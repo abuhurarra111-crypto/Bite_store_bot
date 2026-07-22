@@ -1,0 +1,68 @@
+# ============================================================
+# 🚀 Render.com deployment blueprint for Bite Store Bot
+# ============================================================
+# Do biggest cheezein iske liye zaroori hain:
+#   1. Bot ko 24/7 chalana  -> Background Worker (polling) — RECOMMENDED.
+#   2. Data restart par safe rakhna -> Persistent Disk + DB_PATH.
+#
+# Render dashboard -> "New +" -> "Blueprint" -> apna GitHub repo chuno.
+# Render is file ko parh kar service bana dega. Phir Environment tab mein
+# secrets (BOT_TOKEN, ADMIN_ID, GEMINI_API_KEY, EMAIL_*) add karo.
+#
+# NOTE: Free plan par persistent Disk available NAHI hota — Disk ke liye
+# paid (Starter) instance chahiye. Free par bot chalega lekin har restart par
+# database reset ho jayega (products/orders ud jayenge). Stable store ke liye
+# paid instance + disk use karo.
+# ============================================================
+
+services:
+  # ---- Option A (RECOMMENDED): Polling background worker ----
+  - type: worker
+    name: bite-store-bot
+    runtime: python
+    plan: starter            # "free" bhi chalega par disk ke bina data reset hoga
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python bot.py"
+    autoDeploy: true
+    disk:
+      name: bite-store-data
+      mountPath: /var/data   # persistent disk yahan mount hoga
+      sizeGB: 1
+    envVars:
+      - key: DB_PATH
+        value: /var/data/shop.db   # DB persistent disk par -> restart-safe
+      - key: BOT_TOKEN
+        sync: false                # Render dashboard mein daalo (secret)
+      - key: ADMIN_ID
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: EMAIL_ADDRESS
+        sync: false
+      - key: EMAIL_PASSWORD
+        sync: false
+      - key: BINANCE_EMAIL
+        sync: false
+      - key: BINANCE_EMAIL_PASSWORD
+        sync: false
+      # 🆕 v61: Binance Pay REST API + Pakistani proxy
+      - key: BINANCE_API_KEY
+        sync: false
+      - key: BINANCE_API_SECRET
+        sync: false
+      - key: BINANCE_PROXY_URL
+        sync: false             # set this to a Pakistani / allowed-region HTTPS or SOCKS5 proxy
+      - key: BINANCE_PROXY_LIST
+        sync: false             # 🆕 v63: comma-separated list for auto-rotation
+      - key: BINANCE_API_BASE
+        sync: false             # optional override (api.binance.com / api1 / api2 / api3)
+      - key: PYTHON_VERSION
+        value: "3.12.5"
+
+# ============================================================
+# ---- Option B: Webhook Web Service (agar worker ki jagah web chahiye) ----
+# Web service ko ek open PORT chahiye. Bot.py automatically webhook mode
+# mein chala jayega agar RENDER_EXTERNAL_URL set ho (Render khud set karta hai)
+# ya WEBHOOK_URL diya jaye. Iske liye upar `type: worker` ki jagah `type: web`
+# kar do aur same envVars rakho. PORT Render khud deta hai.
+# ============================================================
