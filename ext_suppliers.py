@@ -2850,6 +2850,32 @@ def _split_item(item_str, sep="|"):
     return [p.strip() for p in str(item_str).split(sep)]
 
 
+def _render_delivery_product_name(raw):
+    """🐛 v104 FIX: smart product-name renderer for delivery messages.
+
+    Old code called `html_escape_plain(product_name)` which converted
+    premium-emoji markup `<tg-emoji emoji-id="X">📱</tg-emoji>` into ugly
+    escaped garbage `&lt;tg-emoji ...&gt;&lt;/tg-emoji&gt;` that Telegram
+    rendered as literal `<tg-emoji ...>` text to BOTH the customer AND
+    later in the admin's User-Side Delivery Preview.
+
+    Behavior:
+      • `[[HTML]]<tg-emoji>...` markup → strip [[HTML]] sentinel, embed
+        raw HTML so <tg-emoji> renders as premium emoji icon
+      • Plain HTML tags without sentinel → embed as-is
+      • Plain text → escape < > & safely for HTML mode
+    """
+    import re as _re
+    s = str(raw or "Product").strip()
+    if s.startswith("[[HTML]]"):
+        return s[len("[[HTML]]"):]
+    # Contains any Telegram-supported HTML tag → embed as-is
+    if _re.search(r"<(?:b|i|u|s|code|pre|tg-emoji|a)\b", s, flags=_re.I):
+        return s
+    # Plain text → safe escape
+    return html_escape_plain(s)
+
+
 def render_v83_delivery(items, fmt_key, product_name="Product",
                         order_id=0, product_id=0):
     """v83: Format-aware BYTE-PERFECT delivery renderer.
@@ -2916,7 +2942,7 @@ def render_v83_delivery(items, fmt_key, product_name="Product",
             f"<i>Format: {fmt['label']}</i>"
         )
         return "[[HTML]]🎉 <b>Bite Store Delivery</b>\n━━━━━━━━━━━━━━━━━━━━\n" + \
-               f"📦 <b>Product:</b> {html_escape_plain(product_name)}\n\n" + \
+               f"📦 <b>Product:</b> {_render_delivery_product_name(product_name)}\n\n" + \
                summary_block + \
                "\n\n🙏 Thank you for shopping with <b>Bite Store</b>!"
 
@@ -2925,7 +2951,7 @@ def render_v83_delivery(items, fmt_key, product_name="Product",
     return (
         "[[HTML]]🎉 <b>Bite Store Delivery</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📦 <b>Product:</b> {html_escape_plain(product_name)}\n\n"
+        f"📦 <b>Product:</b> {_render_delivery_product_name(product_name)}\n\n"
         f"{joined}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"💡 <b>Tip:</b> Save these details securely. Reply to your Order History message if you need help.\n"

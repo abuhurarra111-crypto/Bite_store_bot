@@ -7156,6 +7156,12 @@ async def deliver_command(update, context):
         if pts > 0: msg += f"\n\n💎 You earned {pts} points!"
         
     try:
+        # 🐛 v104: heal any legacy escaped <tg-emoji> markup before sending
+        try:
+            from utils import heal_escaped_delivery_content
+            msg = heal_escaped_delivery_content(msg)
+        except Exception:
+            pass
         send_text, send_mode = smart_text_and_mode(msg, "Markdown")
         if (dict(o) if o else {}).get('delivery_msg_id') and o['status'] == 'delivered':
             await context.bot.edit_message_text(chat_id=o['user_id'], message_id=o['delivery_msg_id'], text=send_text, parse_mode=send_mode)

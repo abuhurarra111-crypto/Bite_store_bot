@@ -2576,6 +2576,13 @@ async def my_order_detail_callback(update, context):
     pd = dict(p) if p else {}
     status = o['status']
     content = (dict(o).get('delivery_content') if o else '') or ''
+    # 🐛 v104: heal legacy escaped <tg-emoji> markup so purani orders
+    # bhi clean render hon (see utils.heal_escaped_delivery_content)
+    try:
+        from utils import heal_escaped_delivery_content
+        content = heal_escaped_delivery_content(content)
+    except Exception:
+        pass
     has_file = bool(pd.get('delivery_file_id'))
     text = (
         f"📦 *Order #{oid}*\n"

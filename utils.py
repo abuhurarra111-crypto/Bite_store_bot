@@ -736,3 +736,59 @@ def sort_products_by_first_word(products, force=False):
     except Exception:
         # Never break the shop — return original on any error
         return list(products or [])
+
+
+# ════════════════════════════════════════════════════════════════
+# 🆕 v104: HEAL escaped <tg-emoji> in stored delivery_content
+# ════════════════════════════════════════════════════════════════
+# Old bug (v83..v103): render_v83_delivery() ran html_escape_plain()
+# on the product name, converting premium <tg-emoji> markup into
+# &lt;tg-emoji&gt; literal text. That garbage got saved to
+# orders.delivery_content AND sent to the customer.
+#
+# This heal function auto-fixes stored content at DISPLAY time so:
+#   • Admin "User-Side Delivery Preview" (v101) shows clean
+#   • Customer's "My Orders → View" (v100 patched) shows clean
+#   • Re-send / re-preview of old orders shows clean
+#
+# Pure display-time fix — doesn't touch DB (safe, reversible).
+# ════════════════════════════════════════════════════════════════
+
+def heal_escaped_delivery_content(text):
+    """Un-escape any accidentally-escaped <tg-emoji ...> and [[HTML]] markers
+    that leaked into stored delivery_content. Never raises."""
+    if not text:
+        return text
+    try:
+        import re as _re
+        s = str(text)
+
+        # Case A: `[[HTML]]&lt;tg-emoji emoji-id="X"&gt;📱&lt;/tg-emoji&gt;`
+        # → strip inner [[HTML]] wart + unescape the tg-emoji tag
+        # We do NOT touch legitimate escaped content elsewhere (only the
+        # tg-emoji block gets un-escaped).
+        pattern = _re.compile(
+            r'(\[\[HTML\]\])?'
+            r'&lt;tg-emoji\s+emoji-id=(?:&quot;|")(\d+)(?:&quot;|")\s*&gt;'
+            r'([^<&]{0,8})'
+            r'&lt;/tg-emoji&gt;',
+            flags=_re.IGNORECASE,
+        )
+        def _replace(m):
+            emoji_id = m.group(2)
+            fallback = m.group(3)
+            return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+        s = pattern.sub(_replace, s)
+
+        # Case B: any leftover `[[HTML]]` sentinel embedded mid-text
+        # (from double-wrapping) — strip only the ones that aren't at start
+        # because the leading [[HTML]] is meaningful (parse_mode selector).
+        if s.startswith("[[HTML]]"):
+            head, tail = s[:len("[[HTML]]")], s[len("[[HTML]]"):]
+            s = head + tail.replace("[[HTML]]", "")
+        else:
+            s = s.replace("[[HTML]]", "")
+
+        return s
+    except Exception:
+        return text

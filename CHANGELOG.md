@@ -8,6 +8,76 @@
 
 ---
 
+# 🚀 v104 (2026-07-23) — Delivery Content Escaped `<tg-emoji>` Fix (Customer + Admin)
+
+**User complaint (Order #18 screenshot):**
+> Admin User-Side Preview showed raw `<tg-emoji emoji-id="5364339557712020484">📱</tg-emoji> Capcut Pro Team...` as literal text.
+> User asked: *"Jb customer ko deliver hota hai kia tb osko b asy hi show hota ya sirf mujy asa show ho raha? Agr to dono side ya issue hai to dono ka fix krdo."*
+
+**Answer:** YES, customer was seeing the same garbage. Same bug affects both sides because customer's original delivery message AND admin's preview both read from the same `orders.delivery_content` DB column — which was written with escaped `<tg-emoji>` tags.
+
+## 🕵️ Root Cause
+
+`render_v83_delivery()` in `ext_suppliers.py` was calling `html_escape_plain(product_name)` before writing to DB. For supplier products whose name contains premium emoji markup (`[[HTML]]<tg-emoji emoji-id="X">📱</tg-emoji> ProductName`), this escaped the `<` `>` `&` chars → `&lt;tg-emoji&gt;` → Telegram rendered it as literal text.
+
+**Impact was dual:**
+1. **Customer** — Every delivered supplier order since v83 had the ugly `<tg-emoji ...>` text visible in their delivery message
+2. **Admin** — User-Side Preview (added in v101) faithfully re-displayed the stored bytes, showing the same garbage
+
+Additional secondary bug: `product_name` starting with `[[HTML]]` sentinel got double-embedded, showing `[[HTML]]&lt;tg-emoji ...` in the escaped output.
+
+## ✅ Fix — Two Layers
+
+### Layer 1: NEW deliveries (post-v104)
+- New helper `_render_delivery_product_name()` in `ext_suppliers.py` — smart branching:
+  - `[[HTML]]` prefix → strip sentinel, embed raw HTML (premium emoji renders as icon)
+  - Contains HTML tags → embed as-is
+  - Plain text → escape safely
+- Replaced both `html_escape_plain(product_name)` call sites in `render_v83_delivery()` (1-item render + bulk render)
+
+### Layer 2: LEGACY orders (already-corrupted DB entries — like user's Order #18)
+- New utility `heal_escaped_delivery_content()` in `utils.py` — display-time healing:
+  - Regex unescapes `&lt;tg-emoji emoji-id="X"&gt;📱&lt;/tg-emoji&gt;` back to real markup
+  - Strips redundant inner `[[HTML]]` sentinels
+  - Never touches other legitimate escaped content (only tg-emoji block)
+  - Never raises — always returns something
+- Applied in 3 read paths:
+  - `completed_orders_v2.py::_build_order_detail_text` (admin order detail)
+  - `completed_orders_v2.py::ac2_userview_callback` (admin user-side preview)
+  - `handlers_order.py::my_order_detail_callback` (customer "View Order")
+  - `handlers_admin.py::deliver_command` (admin manual re-deliver path)
+
+Old orders' DB rows stay unchanged (safe, no risky migration). Every display now heals on-the-fly.
+
+## Test Results
+```
+_test_v84 to _test_v103  — 232/232 ✅
+_test_v104               —   7/7   ✅  ← NEW: smart render + heal + wired in 3 files
+────────────────────────────
+GRAND TOTAL: 239/239 tests PASS. Zero regressions.
+```
+
+Live proof from test suite:
+```
+BEFORE:  <tg-emoji emoji-id="5364339557712020484">📱</tg-emoji> Capcut...   (garbage escaped)
+AFTER:   <tg-emoji emoji-id="5364339557712020484">📱</tg-emoji> Capcut...   (real tag, renders as icon)
+```
+
+## Files Modified in v104
+- `ext_suppliers.py` — new `_render_delivery_product_name()` + 2 call sites patched
+- `utils.py` — new `heal_escaped_delivery_content()`
+- `completed_orders_v2.py` — heal applied in 2 places (order detail, user-side preview)
+- `handlers_order.py::my_order_detail_callback` — heal applied
+- `handlers_admin.py::deliver_command` — heal applied before send
+
+## How to Verify (After Deploy)
+1. **Old orders (e.g. Order #18):**
+   - Admin → 📜 Completed Orders v2 → Yasir → Order #18 → 👀 User-Side Delivery View → premium emoji now renders as icon (or falls back to 📱), no more `<tg-emoji ...>` text
+   - Customer opens `/my_orders` → View Order #18 → same clean rendering
+2. **New orders:** Next supplier product delivery — customer sees premium emoji in Product line immediately, no legacy garbage
+
+---
+
 # 🚀 v103 (2026-07-22) — Finance Dashboard "Temporary Error" Bug Fix
 
 **User complaint (verbatim):**

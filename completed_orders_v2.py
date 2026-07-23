@@ -345,6 +345,13 @@ def _build_order_detail_text(order: dict) -> str:
     pay = escape_html(order.get("payment_method") or "—")
     uname = escape_html(order.get("user_name") or "")
     dc = (order.get("delivery_content") or "").strip()
+    # 🐛 v104: heal legacy escaped <tg-emoji> markup that v83 renderer
+    # accidentally wrote before v104 (see utils.heal_escaped_delivery_content)
+    try:
+        from utils import heal_escaped_delivery_content
+        dc = heal_escaped_delivery_content(dc)
+    except Exception:
+        pass
 
     body = (
         f"{em} <b>Order #{order['id']}</b>\n"
@@ -474,6 +481,12 @@ async def ac2_userview_callback(update, context):
         await _safe_edit(q, "❌ Order not found.")
         return
     dc = (o.get("delivery_content") or "").strip()
+    # 🐛 v104: heal any legacy escaped <tg-emoji> markup pre-display
+    try:
+        from utils import heal_escaped_delivery_content
+        dc = heal_escaped_delivery_content(dc)
+    except Exception:
+        pass
     if not dc:
         await _safe_edit(
             q,
