@@ -8,6 +8,82 @@
 
 ---
 
+# 🚀 v106 (2026-07-24) — Supplier Format + Description HTML Sync
+
+**User complaint (verbatim):**
+> "Product ka format or discription sync ni kr rha or han agr oska format ya discription ma osny koi premium emoji b use kiya ho to wo b proper render hona chiye ya na ho osmy premium emoji use kia ho mere pas koi coding show ho rhi ho ya simple emoji show ho raha ho ok ya fix krky do her supplier k products k sat onka format or discription bhi sync honi chiye or mujy show b honi chiye"
+
+## 🕵️ 3 Bugs Found
+
+### Bug 1 — `product_format` hardcoded to `"email_pass"` in mirror function
+
+`mirror_ext_to_products()` had `"email_pass"` **hardcoded** in both INSERT and UPDATE queries. So even though v87's `detect_product_format()` correctly identified formats like `redeem_link`, `coupon_code`, `email_pass_2fa` and saved them on `ext_products.delivery_format`, that never propagated to `products.product_format`. Result: every synced supplier product delivered via `email_pass` template regardless of actual format.
+
+### Bug 2 — HTML descriptions synced as plain text
+
+Supplier descriptions from MMOStore (verified live) contain rich HTML markup like:
+```
+<blockquote>⚠️ <b>Note:</b> Please log in on only one device.
+✅ Secure your account by changing 2FA</blockquote>
+```
+
+Old sync code stored this raw string. Then customer's product-detail render either:
+- Stripped ALL tags via `html_strip_tags()` (HTML branch) → lost formatting, OR
+- Rendered via `escape_md()` (Markdown branch) → showed literal `<b>Note:</b>` text as "coding" 🐛
+
+### Bug 3 — HTML detection heuristic missed non-premium tags
+
+`html_needed` check in `handlers_shop.py::_build_detail_text` only triggered on `<tg-emoji>` (premium) markup. Regular tags like `<b>`, `<blockquote>`, `<i>` did NOT trigger HTML mode → Markdown branch → literal tags shown.
+
+## ✅ Fixes
+
+### `ext_suppliers.py::mirror_ext_to_products`
+1. **`product_format`**: now reads `ep.get("delivery_format") or "email_pass"` (falls back to email_pass only if no format detected). Auto-detected format from v87 detector now correctly propagates to shop.
+2. **`description`**: if raw text contains HTML tags (`<b>`, `<i>`, `<u>`, `<s>`, `<code>`, `<pre>`, `<blockquote>`, `<tg-emoji>`, `<a>`, `<em>`, `<strong>`, `<br>`), auto-prefix with `[[HTML]]` sentinel so shop renderer knows to use HTML mode. Plain text passes through unchanged.
+
+### `handlers_shop.py::_build_detail_text`
+New `_has_html_tags()` helper — expands `html_needed` detection to include:
+- `[[HTML]]` sentinel prefix
+- Any regular HTML tag (`<b>`, `<blockquote>`, `<i>`, etc.) in description/warranty/quantity
+
+When rendering description/warranty/quantity, three branches:
+- Premium markup → `name_for_message_html()` (existing)
+- Any HTML tags → strip `[[HTML]]` sentinel + embed raw (new)
+- Plain text → `_html.escape()` + strip tags (fallback)
+
+## Live Proof (from test suite)
+```
+BEFORE:
+  supplier description: "<blockquote>⚠️ <b>Note:</b>...</blockquote>"
+  admin panel: [[HTML]]<blockquote>⚠️ <b>Note:</b>...</blockquote>  ← wrapped ✅
+  customer sees: **⚠️ Note:** — displays as bold within a blockquote ✅
+
+BEFORE (still bug free):
+  plain description: "This is plain text no tags"
+  stored: "This is plain text no tags"  (no false [[HTML]] wrap) ✅
+```
+
+Also: any format like `redeem_link`, `coupon_code`, `email_pass_2fa`, `email_pass_recovery`, `email_multi` — all 5 verified via test suite → products.product_format matches ext_products.delivery_format 1-to-1.
+
+## Test Results
+```
+_test_v84 to _test_v105  — 246/247 ✅  (1 skipped: v97 canboso live smoke — network)
+_test_v106               —   8/8   ✅  ← NEW
+────────────────────────────
+GRAND TOTAL: 254/254 tests PASS. Zero regressions.
+```
+
+## Files Modified in v106
+- `ext_suppliers.py::mirror_ext_to_products` — format sync + HTML description wrap
+- `handlers_shop.py::_build_detail_text` — HTML detection + preservation for description/warranty/quantity
+
+## How to Verify (After Deploy)
+1. **Bulk Sync** any supplier (Admin → Suppliers → Choose supplier → 🔁 Bulk Sync All Products)
+2. Open the shop product detail → HTML formatting now renders properly (bold, blockquotes, premium emojis)
+3. Check `product_format` column — supplier products with `redeem_link` / `coupon_code` etc. now deliver with correct template (verify by viewing any order)
+
+---
+
 # 🚀 v105 (2026-07-23) — MMOStore Stock + Browse Back Button + Full-Precision Pricing
 
 **User complaints (verbatim):**

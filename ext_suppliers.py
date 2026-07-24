@@ -407,8 +407,28 @@ def mirror_ext_to_products(ext_product_id):
     cost = float(ep.get("cost_usd") or 0)
     stock = int(ep.get("stock") or 0)
     cat_id = int(ep.get("category_id") or 0)
-    desc = str(ep.get("description") or "")
+    # 🐛 v106 FIX: description was synced as plain text — if supplier's
+    # description contains HTML markup (<b>/<blockquote>/<tg-emoji>/etc.),
+    # wrap in [[HTML]] sentinel so shop rendering preserves the formatting.
+    # If description is empty → sync empty. If it's plain text → pass through.
+    raw_desc = str(ep.get("description") or "")
+    if raw_desc and ("<" in raw_desc and ">" in raw_desc) and not raw_desc.startswith("[[HTML]]"):
+        import re as _re_desc
+        # Detect any HTML tag OR premium emoji markup — mark as HTML so
+        # customer-facing product-detail render uses HTML parse mode.
+        if _re_desc.search(r"<(?:b|i|u|s|code|pre|blockquote|tg-emoji|a|em|strong|br)\b", raw_desc, flags=_re_desc.I):
+            desc = "[[HTML]]" + raw_desc
+        else:
+            desc = raw_desc
+    else:
+        desc = raw_desc
     is_active = 1 if ep.get("active") else 0
+    # 🐛 v106 FIX: sync the delivery_format the auto-detector set on the
+    # ext_products row (from v87 detector — email_pass / email_pass_2fa /
+    # redeem_link / coupon_code / etc.). OLD code hardcoded 'email_pass'
+    # for every product → users got wrong delivery template for redeem_link
+    # / coupon products from supplier.
+    prod_fmt = str(ep.get("delivery_format") or "email_pass").strip() or "email_pass"
 
     if row:
         # Update existing mirror row
@@ -417,7 +437,7 @@ def mirror_ext_to_products(ext_product_id):
                          stock=?, category_id=?, is_active=?, product_format=?
                      WHERE id=?""",
                   (display_name, desc, sell, cost, stock,
-                   cat_id or 1, is_active, "email_pass", shop_pid))
+                   cat_id or 1, is_active, prod_fmt, shop_pid))
         was_new = False
         pid = shop_pid
     else:
@@ -427,9 +447,9 @@ def mirror_ext_to_products(ext_product_id):
                       delivery_text, warranty, quantity, photo_id,
                       is_active, product_format, delivery_template,
                       ext_supplier_id, ext_product_id)
-                     VALUES (?, ?, ?, ?, ?, ?, '', '', '', '', ?, 'email_pass', 1, ?, ?)""",
+                     VALUES (?, ?, ?, ?, ?, ?, '', '', '', '', ?, ?, 1, ?, ?)""",
                   (cat_id or 1, display_name, desc, sell, cost, stock,
-                   is_active,
+                   is_active, prod_fmt,
                    int(ep.get("supplier_id") or 0),
                    int(ep.get("id"))))
         pid = c.lastrowid

@@ -105,14 +105,44 @@ def _build_detail_text(p):
     try: quantity = p['quantity']
     except (IndexError, KeyError): quantity = ""
 
-    html_needed = name_html_aware or contains_premium_markup(p.get('description', '')) or contains_premium_markup(warranty) or contains_premium_markup(quantity)
+    # 🐛 v106 FIX: also switch to HTML mode when description contains
+    # regular HTML tags (<b>, <blockquote>, <i>, etc.) — many suppliers
+    # send richly-formatted HTML descriptions. Previously such tags were
+    # either stripped (HTML branch) or shown as literal `<b>Note:</b>` text
+    # (Markdown branch). Now we detect and preserve them properly.
+    import re as _re_desc_ck
+    def _has_html_tags(_v):
+        if not _v: return False
+        s = str(_v)
+        if s.startswith("[[HTML]]"):
+            return True
+        return bool(_re_desc_ck.search(
+            r"<(?:b|i|u|s|code|pre|blockquote|tg-emoji|a|em|strong|br)\b",
+            s, flags=_re_desc_ck.I))
+
+    html_needed = (name_html_aware
+                   or contains_premium_markup(p.get('description', ''))
+                   or contains_premium_markup(warranty)
+                   or contains_premium_markup(quantity)
+                   or _has_html_tags(p.get('description', ''))
+                   or _has_html_tags(warranty)
+                   or _has_html_tags(quantity))
     if html_needed:
         # HTML mode — premium emojis render anywhere in product content
         title = name_for_message_html(p['name'])
         text = f"📦 <b>{title}</b>\n"
         text += "━━━━━━━━━━━━━━━━━━━━\n\n"
         if p['description']:
-            desc_html = name_for_message_html(p['description']) if contains_premium_markup(p['description']) else _html.escape(html_strip_tags(str(p['description'])))
+            # 🐛 v106: preserve HTML formatting — supplier <b>/<blockquote>/etc.
+            # renders properly for customer instead of showing as literal text.
+            _d = str(p['description'])
+            if contains_premium_markup(_d):
+                desc_html = name_for_message_html(_d)
+            elif _has_html_tags(_d):
+                # Strip [[HTML]] sentinel + embed raw HTML tags as-is
+                desc_html = _d[len("[[HTML]]"):] if _d.startswith("[[HTML]]") else _d
+            else:
+                desc_html = _html.escape(html_strip_tags(_d))
             text += f"📝 {desc_html}\n\n"
         if is_flash:
             text += (f"💰 Price: <s>{fmt_price(p['price'])}</s> ⚡ "
@@ -120,10 +150,23 @@ def _build_detail_text(p):
         else:
             text += f"💰 Price: <b>{fmt_price(p['price'])}</b> ≈ <b>{_html.escape(pkr)}</b>\n"
         if show_warranty and warranty:
-            warranty_html = name_for_message_html(warranty) if contains_premium_markup(warranty) else _html.escape(html_strip_tags(str(warranty)))
+            # 🐛 v106: preserve HTML tags in warranty text (supplier formatting)
+            _w = str(warranty)
+            if contains_premium_markup(_w):
+                warranty_html = name_for_message_html(_w)
+            elif _has_html_tags(_w):
+                warranty_html = _w[len("[[HTML]]"):] if _w.startswith("[[HTML]]") else _w
+            else:
+                warranty_html = _html.escape(html_strip_tags(_w))
             text += f"🛡️ Warranty: <b>{warranty_html}</b>\n"
         if show_quantity and quantity:
-            qty_html = name_for_message_html(quantity) if contains_premium_markup(quantity) else _html.escape(html_strip_tags(str(quantity)))
+            _q = str(quantity)
+            if contains_premium_markup(_q):
+                qty_html = name_for_message_html(_q)
+            elif _has_html_tags(_q):
+                qty_html = _q[len("[[HTML]]"):] if _q.startswith("[[HTML]]") else _q
+            else:
+                qty_html = _html.escape(html_strip_tags(_q))
             text += f"📦 Quantity: <b>{qty_html}</b>\n"
         if show_stock:
             text += f"📊 In Stock: <b>{p['stock']}</b>\n"
