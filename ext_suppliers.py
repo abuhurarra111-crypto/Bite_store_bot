@@ -1191,8 +1191,27 @@ def sync_supplier_products(supplier_id):
                                  format_detected=1)
     except Exception as e:
         logger.warning(f"[sync] format auto-detect failed: {e}")
-    # 🆕 v83: DO NOT auto-mirror. Admin must click "🔄 Sync to Shop" per product.
-    # (was in v82 — auto-mirrored everything, removed per user request)
+    # 🆕 v83: DO NOT auto-mirror NEW products. Admin must click "🔄 Sync to
+    # Shop" per product to make them live to customers.
+    # 🆕 v107: BUT — for products ALREADY marked synced_to_shop=1, silently
+    # re-mirror them so shop.products stays in sync with the fresh supplier
+    # data (description, format, cost, stock). This fixes the "I clicked
+    # Import Products but the description didn't update" complaint.
+    try:
+        _synced_prods = get_ext_products(supplier_id=supplier_id)
+        _mirrored = 0
+        for _ep in _synced_prods:
+            if int(_ep.get("synced_to_shop") or 0) == 1:
+                try:
+                    mirror_ext_to_products(int(_ep["id"]))
+                    _mirrored += 1
+                except Exception as _me:
+                    logger.debug(f"[sync] auto-re-mirror fail #{_ep['id']}: {_me}")
+        if _mirrored:
+            logger.info(f"[sync_supplier_products] auto-re-mirrored {_mirrored} "
+                         f"already-synced products to shop (v107)")
+    except Exception as e:
+        logger.warning(f"[sync] auto-re-mirror pass failed: {e}")
     return n, None
 
 
@@ -1866,11 +1885,35 @@ async def ext_prod_view_callback(update, context):
         f"Status: {'🟢 Active' if p['active'] else '🔴 Inactive'}\n"
         f"Shop: {sync_line}"
     )
+    # 🆕 v107: show description preview so admin can see EXACTLY what's stored
+    # (with pro-user "raw vs rendered" transparency). Helps diagnose sync issues.
+    _desc_stored = str(p.get("description") or "").strip()
+    if _desc_stored:
+        _preview = _desc_stored[:400]
+        _more = "..." if len(_desc_stored) > 400 else ""
+        _tag_info = ""
+        import re as _re_tag
+        if _desc_stored.startswith("[[HTML]]") or _re_tag.search(
+            r"<(?:b|i|u|s|code|pre|blockquote|tg-emoji|a)\b",
+            _desc_stored, flags=_re_tag.I,
+        ):
+            _tag_info = " <i>(HTML-formatted)</i>"
+        text += (f"\n\n📝 <b>Description{_tag_info}:</b>\n"
+                 f"<blockquote expandable>{html_escape_plain(_preview)}{_more}</blockquote>")
+    else:
+        text += "\n\n📝 <b>Description:</b> <i>(none stored)</i>"
+
     kb = [
         # 🆕 v83: SYNC TO SHOP button (per-product manual sync)
         [InlineKeyboardButton(
             "🔴 Unsync (Hide from Shop)" if synced else "🔄 Sync to Shop (Make Live)",
             callback_data=f"ext_prod_sync_{eid}")],
+        # 🆕 v107: FORCE REFRESH — pro-user Shopify-style overwrite mode.
+        # Re-fetches THIS product from supplier API + updates ext_product +
+        # re-mirrors to shop (if synced_to_shop=1). Use when you know supplier
+        # updated the product but bot hasn't caught up.
+        [InlineKeyboardButton("🔃 Force Refresh from Supplier",
+                              callback_data=f"ext_prod_refresh_{eid}")],
         [InlineKeyboardButton("📈 Auto-Markup %",   callback_data=f"ext_prod_markup_{eid}"),
          InlineKeyboardButton("🔒 Fixed Price",      callback_data=f"ext_prod_fixprice_{eid}")],
         [InlineKeyboardButton("🧩 Change Format",   callback_data=f"ext_prod_fmt_{eid}"),
@@ -3026,6 +3069,104 @@ def render_v83_delivery(items, fmt_key, product_name="Product",
 # ═══════════════════════════════════════════════════════════════════════════
 # 🆕 v83: MANUAL SYNC TO SHOP + FORMAT PICKER (admin panel)
 # ═══════════════════════════════════════════════════════════════════════════
+
+async def ext_prod_refresh_callback(update, context):
+    """🆕 v107: FORCE REFRESH from supplier API — pro-user Shopify-style
+    overwrite mode. Re-fetches this ONE product fresh, updates ext_product
+    row (description + cost + stock + name), re-runs format auto-detect,
+    and if the product is synced to shop, mirrors the new data to
+    products.description + products.product_format.
+
+    Use case: admin updated product details on supplier side but shop is
+    showing stale data. Instead of running Bulk Sync (which re-fetches ALL
+    products), this refreshes just one.
+    """
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        eid = int(q.data.replace("ext_prod_refresh_", "", 1))
+    except Exception:
+        return
+    await q.answer("🔃 Re-fetching from supplier…")
+
+    p = get_ext_product(eid)
+    if not p:
+        await q.answer("❌ Product not found", show_alert=True); return
+
+    sup = get_supplier(int(p["supplier_id"]))
+    ad = get_adapter_for_supplier(sup)
+    if not ad:
+        await q.answer("❌ Adapter unavailable", show_alert=True); return
+
+    # Re-fetch ALL products (per-product endpoint may not exist on every
+    # adapter — fall back to full list scan). Update matching remote_id.
+    try:
+        from async_adapter_helpers import async_fetch_products
+        all_prods = await async_fetch_products(ad)
+    except Exception as e:
+        await q.answer(f"❌ Fetch failed: {e}", show_alert=True); return
+
+    fresh = None
+    for rp in (all_prods or []):
+        if str(rp.get("remote_id")) == str(p["remote_id"]):
+            fresh = rp; break
+    if not fresh:
+        await q.answer(
+            "❌ Supplier no longer has this product (removed?)",
+            show_alert=True); return
+
+    # Optional auto-translate on fresh description
+    _desc = fresh.get("description") or ""
+    try:
+        from auto_translator import maybe_auto_translate_description as _mtx
+        _desc = _mtx(_desc)
+    except Exception:
+        pass
+
+    # Update ext_product with fresh data (upsert_ext_product handles overwrite)
+    upsert_ext_product(
+        supplier_id=int(p["supplier_id"]),
+        remote_id=p["remote_id"],
+        name=fresh.get("name") or p["name"],
+        description=_desc,
+        cost_usd=fresh.get("cost_usd", 0),
+        stock=fresh.get("stock", 0),
+        raw_json=json.dumps(fresh.get("raw", {}), ensure_ascii=False),
+    )
+
+    # Re-run format auto-detect on the NEW data
+    try:
+        merged = dict(fresh.get("raw", {}) or {})
+        merged.setdefault("name", fresh.get("name", ""))
+        merged.setdefault("description", _desc)
+        new_fmt = detect_product_format(merged)
+        update_ext_product(eid, delivery_format=new_fmt, format_detected=1)
+    except Exception:
+        pass
+
+    # If synced to shop, re-mirror the updated data
+    p_after = get_ext_product(eid)
+    was_synced = int(p_after.get("synced_to_shop") or 0) == 1
+    if was_synced:
+        try:
+            mirror_ext_to_products(eid)
+        except Exception as e:
+            logger.warning(f"[force_refresh] re-mirror fail: {e}")
+
+    # Show refresh summary
+    _preview = (p_after.get("description") or "")[:120]
+    await q.answer(
+        f"✅ Refreshed!\n"
+        f"Desc: {len(p_after.get('description') or '')} chars\n"
+        f"Format: {p_after.get('delivery_format', '?')}\n"
+        f"Shop mirror: {'✅ updated' if was_synced else '⚠️ not synced to shop'}",
+        show_alert=True)
+
+    # Refresh the view screen
+    _set_q_data(q, f"ext_prod_view_{eid}")
+    await ext_prod_view_callback(update, context)
+
 
 async def ext_prod_sync_callback(update, context):
     """🔄 Toggle: sync product to shop / unsync (hide from customers)."""

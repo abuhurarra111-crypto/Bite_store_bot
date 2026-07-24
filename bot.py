@@ -153,7 +153,7 @@ from ext_suppliers import (
     ext_prod_fixprice_callback, ext_prod_fixprice_set_callback,
     ext_prod_fixprice_received, ext_prod_fixprice_clear_callback,
     # 🆕 v83: Manual sync + format picker
-    ext_prod_sync_callback, ext_prod_fmt_callback, ext_prod_setfmt_callback,
+    ext_prod_sync_callback, ext_prod_refresh_callback, ext_prod_fmt_callback, ext_prod_setfmt_callback,
 )
 from support_replacement import (
     admin_replacement_history_callback, admin_replacement_filter_callback,
@@ -1577,6 +1577,8 @@ def main():
         # 🆕 v83: Manual sync + format picker (order matters, specific first)
         ("^ext_prod_setfmt_",            ext_prod_setfmt_callback),
         ("^ext_prod_sync_",              ext_prod_sync_callback),
+        # 🆕 v107: force-refresh a single product from supplier (pro Shopify overwrite pattern)
+        ("^ext_prod_refresh_",           ext_prod_refresh_callback),
         ("^ext_prod_fmt_",               ext_prod_fmt_callback),
         # 🆕 v85: Bulk sync + low-bal threshold editor + finance + autosync toggle
         ("^ext_sup_bulk_sync_",          ext_sup_bulk_sync_callback),
