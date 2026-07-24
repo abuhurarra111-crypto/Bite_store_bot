@@ -235,7 +235,7 @@ def _friendly_for(key):
     if key.startswith("fc_btn_") and key[7:].isdigit():
         try:
             from database import get_product
-            from utils import html_strip_tags, is_html_value
+            from utils import html_strip_tags, is_html_value, fmt_price
             p = get_product(int(key[7:]))
             if p:
                 nm = p["name"]
@@ -271,7 +271,7 @@ def _sample_label_for(key):
             if p:
                 s = p['stock']
                 if s > 0:
-                    return f"🛍️ {p['name']} — ${p['price']:.2f}"
+                    return f"🛍️ {p['name']} — {fmt_price(p['price'])}"
                 else:
                     return f"🛍️ {p['name']} ❌ Out of Stock"
         except Exception:

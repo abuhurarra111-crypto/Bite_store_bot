@@ -792,3 +792,72 @@ def heal_escaped_delivery_content(text):
         return s
     except Exception:
         return text
+
+
+# ════════════════════════════════════════════════════════════════
+# 🆕 v105: FULL-PRECISION PRICE FORMATTING (never truncate/round)
+# ════════════════════════════════════════════════════════════════
+# User complaint: "Amount supplier ny 0.103 rkhi hoti or mere pas 0.02 bot
+# dekhata hai... ma b kisi product ki price agr asi rkh do 0.024 ya 0.0030003
+# to lgti hi ni."
+#
+# Root cause: everywhere in the codebase used `${price:.2f}` which rounds
+# to 2 decimals → 0.103 → $0.10, 0.024 → $0.02, 0.003 → $0.00.
+# Also _compute_sell_price() called round(..., 2) which truncated to
+# 2 decimals BEFORE saving to DB.
+#
+# fmt_price() rules:
+#   • Preserves FULL precision as stored
+#   • Drops trailing zeros for cleanliness
+#   • Whole dollars → "$5"  (not "$5.00")
+#   • Sub-cent → "$0.103"  "$0.024"  "$0.0030003"  "$0.00030003"
+#   • Handles None / int / float / str inputs safely
+# ════════════════════════════════════════════════════════════════
+
+def fmt_price(value, prefix="$", fallback="—"):
+    """Format a monetary value with FULL precision (no rounding).
+
+    Examples:
+        fmt_price(5)          → "$5"
+        fmt_price(5.00)       → "$5"
+        fmt_price(5.10)       → "$5.1"
+        fmt_price(0.103)      → "$0.103"
+        fmt_price(0.024)      → "$0.024"
+        fmt_price(0.0030003)  → "$0.0030003"
+        fmt_price("2.1500")   → "$2.15"
+        fmt_price(None)       → "—"
+        fmt_price(0)          → "$0"
+    """
+    if value is None or value == "":
+        return fallback
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+    # Very-small numbers may lose precision in float; use repr() for max digits
+    # then trim trailing zeros
+    if v == 0:
+        return f"{prefix}0"
+    if v == int(v):
+        return f"{prefix}{int(v)}"
+
+    # For non-integer: convert to string with up to 10 decimal places, strip trailing zeros
+    s = f"{v:.10f}".rstrip("0").rstrip(".")
+    return f"{prefix}{s}"
+
+
+def fmt_price_precise(value):
+    """Like fmt_price but WITHOUT currency prefix (for embedding in formatted strings).
+    Same precision rules. Empty on None/invalid."""
+    if value is None or value == "":
+        return ""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if v == 0:
+        return "0"
+    if v == int(v):
+        return f"{int(v)}"
+    return f"{v:.10f}".rstrip("0").rstrip(".")

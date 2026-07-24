@@ -8,6 +8,96 @@
 
 ---
 
+# 🚀 v105 (2026-07-23) — MMOStore Stock + Browse Back Button + Full-Precision Pricing
+
+**User complaints (verbatim):**
+> 1. "mmostore ka stock ni show hota products import hony k bawjood mene supplier k bot py ja k dekha whn stock add hai lkin api sy sync krny k bad her product ka stock 0 show ho raha asa q?"
+> 2. "Jb kisi b supplier k products browse kr rha hota ho or next page py jany k liye... 3 dfa next gya ma ab jese hi back krta to first page py ly ata hai jb k os sy pichy waly page py back jana chiye"
+> 3. "amount supplier ny 0.103 rkhi hoti or mere pas 0.02 bot dekhata hai... ma b kisi product ki price agr asi rkh do 0.024 ya 0.0030003 to lgti hi ni"
+
+## 🐛 Bug 1 — MMOStore stock always 0 (same class as Canboso v97)
+
+**Root cause:** MMOStore API returns stock as `stock_available` (verified via docs + live API test with user's key `mmostore_dce0bcbe...`). Adapter used `p.get("stock", 0)` — wrong key → always 0 → 12 products silently marked out-of-stock.
+
+**Live proof after fix (12 products from user's key):**
+| Product | Before | After |
+|---|---|---|
+| Account Gemini Pro + 5TB + Antigravity 1Y | 0 ❌ | 28 ✅ |
+| ACTIVATION LINK 18-Month Gemini Pro | 0 ❌ | 7 ✅ |
+| Outlook Mail | 0 ❌ | 3,925 ✅ |
+| Gmail Domain rental 24-72h @abc.us | 0 ❌ | 21,103 ✅ |
+| Gmail Domain rental 24-72h @abc.com | 0 ❌ | 15,427 ✅ |
+| Gmail Domain rental 24-48h .us Gm | 0 ❌ | 70,380 ✅ |
+| Phone number for Gmail/Google verify | 0 ❌ | 10 ✅ |
+
+**Fix:** Defensive multi-key resolution (same pattern as Canboso v97):
+```
+priority: stock_available → stock → available → 0
+```
+
+## 🐛 Bug 2 — Browse pagination Back button always jumps to page 0
+
+**Root cause:** In `ext_prod_view_callback`, the "🔙 Browse Products" button was hardcoded to `ext_sup_import_pick_{sid}_0`. So if admin was on page 3, opened a product, then tapped Back — always landed on page 1.
+
+**Fix:** `ext_sup_import_pick_callback` now saves the current page into `context.user_data["ext_browse_page_{sid}"]`. `ext_prod_view_callback` reads this and generates the correct dynamic Back URL.
+
+## 🐛 Bug 3 — Sub-cent pricing truncated to $0.00
+
+**Root cause TWO layers:**
+
+### Layer A: `_compute_sell_price()` was rounding
+```python
+return round(cost * (1 + mkp / 100.0), 2)   # ❌ 0.003 * 1.4 = 0.0042 → $0.00
+```
+
+### Layer B: 47 display sites across 8 files used `${price:.2f}`
+- `0.103` supplier price → displayed as `$0.10`
+- Admin's own product `0.024` → `$0.02`
+- Fractional `0.0030003` → `$0.00`
+
+**Fix:**
+1. **`_compute_sell_price()`** — removed `round()`, preserves full float precision
+2. **`fmt_price()` helper in `utils.py`** — smart formatter:
+   - `$5`, `$5.1`, `$0.103`, `$0.024`, `$0.0030003`, `$0.0001` — all render correctly
+   - Whole dollars drop `.00`, sub-cent shows full precision, trailing zeros stripped
+3. **47 sites patched** across 8 files (`ext_suppliers.py`, `handlers_admin.py`, `handlers_buttons.py`, `handlers_order.py`, `handlers_shop.py`, `handlers_start.py`, `handlers_support.py`, `keyboards.py`)
+
+**Live proof:**
+```
+BEFORE: cost=$0.003 * 40% markup → $0.00 (bot showed $0!)
+AFTER:  cost=$0.003 * 40% markup → $0.0042 (bot shows $0.0042 correctly)
+
+fmt_price display samples:
+  0.103       → $0.103         (was $0.10)
+  0.024       → $0.024         (was $0.02)
+  0.0030003   → $0.0030003     (was $0.00)
+  2.15        → $2.15          (unchanged)
+  5.0         → $5             (was $5.00, now cleaner)
+```
+
+## Test Results
+```
+_test_v84 to _test_v104  — 239/239 ✅
+_test_v105               —   8/8   ✅  ← NEW: mmostore field + browse memory + price precision
+────────────────────────────
+GRAND TOTAL: 247/247 tests PASS. Zero regressions.
+```
+
+## Files Modified in v105
+- `ext_suppliers.py` — `MMOStoreAdapter.fetch_products` (stock_available fix); `MMOStoreAdapter.fetch_balance` (defensive string→float); `_compute_sell_price` (no more round); browse page memory in `ext_sup_import_pick_callback`; dynamic Back button in `ext_prod_view_callback`
+- `utils.py` — new `fmt_price()` + `fmt_price_precise()` helpers (12/12 edge cases tested)
+- `handlers_admin.py`, `handlers_buttons.py`, `handlers_order.py`, `handlers_shop.py`, `handlers_start.py`, `handlers_support.py`, `keyboards.py` — 47 `.2f` sites converted to `fmt_price()` (auto-patched via AST-safe regex)
+
+## How to Verify (After Deploy)
+1. **MMOStore stock:** Admin → Suppliers → MMOStore → 🔁 Bulk Sync — products now show real stock (7 out of 12 with real inventory including 70,380 Gmail domains)
+2. **Browse Back button:** Admin → any supplier → Browse Products → go to page 3 → tap any product → Back button now returns to page 3
+3. **Full precision pricing:**
+   - Admin edits own product price to `0.024` → shows `$0.024` (not `$0.02`)
+   - Admin sets to `0.0030003` → shows `$0.0030003` (not `$0.00`)
+   - Supplier's `$0.103` cost with 40% markup → shows `$0.1442` (not `$0.14`)
+
+---
+
 # 🚀 v104 (2026-07-23) — Delivery Content Escaped `<tg-emoji>` Fix (Customer + Admin)
 
 **User complaint (Order #18 screenshot):**

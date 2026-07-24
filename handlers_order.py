@@ -21,7 +21,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from config import *
 from database import *
 from keyboards import *
-from utils import escape_md, format_pkr, nav_push, build_manual_order_whatsapp_url, get_product_mode_tag, smart_text_and_mode, contains_premium_markup
+from utils import escape_md, format_pkr, nav_push, build_manual_order_whatsapp_url, get_product_mode_tag, smart_text_and_mode, contains_premium_markup, fmt_price
 import re
 import logging
 import secrets
@@ -866,7 +866,7 @@ async def _send_deposit_success(bot, order, paid_amount):
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"✅ Your payment has been confirmed.\n"
         f"💎 Points Added: *{pts}*\n"
-        f"💰 Amount: *${float(paid_amount or order['price'] or 0):.2f}*\n"
+        f"💰 Amount: *{fmt_price(float(paid_amount or order['price'] or 0))}*\n"
         f"🧾 Order ID: `#{order['id']}`\n\n"
         f"📊 New Points Balance: *{total_pts}*\n\n"
         f"Thank you for your deposit!"
@@ -2526,7 +2526,7 @@ async def handle_screenshot(update, context):
     try:
         await context.bot.send_photo(
             ADMIN_ID, fid,
-            caption=f"📸 #{pending} | {escape_md(o['product_name'])} | ${o['price']:.2f}" if o else f"#{pending}",
+            caption=f"📸 #{pending} | {escape_md(o['product_name'])} | {fmt_price(o['price'])}" if o else f"#{pending}",
             parse_mode="Markdown",
             reply_markup=admin_order_keyboard(pending))
     except: pass
@@ -2550,7 +2550,7 @@ async def my_orders_callback(update, context):
         s_icon = {'pending':'🟡','screenshot_sent':'📸','binance_waiting':'🔶',
                   'paid_pending_delivery':'🕒','waiting_for_details':'📨',
                   'delivered':'✅','cancelled':'❌','rejected':'❌'}.get(o['status'],'❓')
-        text += f"• #{o['id']} {escape_md(o['product_name'])} — ${o['price']:.2f} {s_icon}\n"
+        text += f"• #{o['id']} {escape_md(o['product_name'])} — {fmt_price(o['price'])} {s_icon}\n"
         if o['status'] == 'delivered':
             text += "   ↳ Tap View to see/resend delivery details.\n"
         elif o['status'] in ('paid_pending_delivery','waiting_for_details'):
@@ -2588,7 +2588,7 @@ async def my_order_detail_callback(update, context):
         f"📦 *Order #{oid}*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📌 Product: *{_fmt_msg_name(o['product_name'])}*\n"
-        f"💰 Price: *${float(o['price'] or 0):.2f}*\n"
+        f"💰 Price: *{fmt_price(float(o['price'] or 0))}*\n"
         f"💳 Payment: *{escape_md(o['payment_method'] or 'N/A')}*\n"
         f"📊 Status: *{escape_md(status)}*\n\n"
     )
@@ -2693,7 +2693,7 @@ async def cancel_pending_order_callback(update, context):
                             ADMIN_ID,
                             f"❌ *Order Cancelled by User*\n"
                             f"#{pending_oid} | {escape_md(o['user_name'])} | "
-                            f"{escape_md(o['product_name'])} | ${o['price']:.2f}",
+                            f"{escape_md(o['product_name'])} | {fmt_price(o['price'])}",
                             parse_mode="Markdown")
                     except: pass
         except: pass

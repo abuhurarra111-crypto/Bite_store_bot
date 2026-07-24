@@ -5,7 +5,7 @@ from telegram.ext import ConversationHandler
 from config import *
 from database import *
 from keyboards import *
-from utils import escape_md, nav_push, set_cb_data, location_back_callback, smart_text_and_mode, has_premium_emoji
+from utils import escape_md, nav_push, set_cb_data, location_back_callback, smart_text_and_mode, has_premium_emoji, fmt_price
 from templates_bundle import (
     FORMAT_EMAIL_PASS, FORMAT_REDEEM_LINK, FORMAT_COUPON_CODES,
     format_label as delivery_format_label,
@@ -736,7 +736,7 @@ async def view_order_callback(u,c):
     if q.from_user.id!=ADMIN_ID: await q.answer("❌",show_alert=True); return
     await q.answer(); o=get_order(int(q.data.split("_")[2]))
     if not o: await _safe_edit(q, "❌ Order not found!"); return
-    text=f"🛒 *#{o['id']}*\n👤 {escape_md(o['user_name'])} `{o['user_id']}`\n📦 {escape_md(o['product_name'])}\n💰 ${o['price']:.2f}\n💳 {o['payment_method']}\n📊 {o['status']}"
+    text=f"🛒 *#{o['id']}*\n👤 {escape_md(o['user_name'])} `{o['user_id']}`\n📦 {escape_md(o['product_name'])}\n💰 {fmt_price(o['price'])}\n💳 {o['payment_method']}\n📊 {o['status']}"
     if o['payment_method']=='binance': text+=f"\n🔶 {escape_md(o['binance_sender_name'])} — {o['binance_amount']}"
     if o['payment_screenshot']:
         try:
@@ -4488,9 +4488,9 @@ async def color_preview_callback(u, c):
             color = get_product_color(p['stock'])
             prefix = f"{color} " if color else ""
             if p['stock'] > 0:
-                text += f"{prefix}🛍️ {p['name']} [{p['stock']}] — ${p['price']:.2f}\n\n"
+                text += f"{prefix}🛍️ {p['name']} [{p['stock']}] — {fmt_price(p['price'])}\n\n"
             else:
-                text += f"{prefix}🛍️ {p['name']} ❌ — ${p['price']:.2f}\n\n"
+                text += f"{prefix}🛍️ {p['name']} ❌ — {fmt_price(p['price'])}\n\n"
 
     text += f"\n━━━━━━━━━━━━━━━━━━━━\n📊 Threshold: {threshold} | {in_stk} In | {low_stk} Low | {out_stk} Out"
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Colors", callback_data="admin_colors")]])
@@ -5554,7 +5554,7 @@ async def _show_deposit_page(q, c, deposits, page=1):
             dt_str = str(d['created_at'])[:16]
         
         # Amount display
-        amt_str = f"${d['price']:.2f}"
+        amt_str = f"{fmt_price(d['price'])}"
         if d['binance_amount'] and d['binance_amount'] > 0:
             if d.get('binance_currency', '') == 'PKR':
                 amt_str = f"Rs.{d['binance_amount']:.0f}"
@@ -5626,7 +5626,7 @@ async def admin_deposit_detail_callback(u, c):
             f"🆔 *User ID:* `{o['user_id']}`\n"
             f"💎 *User Points:* {user_pts}\n\n"
             f"📦 *Product:* {escape_md(o['product_name'] or 'N/A')}\n"
-            f"💰 *Price:* ${o['price']:.2f}\n"
+            f"💰 *Price:* {fmt_price(o['price'])}\n"
             f"💳 *Method:* {method_str}\n"
             f"📊 *Status:* {status_str}\n"
             f"📅 *Date:* {dt_str}\n")
@@ -6264,8 +6264,8 @@ async def view_product_callback(u, c):
         f"📦 *Product Details*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📦 *Name:* {escape_md(p['name'])}\n"
-        f"💰 *Selling Price:* ${p['price']:.2f}\n"
-        f"💵 *Cost Price:* ${p['cost_price']:.2f}\n"
+        f"💰 *Selling Price:* {fmt_price(p['price'])}\n"
+        f"💵 *Cost Price:* {fmt_price(p['cost_price'])}\n"
         f"📊 *Stock:* {p['stock']}\n"
         f"🛡️ *Warranty:* {escape_md(p['warranty']) or 'None'}\n"
         f"🔢 *Min Order Qty:* {escape_md(str(p['quantity'])) or '1'}\n"

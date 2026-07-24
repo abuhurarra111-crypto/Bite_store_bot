@@ -3,7 +3,7 @@
 # ============================================
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from button_system import decorate
-from utils import get_product_delivery_mode, get_product_mode_tag, build_manual_order_whatsapp_url
+from utils import get_product_delivery_mode, get_product_mode_tag, build_manual_order_whatsapp_url, fmt_price
 
 # 🆕 v40: Per-button visual styler (size / align / padding)
 try:
@@ -350,11 +350,11 @@ def all_products_keyboard(products, page=1, per_page=10, user=None, filter_mode=
         if size == "small":
             label = f"{this_prod_emoji}{p['name'][:18]}" if s > 0 else f"❌ {p['name'][:18]}"
         elif size == "medium":
-            label = f"{this_prod_emoji}{p['name']} — ${p['price']:.2f}" if s > 0 else f"{this_prod_emoji}{p['name']} ❌"
+            label = f"{this_prod_emoji}{p['name']} — {fmt_price(p['price'])}" if s > 0 else f"{this_prod_emoji}{p['name']} ❌"
         elif size == "large":
-            label = f"{this_prod_emoji}{p['name']} [{s}] — ${p['price']:.2f}" if s > 0 else f"{this_prod_emoji}{p['name']} ❌ — ${p['price']:.2f}"
+            label = f"{this_prod_emoji}{p['name']} [{s}] — {fmt_price(p['price'])}" if s > 0 else f"{this_prod_emoji}{p['name']} ❌ — {fmt_price(p['price'])}"
         else:
-            label = f"{this_prod_emoji}{p['name']} [Stock: {s}] — ${p['price']:.2f}" if s > 0 else f"{this_prod_emoji}{p['name']} ❌ Out of Stock — ${p['price']:.2f}"
+            label = f"{this_prod_emoji}{p['name']} [Stock: {s}] — {fmt_price(p['price'])}" if s > 0 else f"{this_prod_emoji}{p['name']} ❌ Out of Stock — {fmt_price(p['price'])}"
         from button_system import is_styled
         if is_styled(f"prod_{p['id']}"):
             label = _apply_styler(f"prod_{p['id']}", label)
@@ -1544,11 +1544,11 @@ def shop_category_products_keyboard(products, cat_id, page=1, per_page=10, user=
         if size == "small":
             label = f"{prefix}{this_prod_emoji}{p['name'][:18]}" if s > 0 else f"{prefix}❌ {p['name'][:18]}"
         elif size == "medium":
-            label = f"{prefix}{this_prod_emoji}{p['name']} — ${p['price']:.2f}" if s > 0 else f"{prefix}{this_prod_emoji}{p['name']} ❌"
+            label = f"{prefix}{this_prod_emoji}{p['name']} — {fmt_price(p['price'])}" if s > 0 else f"{prefix}{this_prod_emoji}{p['name']} ❌"
         elif size == "large":
-            label = f"{prefix}{this_prod_emoji}{p['name']} [{s}] — ${p['price']:.2f}" if s > 0 else f"{prefix}{this_prod_emoji}{p['name']} ❌ — ${p['price']:.2f}"
+            label = f"{prefix}{this_prod_emoji}{p['name']} [{s}] — {fmt_price(p['price'])}" if s > 0 else f"{prefix}{this_prod_emoji}{p['name']} ❌ — {fmt_price(p['price'])}"
         else:
-            label = f"{prefix}{this_prod_emoji}{p['name']} [Stock: {s}] — ${p['price']:.2f}" if s > 0 else f"{prefix}{this_prod_emoji}{p['name']} ❌ Out of Stock — ${p['price']:.2f}"
+            label = f"{prefix}{this_prod_emoji}{p['name']} [Stock: {s}] — {fmt_price(p['price'])}" if s > 0 else f"{prefix}{this_prod_emoji}{p['name']} ❌ Out of Stock — {fmt_price(p['price'])}"
         from button_system import is_styled
         if is_styled(f"prod_{p['id']}"):
             label = _apply_styler(f"prod_{p['id']}", label)
@@ -1752,7 +1752,7 @@ def admin_deposit_history_keyboard(deposits, page=1, per_page=5):
             order_type = d['order_type']
         except Exception:
             order_type = 'product'
-        amt = f"${d['price']:.2f}" if order_type == 'product' else f"Rs.{d['binance_amount']:.0f}" if d['binance_amount'] else f"${d['price']:.2f}"
+        amt = f"{fmt_price(d['price'])}" if order_type == 'product' else f"Rs.{d['binance_amount']:.0f}" if d['binance_amount'] else f"{fmt_price(d['price'])}"
 
         # 🧹 v39: method_icon now shown in label
         label = f"{emoji} {method_icon} #{d['id']} {d['user_name'][:15]} | {amt} | {has_ss}"

@@ -6,7 +6,7 @@ from telegram.ext import ConversationHandler  # 🔧 BUG FIX: used (Conversation
 from config import ADMIN_ID, DEFAULT_RESPONSES, POINTS_PER_DOLLAR
 from database import *
 from keyboards import back_btn
-from utils import escape_md, nav_push, set_cb_data, smart_text_and_mode, contains_premium_markup
+from utils import escape_md, nav_push, set_cb_data, smart_text_and_mode, contains_premium_markup, fmt_price
 from datetime import datetime
 from templates_bundle import render_delivery_bundle, normalize_product_format, format_label, format_hint, format_example
 # 🆕 v73: two-way ticket chat (text + photo + video + document)
@@ -442,7 +442,7 @@ async def warranty_menu_callback(update, context):
     text = _r("warranty_menu_header") + "\n"
     kb = []
     for o in delivered[:10]:
-        label = f"📦 #{o['id']} {o['product_name'][:25]} — ${o['price']:.2f}"
+        label = f"📦 #{o['id']} {o['product_name'][:25]} — {fmt_price(o['price'])}"
         kb.append([InlineKeyboardButton(label, callback_data=f"wr_order_{o['id']}")])
 
     # 🆕 v38: Inject custom buttons for warranty screen
@@ -480,7 +480,7 @@ async def wr_order_callback(update, context):
 
     text = (f"📦 *Order #{oid}*\n━━━━━━━━━━━━━━━━━━━━\n\n"
             f"📦 Product: {_fmt_msg_name(o['product_name'])}\n"
-            f"💰 Price: ${o['price']:.2f}\n"
+            f"💰 Price: {fmt_price(o['price'])}\n"
             f"🛡️ Warranty: {escape_md(warranty)}\n\n"
             f"What do you need?")
 
@@ -1105,7 +1105,7 @@ async def adm_wr_view_callback(update, context):
     text = (f"{type_label} Request #{wid}\n━━━━━━━━━━━━━━━━━━━━\n\n"
             f"👤 User: {escape_md(uname)} (`{w['user_id']}`)\n"
             f"📦 Order #{w['order_id']}: {escape_md(o['product_name'] if o else 'N/A')}\n"
-            f"💰 Amount: ${o['price']:.2f}\n" if o else ""
+            f"💰 Amount: {fmt_price(o['price'])}\n" if o else ""
             )
     text += (f"📊 Status: {status_map.get(w['status'], w['status'])}\n"
              f"📅 Date: {w['created_at'][:16]}\n\n"

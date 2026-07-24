@@ -10,7 +10,7 @@ from keyboards import (all_products_keyboard, product_detail_keyboard, back_btn,
                        shop_categories_keyboard,
                        shop_category_products_keyboard)
 from config import DEFAULT_RESPONSES, USD_TO_PKR_RATE, ADMIN_ID
-from utils import (
+from utils import (fmt_price,
     escape_md, format_pkr, nav_push,
     get_product_delivery_mode, get_product_mode_tag,
     build_manual_order_whatsapp_url,
@@ -115,10 +115,10 @@ def _build_detail_text(p):
             desc_html = name_for_message_html(p['description']) if contains_premium_markup(p['description']) else _html.escape(html_strip_tags(str(p['description'])))
             text += f"📝 {desc_html}\n\n"
         if is_flash:
-            text += (f"💰 Price: <s>${p['price']:.2f}</s> ⚡ "
+            text += (f"💰 Price: <s>{fmt_price(p['price'])}</s> ⚡ "
                      f"<b>${f_price:.2f}</b> ≈ <b>{_html.escape(pkr_f)}</b>\n")
         else:
-            text += f"💰 Price: <b>${p['price']:.2f}</b> ≈ <b>{_html.escape(pkr)}</b>\n"
+            text += f"💰 Price: <b>{fmt_price(p['price'])}</b> ≈ <b>{_html.escape(pkr)}</b>\n"
         if show_warranty and warranty:
             warranty_html = name_for_message_html(warranty) if contains_premium_markup(warranty) else _html.escape(html_strip_tags(str(warranty)))
             text += f"🛡️ Warranty: <b>{warranty_html}</b>\n"
@@ -136,9 +136,9 @@ def _build_detail_text(p):
     if p['description']:
         text += f"📝 {escape_md(p['description'])}\n\n"
     if is_flash:
-        text += f"💰 Price: ~${p['price']:.2f}~ ⚡ *${f_price:.2f}* ≈ *{pkr_f}*\n"
+        text += f"💰 Price: ~{fmt_price(p['price'])}~ ⚡ *${f_price:.2f}* ≈ *{pkr_f}*\n"
     else:
-        text += f"💰 Price: *${p['price']:.2f}* ≈ *{pkr}*\n"
+        text += f"💰 Price: *{fmt_price(p['price'])}* ≈ *{pkr}*\n"
     if show_warranty and warranty:
         text += f"🛡️ Warranty: *{escape_md(warranty)}*\n"
     if show_quantity and quantity:
@@ -673,7 +673,7 @@ async def shop_flash_callback(update, context):
             ne_id, plain = extract_emoji_from_html(raw)
         else:
             ne_id, plain = "", raw
-        lbl = f"⚡ {plain} [Stock: {s}] — ${p['flash_price']:.2f}" if s > 0 else f"⚡ {plain} ❌ Out of Stock"
+        lbl = f"⚡ {plain} [Stock: {s}] — {fmt_price(p['flash_price'])}" if s > 0 else f"⚡ {plain} ❌ Out of Stock"
         cb_data = f"viewprod_{p['id']}" if q.from_user.id == ADMIN_ID else f"prod_{p['id']}"
         if ne_id and make_premium_button:
             kb.append([make_premium_button(lbl, emoji_id=ne_id, callback_data=cb_data)])

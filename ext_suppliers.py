@@ -35,7 +35,7 @@ from telegram.ext import ContextTypes
 
 from config import ADMIN_ID
 from database import get_connection, ensure_column, get_setting, set_setting
-from utils import escape_md, html_code_block, html_escape_plain, smart_text_and_mode
+from utils import escape_md, html_code_block, html_escape_plain, smart_text_and_mode, fmt_price
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +204,11 @@ def delete_supplier(sid):
 def _compute_sell_price(cost_usd, markup_pct, fixed_price, fixed_price_base):
     """🆕 v81.1: SMART PRICE calculation.
 
+    🐛 v105 FIX: removed round(..., 2). Was truncating sub-cent prices to
+    $0.00 (supplier cost $0.024 × 1.40 markup = $0.0336 → rounded to $0.03,
+    or cost $0.003 → sell $0.0042 → rounded to $0.00). Now preserves full
+    precision — the DB stores REAL, display uses fmt_price() from utils.
+
     Rules:
       1. If fixed_price == 0     → auto-markup: sell = cost × (1 + markup/100)
       2. If fixed_price > 0      → SMART LOCK:
@@ -215,13 +220,13 @@ def _compute_sell_price(cost_usd, markup_pct, fixed_price, fixed_price_base):
     if fixed_price and fixed_price > 0:
         base = float(fixed_price_base or 0)
         if cost <= base:
-            return round(float(fixed_price), 2)
+            return float(fixed_price)
         # Cost went UP → increase sell by exact delta
         delta = cost - base
-        return round(float(fixed_price) + delta, 2)
+        return float(fixed_price) + delta
     # Auto-markup mode
     mkp = float(markup_pct or 40)
-    return round(cost * (1 + mkp / 100.0), 2)
+    return cost * (1 + mkp / 100.0)
 
 
 def upsert_ext_product(supplier_id, remote_id, name, description, cost_usd,
@@ -849,11 +854,14 @@ class MMOStoreAdapter(SupplierAdapterBase):
             return False, f"Parse error: {e}", {}
 
     def fetch_balance(self):
+        """🐛 v105: MMOStore returns balance_usd as STRING ("20.00").
+        float(string) works fine, but wrap in try/except defensively."""
         r = self._get("/api/v1/balance")
         if r and r.status_code == 200:
             try:
-                return float(r.json().get("data", {}).get("balance_usd", 0) or 0)
-            except Exception:
+                bal = r.json().get("data", {}).get("balance_usd", 0)
+                return float(bal or 0)
+            except (TypeError, ValueError, Exception):
                 return None
         return None
 
@@ -870,13 +878,32 @@ class MMOStoreAdapter(SupplierAdapterBase):
             return []
         out = []
         for p in arr:
-            usd = float(p.get("price_usd", 0) or 0)
+            # 🐛 v105 FIX: MMOStore API uses `stock_available` (not `stock`).
+            # Verified live against api.mmostore.qzz.io — stock always returned
+            # 0 for every product because the wrong field was queried.
+            # Also handle `price_usd` string ("2.15") → float safely.
+            # Defensive multi-key resolution mirrors the Canboso v97 fix.
+            stock_val = 0
+            for cand in (p.get("stock_available"),
+                         p.get("stock"),
+                         p.get("available")):
+                if cand is not None:
+                    try:
+                        stock_val = int(cand)
+                        break
+                    except (TypeError, ValueError):
+                        continue
+            # Price may arrive as string ("2.1500") or number — handle both
+            try:
+                usd = float(p.get("price_usd", 0) or 0)
+            except (TypeError, ValueError):
+                usd = 0.0
             out.append({
                 "remote_id": str(p.get("id")),
                 "name": p.get("name_en") or p.get("name") or "",
                 "description": p.get("description_en") or p.get("description") or "",
                 "cost_usd": usd,
-                "stock": int(p.get("stock", 0) or 0),
+                "stock": stock_val,
                 "raw": p,
             })
         return out
@@ -1673,6 +1700,13 @@ async def ext_sup_import_pick_callback(update, context):
     page = max(0, min(page, total_pages - 1))
     slice_ = prods[page * per_page:(page + 1) * per_page]
 
+    # 🐛 v105 FIX: remember which browse page admin is on so the product
+    # detail's Back button returns to the SAME page (was hardcoded to _0).
+    try:
+        context.user_data[f"ext_browse_page_{sid}"] = int(page)
+    except Exception:
+        pass
+
     lines = [
         f"☑️ *Browse Supplier #{sid} — Page {page+1}/{total_pages}*",
         f"━━━━━━━━━━━━━━━━━━━━",
@@ -1781,14 +1815,14 @@ async def ext_prod_view_callback(update, context):
             f"🔒 <b>Price Mode: SMART LOCK</b>\n"
             f"   Fixed selling: <b>${fp:.2f}</b>\n"
             f"   Locked at cost: ${fpb:.2f}\n"
-            f"   Current sell: <b>${p['sell_price']:.2f}</b>\n"
+            f"   Current sell: <b>{fmt_price(p['sell_price'])}</b>\n"
             f"   <i>(rises if supplier cost goes up, stays if cost drops)</i>\n"
         )
     else:
         price_mode_lines = (
             f"📈 <b>Price Mode: AUTO-MARKUP</b>\n"
             f"   Markup: <b>{p['markup_pct']:.0f}%</b>\n"
-            f"   Sell price: <b>${p['sell_price']:.2f}</b>\n"
+            f"   Sell price: <b>{fmt_price(p['sell_price'])}</b>\n"
         )
     # 🆕 v83: show format + sync status
     fmt_key = p.get("delivery_format") or "email_pass"
@@ -1804,7 +1838,7 @@ async def ext_prod_view_callback(update, context):
         f"📦 Name: {html_escape_plain(p['name'])[:200]}\n"
         f"🏬 Supplier: {sup['name'] if sup else '?'} (#{p['supplier_id']})\n"
         f"🔗 Remote ID: <code>{html_escape_plain(p['remote_id'])}</code>\n\n"
-        f"💰 Cost: <b>${p['cost_usd']:.2f}</b>\n"
+        f"💰 Cost: <b>{fmt_price(p['cost_usd'])}</b>\n"
         f"{price_mode_lines}"
         f"📊 Stock: <b>{p['stock']}</b>\n\n"
         f"🧩 Delivery Format: <b>{fmt_meta['label']}</b>  <i>({fmt_source})</i>\n\n"
@@ -1824,9 +1858,19 @@ async def ext_prod_view_callback(update, context):
         [InlineKeyboardButton("🏷 Set Category",     callback_data=f"ext_prod_cat_{eid}")],
         [InlineKeyboardButton("🔴 Deactivate" if p["active"] else "🟢 Activate",
                               callback_data=f"ext_prod_toggle_{eid}")],
-        [InlineKeyboardButton("🔙 Browse Products",
-                              callback_data=f"ext_sup_import_pick_{p['supplier_id']}_0")],
     ]
+    # 🐛 v105 FIX: Back button returns to the SAME browse page admin came
+    # from (previously hardcoded to page 0). Reads context.user_data which
+    # ext_sup_import_pick_callback stored on entry.
+    _remembered_page = 0
+    try:
+        _remembered_page = int(
+            context.user_data.get(f"ext_browse_page_{p['supplier_id']}", 0)
+        )
+    except Exception:
+        _remembered_page = 0
+    kb.append([InlineKeyboardButton("🔙 Browse Products",
+                                     callback_data=f"ext_sup_import_pick_{p['supplier_id']}_{_remembered_page}")])
     await _safe_edit(q, text, reply_markup=InlineKeyboardMarkup(kb))
 
 
@@ -1860,8 +1904,8 @@ async def ext_prod_markup_callback(update, context):
         f"💲 *Set Markup for #{eid}*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📦 {escape_md(p['name'][:40])}\n"
-        f"💰 Cost: `${p['cost_usd']:.2f}`\n"
-        f"📈 Current: `{p['markup_pct']:.0f}%` → sell `${p['sell_price']:.2f}`\n\n"
+        f"💰 Cost: `{fmt_price(p['cost_usd'])}`\n"
+        f"📈 Current: `{p['markup_pct']:.0f}%` → sell `{fmt_price(p['sell_price'])}`\n\n"
         f"*Pick preset:*"
     )
     kb = []
@@ -1889,7 +1933,7 @@ async def ext_prod_set_mkp_callback(update, context):
         return
     update_ext_product(eid, markup_pct=pct)
     p = get_ext_product(eid)
-    await q.answer(f"✅ Markup set: {pct:.0f}% → ${p['sell_price']:.2f}", show_alert=True)
+    await q.answer(f"✅ Markup set: {pct:.0f}% → {fmt_price(p['sell_price'])}", show_alert=True)
     _set_q_data(q, f"ext_prod_view_{eid}")
     await ext_prod_view_callback(update, context)
 
@@ -2175,8 +2219,8 @@ async def ext_prod_fixprice_callback(update, context):
             f"📦 {escape_md(p['name'][:60])}\n\n"
             f"💵 *Currently locked at:* `${fp:.2f}`\n"
             f"📌 Cost when locked: `${fpb:.2f}`\n"
-            f"💰 Current cost: `${p['cost_usd']:.2f}`\n"
-            f"🏷 Current sell: `${p['sell_price']:.2f}`\n\n"
+            f"💰 Current cost: `{fmt_price(p['cost_usd'])}`\n"
+            f"🏷 Current sell: `{fmt_price(p['sell_price'])}`\n\n"
             f"*Smart-Lock Rule:*\n"
             f"• If supplier cost RISES → sell goes UP by same amount\n"
             f"• If supplier cost DROPS → sell STAYS locked (no drop)\n\n"
@@ -2195,8 +2239,8 @@ async def ext_prod_fixprice_callback(update, context):
             f"💲 *Set Fixed Selling Price — Product #{eid}*\n"
             f"━━━━━━━━━━━━━━━━━━━━\n\n"
             f"📦 {escape_md(p['name'][:60])}\n"
-            f"💰 Current cost: `${p['cost_usd']:.2f}`\n"
-            f"📈 Current sell (auto-markup {p['markup_pct']:.0f}%): `${p['sell_price']:.2f}`\n\n"
+            f"💰 Current cost: `{fmt_price(p['cost_usd'])}`\n"
+            f"📈 Current sell (auto-markup {p['markup_pct']:.0f}%): `{fmt_price(p['sell_price'])}`\n\n"
             f"*Smart-Lock Behavior:*\n"
             f"• You set a fixed selling price (e.g. `$10`)\n"
             f"• Supplier cost rises `$0.50` → sell auto-rises to `$10.50`\n"
@@ -2228,7 +2272,7 @@ async def ext_prod_fixprice_set_callback(update, context):
         f"✏️ *Enter Fixed Selling Price*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📦 {escape_md(p['name'][:60])}\n"
-        f"💰 Current cost: `${p['cost_usd']:.2f}`\n\n"
+        f"💰 Current cost: `{fmt_price(p['cost_usd'])}`\n\n"
         f"Send the *selling price in USD* in your next message.\n"
         f"Example: `10` or `10.5` or `$12.99`\n\n"
         f"_Send /cancel to abort._"
@@ -2491,8 +2535,8 @@ async def route_order_to_supplier(bot, order):
             f"🏬 Supplier: {sup['name']}\n"
             f"📦 Product: {escape_md(ep['name'][:40])}\n"
             f"🔢 Qty: {qty}\n"
-            f"💰 Cost: `${(ep.get('cost_usd') or 0)*qty:.2f}` · Sold: `${order['price']:.2f}`\n"
-            f"📈 Profit: `${order['price'] - (ep.get('cost_usd') or 0)*qty:.2f}`",
+            f"💰 Cost: `${(ep.get('cost_usd') or 0)*qty:.2f}` · Sold: `{fmt_price(order['price'])}`\n"
+            f"📈 Profit: `{fmt_price(order['price'] - (ep.get('cost_usd') or 0)*qty)}`",
             parse_mode="Markdown")
     except Exception:
         pass

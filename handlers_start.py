@@ -6,7 +6,7 @@ from telegram.ext import ContextTypes
 from config import *
 from keyboards import *
 from database import *
-from utils import escape_md, format_date, notify_admin, nav_push, nav_pop, set_cb_data, smart_text_and_mode
+from utils import escape_md, format_date, notify_admin, nav_push, nav_pop, set_cb_data, smart_text_and_mode, fmt_price
 
 def _r(key, user_id=None):
     """🆕 v79: Optional user_id triggers per-language lookup first.
@@ -591,7 +591,7 @@ async def transactions_callback(update: Update, context: ContextTypes.DEFAULT_TY
             txid_line = f"\n🆔 TXID: `{escape_md(txid[:25])}...`"
         text += (f"{emoji} *{label}* — #{t['id']}\n"
                  f"💎 {escape_md(pname)}\n"
-                 f"💰 ${t['price']:.2f}  |  {method}{txid_line}\n"
+                 f"💰 {fmt_price(t['price'])}  |  {method}{txid_line}\n"
                  f"📅 {dt_str}\n"
                  f"━━━━━━━━━━━━━━━━━━━━\n")
     if len(txns) > 15:
