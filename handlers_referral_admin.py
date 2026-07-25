@@ -51,52 +51,75 @@ def _panel_kb():
     ])
 
 
+def _is_direct_referral(row):
+    """🆕 v110: True if row is a DIRECT (general) referral, not a product-mode one.
+    Product-mode entries store reason like 'product_ref_pid_5' or
+    'dup_product_ref_pid_5'. Direct ones use 'ok' (or empty).
+    """
+    reason = (row.get("reason") or "").lower() if hasattr(row, "get") else \
+             (row["reason"] or "").lower()
+    return not reason.startswith("product_ref_pid_") and \
+           not reason.startswith("dup_product_ref_pid_")
+
+
 async def refadm_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Open the Referral Abuse panel.
-    🆕 v55: cancels any pending refadm_step text-input flow."""
+    🆕 v55: cancels any pending refadm_step text-input flow.
+    🆕 v110: Counts show only DIRECT (general) referrals. Product-mode
+    referrals now have their own dedicated per-product tracker inside
+    the Free-via-Referrals settings panel (👥 Referrals for This Product).
+    """
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
     await q.answer()
     # 🆕 v55: cancel any pending text-input flow
     context.user_data.pop("refadm_step", None)
-    # Stats
-    counted = get_referral_log(limit=10000, status="counted")
-    blocked = get_referral_log(limit=10000, status="blocked")
+    # Stats — filter out product-mode
+    counted_all = get_referral_log(limit=10000, status="counted")
+    blocked_all = get_referral_log(limit=10000, status="blocked")
+    counted = [r for r in counted_all if _is_direct_referral(r)]
+    blocked = [r for r in blocked_all if _is_direct_referral(r)]
     bans = get_referral_bans(limit=10000)
     text = (
         "🛡️ *Referral Abuse Control*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"✅ Counted Referrals: *{len(counted)}*\n"
+        f"✅ Direct Counted Referrals: *{len(counted)}*\n"
         f"🚫 Blocked Attempts: *{len(blocked)}*\n"
         f"🔨 Currently Banned: *{len(bans)}*\n\n"
-        "_Manage referral system integrity below:_"
+        "_Only DIRECT referrals (via general Refer & Earn link) shown here.\n"
+        "For product-specific referrals see: Product → 🎁 Free via Referrals → 👥 Referrals for This Product._"
     )
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=_panel_kb())
 
 
 async def refadm_log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show recent referral log entries (counted / blocked / all)."""
+    """Show recent referral log entries (counted / blocked / all).
+
+    🆕 v110: Filters out product-mode referrals (they have their own
+    per-product view). This panel is now DIRECT-ONLY.
+    """
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
     await q.answer()
     data = q.data.replace("refadm_log_", "")
     status_filter = None
-    title = "📜 *All Referral Attempts*"
+    title = "📜 *All Direct Referral Attempts*"
     if data == "counted":
-        status_filter = "counted"; title = "✅ *Counted Referrals*"
+        status_filter = "counted"; title = "✅ *Direct Counted Referrals*"
     elif data == "blocked":
         status_filter = "blocked"; title = "🚫 *Blocked Referrals*"
-    rows = get_referral_log(limit=30, status=status_filter)
+    rows = get_referral_log(limit=200, status=status_filter)  # fetch more, filter after
+    rows = [r for r in rows if _is_direct_referral(r)][:30]
     if not rows:
-        body = "_No entries yet._"
+        body = "_No direct-referral entries yet._"
     else:
         lines = []
         for r in rows:
             icon = "✅" if r["status"] == "counted" else "🚫"
-            at = (r.get("created_at") or "")[:16].replace("T", " ")
-            reason = escape_md(r.get("reason") or "")
+            at = (r["created_at"] or "")[:16].replace("T", " ") if r["created_at"] else ""
+            reason = escape_md(r["reason"] or "")
             lines.append(
                 f"{icon} `{r['referrer_id']}` → `{r['referred_id']}` "
                 f"| _{at}_"

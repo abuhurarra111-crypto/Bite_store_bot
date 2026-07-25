@@ -2569,19 +2569,22 @@ async def route_order_to_supplier(bot, order):
     except Exception as e:
         logger.error(f"[router] failed to send delivery to user: {e}")
 
-    # Bulk delivery as .txt file (>3 items)
-    if len(items) > 3:
+    # 🆕 v108: Bulk delivery as .txt file — threshold changed to >= 10
+    # (was > 3). For 1-9 accounts, only compact text message is sent.
+    # For 10+, both compact text preview + .txt file are sent.
+    # File naming: bite_store_order_{id}_{qty}accounts.txt (branded)
+    if len(items) >= 10:
         try:
             import io
             buf = io.BytesIO()
             for i, item in enumerate(items, 1):
                 buf.write(f"{i}. {item}\n".encode('utf-8'))
             buf.seek(0)
-            fname = f"order_{order['id']}_{len(items)}accounts.txt"
+            fname = f"bite_store_order_{order['id']}_{len(items)}accounts.txt"
             await bot.send_document(
                 order['user_id'],
                 document=buf, filename=fname,
-                caption=f"📄 *{len(items)} accounts for Order #{order['id']}*\n"
+                caption=f"📎 *{len(items)} accounts — Order #{order['id']}*\n"
                         f"_Each line = 1 account. Save this file safely._",
                 parse_mode="Markdown"
             )
@@ -2834,10 +2837,42 @@ def _detect_from_keywords(name, description):
         return "email_pass_recovery"
 
     # 🆕 v87: token indicators (email_multi — 4+ fields) — highest priority
-    if any(kw in text for kw in ["refresh token", "refresh tokens",
-                                   "client id", "client_id",
-                                   "client secret", "access token"]):
+    # 🆕 v108: expanded — also catch pipe-separated 4-field patterns like
+    # "Email | Pass | Refresh_token | Client_id" (MMOStore Outlook Mail style)
+    _multi_signals = [
+        "refresh token", "refresh tokens", "refresh_token",
+        "client id", "client_id", "client secret", "access token",
+        "batteries", "msaartifacts", "msa artifacts",
+        # 4-field pipe patterns (any combo mentioning tokens)
+        "email | pass | refresh", "email|pass|refresh",
+        "email | pass | token", "email|pass|token",
+        "email|password|refresh", "email | password | refresh",
+    ]
+    if any(kw in text for kw in _multi_signals):
         return "email_multi"
+
+    # 🆕 v108: NAME-based email_multi hint — some suppliers deliver Outlook
+    # Mail / Hotmail with the 4-field format but description is too short to
+    # detect. Treat these product types as email_multi by default (admin can
+    # override via Change Format button if wrong).
+    _name_multi_signals = ("outlook mail", "hotmail account", "hotmail mail",
+                            "microsoft account with token", "office365 account",
+                            "outlook account")
+    if any(sig in name_lc for sig in _name_multi_signals):
+        return "email_multi"
+
+    # 🆕 v108: also detect by counting pipe-separated fields in a "Format:" line
+    # e.g. "Format: Email | Pass | Refresh_token | Client_id" → 4 fields → email_multi
+    import re as _re_multi
+    _fmt_line = _re_multi.search(
+        r"(?:^|\n)\s*(?:format|định dạng)\s*:\s*([^\n\r<]+)",
+        text, flags=_re_multi.IGNORECASE
+    )
+    if _fmt_line:
+        _line = _fmt_line.group(1).strip()
+        _parts = [p.strip() for p in _line.split("|") if p.strip()]
+        if len(_parts) >= 4:
+            return "email_multi"
 
     # 🆕 v87: STRONG format signal — if description explicitly shows
     #   "Format: xxx@yyy | password" or "Email | Password", treat as email_pass
@@ -2987,82 +3022,112 @@ def render_v83_delivery(items, fmt_key, product_name="Product",
                         order_id=0, product_id=0):
     """v83: Format-aware BYTE-PERFECT delivery renderer.
 
+    🆕 v108: switched from per-field breakdown to COMPACT single-line format
+    (matches MMOStore's proven pattern users know):
+        📝 Format: Email | Pass | Refresh_token | Client_id
+        1. email@x.com|pass|token|clientid
+        2. email2@x.com|pass2|token2|clientid2
+    Reasoning: users copy-paste into automation tools that expect one line
+    per account. Per-field breakdown was pretty but broke batch imports.
+
+    Threshold for .txt file changed to >= 10 (was > 3) — for 1-9 accounts,
+    only text is sent. For 10+, both text preview + .txt file.
+
     Uses HTML mode with <code> wrapping (v72 pattern) → every char preserved.
-    Each item gets a beautiful per-field breakdown based on format definition.
     """
     from utils import html_code_block, html_escape_plain
     fmt = V83_FORMATS.get(fmt_key) or V83_FORMATS["raw_text"]
     fields = fmt.get("fields", ["content"])
     icons  = fmt.get("icons", ["📝 Content"])
     sep    = fmt.get("separator", "")
+    fmt_label = fmt.get("label", "📝 Raw Text")
+
+    # 🆕 v108: build human-readable format spec like "Email | Pass | Token"
+    if sep and len(fields) > 1:
+        # Prettify each field name for display
+        _pretty = {
+            "email": "Email", "password": "Pass", "twofa": "2FA",
+            "recovery": "Recovery", "refresh_token": "Refresh_token",
+            "client_id": "Client_id", "link": "Link", "code": "Code",
+            "content": "Content",
+        }
+        fmt_spec = " | ".join(_pretty.get(f, f.replace("_", " ").title()) for f in fields)
+    else:
+        fmt_spec = fields[0].title() if fields else "Content"
 
     safe_items = [str(x) for x in (items or []) if x is not None and str(x) != ""]
     if not safe_items:
         return "⚠️ Delivery is empty. Please contact admin."
 
     total = len(safe_items)
-    blocks = []
 
+    # 🆕 v108: BULK (>= 10 items) — .txt file follows
+    # 🆕 v109: For email_multi (Outlook/Hotmail/M365 with refresh_token etc.),
+    # SKIP the account preview entirely in text — send ONLY header + format
+    # spec + "file attached" note. User's real MMOStore purchase behavior:
+    # when qty >= 10, customers want a clean text summary and rely on the
+    # .txt file for the actual data (easier to copy-paste to automation).
+    # For other formats (email_pass, redeem_link, code, etc.), keep the
+    # v108 compact preview (first 3 + ⋯ + last 2) as before.
+    if total >= 10:
+        if fmt_key == "email_multi":
+            # 🆕 v109: NO account preview — pure header + file note
+            return (
+                "[[HTML]]🎉 <b>Bite Store Delivery</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                f"📦 <b>Product:</b> {_render_delivery_product_name(product_name)}\n"
+                f"🧾 <b>Order ID:</b> <code>#{order_id}</code>\n"
+                f"📊 <b>Delivered accounts:</b> <b>{total}</b>\n\n"
+                f"📝 <b>Format:</b> {html_escape_plain(fmt_spec)}\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📎 <b>Full list of {total} accounts attached below as .txt file.</b>\n"
+                "💡 <b>Tip:</b> Save the file securely — each line = 1 account.\n"
+                "🙏 Thank you for shopping with <b>Bite Store</b>!"
+            )
+
+        # Non email_multi bulk: keep v108 preview (first 3 + ⋯ + last 2)
+        preview_lines = []
+        preview_lines.append(f"<b>1.</b> {html_code_block(safe_items[0])}")
+        preview_lines.append(f"<b>2.</b> {html_code_block(safe_items[1])}")
+        preview_lines.append(f"<b>3.</b> {html_code_block(safe_items[2])}")
+        preview_lines.append("⋯")
+        preview_lines.append(f"<b>{total-1}.</b> {html_code_block(safe_items[-2])}")
+        preview_lines.append(f"<b>{total}.</b> {html_code_block(safe_items[-1])}")
+        preview_block = "\n\n".join(preview_lines)
+
+        return (
+            "[[HTML]]🎉 <b>Bite Store Delivery</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"📦 <b>Product:</b> {_render_delivery_product_name(product_name)}\n"
+            f"🧾 <b>Order ID:</b> <code>#{order_id}</code>\n"
+            f"📊 <b>Delivered accounts:</b> <b>{total}</b>\n\n"
+            f"📝 <b>Format:</b> {html_escape_plain(fmt_spec)}\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"{preview_block}\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"📎 <b>Full list of {total} accounts attached below as .txt file.</b>\n"
+            "💡 <b>Tip:</b> Save the file securely — each line = 1 account.\n"
+            "🙏 Thank you for shopping with <b>Bite Store</b>!"
+        )
+
+    # 🆕 v108: SMALL orders (1-9 items) — compact numbered list, NO file
+    account_lines = []
     for idx, raw_item in enumerate(safe_items, start=1):
-        # Item header
-        header_prefix = f"🧾 <b>Item:</b> {idx}/{total}\n" if total > 1 else ""
+        account_lines.append(f"<b>{idx}.</b> {html_code_block(raw_item)}")
+    joined = "\n\n".join(account_lines)
 
-        # Split & render per-field
-        body_parts = []
-        if sep and len(fields) > 1:
-            parts = _split_item(raw_item, sep)
-            for i, val in enumerate(parts):
-                if i < len(icons):
-                    label = icons[i]
-                else:
-                    label = f"📎 Field {i+1}"
-                body_parts.append(f"<b>{label}:</b>\n{html_code_block(val)}")
-            # If supplier sent MORE parts than expected, show extras verbatim
-            if len(parts) > len(fields):
-                extras = parts[len(fields):]
-                for j, ex in enumerate(extras):
-                    body_parts.append(f"<b>📎 Extra {j+1}:</b>\n{html_code_block(ex)}")
-        else:
-            # Single-field format (link, code, raw)
-            label = icons[0] if icons else "📝 Content"
-            body_parts.append(f"<b>{label}:</b>\n{html_code_block(raw_item)}")
-
-        body = "\n\n".join(body_parts)
-        block = (
-            f"{header_prefix}"
-            f"🧩 <b>Format:</b> {fmt['label']}\n\n"
-            f"{body}"
-        )
-        blocks.append(block)
-
-    # For BULK (>3 items), show a compact summary + hint that .txt file included
-    if total > 3:
-        # Show first + last + note that all are in the .txt file
-        summary_block = (
-            f"📦 <b>{total} accounts delivered!</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"{blocks[0]}\n\n"
-            f"⋯\n\n"
-            f"{blocks[-1]}\n\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📄 <b>All {total} accounts are also in the .txt file below.</b>\n"
-            f"<i>Format: {fmt['label']}</i>"
-        )
-        return "[[HTML]]🎉 <b>Bite Store Delivery</b>\n━━━━━━━━━━━━━━━━━━━━\n" + \
-               f"📦 <b>Product:</b> {_render_delivery_product_name(product_name)}\n\n" + \
-               summary_block + \
-               "\n\n🙏 Thank you for shopping with <b>Bite Store</b>!"
-
-    # For 1–3 items, show each item's block fully
-    joined = "\n\n━━━━━━━━━━━━━━━━━━━━\n\n".join(blocks)
     return (
         "[[HTML]]🎉 <b>Bite Store Delivery</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📦 <b>Product:</b> {_render_delivery_product_name(product_name)}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"📦 <b>Product:</b> {_render_delivery_product_name(product_name)}\n"
+        f"🧾 <b>Order ID:</b> <code>#{order_id}</code>\n"
+        f"📊 <b>Delivered accounts:</b> <b>{total}</b>\n\n"
+        f"📝 <b>Format:</b> {html_escape_plain(fmt_spec)}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{joined}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💡 <b>Tip:</b> Save these details securely. Reply to your Order History message if you need help.\n"
-        f"🙏 Thank you for shopping with <b>Bite Store</b>!"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 <b>Tip:</b> Save these details securely. Reply to your Order History message if you need help.\n"
+        "🙏 Thank you for shopping with <b>Bite Store</b>!"
     )
 
 

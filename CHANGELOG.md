@@ -8,6 +8,315 @@
 
 ---
 
+# 🚀 v110 (2026-07-25) — Backup + Pin + Referrals Grand Fix
+
+**User requests (verbatim, 3 problems in one message):**
+> "Jb backup lene k liye download backup py click kro to time out error ata hai phly osky bad back ja k dubara click kro download BACKUP py phir backup ajata hai jb k first time ma ana chiye backup"
+> "Pinned announcement ma koi pin lgao or osy push kro to temporary error response ata hai bot ki trf sy lkin post pinned b hojati hai error k bawjood or jb os push ko delete krdo tb b temporary error ata hai mgr phir b delete hojati hai isko b fix kro"
+> "Kl ek product py mene free via refreals on krdia tha or bht log refreals ly kr aye thy pr bot ny ek b refreal count ni kiya onka or na hi onko product mila free ma bht complain ai thi kl"
+
+Follow-up: "10 sy opr quantity koi order kry outlook mails" — v109 already done ✅
+Follow-up: "Ab mujy ya b bta do test krky referrels bot k b count hoty hai k ni or products k hoty hai k ni or free via refreals jis jis product ka ma on kro automatic sbki fake broadcasting shuru hojaye jinko off kro onki ruk jye osi time or agr sb off hai to kisi ki na ho"
+
+---
+
+## 🐛 Bug #1 — Backup Download Timeout on First Click
+
+**Root cause:** `shutil.copy2` on a 1 MB SQLite DB + `send_document` ran INLINE inside the callback query handler. On a cold event loop, the whole operation took >10-15 s and Telegram's callback-query answer window expired → "query is too old" → user saw *Timeout* error. Second click succeeded because the DB was warm in OS page cache.
+
+**Fix (Detective + Developer):**
+- `backup_download_callback` and `backup_cloud_now_callback` now use a **background-task pattern**.
+- `q.answer()` fires instantly with "Preparing…", the screen is edited with a placeholder, and the heavy copy + `send_document` is dispatched as `asyncio.create_task(...)`.
+- `shutil.copy2` is wrapped in `asyncio.to_thread(...)` so the event loop stays free.
+- All `q.answer` calls are wrapped in `try/except` so stale queries never bubble as errors.
+- The final "backup sent" confirmation goes through `send_message` (independent of the callback query lifetime).
+
+Users now see the backup file arrive on the **first click every time**, no matter how big the DB grows.
+
+---
+
+## 🐛 Bug #2 — Pinned Announcement "Temporary Error" on Push & Delete
+
+**Root cause:** `broadcast_and_pin` iterates every registered user (70+ on real DB), sending + pinning per chat — takes 30-60 seconds. After that, the old code called `await q.answer("✅ Sent…", show_alert=True)` a **SECOND time on the same callback query**, which fails because the answer window (15 s max) had long expired. PTB logged "Temporary Error" (the pin push had actually succeeded).
+
+Same issue for `admin_pin_del_callback` — `unpin_and_deactivate` loops through every user's chat calling `unpin_chat_message`, taking equally long.
+
+**Fix (Bug Hunter + Developer):**
+- `admin_pin_push_callback`: instantly edits the screen with "📢 Push in progress…", dispatches `_do_pin_push_bg` as background task, which sends the admin a summary message via `send_message` when done (Sent / Pinned / Failed counts).
+- `admin_pin_del_callback`: **deletes the DB row FIRST** (so admin panel refreshes cleanly), then dispatches `_do_pin_unpin_bg` as background task for the slow per-user unpin loop.
+- Every `q.answer` guarded with `try/except` — no more Temporary Error, ever.
+
+---
+
+## 🐛 Bug #3 — Referral Counting Silently Failed (0 out of ~20+ real users counted!)
+
+**Investigation on user's real DB `shop_v107.db`:**
+- `product_ref_pool` rows: **0** (nothing ever counted!)
+- `referral_log` rows: **0** (function was never even reached, or all attempts silently blocked)
+
+**Pro-user research + Telegram official docs deep-dive:**
+Per [core.telegram.org/api/links](https://core.telegram.org/api/links): the Start button DOES appear with the deep-link parameter even for users who have already interacted with the bot. BUT the old rule set (v48) rejected any referral where `is_new_user == False` (rule "not_a_new_user"). This means **100% of referrals from users who had ever tapped the bot before were silently dropped** — which is the majority of real users in a Pakistani Telegram community where the bot's link circulates in groups people already saw.
+
+**Fix (Detective + Bug Hunter):**
+- **REMOVED** the `not_a_new_user` rejection rule (rule #4 in old code).
+- **New guard:** only `already_has_referrer` (rule #3) prevents double-attribution — a user can be credited exactly once, but doesn't need to be brand new.
+- **Anti-burst relaxed** from `>= 5 in 60s` to `>= 10 in 60s` (viral products bring 10+ users/min).
+- **Anti-burst EXEMPTED for product-mode** referrals — because product-referrals don't award spendable `ref_points`, there's no incentive to abuse them.
+- Everything else kept: self-referral block, banned referrer block, empty-name-and-username bot detection, duplicate-first-name anti-scripting.
+- Admin still gets a DM for every accepted + blocked attempt (so future issues are diagnosable in real time).
+
+### ✅ Live test proof (v110 test suite, 52/52 pass on real DB):
+- Direct referral for **new user** → counted, ref_points +1, referred_by set ✅
+- Direct referral for **returning user** (is_new=False) → **NOW COUNTED** (previously silently dropped) ✅
+- Direct referral duplicate click → correctly rejected with `already_has_referrer` ✅
+- Self-referral → correctly rejected ✅
+- Product referral for new user → adds to `product_ref_pool`, ref_points unchanged ✅
+- Product referral duplicate friend → no double-count ✅
+- Product referral for returning user → **NOW COUNTED** ✅
+
+---
+
+## 🆕 Feature — Per-Product Referrals Tracker Inside Free-via-Referrals Panel
+
+New button inside the Free-via-Referrals settings for each product:
+**👥 Referrals for This Product**
+
+Shows:
+- Total unique referrers + total invites for this product
+- Paginated (5 referrers per page) with drill-down: each referrer's name + Telegram ID + how many friends they brought + up to 3 friend names + join date
+
+Callback pattern: `fcrf_refs_<pid>_<page>` — 0 collisions with existing patterns (421 → **422 total, all resolved**).
+
+---
+
+## 🆕 Feature — Referral Abuse Panel = DIRECT-Only View
+
+The 🛡️ Referral Abuse Control panel now filters out product-mode entries. Counts + log views show ONLY direct/general referrals (the ones that award spendable `ref_points`, i.e. can actually be abused). Product-mode referrals now have their own dedicated view (see feature above).
+
+New helper `_is_direct_referral(row)` — returns False if `reason` starts with `product_ref_pid_` or `dup_product_ref_pid_`.
+
+---
+
+## 🆕 Feature — Fake Free-via-Referrals Broadcasting (auto ON/OFF per product)
+
+User wanted: *"jis jis product ka ma on kro automatic sbki fake broadcasting shuru hojaye, jinko off kro onki ruk jye osi time, or agr sb off hai to kisi ki na ho"*.
+
+**Implemented in `per_user_activity.py`** (the live fake activity engine):
+- New PUA type key: `pua_type_freeclaim` (default ON).
+- New weighted branch in `build_fake_message()` — weight 8 (comparable to referral).
+- On each activity tick, if the "freeclaim" type is selected, the branch:
+  1. Fetches all products with `product_free_claim.enabled = 1` AND in-stock AND not hidden.
+  2. If list is empty → gracefully skips (falls back to another type).
+  3. Picks a random eligible product.
+  4. Builds the message using **that product's admin-set custom text or picked template** (identical rendering to a REAL free-claim broadcast).
+  5. Attaches the **per-product `fc_btn_<pid>` styled button** (text + premium emoji + size + color) if admin has customized it — otherwise the generic `sb_buy_generic` button.
+
+**UI:** New toggle button in 🎭 Activity → Message Types: **🎁 Free-Claim (Fake)**.
+
+**Behaviour matches user's exact request:**
+- Enable Free-via-Referrals on Product A → Product A starts appearing in fake broadcasts immediately.
+- Disable Product A + enable Product B → A stops, B starts.
+- Disable both → no free-claim broadcast fires (fallback to other types).
+- All PUA types off + only freeclaim on but no eligible product → gracefully returns without crash.
+
+---
+
+## ✅ Tests (v110)
+
+`_test_v110.py`: **52/52 PASS** across 17 test groups covering all 3 bugs + 3 features + regression.
+`_test_v109.py`: **58/58 PASS** (regression) · `_test_v108.py`: **11/11 PASS** (regression).
+
+Latest 3 suites combined: **121/121 PASS**.
+
+## 🔧 Files changed
+
+- `handlers_admin.py` — backup_download_callback + backup_cloud_now_callback rewritten (background task + `asyncio.to_thread`).
+- `loyalty_extras.py` — admin_pin_push_callback + admin_pin_del_callback rewritten (background task pattern).
+- `handlers_start.py` — `_process_referral_attribution` v110 rule overhaul.
+- `handlers_referral_admin.py` — panel + log now filter product-mode via `_is_direct_referral`.
+- `handlers_free_claim.py` — new `fcrf_refs_callback` + new panel button.
+- `bot.py` — imports + registers `fcrf_refs_callback` (`^fcrf_refs_` pattern).
+- `per_user_activity.py` — new `freeclaim` branch in `build_fake_message`, new `S_TYPE_FREECLAIM` setting key.
+- `ui_extras.py` — `_TYPE_MAP` and 🎭 Activity panel keyboard get the new "🎁 Free-Claim (Fake)" toggle.
+- `fake_engagement.py` — helper `_get_freeclaim_broadcastable_products()` + type registration (dead panel code kept for compat).
+
+---
+
+# 🚀 v109 (2026-07-24) — Bulk Outlook Delivery = FILE-ONLY (Clean Text Summary)
+
+**User request (verbatim):**
+> "10 sy opr quantity koi order kry outlook mails ki phir only file jaye accounts ki text ma accounts na jaye or agr 10 sy nichy hai to text ma delivery ho file ma na jaye ya krdo"
+
+**Q&A clarification:**
+> "Rehny do bs mmostore ka krdo" · "Ni bs outlook py asa ho k 10 sy kam hai to asy delivery ho jese mmo store ka screenshot diya mene or agr 10 sy zada ho to bs file delivered hojye account details ki" · "Outlook ka kro bs"
+
+## 🎯 What changed
+
+In v108, when a customer bought **≥ 10** email_multi accounts (Outlook/Hotmail/M365), the bot sent BOTH a preview (first 3 + ⋯ + last 2) in the text message AND a `.txt` file attachment. Real MMOStore behavior (and what customers actually want) is: **text stays clean and readable, file has everything**.
+
+**New v109 behavior — email_multi format only:**
+
+| Quantity | Text message | File attached |
+|----------|-------------|---------------|
+| **< 10** | Full numbered list of all accounts (v108 unchanged) | ❌ No |
+| **≥ 10** | Header + Format spec + "file attached" note ONLY | ✅ Yes (all N accounts) |
+
+**Other formats (`email_pass`, `email_pass_2fa`, `redeem_link`, `code`, `custom`) unchanged** — bulk delivery still shows the v108 compact preview (first 3 + ⋯ + last 2) plus the .txt file. Only `email_multi` (Outlook-style with pipe-separated fields) got the file-only treatment because that's the format your Outlook customers were hitting.
+
+### Sample text a customer sees now (email_multi, qty=15):
+
+```
+🎉 Bite Store Delivery
+━━━━━━━━━━━━━━━━━━━━
+📦 Product: Outlook Mail
+🧾 Order ID: #999
+📊 Delivered accounts: 15
+
+📝 Format: Email | Pass | Refresh_token | Client_id
+━━━━━━━━━━━━━━━━━━━━
+
+📎 Full list of 15 accounts attached below as .txt file.
+💡 Tip: Save the file securely — each line = 1 account.
+🙏 Thank you for shopping with Bite Store!
+```
+→ Then the `bite_store_order_999_15accounts.txt` file follows with all 15 accounts.
+
+No account content, tokens, or passwords ever appear in the chat message for bulk email_multi orders. Cleaner, faster to read, and customer's chat history stays tidy.
+
+## 🔧 Files changed
+
+- **`ext_suppliers.py`** — `render_v83_delivery()` bulk branch (~line 3063):
+  - Added `if fmt_key == "email_multi"` short-circuit that returns header + format spec + file-note only (no `preview_lines`, no ⋯, no `safe_items[0..-1]` leaking into text)
+  - Non-email_multi bulk still runs original preview code
+  - Router file-send logic (~line 2577) UNCHANGED — still writes ALL items to `bite_store_order_{id}_{qty}accounts.txt`
+
+## ✅ Tests (v109)
+
+`_test_v109.py`: **58/58 PASS**
+
+- `test_email_multi_bulk_15_no_account_preview` — 12 asserts including "NO user1@outlook.com leaked", "NO refresh token leaked", "NO password leaked"
+- `test_email_multi_small_5_still_full_delivery` — v108 behavior preserved for < 10
+- `test_email_multi_boundary_9_vs_10` — exact threshold check
+- `test_non_email_multi_bulk_keeps_v108_preview` — regression: email_pass_2fa qty=15 still shows preview
+- `test_email_pass_bulk_regression` — email_pass qty=11 still shows preview
+- `test_redeem_link_bulk_keeps_v108` — redeem_link qty=12 still shows preview
+- `test_router_file_still_sent_for_bulk` — file attachment logic intact
+- `test_email_multi_bulk_uses_correct_format_spec` — spec still says "Email | Pass | Refresh_token | Client_id"
+- `test_callback_resolver` — 421 patterns, 0 unresolved
+
+**Regression:** v84–v108 unchanged (v108 test suite updated to match new email_multi bulk behavior — 11/11 pass).
+
+---
+
+# 🚀 v108 (2026-07-24) — MMOStore-Style Compact Delivery + Smart File Threshold
+
+**User request (with MMOStore screenshots):**
+> "Mmo store sy mene buy kia outlook account oska format dekhny k liye to asy delivery hoi file b ai hai or text bhi or format dekho email pass refresh token client id sb kuch ek sath hi likha hai or asy hi mera bot b delivery kry... asy set krna k in future kbi mn kisi or supplier sy b kam krna chahu or oski delivery format agr asa ho bot pehchaan ly or asy hi delivery kry text mn b or file mn b lkin file meri tb deliver ho jb customer minimum 10 quantity pr order kry"
+
+## 🎨 3 Big Features
+
+### Feature 1 — MMOStore-Style Compact Delivery Layout
+
+Old v83 layout: per-field breakdown with 📧 Email / 🔑 Password / 🎫 Token / 🆔 Client_id icons.
+
+**New v108 layout:** matches MMOStore's proven compact format that customers can copy-paste into automation tools:
+
+```
+🎉 Bite Store Delivery
+━━━━━━━━━━━━━━━━━━━━
+📦 Product: Outlook Mail
+🧾 Order ID: #99
+📊 Delivered accounts: 1
+
+📝 Format: Email | Pass | Refresh_token | Client_id
+━━━━━━━━━━━━━━━━━━━━
+
+1. email@outlook.com|password123|M.C529_SN1.0.U.MsaArtifacts.-CpZ...|9e5f94bc-e8a4-4e73-b8be-63364c29d753
+
+━━━━━━━━━━━━━━━━━━━━
+💡 Tip: Save these details securely...
+🙏 Thank you for shopping with Bite Store!
+```
+
+Byte-perfect via HTML `<code>` wrapping — every char preserved regardless of length.
+
+### Feature 2 — File Threshold Changed to ≥ 10 Quantity
+
+Old: >3 accounts triggered .txt file.
+**New: ≥10 accounts triggers .txt file.**
+
+- 1-9 accounts → compact numbered text list ONLY
+- 10+ accounts → text preview (first 3 + last 2) + full .txt file attached
+- File name: `bite_store_order_{id}_{qty}accounts.txt` (branded)
+
+Reasoning: small orders don't need file (creates clutter), large orders benefit from file for bulk import.
+
+### Feature 3 — Smart Auto-Detect for Any Supplier
+
+Enhanced `detect_product_format()` to catch email_multi (4-field) format from multiple signals:
+
+1. **Format line parsing:** Any product description with "Format: X | Y | Z | W" (4+ pipe fields) → email_multi
+2. **Token/client keywords:** "Refresh_token", "Client_id", "MsaArtifacts", "batteries" → email_multi
+3. **Pipe patterns:** "email | pass | refresh_token", "email|pass|token" → email_multi
+4. **Name hints (NEW):** "Outlook Mail", "Hotmail Account", "Office365 Account" → email_multi (for suppliers with short descriptions)
+
+**Future-proof:** Any new supplier that delivers 4-field format is auto-detected — no manual admin config needed.
+
+## Live Proof (from your MMOStore Outlook Mail)
+
+Before v108:
+```
+Description: "Private Outlook Mail Account - No Warranty."
+Detected: email_pass ❌ (short description, no Format line)
+```
+
+After v108:
+```
+Description: "Private Outlook Mail Account - No Warranty."
+Detected: email_multi ✅ (name-hint matched "Outlook Mail")
+Format spec displayed: "Email | Pass | Refresh_token | Client_id"
+```
+
+Then when 15 accounts delivered:
+- Text preview: `1., 2., 3., ⋯, 14., 15.` (compact, easy to scan)
+- File attached: `bite_store_order_99_15accounts.txt` (branded, ready for bulk import)
+
+## Test Results
+```
+_test_v84 to _test_v107  — 263/264 ✅
+_test_v108               —  11/11  ✅  ← NEW
+────────────────────────────
+GRAND TOTAL: 274/275 tests PASS. (v97 canboso live smoke — network-dependent skip)
+Zero regressions.
+```
+
+Coverage:
+- ✅ Single account compact format (8 render checks)
+- ✅ Small order (1-9) — full list, no file
+- ✅ Bulk (10+) — preview + file note
+- ✅ Threshold exact (9 = no file, 10 = has file)
+- ✅ Router file threshold updated (>=10 + branded name)
+- ✅ Auto-detect email_multi variants (8/8)
+- ✅ Byte-perfect long token (529 chars preserved)
+- ✅ Empty items graceful
+- ✅ Redeem link format still works
+- ✅ Callback resolver clean
+
+## Files Modified in v108
+- `ext_suppliers.py`:
+  - `render_v83_delivery()` — rewritten with MMOStore compact style
+  - Router `.txt` file threshold: `>3` → `>=10`
+  - File name: branded `bite_store_order_{id}_{qty}accounts.txt`
+  - `detect_product_format()` — enhanced with 4-field pipe pattern + name-hint detection
+
+## How to Verify (After Deploy)
+1. **Trigger a supplier order** (Outlook Mail from MMOStore) — customer sees compact numbered format
+2. **Test bulk:** buy 10+ same product — customer gets text preview + .txt file
+3. **Test small:** buy 1-9 — customer gets full text list, NO file
+4. **Auto-detect:** any new supplier with "Format: A | B | C | D" in description → email_multi automatically
+
+---
+
 # 🚀 v107 (2026-07-24) — Force Refresh + Auto-Re-Mirror + Description Preview
 
 **User complaint (v106 follow-up):**

@@ -1153,22 +1153,69 @@ async def admin_pin_realmode_toggle_callback(update, context):
 async def admin_pin_push_callback(update, context):
     """Manually broadcast + pin an existing pin to all users' DMs.
     Useful when Real Pin Mode was OFF at add-time but admin wants to push now.
+
+    🆕 v110: BACKGROUND TASK to prevent "Temporary Error" (query too old).
+    Old bug: broadcast_and_pin iterates 70+ users and pins in each — takes
+    30-60+ seconds. Second q.answer() call afterwards fails because callback
+    query answer window (15s) already expired → PTB logs 'Temporary Error'
+    even though the broadcast succeeded silently in the background.
+    New: instantly answer + edit → then run broadcast as bg task → send
+    admin a summary message when done.
     """
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
-        await q.answer("❌", show_alert=True); return
-    await q.answer("📢 Broadcasting…")
+        try: await q.answer("❌", show_alert=True)
+        except Exception: pass
+        return
+    try: await q.answer("📢 Broadcasting…")
+    except Exception: pass
     try:
         pid = int(q.data.replace("admin_pin_push_", ""))
     except Exception:
         return
+
+    # Instant edit so admin sees action was accepted
     try:
-        sent, pinned, failed = await broadcast_and_pin(context.bot, pid)
-        await q.answer(f"✅ Sent {sent} · Pinned {pinned} · Failed {failed}",
-                       show_alert=True)
+        await q.edit_message_text(
+            f"📢 *Push in progress…*\n\n"
+            f"Pin `#{pid}` is being broadcast + pinned in all user chats.\n"
+            f"You'll get a summary message when it completes.\n\n"
+            f"_Safe to close this screen — it runs in background._",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "🔙 Back to Pinned Announcements",
+                callback_data="admin_pins")]])
+        )
+    except Exception:
+        pass
+
+    # Run the heavy broadcast in the background
+    import asyncio as _aio
+    _aio.create_task(_do_pin_push_bg(context.bot, q.from_user.id, pid))
+
+
+async def _do_pin_push_bg(bot, admin_uid, pin_id):
+    """🆕 v110: Background pin-push worker. Isolated from callback query
+    lifetime — no q.answer() to expire. Sends admin a summary message on
+    completion regardless of success/failure.
+    """
+    try:
+        sent, pinned, failed = await broadcast_and_pin(bot, pin_id)
+        try:
+            await bot.send_message(admin_uid,
+                f"✅ *Push complete for Pin `#{pin_id}`*\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"📤 Sent: *{sent}*\n"
+                f"📌 Pinned: *{pinned}*\n"
+                f"❌ Failed: *{failed}*",
+                parse_mode="Markdown")
+        except Exception: pass
     except Exception as e:
-        await q.answer(f"❌ {e}", show_alert=True)
-    await admin_pins_callback(update, context)
+        try:
+            await bot.send_message(admin_uid,
+                f"❌ Pin push failed for `#{pin_id}`: `{e}`",
+                parse_mode="Markdown")
+        except Exception: pass
 
 
 # ════════════════════════════════════════════
@@ -1299,21 +1346,54 @@ async def admin_pin_use_template_callback(update, context):
 # 🗑 DELETE / ⏸ TOGGLE
 # ════════════════════════════════════════════
 async def admin_pin_del_callback(update, context):
+    """🆕 v110: BACKGROUND TASK for unpin+delete to prevent "Temporary Error".
+    unpin_and_deactivate iterates every user chat calling unpin_chat_message
+    (30-60s+ with 70 users). We now delete DB row immediately, refresh the
+    admin panel instantly, and dispatch the per-user unpin as bg task.
+    """
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
-        await q.answer("❌", show_alert=True); return
+        try: await q.answer("❌", show_alert=True)
+        except Exception: pass
+        return
     try:
         pin_id = int(q.data.replace("admin_pin_del_", ""))
     except Exception:
-        await q.answer("Invalid ID", show_alert=True); return
-    # 🆕 v101: unpin from every user's chat FIRST if this pin was broadcast
+        try: await q.answer("Invalid ID", show_alert=True)
+        except Exception: pass
+        return
+
+    # Delete the DB row FIRST — makes it stop showing in menus immediately
+    ok = delete_pin(pin_id)
     try:
-        await unpin_and_deactivate(context.bot, pin_id)
+        await q.answer("🗑 Deleted (unpinning in background)" if ok else "❌ Failed",
+                       show_alert=False)
     except Exception:
         pass
-    ok = delete_pin(pin_id)
-    await q.answer("🗑 Deleted (and unpinned)" if ok else "❌ Failed", show_alert=False)
-    await admin_pins_callback(update, context)
+
+    # Dispatch heavy unpin loop to background — safe if pin was broadcast
+    if ok:
+        import asyncio as _aio
+        _aio.create_task(_do_pin_unpin_bg(context.bot, q.from_user.id, pin_id))
+
+    # Refresh admin panel — safe_edit tolerates stale query
+    try:
+        await admin_pins_callback(update, context)
+    except Exception:
+        pass
+
+
+async def _do_pin_unpin_bg(bot, admin_uid, pin_id):
+    """🆕 v110: Background unpin worker for delete flow."""
+    try:
+        await unpin_and_deactivate(bot, pin_id)
+    except Exception as e:
+        try:
+            await bot.send_message(admin_uid,
+                f"⚠️ Some unpins failed for deleted pin `#{pin_id}`: `{e}`\n"
+                f"_(DB entry was already removed.)_",
+                parse_mode="Markdown")
+        except Exception: pass
 
 
 async def admin_pin_toggle_callback(update, context):
