@@ -113,11 +113,159 @@ def _admin_panel_kb(pid, cfg):
                               callback_data=f"fcrf_preview_{pid}"),
          InlineKeyboardButton("📤 Send Test",
                               callback_data=f"fcrf_test_{pid}")],
+        # 🆕 v110: Product-specific referrals tracker (who invited whom for THIS product)
+        [InlineKeyboardButton("👥 Referrals for This Product",
+                              callback_data=f"fcrf_refs_{pid}_0")],
         [InlineKeyboardButton("📜 Recent Claims (all products)",
                               callback_data="fcrf_history")],
         [InlineKeyboardButton("🔙 Back to Product", callback_data=f"viewprod_{pid}")],
     ]
     return InlineKeyboardMarkup(kb)
+
+
+# ════════════════════════════════════════════════════════════════
+# 🆕 v110: PER-PRODUCT REFERRALS TRACKER
+# Shows admin who invited whom via THIS product's share link.
+# Data lives in product_ref_pool table.
+# ════════════════════════════════════════════════════════════════
+
+async def fcrf_refs_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🆕 v110: Show list of all referrals made via THIS product's share link.
+
+    Groups by referrer → shows how many friends each user brought + who
+    the friends are. Paginated for products with many referrers.
+
+    Callback pattern: fcrf_refs_<pid>_<page>
+    """
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        rest = q.data.replace("fcrf_refs_", "")
+        pid_s, page_s = rest.rsplit("_", 1)
+        pid = int(pid_s); page = int(page_s)
+    except Exception:
+        await _safe_edit(q, "❌ Bad callback."); return
+
+    prod = get_product(pid)
+    if not prod:
+        await _safe_edit(q, "❌ Product not found."); return
+
+    # Fetch all product-ref rows: (referrer_id, referred_id, created_at)
+    from database import get_connection
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("""SELECT referrer_id, referred_id, created_at
+                     FROM product_ref_pool
+                     WHERE product_id=?
+                     ORDER BY created_at DESC""", (int(pid),))
+        rows = c.fetchall()
+    except Exception:
+        rows = []
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+    pname = escape_md(prod["name"][:40]) if prod else f"#{pid}"
+
+    if not rows:
+        text = (
+            f"👥 *Referrals for Product*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"📦 {pname}\n\n"
+            f"_No referrals tracked yet for this product._\n\n"
+            f"💡 Ask users to open the product → tap *🔗 Share Link* — "
+            f"every friend that joins via that link will appear here."
+        )
+        await _safe_edit(q, text, parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Back to Free Claim",
+                                      callback_data=f"fcrf_panel_{pid}")]]))
+        return
+
+    # Group by referrer
+    from collections import OrderedDict
+    grouped = OrderedDict()
+    for r in rows:
+        rid = int(r["referrer_id"])
+        grouped.setdefault(rid, []).append({
+            "referred_id": int(r["referred_id"]),
+            "created_at": r["created_at"],
+        })
+
+    # Paginate — 5 referrers per page
+    PAGE_SIZE = 5
+    referrer_ids = list(grouped.keys())
+    total_referrers = len(referrer_ids)
+    total_pages = max(1, (total_referrers + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    slice_ids = referrer_ids[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+
+    # Fetch user info for display
+    from database import get_user as _gu
+    lines = [
+        f"👥 *Referrals for Product*",
+        f"━━━━━━━━━━━━━━━━━━━━",
+        f"",
+        f"📦 {pname}",
+        f"📊 Total referrers: *{total_referrers}* · "
+        f"Total invites: *{len(rows)}*",
+        f"",
+    ]
+    for rid in slice_ids:
+        rurow = _gu(rid)
+        rname = "(unknown)"
+        if rurow:
+            try:
+                rname = (rurow["first_name"] or "").strip() or \
+                        (f"@{rurow['username']}" if rurow["username"] else f"#{rid}")
+            except Exception:
+                pass
+        rname = escape_md(str(rname)[:24])
+        friends = grouped[rid]
+        lines.append(
+            f"👤 *{rname}* `({rid})` — brought *{len(friends)}* friend"
+            f"{'s' if len(friends) != 1 else ''}"
+        )
+        # List up to 3 friends per referrer for brevity
+        for f in friends[:3]:
+            fu = _gu(f["referred_id"])
+            fn = "(unknown)"
+            if fu:
+                try:
+                    fn = (fu["first_name"] or "").strip() or \
+                         (f"@{fu['username']}" if fu["username"] else f"#{f['referred_id']}")
+                except Exception:
+                    pass
+            fn = escape_md(str(fn)[:20])
+            when = str(f["created_at"] or "")[:16]
+            lines.append(f"   └ {fn} `({f['referred_id']})` · _{when}_")
+        if len(friends) > 3:
+            lines.append(f"   └ _…and {len(friends) - 3} more_")
+        lines.append("")
+
+    text = "\n".join(lines)
+
+    # Pagination buttons
+    kb = []
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("« Prev",
+            callback_data=f"fcrf_refs_{pid}_{page - 1}"))
+    nav.append(InlineKeyboardButton(f"Page {page + 1}/{total_pages}",
+        callback_data=f"fcrf_refs_{pid}_{page}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("Next »",
+            callback_data=f"fcrf_refs_{pid}_{page + 1}"))
+    if nav:
+        kb.append(nav)
+    kb.append([InlineKeyboardButton("🔙 Back to Free Claim",
+                                     callback_data=f"fcrf_panel_{pid}")])
+
+    # Use HTML-safe text to avoid Markdown escape gotchas on unusual names
+    await _safe_edit(q, text, parse_mode="Markdown",
+                     reply_markup=InlineKeyboardMarkup(kb))
 
 
 async def fcrf_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

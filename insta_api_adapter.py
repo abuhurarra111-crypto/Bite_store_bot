@@ -308,9 +308,22 @@ class InstaAPIAdapter(_StandaloneBase):
 # Item extraction (handles all common response shapes)
 # ============================================================
 def _extract_items(j):
-    """Pull the actual account-content strings out of a success response."""
-    # Preferred keys in order
-    for key in ("accounts", "items", "data", "products", "results"):
+    """Pull the actual account-content strings out of a success response.
+
+    v113: Reuse the universal parser from ext_suppliers when available, so
+    InstaAPI also understands deliveredAccounts / nested data.accounts /
+    refreshToken+clientId style objects. Fallback kept for standalone imports.
+    """
+    try:
+        from ext_suppliers import _extract_delivery_items
+        out = _extract_delivery_items(j)
+        if out:
+            return out
+    except Exception:
+        pass
+
+    # Fallback for rare standalone use.
+    for key in ("deliveredAccounts", "accounts", "items", "data", "results"):
         v = j.get(key)
         if v is None:
             continue
@@ -318,19 +331,15 @@ def _extract_items(j):
             out = []
             for it in v:
                 if isinstance(it, dict):
-                    # Try common shapes
-                    for combo in (("email", "password"),
-                                  ("username", "password"),
-                                  ("user", "pass"),
-                                  ("login", "pass")):
-                        em = it.get(combo[0]); pw = it.get(combo[1])
-                        if em and pw:
-                            out.append(f"{em}|{pw}")
-                            break
+                    em = it.get("email") or it.get("username") or it.get("user") or it.get("login") or ""
+                    pw = it.get("password") or it.get("pass") or it.get("pwd") or ""
+                    rt = it.get("refreshToken") or it.get("refresh_token") or it.get("token") or ""
+                    cid = it.get("clientId") or it.get("client_id") or ""
+                    if em and pw:
+                        parts = [em, pw] + [x for x in (rt, cid) if x]
+                        out.append("|".join(str(x) for x in parts))
                     else:
-                        # Fallbacks
-                        for k in ("account", "credentials", "content",
-                                 "code", "link", "text"):
+                        for k in ("account", "credentials", "content", "code", "link", "text", "value"):
                             if it.get(k):
                                 out.append(str(it[k])); break
                         else:
@@ -339,11 +348,8 @@ def _extract_items(j):
                     out.append(str(it))
             return out
         if isinstance(v, str):
-            # Newline-separated dump
-            lines = [ln.strip() for ln in v.split("\n") if ln.strip()]
-            return lines
-    # Nothing recognised — return the whole thing as one string
-    return [json.dumps(j, ensure_ascii=False)]
+            return [ln.strip() for ln in v.split("\n") if ln.strip()]
+    return []
 
 
 # ============================================================

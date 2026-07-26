@@ -80,22 +80,33 @@ async def _process_referral_attribution(context, new_user, referrer_id, is_new_u
     NO reward point is added to the general ref_points pool. When 0, it's
     a normal direct referral link → +1 ref_point as before.
 
-    Rules (each check is fast — no waiting time):
-      1.  Block if new user is a bot
-      2.  Block self-referral
-      3.  Block if user already has a referrer (one-time — general mode)
-      4.  Block if user already existed in DB (returning user came back via someone's link)
-      5.  Block if referrer is banned
-      6.  Block if referrer doesn't exist
-      7.  Anti-burst: block if same referrer has >= 5 new sign-ups in last 60s
-                     (catches automated mass-bot scripts)
-      8.  Anti-duplicate-name: block if a recent referred user (60min) had the
-                     same first_name + empty username (catches scripted accounts
-                     where attacker doesn't bother changing name)
-      9.  Block if new user has BOTH empty first_name AND empty username
-                     (real users have at least one)
+    🆕 v110: ATTRIBUTION RULES OVERHAUL based on pro Telegram referral bots
+    (BotFather Deep Link docs + top-tier referral bots research).
 
-    On success: +1 ref_point to referrer, notify referrer + admin, broadcast.
+    The old rule "block if user already existed in DB" caused MASSIVE silent
+    losses — Telegram shows the START button even for users who already
+    interacted with the bot (per official docs), so a "not new" user tapping
+    a friend's link would be silently rejected. Zero counts in real DB
+    proved this.
+
+    NEW rule set:
+      1. Block if new user is a bot                                     (dead)
+      2. Block self-referral                                            (essential)
+      3. Block if the user ALREADY HAS a referrer set                   (one-time credit)
+      4. [REMOVED] "must be brand new user" — replaced by rule #3
+      5. Block if referrer is banned                                    (abuse gate)
+      6. Block if referrer doesn't exist                                 (bad link)
+      7. Anti-burst: ONLY for GENERAL referrals (product mode is exempt
+         because no ref_points reward → nothing to abuse). Threshold
+         relaxed from 5→10 in 60s.
+      8. Anti-duplicate-name: same (only when username empty)
+      9. Block if BOTH first_name AND username empty                     (bot detect)
+
+    Every event is logged AND admin gets a compact DM notification for
+    both counted + blocked attempts (so future issues are diagnosable).
+
+    On success: +1 ref_point to referrer (direct mode only), notify referrer
+    + admin, fire fake-activity broadcast.
     """
     from database import (
         get_user, set_referred_by, increment_referral_count,
@@ -126,20 +137,19 @@ async def _process_referral_attribution(context, new_user, referrer_id, is_new_u
     if int(referrer_id) == int(new_user.id):
         return _reject("self_referral")
 
-    # ── 3. & 4. Already referred / pre-existing user ──
+    # ── 3. Already has a referrer? (one-time credit only) ──
+    # 🆕 v110: removed the "must-be-brand-new-user" block. Telegram's own
+    # docs confirm the Start button appears with the deep-link parameter
+    # even for returning users, so rejecting non-new users silently killed
+    # 100% of real-world referrals. We now only guard against DOUBLE
+    # attribution via referred_by column.
     db_new = get_user(new_user.id)
-    if db_new is None:
-        # Edge: save_user wasn't called yet — let's trust is_new_user flag
-        if not is_new_user:
-            return _reject("user_already_existed")
-    else:
+    if db_new is not None:
         try:
             if db_new["referred_by"] and int(db_new["referred_by"]) != 0:
                 return _reject("already_has_referrer")
         except Exception:
             pass
-        if not is_new_user:
-            return _reject("not_a_new_user")
 
     # ── 5. Referrer banned? ──
     if is_referrer_banned(referrer_id):
@@ -151,9 +161,12 @@ async def _process_referral_attribution(context, new_user, referrer_id, is_new_u
         return _reject("referrer_unknown")
 
     # ── 7. Anti-burst: too many referrals in last 60s ──
-    recent_60s = count_referrals_by_referrer_recent(referrer_id, minutes=1)
-    if recent_60s >= 5:
-        return _reject(f"burst_5_in_60s ({recent_60s} found)")
+    # 🆕 v110: RELAXED — threshold 5→10 (viral products can bring 10+ users/min)
+    # + EXEMPT for product-mode (no ref_points reward means no abuse incentive)
+    if not (product_id and int(product_id) > 0):
+        recent_60s = count_referrals_by_referrer_recent(referrer_id, minutes=1)
+        if recent_60s >= 10:
+            return _reject(f"burst_10_in_60s ({recent_60s} found)")
 
     # ── 8. Anti-duplicate-name within 60 min ──
     new_fn = (new_user.first_name or "").strip().lower()

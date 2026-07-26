@@ -209,6 +209,7 @@ def setup_database():
         payment_screenshot TEXT DEFAULT '', binance_sender_name TEXT DEFAULT '',
         binance_amount REAL DEFAULT 0, binance_currency TEXT DEFAULT '',
         order_type TEXT DEFAULT 'product', payment_note_id TEXT DEFAULT '',
+        order_qty INTEGER DEFAULT 1,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (product_id) REFERENCES products(id))""")
 
@@ -385,6 +386,7 @@ def migrate_all():
         ensure_product_columns(c)
         ensure_product_accounts_table(c)
         ensure_column(c, "orders", "payment_note_id", "TEXT DEFAULT ''")
+        ensure_column(c, "orders", "order_qty", "INTEGER DEFAULT 1")
         conn.commit(); conn.close()
     except Exception as e:
         stats["errors"].append(f"final ensure_columns: {e}")
@@ -622,8 +624,28 @@ def get_user_points(uid):
 # Column kept for backward compatibility with old databases
 
 def add_points(uid, pts):
+    """Add points to a user, creating a minimal user row if needed.
+
+    🔧 v115: Older code only did UPDATE. If a refund/bonus ran before the user
+    row existed (rare but possible on imported/edge-case orders), rowcount=0 and
+    points were silently lost. Now it is an idempotent upsert-style operation.
+    """
     conn = get_connection(); c = conn.cursor()
-    c.execute("UPDATE users SET points=points+? WHERE user_id=?", (pts,uid)); conn.commit(); conn.close()
+    try:
+        uid = int(uid)
+        pts = int(pts or 0)
+    except Exception:
+        conn.close(); return
+    c.execute("UPDATE users SET points=COALESCE(points,0)+? WHERE user_id=?", (pts, uid))
+    if c.rowcount == 0:
+        try:
+            c.execute("""INSERT INTO users
+                         (user_id, username, first_name, wallet_balance, points)
+                         VALUES (?, '', '', 0.0, ?)""", (uid, pts))
+        except Exception:
+            # Race-safe fallback: if another worker inserted the row, update it.
+            c.execute("UPDATE users SET points=COALESCE(points,0)+? WHERE user_id=?", (pts, uid))
+    conn.commit(); conn.close()
 
 def set_referred_by(uid, ref_id):
     conn = get_connection(); c = conn.cursor()
@@ -1075,8 +1097,22 @@ def consume_product_account(pid, order_id, buyer_uid=None):
         if c.rowcount != 1:
             conn.rollback(); return None
         c.execute("SELECT COUNT(*) FROM product_accounts WHERE product_id=? AND status='available'", (pid,))
-        remaining = c.fetchone()[0]
-        c.execute("UPDATE products SET stock=? WHERE id=?", (remaining, pid))
+        remaining = int(c.fetchone()[0] or 0)
+        final_stock = remaining
+        # v114: External supplier products can have a local bonus pool. Keep
+        # products.stock = supplier stock + local available, not just local.
+        try:
+            c.execute("SELECT ext_product_id FROM products WHERE id=?", (pid,))
+            prow = c.fetchone()
+            ext_pid = int((prow['ext_product_id'] if hasattr(prow, 'keys') else prow[0]) or 0) if prow else 0
+            if ext_pid:
+                c.execute("SELECT stock FROM ext_products WHERE id=?", (ext_pid,))
+                erow = c.fetchone()
+                remote_stock = int((erow['stock'] if hasattr(erow, 'keys') else erow[0]) or 0) if erow else 0
+                final_stock = remote_stock + remaining
+        except Exception:
+            final_stock = remaining
+        c.execute("UPDATE products SET stock=? WHERE id=?", (final_stock, pid))
         conn.commit()
         return data
     except Exception:
@@ -1226,7 +1262,24 @@ def get_all_products_profit():
 
 
 # ── Orders ──
-def create_order(uid, uname, pid, pname, price, method="manual", bname="", bamt=0, bcur="", otype="product", creds=""):
+def _infer_order_qty_from_name(pname):
+    """Backward-compatible quantity inference for old orders.
+
+    New code passes/stores order_qty explicitly, but old rows only have the
+    product_name suffix ("Product × 5"). Suffix-only regex avoids product names
+    containing numbers in the middle.
+    """
+    try:
+        import re as _re
+        m = _re.search(r'(?:×|x)\s*(\d+)\s*$', str(pname or ''), flags=_re.I)
+        if m:
+            return max(1, min(100, int(m.group(1))))
+    except Exception:
+        pass
+    return 1
+
+
+def create_order(uid, uname, pid, pname, price, method="manual", bname="", bamt=0, bcur="", otype="product", creds="", qty=None):
     conn = get_connection(); c = conn.cursor()
     # Check if we need to add the column if missing
     c.execute("PRAGMA table_info(orders)")
@@ -1235,9 +1288,16 @@ def create_order(uid, uname, pid, pname, price, method="manual", bname="", bamt=
         c.execute("ALTER TABLE orders ADD COLUMN customer_credentials TEXT DEFAULT ''")
     if 'payment_note_id' not in cols:
         c.execute("ALTER TABLE orders ADD COLUMN payment_note_id TEXT DEFAULT ''")
-    
-    c.execute("""INSERT INTO orders (user_id,user_name,product_id,product_name,price,status,payment_method,binance_sender_name,binance_amount,binance_currency,order_type,customer_credentials) VALUES (?,?,?,?,?,'pending',?,?,?,?,?,?)""",
-        (uid,uname,pid,pname,price,method,bname,bamt,bcur,otype,creds))
+    if 'order_qty' not in cols:
+        c.execute("ALTER TABLE orders ADD COLUMN order_qty INTEGER DEFAULT 1")
+    try:
+        order_qty = int(qty) if qty is not None else _infer_order_qty_from_name(pname)
+    except Exception:
+        order_qty = _infer_order_qty_from_name(pname)
+    order_qty = max(1, min(100, int(order_qty or 1)))
+
+    c.execute("""INSERT INTO orders (user_id,user_name,product_id,product_name,price,status,payment_method,binance_sender_name,binance_amount,binance_currency,order_type,customer_credentials,order_qty) VALUES (?,?,?,?,?,'pending',?,?,?,?,?,?,?)""",
+        (uid,uname,pid,pname,price,method,bname,bamt,bcur,otype,creds,order_qty))
     i = c.lastrowid; conn.commit(); conn.close(); return i
 
 def get_order(oid):
@@ -1315,7 +1375,8 @@ def update_order_status(oid, s):
     # 🆕 v37: When marking as delivered, auto-update loyalty tier
     prev = None
     try:
-        c.execute("SELECT status, user_id, price, product_id, product_name FROM orders WHERE id=?", (oid,))
+        ensure_column(c, "orders", "order_qty", "INTEGER DEFAULT 1")
+        c.execute("SELECT status, user_id, price, product_id, product_name, order_qty FROM orders WHERE id=?", (oid,))
         prev = c.fetchone()
     except Exception:
         pass
@@ -1335,12 +1396,12 @@ def update_order_status(oid, s):
             pid = prev['product_id'] if 'product_id' in prev.keys() else None
             pname = (prev['product_name'] if 'product_name' in prev.keys() else '') or ''
             if pid:
-                # Detect bulk quantity from product name ("Product × 5")
-                import re as _re
-                qty = 1
-                m = _re.search(r'[×x]\s*(\d+)\s*$', pname)
-                if m:
-                    qty = int(m.group(1))
+                # Prefer explicit order_qty; fallback to legacy name suffix.
+                try:
+                    qty = int(prev['order_qty'] or 1)
+                except Exception:
+                    qty = _infer_order_qty_from_name(pname)
+                qty = max(1, min(100, int(qty or 1)))
                 increment_real_sold(pid, qty)
                 _queue_purchase_broadcast(pid, pname, qty)
         except Exception as e:
@@ -1942,6 +2003,7 @@ def setup_support_tables():
     ensure_column(c, "orders", "delivery_content", "TEXT DEFAULT ''")
     ensure_column(c, "orders", "delivery_msg_id", "INTEGER DEFAULT 0")
     ensure_column(c, "orders", "payment_note_id", "TEXT DEFAULT ''")
+    ensure_column(c, "orders", "order_qty", "INTEGER DEFAULT 1")
     # 🔧 BUGFIX: admin_reply used by warranty auto-refund / responses
     ensure_column(c, "warranty_requests", "admin_reply", "TEXT DEFAULT ''")
 

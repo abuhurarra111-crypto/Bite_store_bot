@@ -281,6 +281,7 @@ from handlers_free_claim import (
     fcrf_setrefs_callback, fcrf_tpllist_callback, fcrf_pick_callback,
     fcrf_custom_callback, fcrf_preview_callback, fcrf_test_callback,
     fcrf_history_callback, fcrf_text_received,
+    fcrf_refs_callback,  # 🆕 v110 — per-product referrals tracker
     freeclaim_open_callback, freeclaim_do_callback,
     freeclaim_share_callback,  # 🆕 v48
     # 🆕 v49 — per-product broadcast button editor
@@ -1660,6 +1661,8 @@ def main():
         ("^fcrf_preview_",      fcrf_preview_callback),
         ("^fcrf_test_",         fcrf_test_callback),
         ("^fcrf_history$",      fcrf_history_callback),
+        # 🆕 v110: Per-product referrals tracker (fcrf_refs_<pid>_<page>)
+        ("^fcrf_refs_",         fcrf_refs_callback),
         # 🆕 v47-48: Free-via-Referrals — user claim flow
         ("^freeclaim_open_",    freeclaim_open_callback),
         ("^freeclaim_do_",      freeclaim_do_callback),
