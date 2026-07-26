@@ -522,7 +522,7 @@ def find_matching_payment(
     expected_amount: float,
     sender_name: str | None = None,
     note_id: str | None = None,
-    tolerance: float = 0.005,
+    tolerance: float = 0.05,
     lookback_hours: int = 48,
 ) -> dict | None:
     """Scan recent Pay transactions and return the first one that matches the criteria.
@@ -586,7 +586,7 @@ def find_payment_by_order_id(
     *,
     order_id: str,
     expected_amount: float | None = None,
-    tolerance: float = 0.005,
+    tolerance: float = 0.05,
     lookback_hours: int = 72,
 ) -> dict | None:
     """
@@ -669,7 +669,7 @@ def verify_payment_unified(
     sender_name: str | None = None,
     note_id: str | None = None,
     order_id: str | None = None,
-    tolerance: float = 0.005,
+    tolerance: float = 0.05,
     use_email_fallback: bool = True,
 ) -> dict:
     """

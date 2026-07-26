@@ -3985,138 +3985,81 @@ Choose action:"""
 
 
 async def backup_cloud_now_callback(u, c):
-    """☁️ Manually trigger a Telegram cloud backup right now.
-
-    🆕 v110: BACKGROUND-TASK PATTERN (same fix as backup_download_callback).
-    Prevents "query too old" on first click.
-    """
+    """☁️ Manually trigger a Telegram cloud backup right now."""
     q = u.callback_query
     if q.from_user.id != ADMIN_ID:
-        try: await q.answer("❌", show_alert=True)
-        except Exception: pass
-        return
-    try: await q.answer("☁️ Sending backup...", show_alert=False)
-    except Exception: pass
+        await q.answer("❌", show_alert=True); return
+    await q.answer("☁️ Sending backup...", show_alert=False)
 
-    try:
-        await _safe_edit(q,
-            "☁️ *Sending backup to your cloud…*\n\n"
-            "_Running in background — you can keep using the bot._",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
-                "🔙 Back", callback_data="admin_backup")]]))
-    except Exception:
-        pass
-
-    import asyncio as _aio
-    _aio.create_task(_do_cloud_backup_bg(c.bot, q.from_user.id))
-
-
-async def _do_cloud_backup_bg(bot, admin_uid):
-    """🆕 v110: Background cloud backup worker."""
-    import os, shutil, asyncio as _aio
+    import os, shutil
     from datetime import datetime as _dt2
     try:
         from config import BACKUP_CHANNEL_ID
         from database import DB_PATH
-        target = BACKUP_CHANNEL_ID or admin_uid
+        target = BACKUP_CHANNEL_ID or ADMIN_ID
         if not os.path.exists(DB_PATH):
-            try: await bot.send_message(admin_uid, "❌ No database file found.")
-            except Exception: pass
+            await _safe_edit(q, "❌ No database file found.",
+                            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_backup")]]))
             return
         ts = _dt2.now().strftime("%Y%m%d_%H%M%S")
         tmp = os.path.join("/tmp", f"manualbackup_{ts}.db") if os.path.exists("/tmp") else f"manualbackup_{ts}.db"
-        await _aio.to_thread(shutil.copy2, DB_PATH, tmp)
+        shutil.copy2(DB_PATH, tmp)
         with open(tmp, "rb") as f:
-            await bot.send_document(
-                chat_id=target, document=f, filename=f"shop_backup_{ts}.db",
+            await c.bot.send_document(
+                chat_id=target,
+                document=f,
+                filename=f"shop_backup_{ts}.db",
                 caption=f"☁️ *Manual Backup*\n📅 {_dt2.now().strftime('%d %b %Y %I:%M %p')}",
                 parse_mode="Markdown",
             )
         try: os.remove(tmp)
         except Exception: pass
         where = "backup channel" if BACKUP_CHANNEL_ID else "your private chat (DM)"
-        try:
-            await bot.send_message(admin_uid,
-                f"✅ *Backup sent to {where}!*", parse_mode="Markdown")
-        except Exception: pass
+        await _safe_edit(q,
+            f"✅ *Backup sent to {where}!*\n\n"
+            f"_Tip: Set BACKUP_CHANNEL_ID in config.py to use a private channel._",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="admin_backup")]]))
     except Exception as e:
-        try:
-            await bot.send_message(admin_uid,
-                f"❌ Backup failed: `{e}`\n\n"
-                f"Make sure the bot is an *admin* of the backup channel, "
-                f"and BACKUP_CHANNEL_ID is correct.",
-                parse_mode="Markdown")
-        except Exception: pass
+        await _safe_edit(q,
+            f"❌ Backup failed: {e}\n\n"
+            f"Make sure the bot is an *admin* of the backup channel, "
+            f"and BACKUP_CHANNEL_ID is correct.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="admin_backup")]]))
 
 
 async def backup_download_callback(u, c):
-    """📥 Send DB file to admin as document.
-
-    🆕 v110: BACKGROUND-TASK PATTERN to eliminate "query timeout" on first click.
-    Old bug: shutil.copy2 on a large DB + send_document ran INLINE in the
-    callback handler. On the first click after a cold event loop, the whole
-    thing took > 10-15s and Telegram's callback_query answer window expired
-    → user saw "query is too old" (Temporary Error). Second click succeeded
-    because the DB was warm in OS page cache.
-
-    New behaviour: `q.answer()` fires instantly with "Preparing…", we edit
-    the screen with a placeholder immediately, and the heavy copy + send is
-    dispatched as an asyncio background task with `asyncio.to_thread` for
-    the blocking file I/O. `_safe_edit` at the end tolerates the query
-    already being stale (falls back to send_message).
-    """
+    """📥 Send DB file to admin as document"""
     q = u.callback_query
     if q.from_user.id != ADMIN_ID:
-        try: await q.answer("❌", show_alert=True)
-        except Exception: pass
-        return
-    try: await q.answer("📦 Preparing backup...", show_alert=False)
-    except Exception: pass
+        await q.answer("❌", show_alert=True); return
+    await q.answer("📦 Preparing backup...", show_alert=False)
 
-    # Instant placeholder so user sees progress and query is answered fast
-    try:
-        await _safe_edit(q,
-            "📦 *Preparing backup…*\n\n"
-            "_Copying database & uploading. This runs in the background — "
-            "you can safely tap Back or do other things._",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
-                "🔙 Back", callback_data="admin_backup")]]))
-    except Exception:
-        pass
-
-    # Kick off the real work as a background task — event loop stays free
-    import asyncio as _aio
-    _aio.create_task(_do_backup_download_bg(c.bot, q.from_user.id))
-
-
-async def _do_backup_download_bg(bot, admin_uid):
-    """🆕 v110: Background worker for backup download. Handles copy + send
-    without blocking the callback query, tolerates any Telegram/File errors.
-    """
     from database import DB_PATH
-    import asyncio as _aio
     db_path = DB_PATH
     if not os.path.exists(db_path):
-        try:
-            await bot.send_message(admin_uid, "❌ Database file not found!")
-        except Exception: pass
+        await _safe_edit(q, "❌ Database file not found!",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_backup")]]))
         return
 
+    # Create timestamped backup file
     ts = _dt.now().strftime("%Y%m%d_%H%M%S")
     backup_name = f"bite_store_backup_{ts}.db"
     backup_path = os.path.join("/tmp", backup_name) if os.path.exists("/tmp") else backup_name
 
     try:
-        # Copy in a thread — event loop stays free for other users
-        await _aio.to_thread(shutil.copy2, db_path, backup_path)
+        # Copy DB (safe copy, prevents lock issues)
+        shutil.copy2(db_path, backup_path)
         size_kb = os.path.getsize(backup_path) / 1024
         size_str = f"{size_kb:.1f} KB" if size_kb < 1024 else f"{size_kb/1024:.1f} MB"
 
+        # Send as document
         with open(backup_path, "rb") as f:
-            await bot.send_document(
-                chat_id=admin_uid, document=f, filename=backup_name,
+            await c.bot.send_document(
+                chat_id=q.from_user.id,
+                document=f,
+                filename=backup_name,
                 caption=(
                     f"💾 *Database Backup*\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -4127,19 +4070,18 @@ async def _do_backup_download_bg(bot, admin_uid):
                 ),
                 parse_mode="Markdown",
             )
+        # Cleanup tmp
         try: os.remove(backup_path)
         except Exception: pass
-        try:
-            await bot.send_message(admin_uid,
-                f"✅ *Backup Sent!* `{backup_name}`", parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
-                    "🔙 Back to Backup Menu", callback_data="admin_backup")]]))
-        except Exception: pass
+
+        # Confirmation
+        await _safe_edit(q,
+            f"✅ *Backup Sent!*\n\nCheck your messages above 👆\n\nFile: `{backup_name}`",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="admin_backup")]]))
     except Exception as e:
-        try:
-            await bot.send_message(admin_uid, f"❌ Backup failed: `{e}`",
-                                   parse_mode="Markdown")
-        except Exception: pass
+        await _safe_edit(q, f"❌ Backup failed: {e}",
+                        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙", callback_data="admin_backup")]]))
 
 
 async def backup_restore_start_callback(u, c):

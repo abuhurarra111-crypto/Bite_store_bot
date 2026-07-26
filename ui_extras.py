@@ -1120,8 +1120,6 @@ _TYPE_MAP = {
     # from _TYPE_MAP → clicking it showed "❌ Unknown type" alert and never
     # toggled → cross ✅/❌ icon stuck. Now works correctly.
     "price_drop": ("pua_type_price_drop", "📉 Price Drop"),
-    # 🆕 v110: Fake Free-via-Referrals claim broadcasts (uses per-product fc_btn)
-    "freeclaim":  ("pua_type_freeclaim", "🎁 Free-Claim (Fake)"),
 }
 
 

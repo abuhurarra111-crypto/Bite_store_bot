@@ -294,7 +294,6 @@ SETTING_TYPE_REFERRAL  = "fbc_type_referral"      # "1" or "0" — send fake ref
 SETTING_TYPE_TIER      = "fbc_type_tier"          # "1" or "0" — send fake tier upgrades?
 SETTING_TYPE_STOCK     = "fbc_type_stock"         # "1" or "0" — send real new stock alerts?
 SETTING_TYPE_DISCOUNT  = "fbc_type_discount"      # "1" or "0" — send fake discount alerts?
-SETTING_TYPE_FREECLAIM = "fbc_type_freeclaim"     # 🆕 v110: fake free-via-referrals claims (uses per-product fc_btn)
 SETTING_NAME_STYLE     = "fbc_name_style"         # "stars" / "initials" / "random"
 SETTING_LOG_ENABLED    = "fbc_log_enabled"        # "1" or "0" — save broadcast log to DB?
 
@@ -344,36 +343,6 @@ def get_name_style():
     return _get(SETTING_NAME_STYLE, "stars")
 
 
-def _get_freeclaim_broadcastable_products():
-    """🆕 v110: Return list of product_ids that are enabled for
-    Free-via-Referrals AND still buyable (in-stock, not hidden). Used by
-    the fake-broadcast engine to pick a random product for the fake
-    'someone just claimed X for free' announcement.
-    """
-    try:
-        from database import (get_connection, is_product_hidden,
-                              get_product)
-        conn = get_connection(); c = conn.cursor()
-        c.execute("SELECT product_id FROM product_free_claim WHERE enabled=1")
-        raw = [int(r["product_id"]) for r in (c.fetchall() or [])]
-        conn.close()
-    except Exception:
-        return []
-    out = []
-    for pid in raw:
-        try:
-            p = get_product(pid)
-            if not p: continue
-            if int(p["stock"] or 0) <= 0: continue
-            try:
-                if is_product_hidden(pid): continue
-            except Exception: pass
-            out.append(pid)
-        except Exception:
-            pass
-    return out
-
-
 def is_type_enabled(type_key):
     """
     Check if a specific broadcast type is enabled.
@@ -386,7 +355,6 @@ def is_type_enabled(type_key):
         "tier":     SETTING_TYPE_TIER,
         "stock":    SETTING_TYPE_STOCK,
         "discount": SETTING_TYPE_DISCOUNT,
-        "freeclaim": SETTING_TYPE_FREECLAIM,  # 🆕 v110
     }
     key = setting_map.get(type_key)
     if not key:
@@ -555,27 +523,18 @@ async def run_fake_broadcast(bot, force_type=None):
         "referral": 20,
         "tier":     10,
         "discount":  5,
-        # 🆕 v110: fake free-via-referrals claims. Only shown when there's at
-        # least one enabled + in-stock free-claim product; auto-eligibility
-        # filter happens below in the availability check.
-        "freeclaim": 15,
     }
 
     if is_test:
         # Test mode — use force_type directly, no enable-check needed
         chosen_type = force_type
     else:
-        # 🆕 v110: also skip 'freeclaim' if no eligible product available
-        freeclaim_ready = bool(_get_freeclaim_broadcastable_products())
         available_types = []
         weights = []
         for ttype, weight in type_weights.items():
-            if not is_type_enabled(ttype):
-                continue
-            if ttype == "freeclaim" and not freeclaim_ready:
-                continue
-            available_types.append(ttype)
-            weights.append(weight)
+            if is_type_enabled(ttype):
+                available_types.append(ttype)
+                weights.append(weight)
 
         if not available_types:
             logger.info("[FakeBroadcast] All types disabled — nothing to send.")
@@ -619,56 +578,6 @@ async def run_fake_broadcast(bot, force_type=None):
         if new_price >= old_price:
             new_price = round(old_price - 0.5, 1)
         msg = make_discount_msg(product_name, old_price, new_price)
-
-    elif chosen_type == "freeclaim":
-        # 🆕 v110: Fake free-via-referrals claim broadcast.
-        # Picks a random enabled+in-stock free-claim product, renders the
-        # per-product custom template (or per-product picked template, or
-        # global) with a masked fake username, then routes through the
-        # normal broadcast_store_message so the per-product `fc_btn_<pid>`
-        # button (text + premium emoji + size + color) is attached.
-        try:
-            eligible = _get_freeclaim_broadcastable_products()
-            if not eligible:
-                logger.info("[FakeBroadcast] freeclaim: no eligible product — skip")
-                return None, 0, 0
-            fc_pid = random.choice(eligible)
-            from database import get_product_free_config as _gpfc, get_product as _gp
-            fc_prod = _gp(fc_pid)
-            fc_cfg = _gpfc(fc_pid) or {}
-            fc_pname = (dict(fc_prod).get("name", "product") if fc_prod else "product")
-            try:
-                from templates_bundle import build_free_claim_message
-            except Exception:
-                from handlers_free_claim import build_free_claim_message
-            fc_msg = build_free_claim_message(
-                user_name=user,
-                product_name=fc_pname,
-                refs_used=int(fc_cfg.get("required_refs") or 5),
-                tpl_index=(int(fc_cfg.get("tpl_index"))
-                           if fc_cfg.get("tpl_index") is not None else -1),
-                custom_text=fc_cfg.get("custom_text") or "",
-                shop_name=None,  # auto SHOP_NAME
-            )
-            # Route through broadcast_store_message so fc_btn_<pid> styled
-            # button (color, emoji, size) is attached to the fake claim.
-            try:
-                from handlers_free_claim import fc_btn_has_custom as _fcb
-                _use_key = f"fc_btn_{fc_pid}" if _fcb(fc_pid) else None
-            except Exception:
-                _use_key = None
-            success = await broadcast_store_message(
-                bot, fc_msg, pid=fc_pid,
-                tpl_id=_use_key,
-                btn_key=(None if _use_key else "sb_buy_generic"),
-            )
-            fail = 0  # broadcast_store_message returns sent count only
-            _log_broadcast("freeclaim", fc_msg, success)
-            logger.info(f"[FakeBroadcast] Done freeclaim — ✅ {success} sent")
-            return chosen_type, success, fail
-        except Exception as _e:
-            logger.exception(f"[FakeBroadcast] freeclaim failed: {_e}")
-            return None, 0, 0
 
     if not msg:
         return None, 0, 0
@@ -1617,7 +1526,6 @@ async def fake_broadcast_panel_callback(update, context):
     t_tier     = is_type_enabled("tier")
     t_discount = is_type_enabled("discount")
     t_stock    = is_type_enabled("stock")
-    t_freeclaim = is_type_enabled("freeclaim")  # 🆕 v110
 
     # ── Get user counts ──
     try:
@@ -1649,8 +1557,7 @@ async def fake_broadcast_panel_callback(update, context):
         f"  {_toggle_icon(t_referral)} Fake Referrals\n"
         f"  {_toggle_icon(t_tier)} Tier Upgrades\n"
         f"  {_toggle_icon(t_discount)} Discount Alerts\n"
-        f"  {_toggle_icon(t_stock)} Real Stock Alerts *(auto)*\n"
-        f"  {_toggle_icon(t_freeclaim)} Fake Free-Claims *(uses per-product fc button)*\n\n"
+        f"  {_toggle_icon(t_stock)} Real Stock Alerts *(auto)*\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📋 *How it works:*\n"
         f"• Fake msgs fire every {min_m}–{max_m} min randomly\n"
@@ -1675,10 +1582,6 @@ async def fake_broadcast_panel_callback(update, context):
         [
             InlineKeyboardButton(f"{_toggle_icon(t_discount)} Discounts", callback_data="fbc_type_discount"),
             InlineKeyboardButton(f"{_toggle_icon(t_stock)} Stock Alerts", callback_data="fbc_type_stock"),
-        ],
-        # 🆕 v110: Fake Free-Claims toggle
-        [
-            InlineKeyboardButton(f"{_toggle_icon(t_freeclaim)} Fake Free-Claims", callback_data="fbc_type_freeclaim"),
         ],
         [InlineKeyboardButton("━━━━━ Settings ━━━━━", callback_data="fbc_noop")],
         [
@@ -1760,7 +1663,6 @@ _TYPE_MAP = {
     "tier":     SETTING_TYPE_TIER,
     "discount": SETTING_TYPE_DISCOUNT,
     "stock":    SETTING_TYPE_STOCK,
-    "freeclaim": SETTING_TYPE_FREECLAIM,  # 🆕 v110
 }
 
 _TYPE_LABELS = {
@@ -1770,7 +1672,6 @@ _TYPE_LABELS = {
     "tier":     "Tier Upgrades",
     "discount": "Discount Alerts",
     "stock":    "Real Stock Alerts",
-    "freeclaim": "Fake Free-Claims",  # 🆕 v110
 }
 
 

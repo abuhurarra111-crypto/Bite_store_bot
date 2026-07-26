@@ -930,15 +930,7 @@ class MMOStoreAdapter(SupplierAdapterBase):
 
     def create_order(self, remote_id, quantity):
         """MMOStore POST /api/v1/orders {product_id, qty, currency, reserve}.
-
-        🔧 v111 defensive parser:
-        - MMOStore normally returns ``data.accounts`` as a list, but some
-          products/versions may return a single string or richer dict objects.
-        - Never iterate a string character-by-character (that can inflate one
-          account into many fake "items").
-        - Preserve Outlook-style extra fields (refresh_token/client_id/etc.)
-          instead of collapsing dicts to only email|password.
-        """
+        Documented response: {ok: true, data: {order_id, items:[...]}} """
         body = {"product_id": str(remote_id), "qty": int(quantity),
                 "currency": "USD", "reserve": False}
         r = self._post("/api/v1/orders", body, timeout=45)
@@ -950,87 +942,28 @@ class MMOStoreAdapter(SupplierAdapterBase):
             return {"ok": False, "error": f"bad_response_{r.status_code}",
                     "items": [], "raw": r.text[:500]}
         if not j.get("ok"):
-            err = j.get("error") or j.get("message") or f"HTTP {r.status_code}"
-            if isinstance(err, dict):
-                err = err.get("message") or err.get("code") or json.dumps(err, ensure_ascii=False)
-            return {"ok": False, "error": str(err), "items": [], "raw": j}
-
+            return {"ok": False,
+                    "error": j.get("error") or j.get("message") or f"HTTP {r.status_code}",
+                    "items": [], "raw": j}
         data = j.get("data") or {}
-        raw_items = data.get("items")
-        if raw_items is None:
-            raw_items = data.get("accounts")
-        if raw_items is None:
-            raw_items = data.get("account")
-
-        def _as_list(value):
-            """Return a real list of account objects/strings without char-splitting."""
-            if value is None:
-                return []
-            if isinstance(value, list):
-                return value
-            if isinstance(value, tuple):
-                return list(value)
-            if isinstance(value, dict):
-                # Some APIs wrap the actual array one level deeper.
-                for k in ("items", "accounts", "data", "list", "results"):
-                    nested = value.get(k)
-                    if isinstance(nested, (list, tuple)):
-                        return list(nested)
-                return [value]
-            if isinstance(value, str):
-                txt = value.strip()
-                if not txt:
-                    return []
-                # If supplier ever returns JSON as a string, decode it first.
-                if txt[:1] in ("[", "{"):
-                    try:
-                        return _as_list(json.loads(txt))
-                    except Exception:
-                        pass
-                # One account per line is common in stock APIs. Keep a single
-                # pipe-separated account as one item.
-                lines = [ln.strip() for ln in re.split(r"[\r\n]+", txt) if ln.strip()]
-                return lines if len(lines) > 1 else [txt]
-            return [str(value)]
-
-        def _normalise_item(it):
-            if isinstance(it, dict):
-                # Prefer supplier-provided full credential strings when present.
-                for k in ("credentials", "credential", "account", "data",
-                          "content", "text", "value"):
-                    v = it.get(k)
-                    if v:
-                        return str(v).strip()
-
-                # Otherwise compose a compact, copy-paste friendly line while
-                # preserving Outlook/Microsoft token fields if supplied.
-                email = (it.get("email") or it.get("mail") or it.get("username")
-                         or it.get("user") or it.get("login") or "")
-                password = it.get("password") or it.get("pass") or it.get("pwd") or ""
-                ordered_keys = [
-                    ("email", email),
-                    ("password", password),
-                    ("twofa", it.get("twofa") or it.get("2fa") or it.get("otp_secret")),
-                    ("refresh_token", it.get("refresh_token") or it.get("refreshToken") or it.get("token")),
-                    ("client_id", it.get("client_id") or it.get("clientId")),
-                    ("recovery", it.get("recovery") or it.get("recovery_email")),
-                ]
-                parts = [str(v).strip() for _, v in ordered_keys if v]
-                if parts:
-                    return "|".join(parts)
-                return json.dumps(it, ensure_ascii=False)
-            return str(it).strip()
-
+        items_raw = data.get("items") or data.get("accounts") or []
         items = []
-        for it in _as_list(raw_items):
-            norm = _normalise_item(it)
-            if norm:
-                items.append(norm)
-
+        for it in items_raw:
+            if isinstance(it, dict):
+                em = it.get("email") or it.get("username") or it.get("user") or ""
+                pw = it.get("password") or it.get("pass") or ""
+                if em and pw:
+                    items.append(f"{em}|{pw}")
+                elif it.get("credentials"):
+                    items.append(str(it["credentials"]))
+                elif it.get("account"):
+                    items.append(str(it["account"]))
+                else:
+                    items.append(json.dumps(it, ensure_ascii=False))
+            else:
+                items.append(str(it))
         return {"ok": True, "items": items,
                 "order_id": str(data.get("order_id") or ""),
-                "supplier_qty": data.get("qty"),
-                "total_usd": data.get("total_usd"),
                 "raw": j}
 
 
@@ -2511,76 +2444,6 @@ def log_ext_order(internal_order_id, supplier_id, ext_product_id, quantity,
     conn.commit(); conn.close()
 
 
-def _supplier_order_qty_from_name(order):
-    """Extract the exact customer-requested quantity for supplier API.
-
-    🔧 v111 rule:
-      • Buy Now stores order_qty=1 → supplier API gets qty=1.
-      • Buy Multiple stores order_qty=user typed qty → supplier API gets that.
-      • Old DB rows without order_qty fall back to legacy "Product × 5" suffix.
-    """
-    try:
-        oq = order.get('order_qty') if hasattr(order, 'get') else order['order_qty']
-        if oq is not None and str(oq).strip() != '':
-            return max(1, min(100, int(oq)))
-    except Exception:
-        pass
-    try:
-        name = str((order.get('product_name') if hasattr(order, 'get') else order['product_name']) or '')
-        m = re.search(r'(?:×|x)\s*(\d+)\s*$', name, flags=re.I)
-        if m:
-            return max(1, min(100, int(m.group(1))))
-    except Exception:
-        pass
-    return 1
-
-
-def _claim_supplier_order_for_processing(order_id):
-    """Atomic idempotency guard for supplier fulfillment.
-
-    Payment verification can be triggered by a background job + user retry at
-    nearly the same time. Without a claim step, the same paid order can call the
-    supplier API more than once. We mark the order as supplier_processing under
-    BEGIN IMMEDIATE before the API call; any duplicate worker sees that status
-    and exits without buying/delivering extra stock.
-    """
-    conn = get_connection(); c = conn.cursor()
-    try:
-        c.execute("BEGIN IMMEDIATE")
-        c.execute("SELECT status FROM orders WHERE id=?", (int(order_id),))
-        row = c.fetchone()
-        if not row:
-            conn.rollback(); conn.close(); return False, "missing"
-        status = str(row['status'] or '')
-        if status in ("delivered", "supplier_processing", "refunded", "cancelled", "rejected"):
-            conn.rollback(); conn.close(); return False, status
-        c.execute("UPDATE orders SET status='supplier_processing' WHERE id=?", (int(order_id),))
-        conn.commit(); conn.close(); return True, "claimed"
-    except Exception as e:
-        try: conn.rollback()
-        except Exception: pass
-        try: conn.close()
-        except Exception: pass
-        logger.warning(f"[router] supplier order claim failed for #{order_id}: {e}")
-        return False, "claim_failed"
-
-
-def _supplier_result_cost_usd(result, fallback):
-    """Prefer supplier-returned total_usd when present; otherwise use fallback."""
-    for v in (result.get('total_usd'),):
-        if v is not None and v != "":
-            try: return float(v)
-            except (TypeError, ValueError): pass
-    raw = result.get('raw')
-    data = raw.get('data') if isinstance(raw, dict) else {}
-    for key in ("total_usd", "totalUsd", "amount_usd", "cost_usd"):
-        v = data.get(key) if isinstance(data, dict) else None
-        if v is not None and v != "":
-            try: return float(v)
-            except (TypeError, ValueError): pass
-    return float(fallback or 0)
-
-
 async def route_order_to_supplier(bot, order):
     """CORE ROUTER. Called by fulfill_paid_product_order for supplier-linked
     products. Steps:
@@ -2622,14 +2485,15 @@ async def route_order_to_supplier(bot, order):
         logger.error(f"[router] order #{order['id']}: broken link ep={ep} sup={sup}")
         return False
 
-    # Detect exactly what the customer paid for (single buy = 1; bulk = suffix).
-    qty = _supplier_order_qty_from_name(order)
-
-    # Idempotency/concurrency guard: claim before calling the paid supplier API.
-    claimed, claim_reason = _claim_supplier_order_for_processing(order['id'])
-    if not claimed:
-        logger.info(f"[router] order #{order['id']} already handled/locked: {claim_reason}")
-        return True
+    # Detect quantity from stored order
+    qty = 1
+    try:
+        # If admin/customer used bulk quantity, stored in product_name suffix like "×5"
+        import re as _re
+        m = _re.search(r"×\s*(\d+)", order.get('product_name') or "")
+        if m: qty = int(m.group(1))
+    except Exception:
+        pass
 
     ad = get_adapter_for_supplier(sup)
     if not ad:
@@ -2643,71 +2507,33 @@ async def route_order_to_supplier(bot, order):
         result = await asyncio.to_thread(ad.create_order, ep['remote_id'], qty)
     except Exception as e:
         logger.error(f"[router] adapter crashed: {e}")
-        log_ext_order(
-            internal_order_id=order['id'], supplier_id=ext_sid, ext_product_id=ext_pid,
-            quantity=qty, cost_usd=(ep.get('cost_usd') or 0) * qty,
-            remote_order_id="", status="failed", raw_response="", error_msg=f"Adapter error: {e}")
         await _refund_and_notify(bot, order, sup, ep, qty, f"Adapter error: {e}")
         return True
 
-    raw_dump = json.dumps(result.get('raw', ''), default=str, ensure_ascii=False)[:5000]
-    supplier_cost = _supplier_result_cost_usd(result, (ep.get('cost_usd') or 0) * qty)
+    log_ext_order(
+        internal_order_id=order['id'],
+        supplier_id=ext_sid, ext_product_id=ext_pid,
+        quantity=qty, cost_usd=(ep.get('cost_usd') or 0) * qty,
+        remote_order_id=result.get('order_id', ''),
+        status=("delivered" if result.get('ok') else "failed"),
+        raw_response=json.dumps(result.get('raw', ''), default=str)[:5000],
+        error_msg=result.get('error', ''),
+    )
 
     if not result.get('ok'):
         logger.error(f"[router] supplier returned error: {result.get('error')}")
-        log_ext_order(
-            internal_order_id=order['id'], supplier_id=ext_sid, ext_product_id=ext_pid,
-            quantity=qty, cost_usd=supplier_cost,
-            remote_order_id=result.get('order_id', ''), status="failed",
-            raw_response=raw_dump, error_msg=result.get('error', 'unknown'))
         await _refund_and_notify(bot, order, sup, ep, qty, result.get('error', 'unknown'))
         return True
 
-    items = [str(x).strip() for x in (result.get('items') or []) if str(x).strip()]
-    received_count = len(items)
-    if received_count < qty:
-        reason = f"Supplier returned only {received_count}/{qty} item(s)."
-        log_ext_order(
-            internal_order_id=order['id'], supplier_id=ext_sid, ext_product_id=ext_pid,
-            quantity=qty, cost_usd=supplier_cost,
-            remote_order_id=result.get('order_id', ''), status="failed",
-            raw_response=raw_dump, error_msg=reason)
-        await _refund_and_notify(bot, order, sup, ep, qty, reason)
+    items = result.get('items') or []
+    if not items:
+        await _refund_and_notify(bot, order, sup, ep, qty,
+                                  "Supplier returned no items.")
         return True
 
-    # 🔧 v111 over-delivery guard (MMOStore Outlook case): if customer ordered 1
-    # but supplier response contains 10 accounts, do NOT pass the free extras to
-    # the customer. Deliver exactly the paid quantity and alert admin below.
-    overdelivery_note = ""
-    if received_count > qty:
-        overdelivery_note = (f"⚠️ Supplier returned {received_count} item(s) for qty {qty}; "
-                             f"customer delivery was capped to {qty}.")
-        logger.warning(f"[router] order #{order['id']}: {overdelivery_note}")
-        items = items[:qty]
-
-    log_ext_order(
-        internal_order_id=order['id'], supplier_id=ext_sid, ext_product_id=ext_pid,
-        quantity=qty, cost_usd=supplier_cost,
-        remote_order_id=result.get('order_id', ''), status="delivered",
-        raw_response=raw_dump, error_msg=overdelivery_note)
-
     # ✅ Success — build v83 FORMAT-AWARE byte-perfect delivery
-    # Use per-product delivery_format (auto-detected or admin-overridden). If an
-    # older DB row still has an auto-detected default (email_pass) but the latest
-    # detector now recognises this product as Outlook/email_multi, heal it at
-    # delivery time without requiring a manual re-sync.
+    # Use per-product delivery_format (auto-detected or admin-overridden)
     fmt_key = ep.get('delivery_format') or 'email_pass'
-    try:
-        if int(ep.get('format_detected') or 0) == 1:
-            raw_meta = json.loads(ep.get('raw_json') or '{}') if ep.get('raw_json') else {}
-            merged = dict(raw_meta) if isinstance(raw_meta, dict) else {}
-            merged['name'] = ep.get('name') or merged.get('name') or ''
-            merged['description'] = ep.get('description') or merged.get('description') or ''
-            auto_fmt = detect_product_format(merged)
-            if auto_fmt and auto_fmt != fmt_key:
-                fmt_key = auto_fmt
-    except Exception:
-        pass
     delivery_text = render_v83_delivery(
         items, fmt_key=fmt_key,
         product_name=order.get('product_name') or ep['name'],
@@ -2743,22 +2569,19 @@ async def route_order_to_supplier(bot, order):
     except Exception as e:
         logger.error(f"[router] failed to send delivery to user: {e}")
 
-    # 🆕 v108: Bulk delivery as .txt file — threshold changed to >= 10
-    # (was > 3). For 1-9 accounts, only compact text message is sent.
-    # For 10+, both compact text preview + .txt file are sent.
-    # File naming: bite_store_order_{id}_{qty}accounts.txt (branded)
-    if len(items) >= 10:
+    # Bulk delivery as .txt file (>3 items)
+    if len(items) > 3:
         try:
             import io
             buf = io.BytesIO()
             for i, item in enumerate(items, 1):
                 buf.write(f"{i}. {item}\n".encode('utf-8'))
             buf.seek(0)
-            fname = f"bite_store_order_{order['id']}_{len(items)}accounts.txt"
+            fname = f"order_{order['id']}_{len(items)}accounts.txt"
             await bot.send_document(
                 order['user_id'],
                 document=buf, filename=fname,
-                caption=f"📎 *{len(items)} accounts — Order #{order['id']}*\n"
+                caption=f"📄 *{len(items)} accounts for Order #{order['id']}*\n"
                         f"_Each line = 1 account. Save this file safely._",
                 parse_mode="Markdown"
             )
@@ -2768,8 +2591,6 @@ async def route_order_to_supplier(bot, order):
     # Notify admin
     try:
         from config import ADMIN_ID as _AID
-        sold_usd = float(order.get('price') or 0)
-        warn_line = f"\n\n⚠️ {escape_md(overdelivery_note)}" if overdelivery_note else ""
         await bot.send_message(_AID,
             f"✅ *Supplier order delivered!*\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -2777,9 +2598,8 @@ async def route_order_to_supplier(bot, order):
             f"🏬 Supplier: {sup['name']}\n"
             f"📦 Product: {escape_md(ep['name'][:40])}\n"
             f"🔢 Qty: {qty}\n"
-            f"💰 Cost: `${supplier_cost:.2f}` · Sold: `{fmt_price(sold_usd)}`\n"
-            f"📈 Profit: `{fmt_price(sold_usd - supplier_cost)}`"
-            f"{warn_line}",
+            f"💰 Cost: `${(ep.get('cost_usd') or 0)*qty:.2f}` · Sold: `{fmt_price(order['price'])}`\n"
+            f"📈 Profit: `{fmt_price(order['price'] - (ep.get('cost_usd') or 0)*qty)}`",
             parse_mode="Markdown")
     except Exception:
         pass
@@ -3014,42 +2834,10 @@ def _detect_from_keywords(name, description):
         return "email_pass_recovery"
 
     # 🆕 v87: token indicators (email_multi — 4+ fields) — highest priority
-    # 🆕 v108: expanded — also catch pipe-separated 4-field patterns like
-    # "Email | Pass | Refresh_token | Client_id" (MMOStore Outlook Mail style)
-    _multi_signals = [
-        "refresh token", "refresh tokens", "refresh_token",
-        "client id", "client_id", "client secret", "access token",
-        "batteries", "msaartifacts", "msa artifacts",
-        # 4-field pipe patterns (any combo mentioning tokens)
-        "email | pass | refresh", "email|pass|refresh",
-        "email | pass | token", "email|pass|token",
-        "email|password|refresh", "email | password | refresh",
-    ]
-    if any(kw in text for kw in _multi_signals):
+    if any(kw in text for kw in ["refresh token", "refresh tokens",
+                                   "client id", "client_id",
+                                   "client secret", "access token"]):
         return "email_multi"
-
-    # 🆕 v108: NAME-based email_multi hint — some suppliers deliver Outlook
-    # Mail / Hotmail with the 4-field format but description is too short to
-    # detect. Treat these product types as email_multi by default (admin can
-    # override via Change Format button if wrong).
-    _name_multi_signals = ("outlook mail", "hotmail account", "hotmail mail",
-                            "microsoft account with token", "office365 account",
-                            "outlook account")
-    if any(sig in name_lc for sig in _name_multi_signals):
-        return "email_multi"
-
-    # 🆕 v108: also detect by counting pipe-separated fields in a "Format:" line
-    # e.g. "Format: Email | Pass | Refresh_token | Client_id" → 4 fields → email_multi
-    import re as _re_multi
-    _fmt_line = _re_multi.search(
-        r"(?:^|\n)\s*(?:format|định dạng)\s*:\s*([^\n\r<]+)",
-        text, flags=_re_multi.IGNORECASE
-    )
-    if _fmt_line:
-        _line = _fmt_line.group(1).strip()
-        _parts = [p.strip() for p in _line.split("|") if p.strip()]
-        if len(_parts) >= 4:
-            return "email_multi"
 
     # 🆕 v87: STRONG format signal — if description explicitly shows
     #   "Format: xxx@yyy | password" or "Email | Password", treat as email_pass
@@ -3199,112 +2987,82 @@ def render_v83_delivery(items, fmt_key, product_name="Product",
                         order_id=0, product_id=0):
     """v83: Format-aware BYTE-PERFECT delivery renderer.
 
-    🆕 v108: switched from per-field breakdown to COMPACT single-line format
-    (matches MMOStore's proven pattern users know):
-        📝 Format: Email | Pass | Refresh_token | Client_id
-        1. email@x.com|pass|token|clientid
-        2. email2@x.com|pass2|token2|clientid2
-    Reasoning: users copy-paste into automation tools that expect one line
-    per account. Per-field breakdown was pretty but broke batch imports.
-
-    Threshold for .txt file changed to >= 10 (was > 3) — for 1-9 accounts,
-    only text is sent. For 10+, both text preview + .txt file.
-
     Uses HTML mode with <code> wrapping (v72 pattern) → every char preserved.
+    Each item gets a beautiful per-field breakdown based on format definition.
     """
     from utils import html_code_block, html_escape_plain
     fmt = V83_FORMATS.get(fmt_key) or V83_FORMATS["raw_text"]
     fields = fmt.get("fields", ["content"])
     icons  = fmt.get("icons", ["📝 Content"])
     sep    = fmt.get("separator", "")
-    fmt_label = fmt.get("label", "📝 Raw Text")
-
-    # 🆕 v108: build human-readable format spec like "Email | Pass | Token"
-    if sep and len(fields) > 1:
-        # Prettify each field name for display
-        _pretty = {
-            "email": "Email", "password": "Pass", "twofa": "2FA",
-            "recovery": "Recovery", "refresh_token": "Refresh_token",
-            "client_id": "Client_id", "link": "Link", "code": "Code",
-            "content": "Content",
-        }
-        fmt_spec = " | ".join(_pretty.get(f, f.replace("_", " ").title()) for f in fields)
-    else:
-        fmt_spec = fields[0].title() if fields else "Content"
 
     safe_items = [str(x) for x in (items or []) if x is not None and str(x) != ""]
     if not safe_items:
         return "⚠️ Delivery is empty. Please contact admin."
 
     total = len(safe_items)
+    blocks = []
 
-    # 🆕 v108: BULK (>= 10 items) — .txt file follows
-    # 🆕 v109: For email_multi (Outlook/Hotmail/M365 with refresh_token etc.),
-    # SKIP the account preview entirely in text — send ONLY header + format
-    # spec + "file attached" note. User's real MMOStore purchase behavior:
-    # when qty >= 10, customers want a clean text summary and rely on the
-    # .txt file for the actual data (easier to copy-paste to automation).
-    # For other formats (email_pass, redeem_link, code, etc.), keep the
-    # v108 compact preview (first 3 + ⋯ + last 2) as before.
-    if total >= 10:
-        if fmt_key == "email_multi":
-            # 🆕 v109: NO account preview — pure header + file note
-            return (
-                "[[HTML]]🎉 <b>Bite Store Delivery</b>\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                f"📦 <b>Product:</b> {_render_delivery_product_name(product_name)}\n"
-                f"🧾 <b>Order ID:</b> <code>#{order_id}</code>\n"
-                f"📊 <b>Delivered accounts:</b> <b>{total}</b>\n\n"
-                f"📝 <b>Format:</b> {html_escape_plain(fmt_spec)}\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"📎 <b>Full list of {total} accounts attached below as .txt file.</b>\n"
-                "💡 <b>Tip:</b> Save the file securely — each line = 1 account.\n"
-                "🙏 Thank you for shopping with <b>Bite Store</b>!"
-            )
-
-        # Non email_multi bulk: keep v108 preview (first 3 + ⋯ + last 2)
-        preview_lines = []
-        preview_lines.append(f"<b>1.</b> {html_code_block(safe_items[0])}")
-        preview_lines.append(f"<b>2.</b> {html_code_block(safe_items[1])}")
-        preview_lines.append(f"<b>3.</b> {html_code_block(safe_items[2])}")
-        preview_lines.append("⋯")
-        preview_lines.append(f"<b>{total-1}.</b> {html_code_block(safe_items[-2])}")
-        preview_lines.append(f"<b>{total}.</b> {html_code_block(safe_items[-1])}")
-        preview_block = "\n\n".join(preview_lines)
-
-        return (
-            "[[HTML]]🎉 <b>Bite Store Delivery</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"📦 <b>Product:</b> {_render_delivery_product_name(product_name)}\n"
-            f"🧾 <b>Order ID:</b> <code>#{order_id}</code>\n"
-            f"📊 <b>Delivered accounts:</b> <b>{total}</b>\n\n"
-            f"📝 <b>Format:</b> {html_escape_plain(fmt_spec)}\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"{preview_block}\n\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"📎 <b>Full list of {total} accounts attached below as .txt file.</b>\n"
-            "💡 <b>Tip:</b> Save the file securely — each line = 1 account.\n"
-            "🙏 Thank you for shopping with <b>Bite Store</b>!"
-        )
-
-    # 🆕 v108: SMALL orders (1-9 items) — compact numbered list, NO file
-    account_lines = []
     for idx, raw_item in enumerate(safe_items, start=1):
-        account_lines.append(f"<b>{idx}.</b> {html_code_block(raw_item)}")
-    joined = "\n\n".join(account_lines)
+        # Item header
+        header_prefix = f"🧾 <b>Item:</b> {idx}/{total}\n" if total > 1 else ""
 
+        # Split & render per-field
+        body_parts = []
+        if sep and len(fields) > 1:
+            parts = _split_item(raw_item, sep)
+            for i, val in enumerate(parts):
+                if i < len(icons):
+                    label = icons[i]
+                else:
+                    label = f"📎 Field {i+1}"
+                body_parts.append(f"<b>{label}:</b>\n{html_code_block(val)}")
+            # If supplier sent MORE parts than expected, show extras verbatim
+            if len(parts) > len(fields):
+                extras = parts[len(fields):]
+                for j, ex in enumerate(extras):
+                    body_parts.append(f"<b>📎 Extra {j+1}:</b>\n{html_code_block(ex)}")
+        else:
+            # Single-field format (link, code, raw)
+            label = icons[0] if icons else "📝 Content"
+            body_parts.append(f"<b>{label}:</b>\n{html_code_block(raw_item)}")
+
+        body = "\n\n".join(body_parts)
+        block = (
+            f"{header_prefix}"
+            f"🧩 <b>Format:</b> {fmt['label']}\n\n"
+            f"{body}"
+        )
+        blocks.append(block)
+
+    # For BULK (>3 items), show a compact summary + hint that .txt file included
+    if total > 3:
+        # Show first + last + note that all are in the .txt file
+        summary_block = (
+            f"📦 <b>{total} accounts delivered!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"{blocks[0]}\n\n"
+            f"⋯\n\n"
+            f"{blocks[-1]}\n\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📄 <b>All {total} accounts are also in the .txt file below.</b>\n"
+            f"<i>Format: {fmt['label']}</i>"
+        )
+        return "[[HTML]]🎉 <b>Bite Store Delivery</b>\n━━━━━━━━━━━━━━━━━━━━\n" + \
+               f"📦 <b>Product:</b> {_render_delivery_product_name(product_name)}\n\n" + \
+               summary_block + \
+               "\n\n🙏 Thank you for shopping with <b>Bite Store</b>!"
+
+    # For 1–3 items, show each item's block fully
+    joined = "\n\n━━━━━━━━━━━━━━━━━━━━\n\n".join(blocks)
     return (
         "[[HTML]]🎉 <b>Bite Store Delivery</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"📦 <b>Product:</b> {_render_delivery_product_name(product_name)}\n"
-        f"🧾 <b>Order ID:</b> <code>#{order_id}</code>\n"
-        f"📊 <b>Delivered accounts:</b> <b>{total}</b>\n\n"
-        f"📝 <b>Format:</b> {html_escape_plain(fmt_spec)}\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📦 <b>Product:</b> {_render_delivery_product_name(product_name)}\n\n"
         f"{joined}\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "💡 <b>Tip:</b> Save these details securely. Reply to your Order History message if you need help.\n"
-        "🙏 Thank you for shopping with <b>Bite Store</b>!"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💡 <b>Tip:</b> Save these details securely. Reply to your Order History message if you need help.\n"
+        f"🙏 Thank you for shopping with <b>Bite Store</b>!"
     )
 
 

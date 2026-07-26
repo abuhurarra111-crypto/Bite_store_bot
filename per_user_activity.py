@@ -117,7 +117,6 @@ S_TYPE_NEWUSER   = "pua_type_newuser"     # 🎉 New user joined
 S_TYPE_FLASH     = "pua_type_flash"       # 🛍 Flash sale (real events only)
 S_TYPE_NEWPROD   = "pua_type_newprod"     # 🆕 New product (real + fake)
 S_TYPE_PRICE_DROP= "pua_type_price_drop"  # 🆕 v66 Big Price Drop alerts
-S_TYPE_FREECLAIM = "pua_type_freeclaim"   # 🆕 v110 Fake Free-via-Referrals claim broadcasts
 
 
 def _g(key, default=""):
@@ -188,7 +187,6 @@ def is_type_on(type_key):
         "flash":     S_TYPE_FLASH,
         "newprod":   S_TYPE_NEWPROD,
         "price_drop": S_TYPE_PRICE_DROP,   # 🆕 v66
-        "freeclaim":  S_TYPE_FREECLAIM,    # 🆕 v110
     }
     k = key_map.get(type_key)
     return _g(k, "1") == "1" if k else False
@@ -429,12 +427,6 @@ async def build_fake_message(bot, user_id: int) -> tuple[str, any]:
         ("newuser",   4),
         ("newprod",   2),
         ("price_drop", 5),   # 🆕 v66 — Big Price Drop alerts
-        # 🆕 v110: Fake Free-via-Referrals claim announcements. Only fires
-        # when at least one product has Free-via-Referrals enabled + in stock.
-        # Uses the product's per-product broadcast button (fc_btn_<pid>)
-        # + admin's custom text / picked template, so it looks IDENTICAL to
-        # a real claim broadcast (color, emoji, size, all preserved).
-        ("freeclaim", 8),
         # NOTE: 'flash' is NOT in the random pool — flash sale only broadcasts
         # for REAL flash sales the admin sets (its toggle gates that broadcast).
     ]
@@ -566,80 +558,6 @@ async def build_fake_message(bot, user_id: int) -> tuple[str, any]:
             f"⏳ *{more} more* invites to unlock next reward milestone!\n\n"
             f"🚀 _Invite friends and earn free balance!_"
         ), None
-
-    # ── FREECLAIM (🆕 v110) ──────────────────────
-    # Fake "someone just claimed X for free" broadcast for products that
-    # have Free-via-Referrals enabled. Uses the product's own custom text /
-    # template + the per-product fc_btn_<pid> styled button (color, emoji,
-    # size) so it's IDENTICAL to a real free-claim broadcast.
-    if chosen == "freeclaim":
-        try:
-            from database import (get_connection as _gc,
-                                  get_product as _gp,
-                                  is_product_hidden as _iph,
-                                  get_product_free_config as _gpfc)
-            # Find eligible products (free-claim ON + in-stock + not hidden)
-            conn = _gc(); c = conn.cursor()
-            c.execute("SELECT product_id FROM product_free_claim WHERE enabled=1")
-            raw = [int(r["product_id"]) for r in (c.fetchall() or [])]
-            conn.close()
-            eligible = []
-            for _pid in raw:
-                try:
-                    _pp = _gp(_pid)
-                    if not _pp: continue
-                    if int(_pp["stock"] or 0) <= 0: continue
-                    try:
-                        if _iph(_pid): continue
-                    except Exception: pass
-                    eligible.append((_pid, _pp))
-                except Exception:
-                    pass
-            if not eligible:
-                # nothing to fake — degrade gracefully
-                chosen = "referral"
-            else:
-                fc_pid, fc_prod = random.choice(eligible)
-                fc_cfg = _gpfc(fc_pid) or {}
-                fc_pname = dict(fc_prod).get("name", "product")
-                try:
-                    from templates_bundle import build_free_claim_message
-                except Exception:
-                    from handlers_free_claim import build_free_claim_message
-                fc_msg = build_free_claim_message(
-                    user_name=masked,
-                    product_name=fc_pname,
-                    refs_used=int(fc_cfg.get("required_refs") or 5),
-                    tpl_index=(int(fc_cfg.get("tpl_index"))
-                               if fc_cfg.get("tpl_index") is not None else -1),
-                    custom_text=fc_cfg.get("custom_text") or "",
-                    shop_name=None,
-                )
-                # Build button — use per-product fc_btn_<pid> if custom set
-                try:
-                    bot_me = await bot.get_me()
-                    bot_username = bot_me.username
-                except Exception:
-                    bot_username = "BiteStoreBot"
-                deep_link = f"https://t.me/{bot_username}?start=buy_{fc_pid}"
-                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-                try:
-                    from handlers_free_claim import fc_btn_has_custom as _fcb
-                    from button_system import build_button as _bb, wrap_button as _wrap
-                    _key = f"fc_btn_{fc_pid}" if _fcb(fc_pid) else "sb_buy_generic"
-                    _btn = _bb(_key, "🛒 Buy Now", url=deep_link)
-                    try:
-                        _btn = _wrap(_key, _btn)
-                    except Exception:
-                        pass
-                except Exception:
-                    _btn = InlineKeyboardButton("🛒 Buy Now", url=deep_link)
-                kb = InlineKeyboardMarkup([[_btn]])
-                if fc_msg:
-                    return fc_msg, kb
-        except Exception as _e:
-            logger.exception(f"[PUA] freeclaim branch failed: {_e}")
-            chosen = "referral"
 
     # ── DISCOUNT ─────────────────────────────────
     if chosen == "discount":
