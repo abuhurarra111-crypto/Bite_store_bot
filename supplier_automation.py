@@ -2,9 +2,9 @@
 # ⚡ v85: SUPPLIER AUTOMATION — 4 features in one module
 # ============================================================
 #   1. Auto-Sync every 30s (price+stock for synced_to_shop=1 products)
-#      + every 5 min supplier balance refresh
+#      (v117: automatic balance polling removed by owner request)
 #   2. Bulk Sync — 1 tap to sync all products of a supplier
-#   3. Low Balance Alerts — DM admin when supplier balance < threshold
+#   3. Low Balance Alerts — checked only after manual refresh or supplier order
 #      (per-supplier threshold, default $3.00)
 #   4. Finance Dashboard — revenue / cost / profit for
 #      today / yesterday / week / month, per-supplier breakdown
@@ -213,52 +213,16 @@ async def autosync_price_stock_job(context):
 
 
 async def autosync_balance_job(context):
+    """v117: automatic balance polling disabled by owner request.
+
+    Balance is refreshed only when:
+      1) admin taps Supplier → Test & Refresh, or
+      2) a successful customer order spends that supplier's wallet.
+
+    This prevents temporary API failures/rate limits from causing confusing
+    balance changes and avoids unnecessary supplier API requests.
     """
-    Runs every 5 minutes.
-    Refreshes each supplier's balance_usd and triggers low-balance
-    alerts if the balance dropped below its threshold.
-
-    🆕 v89: re-entrancy protected + async adapter wraps.
-    """
-    global _AUTOSYNC_BAL_RUNNING
-    if _AUTOSYNC_BAL_RUNNING:
-        logger.warning("[AutoSync-Bal] previous balance tick still running — skipping")
-        return
-    if not is_autosync_enabled():
-        return
-    _AUTOSYNC_BAL_RUNNING = True
-    try:
-        try:
-            from ext_suppliers import (
-                list_suppliers, get_adapter_for_supplier, update_supplier,
-            )
-            from async_adapter_helpers import async_fetch_balance
-        except Exception as e:
-            logger.debug(f"[AutoSync-Bal] import fail: {e}")
-            return
-
-        for sup in list_suppliers(include_disabled=False):
-            try:
-                ad = get_adapter_for_supplier(sup)
-                if not ad:
-                    continue
-                # ASYNC — event loop stays responsive
-                bal = await async_fetch_balance(ad)
-                if bal is None:
-                    continue
-                bal_f = float(bal)
-                update_supplier(sup["id"],
-                                 balance_usd=bal_f,
-                                 balance_updated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-
-                # Low balance check
-                threshold = float(sup.get("low_bal_threshold") or DEFAULT_LOW_BAL_THRESHOLD)
-                if threshold > 0 and bal_f < threshold:
-                    await _maybe_send_low_balance_alert(context, sup, bal_f, threshold)
-            except Exception as e:
-                logger.warning(f"[AutoSync-Bal] sup#{sup['id']} error: {e}")
-    finally:
-        _AUTOSYNC_BAL_RUNNING = False
+    return
 
 
 # ============================================================
@@ -883,9 +847,10 @@ async def admin_autosync_callback(update, context):
         f"Status: {'🟢 ON' if on else '🔴 OFF'}\n"
         f"Live products being synced: *{live}*\n\n"
         f"🔄 Price + Stock refresh: every *{AUTOSYNC_PRICE_STOCK_INTERVAL}s*\n"
-        f"💰 Balance + Low-bal alerts: every *{AUTOSYNC_BALANCE_INTERVAL // 60} min*\n\n"
+        f"💰 Balance refresh: *Manual Test & Refresh + after successful orders only*\n"
+        f"⚠️ Low-bal alerts: *checked only after balance refresh events*\n\n"
         "_Only products you've explicitly tapped 🔄 Sync-to-Shop are auto-synced. "
-        "The rest stay dormant so API calls stay lean._"
+        "Balance is not polled in background anymore, so supplier APIs stay lean._"
     )
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(

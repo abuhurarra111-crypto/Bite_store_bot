@@ -609,9 +609,10 @@ async def post_init(app):
     except Exception as e:
         print(f'[Activity] Restore error: {e}')
 
-    # 🆕 v85: Supplier auto-sync jobs
+    # 🆕 v85/v117: Supplier auto-sync jobs
     #   - Every 30s: price+stock refresh for products with synced_to_shop=1
-    #   - Every 5min: supplier balance refresh + low-balance alerts
+    #   - Balance polling job REMOVED by owner request. Balance updates only on
+    #     manual Test & Refresh or after a successful customer order.
     try:
         if app.job_queue:
             app.job_queue.run_repeating(
@@ -620,14 +621,8 @@ async def post_init(app):
                 first=45,
                 name="v85_autosync_price_stock",
             )
-            app.job_queue.run_repeating(
-                autosync_balance_job,
-                interval=AUTOSYNC_BALANCE_INTERVAL,
-                first=60,
-                name="v85_autosync_balance",
-            )
-            print(f"[v85 AutoSync] price+stock every {AUTOSYNC_PRICE_STOCK_INTERVAL}s, "
-                  f"balance+low-bal every {AUTOSYNC_BALANCE_INTERVAL // 60} min")
+            print(f"[v85 AutoSync] price+stock every {AUTOSYNC_PRICE_STOCK_INTERVAL}s; "
+                  "balance manual/order-only")
     except Exception as e:
         print(f'[v85 AutoSync] Job setup error: {e}')
 

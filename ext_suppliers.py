@@ -838,6 +838,15 @@ class CanbosoAdapter(SupplierAdapterBase):
     DOCS_URL = "https://canboso.com/api/swagger"
     AUTH_STYLE = "x_api_key"
 
+    def _params(self):
+        """Canboso Buyer API docs require ?key=API_KEY on GET endpoints.
+
+        We keep X-API-Key header from AUTH_STYLE for backwards compatibility,
+        but also send the documented query key so balance/products do not fail
+        and accidentally look like $0.
+        """
+        return {"key": self.api_key}
+
     def test_connection(self):
         """🐛 v99 FIX: also fetch wallet balance so admin dashboard shows
         the correct Canboso balance (was always $0 because 'balance' key
@@ -853,20 +862,22 @@ class CanbosoAdapter(SupplierAdapterBase):
             products = j.get("products", [])
             req = j.get("requester", {})
 
-            # 🆕 v99: piggyback the balance call so callers get it in `extra`
-            # Best-effort — never break test_connection if balance fetch fails.
-            balance = 0.0
+            # 🆕 v99: piggyback the balance call so callers get it in `extra`.
+            # v116: if balance endpoint is temporarily unavailable, return None
+            # instead of 0 so DB does not overwrite a real balance with $0.
+            balance = None
             try:
                 balance = self.fetch_balance()
             except Exception:
-                pass
+                balance = None
+            bal_txt = f"${balance:.2f}" if balance is not None else "not refreshed"
 
             return True, (f"Connected as {req.get('name', 'unknown')}. "
-                          f"{len(products)} products. Balance: ${balance:.2f}"), {
+                          f"{len(products)} products. Balance: {bal_txt}"), {
                 "count": len(products),
                 "user": req.get("name", ""),
                 "wallet_currency": j.get("walletCurrency", "USD"),
-                "balance": balance,   # 🆕 v99: consumed by ext_sup_test_callback → update_supplier
+                "balance": balance,
             }
         except Exception as e:
             return False, f"Parse error: {e}", {}
@@ -890,12 +901,13 @@ class CanbosoAdapter(SupplierAdapterBase):
         """
         r = self._get("/api/telegram-buyer/balance")
         if r is None or r.status_code != 200:
-            return 0.0
+            return None
         try:
             j = r.json()
             if not j.get("success"):
-                return 0.0
-            # Prefer USD, fallback to raw balance
+                return None
+            # Prefer USD, fallback to raw balance. A real 0.0 is valid, but
+            # missing/unparseable fields are treated as unknown (None).
             for k in ("balanceUsd", "balance", "usdtBalance"):
                 v = j.get(k)
                 if v is not None:
@@ -903,9 +915,9 @@ class CanbosoAdapter(SupplierAdapterBase):
                         return float(v)
                     except (TypeError, ValueError):
                         continue
-            return 0.0
+            return None
         except Exception:
-            return 0.0
+            return None
 
     def fetch_products(self):
         r = self._get("/api/telegram-buyer/products")
@@ -975,9 +987,20 @@ class CanbosoAdapter(SupplierAdapterBase):
         official field plus legacy fallbacks, and include `key` in the JSON body
         as documented (header is still sent for backwards compatibility).
         """
+        import uuid as _uu
         qty = max(1, min(100, int(quantity or 1)))
         body = {"key": self.api_key, "product_id": str(remote_id), "quantity": qty}
-        r = self._post("/api/telegram-buyer/purchase", body, timeout=45)
+        # Canboso v1.4 docs require Idempotency-Key for purchases. The router
+        # already prevents duplicate paid calls; this header satisfies the API
+        # and keeps a retry from creating a second supplier order.
+        url = self.base_url + "/api/telegram-buyer/purchase"
+        headers = self._headers()
+        headers["Idempotency-Key"] = f"bite-{remote_id}-{qty}-{_uu.uuid4().hex[:16]}"
+        try:
+            r = requests.post(url, headers=headers, params=self._params(), json=body, timeout=45)
+        except Exception as e:
+            logger.warning(f"[canboso] create_order network err: {e}")
+            r = None
         if r is None:
             return {"ok": False, "error": "network_error", "items": [], "raw": None}
         try:
@@ -1383,13 +1406,11 @@ def sync_supplier_products(supplier_id):
             n += 1
         except Exception as e:
             logger.warning(f"[sync_supplier_products] upsert failed for {p.get('remote_id')}: {e}")
-    # Also refresh balance
+    # v117 policy: product import/sync must NOT refresh supplier balance.
+    # Balance is updated only on manual Test & Refresh or after a successful
+    # customer order for that supplier. Still record product-sync time.
     try:
-        bal = ad.fetch_balance()
-        if bal is not None:
-            update_supplier(supplier_id, balance_usd=float(bal),
-                            balance_updated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            last_sync_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        update_supplier(supplier_id, last_sync_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     except Exception:
         pass
     # 🆕 v83: Auto-detect format for each imported product (does NOT sync to shop)
@@ -1709,10 +1730,10 @@ async def ext_sup_api_key_received(update, context):
         base_url=wiz["base_url"], api_key=key,
         docs_url=wiz["docs_url"],
     )
-    bal = extra.get("balance", 0)
+    bal = extra.get("balance")
     count = extra.get("count", 0)
     user = extra.get("user", "")
-    if bal:
+    if bal is not None:
         update_supplier(sid, balance_usd=float(bal),
                         balance_updated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     context.user_data.pop("ext_sup_wizard", None)
@@ -1721,7 +1742,7 @@ async def ext_sup_api_key_received(update, context):
         f"✅ *{cls.LABEL} added! (#{sid})*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"👤 Account: `{escape_md(user)}`\n"
-        f"💰 Balance: `${bal:.2f}`\n"
+        f"💰 Balance: `{('$' + format(float(bal), '.2f')) if bal is not None else 'not refreshed'}`\n"
         f"📦 Products available: *{count}*\n\n"
         f"_Now tap below to import products._"
     )
@@ -1763,20 +1784,9 @@ async def ext_sup_view_callback(update, context):
     cls = ADAPTERS.get(s["adapter"])
     label = cls.LABEL if cls else s["adapter"]
 
-    # 🆕 v101: silent balance refresh — never breaks the view if it fails
-    try:
-        ad = get_adapter_for_supplier(s)
-        if ad:
-            from async_adapter_helpers import async_fetch_balance
-            live_bal = await async_fetch_balance(ad)
-            if live_bal is not None:
-                bal_f = float(live_bal)
-                update_supplier(sid, balance_usd=bal_f,
-                                balance_updated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-                # Re-read so the display below is fresh
-                s = get_supplier(sid) or s
-    except Exception as _e:
-        logger.debug(f"[ext_sup_view] auto-refresh balance failed for sid={sid}: {_e}")
+    # v117 policy: opening supplier panel must NOT call supplier balance API.
+    # It shows the last known balance. Admin can tap "Test & Refresh" for a
+    # manual balance update.
 
     conn = get_connection(); c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM ext_products WHERE supplier_id=?", (sid,))
@@ -1798,9 +1808,10 @@ async def ext_sup_view_callback(update, context):
         f"🌐 URL: `{escape_md(s['base_url'])}`\n"
         f"🔑 Key: `{escape_md(s['api_key'][:10])}...`\n"
         f"📊 Status: {status}\n"
-        f"💰 Balance: `${bal:.2f}` (updated: {bal_when})\n"
+        f"💰 Balance: `${bal:.2f}` (last known: {bal_when})\n"
         f"⚠️ Low-bal threshold: `${s.get('low_bal_threshold', 5):.2f}`\n"
-        f"🔄 Auto sync: `{auto_label}`\n"
+        f"🔄 Product auto-sync: `{auto_label}`\n"
+        f"💡 Balance refresh: `manual Test & Refresh + after orders only`\n"
         f"📦 Products: *{active_p}/{total_p}* active\n"
     )
     kb = InlineKeyboardMarkup([
@@ -1842,9 +1853,21 @@ async def ext_sup_test_callback(update, context):
     from async_adapter_helpers import async_test_connection
     ok, msg, extra = await async_test_connection(ad)
     if ok:
-        bal = extra.get("balance", 0)
-        update_supplier(sid, balance_usd=float(bal),
-                        balance_updated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        bal = extra.get("balance")
+        if bal is not None:
+            bal_f = float(bal)
+            update_supplier(sid, balance_usd=bal_f,
+                            balance_updated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            # Low-balance alert now only happens after manual refresh or after
+            # an order — never from background polling.
+            try:
+                from supplier_automation import _maybe_send_low_balance_alert, DEFAULT_LOW_BAL_THRESHOLD
+                fresh_sup = get_supplier(sid) or s
+                threshold = float(fresh_sup.get("low_bal_threshold") or DEFAULT_LOW_BAL_THRESHOLD)
+                if threshold > 0 and bal_f < threshold:
+                    await _maybe_send_low_balance_alert(context, fresh_sup, bal_f, threshold)
+            except Exception as _lb_err:
+                logger.debug(f"[ext_sup_test] low-balance alert check failed: {_lb_err}")
     alert = f"{'✅' if ok else '❌'} {msg}"
     await q.answer(alert[:190], show_alert=True)
     # Refresh view
@@ -3086,15 +3109,26 @@ async def route_order_to_supplier(bot, order):
     except Exception:
         pass
 
-    # Refresh supplier balance in background (best effort)
-    # 🆕 v89: async wrap so this doesn't block the event loop
+    # v117 policy: after a successful customer order, refresh ONLY this
+    # supplier's balance (because this order just spent supplier wallet).
+    # No periodic/global balance polling is used anymore.
     try:
         if ad is not None:
             from async_adapter_helpers import async_fetch_balance
             bal = await async_fetch_balance(ad)
             if bal is not None:
-                update_supplier(ext_sid, balance_usd=float(bal),
+                bal_f = float(bal)
+                update_supplier(ext_sid, balance_usd=bal_f,
                                 balance_updated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                try:
+                    from types import SimpleNamespace
+                    from supplier_automation import _maybe_send_low_balance_alert, DEFAULT_LOW_BAL_THRESHOLD
+                    fresh_sup = get_supplier(ext_sid) or sup
+                    threshold = float(fresh_sup.get("low_bal_threshold") or DEFAULT_LOW_BAL_THRESHOLD)
+                    if threshold > 0 and bal_f < threshold:
+                        await _maybe_send_low_balance_alert(SimpleNamespace(bot=bot), fresh_sup, bal_f, threshold)
+                except Exception as _lb_err:
+                    logger.debug(f"[router] low-balance alert check failed: {_lb_err}")
     except Exception:
         pass
 
