@@ -68,8 +68,13 @@ def _pkr_rate():
     except: return float(USD_TO_PKR_RATE)
 
 
-def _amounts_match(actual, expected, tolerance=0.05):
-    """Return True only when a paid/entered USD amount matches expected price."""
+def _amounts_match(actual, expected, tolerance=0.005):
+    """Return True only when a paid/entered USD amount matches expected price.
+
+    🔧 v111: Old tolerance was $0.05, which is too loose for micro-priced
+    products like Outlook Mail ($0.038). Use half-cent tolerance so a 1-account
+    payment can never validate a higher-quantity order.
+    """
     try:
         return abs(float(actual) - float(expected)) <= float(tolerance)
     except Exception:
@@ -459,7 +464,7 @@ async def _start_binance_note_order(update, context, *, is_points=False, product
             return
         pname = p['name'] if int(qty) == 1 else f"{p['name']} × {int(qty)}"
         creds = context.user_data.pop('order_creds', '')
-        oid = create_order(u.id, un, p['id'], pname, amount, 'binance', note_id, amount, 'USDT', 'product', creds)
+        oid = create_order(u.id, un, p['id'], pname, amount, 'binance', note_id, amount, 'USDT', 'product', creds, qty=int(qty))
         title = f"📦 Product: *{_fmt_msg_name(pname)}*"
 
     set_order_payment_note(oid, note_id)
@@ -534,6 +539,7 @@ async def _start_binance_order_id_flow(update, context, *, is_points, product, q
         oid = create_order(
             u.id, un, p["id"], pname,
             amount, "binance", "", amount, "USDT", "product", creds,
+            qty=int(qty),
         )
         title = f"📦 *{_fmt_msg_name(pname)}*"
 
@@ -601,7 +607,7 @@ async def binance_order_id_received(update, context):
         return True
 
     # 🆕 v64: also short-circuit if status indicates payment already accepted
-    if o["status"] in ("paid_pending_delivery", "completed"):
+    if o["status"] in ("paid_pending_delivery", "completed", "supplier_processing"):
         for k in ["binance_step", "binance_order_id", "binance_amount",
                   "binance_product_id", "binance_qty", "points_mode",
                   "pending_order_id", "points_amount", "order_qty"]:
@@ -647,7 +653,7 @@ async def binance_order_id_received(update, context):
     # 🆕 v64: Re-check order status AFTER verify call too — background job could
     # have delivered it during this verify call's seconds-long window.
     fresh = get_order(oid)
-    if fresh and fresh["status"] in ("delivered", "paid_pending_delivery", "completed"):
+    if fresh and fresh["status"] in ("delivered", "paid_pending_delivery", "completed", "supplier_processing"):
         try: await processing_msg.delete()
         except Exception: pass
         for k in ["binance_step", "binance_order_id", "binance_amount",
@@ -792,7 +798,7 @@ async def verify_order_id_callback(update, context):
     # 🆕 v64: After the verify call, re-check status — background job may have
     # already delivered this order during our verify window.
     fresh2 = get_order(oid)
-    if fresh2 and fresh2["status"] in ("delivered", "paid_pending_delivery", "completed"):
+    if fresh2 and fresh2["status"] in ("delivered", "paid_pending_delivery", "completed", "supplier_processing"):
         for k in ["binance_step", "binance_order_id", "pending_order_id"]:
             context.user_data.pop(k, None)
         try:
@@ -961,6 +967,16 @@ async def fulfill_paid_product_order(bot, order, paid_amount=None, *, payment_me
 
     if not order or not order['product_id']:
         return False
+
+    # 🔧 v111 idempotency guard: if a payment checker/user retry calls the
+    # fulfillment function again after delivery/cancel/refund, never deliver or
+    # buy supplier stock a second time.
+    try:
+        _st = str(order.get('status') or '')
+        if _st in ('delivered', 'supplier_processing', 'refunded', 'cancelled', 'rejected'):
+            return True
+    except Exception:
+        pass
 
     # 🆕 v82: External Supplier ROUTER — if the product is linked to a REST-API
     # supplier, delegate delivery to the router. Router handles: adapter call,
@@ -1398,7 +1414,7 @@ async def binance_amount_received(update, context):
             return True
         amt = expected_amount
         creds = context.user_data.pop('order_creds', '')
-        oid = create_order(u.id, un, p['id'], pname, order_total, 'binance', sender_name, expected_amount, 'USDT', 'product', creds)
+        oid = create_order(u.id, un, p['id'], pname, order_total, 'binance', sender_name, expected_amount, 'USDT', 'product', creds, qty=qty)
         context.user_data['order_qty'] = qty
 
     update_order_status(oid, 'binance_waiting')
@@ -1698,7 +1714,7 @@ async def _start_ep_flow(update, context, is_points=False):
     total_rs = total_usd * _pkr_rate()
 
     creds = context.user_data.pop('order_creds', '')
-    oid = create_order(u.id, un, p['id'], pname, total_usd, 'easypaisa', '', total_rs, 'PKR', 'product', creds)
+    oid = create_order(u.id, un, p['id'], pname, total_usd, 'easypaisa', '', total_rs, 'PKR', 'product', creds, qty=qty)
     update_order_status(oid, 'screenshot_sent')
 
     context.user_data['ep_product_id'] = pid
@@ -1757,7 +1773,7 @@ async def _start_jc_manual(update, context):
 
     # Create pending order RIGHT NOW
     creds = context.user_data.pop('order_creds', '')
-    oid = create_order(u.id, un, p['id'], pname, total_usd, 'jazzcash', '', total_rs, 'PKR', 'product', creds)
+    oid = create_order(u.id, un, p['id'], pname, total_usd, 'jazzcash', '', total_rs, 'PKR', 'product', creds, qty=qty)
     update_order_status(oid, 'screenshot_sent')
 
     context.user_data['jc_product_id'] = pid
@@ -3582,7 +3598,7 @@ async def pay_pts_callback(update, context):
     un = q.from_user.username or q.from_user.first_name
     creds = context.user_data.pop('order_creds', '')
     pname = p['name'] if qty == 1 else f"{p['name']} × {qty}"
-    oid = create_order(q.from_user.id, un, pid, pname, cost_usd, 'wallet', '', cost_pts, 'PTS', 'product', creds)
+    oid = create_order(q.from_user.id, un, pid, pname, cost_usd, 'wallet', '', cost_pts, 'PTS', 'product', creds, qty=qty)
     
     await _safe_send(q, context,
         f"✅ *Wallet Payment Successful!*\n"

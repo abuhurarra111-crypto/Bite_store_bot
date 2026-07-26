@@ -930,7 +930,15 @@ class MMOStoreAdapter(SupplierAdapterBase):
 
     def create_order(self, remote_id, quantity):
         """MMOStore POST /api/v1/orders {product_id, qty, currency, reserve}.
-        Documented response: {ok: true, data: {order_id, items:[...]}} """
+
+        🔧 v111 defensive parser:
+        - MMOStore normally returns ``data.accounts`` as a list, but some
+          products/versions may return a single string or richer dict objects.
+        - Never iterate a string character-by-character (that can inflate one
+          account into many fake "items").
+        - Preserve Outlook-style extra fields (refresh_token/client_id/etc.)
+          instead of collapsing dicts to only email|password.
+        """
         body = {"product_id": str(remote_id), "qty": int(quantity),
                 "currency": "USD", "reserve": False}
         r = self._post("/api/v1/orders", body, timeout=45)
@@ -942,28 +950,87 @@ class MMOStoreAdapter(SupplierAdapterBase):
             return {"ok": False, "error": f"bad_response_{r.status_code}",
                     "items": [], "raw": r.text[:500]}
         if not j.get("ok"):
-            return {"ok": False,
-                    "error": j.get("error") or j.get("message") or f"HTTP {r.status_code}",
-                    "items": [], "raw": j}
+            err = j.get("error") or j.get("message") or f"HTTP {r.status_code}"
+            if isinstance(err, dict):
+                err = err.get("message") or err.get("code") or json.dumps(err, ensure_ascii=False)
+            return {"ok": False, "error": str(err), "items": [], "raw": j}
+
         data = j.get("data") or {}
-        items_raw = data.get("items") or data.get("accounts") or []
-        items = []
-        for it in items_raw:
+        raw_items = data.get("items")
+        if raw_items is None:
+            raw_items = data.get("accounts")
+        if raw_items is None:
+            raw_items = data.get("account")
+
+        def _as_list(value):
+            """Return a real list of account objects/strings without char-splitting."""
+            if value is None:
+                return []
+            if isinstance(value, list):
+                return value
+            if isinstance(value, tuple):
+                return list(value)
+            if isinstance(value, dict):
+                # Some APIs wrap the actual array one level deeper.
+                for k in ("items", "accounts", "data", "list", "results"):
+                    nested = value.get(k)
+                    if isinstance(nested, (list, tuple)):
+                        return list(nested)
+                return [value]
+            if isinstance(value, str):
+                txt = value.strip()
+                if not txt:
+                    return []
+                # If supplier ever returns JSON as a string, decode it first.
+                if txt[:1] in ("[", "{"):
+                    try:
+                        return _as_list(json.loads(txt))
+                    except Exception:
+                        pass
+                # One account per line is common in stock APIs. Keep a single
+                # pipe-separated account as one item.
+                lines = [ln.strip() for ln in re.split(r"[\r\n]+", txt) if ln.strip()]
+                return lines if len(lines) > 1 else [txt]
+            return [str(value)]
+
+        def _normalise_item(it):
             if isinstance(it, dict):
-                em = it.get("email") or it.get("username") or it.get("user") or ""
-                pw = it.get("password") or it.get("pass") or ""
-                if em and pw:
-                    items.append(f"{em}|{pw}")
-                elif it.get("credentials"):
-                    items.append(str(it["credentials"]))
-                elif it.get("account"):
-                    items.append(str(it["account"]))
-                else:
-                    items.append(json.dumps(it, ensure_ascii=False))
-            else:
-                items.append(str(it))
+                # Prefer supplier-provided full credential strings when present.
+                for k in ("credentials", "credential", "account", "data",
+                          "content", "text", "value"):
+                    v = it.get(k)
+                    if v:
+                        return str(v).strip()
+
+                # Otherwise compose a compact, copy-paste friendly line while
+                # preserving Outlook/Microsoft token fields if supplied.
+                email = (it.get("email") or it.get("mail") or it.get("username")
+                         or it.get("user") or it.get("login") or "")
+                password = it.get("password") or it.get("pass") or it.get("pwd") or ""
+                ordered_keys = [
+                    ("email", email),
+                    ("password", password),
+                    ("twofa", it.get("twofa") or it.get("2fa") or it.get("otp_secret")),
+                    ("refresh_token", it.get("refresh_token") or it.get("refreshToken") or it.get("token")),
+                    ("client_id", it.get("client_id") or it.get("clientId")),
+                    ("recovery", it.get("recovery") or it.get("recovery_email")),
+                ]
+                parts = [str(v).strip() for _, v in ordered_keys if v]
+                if parts:
+                    return "|".join(parts)
+                return json.dumps(it, ensure_ascii=False)
+            return str(it).strip()
+
+        items = []
+        for it in _as_list(raw_items):
+            norm = _normalise_item(it)
+            if norm:
+                items.append(norm)
+
         return {"ok": True, "items": items,
                 "order_id": str(data.get("order_id") or ""),
+                "supplier_qty": data.get("qty"),
+                "total_usd": data.get("total_usd"),
                 "raw": j}
 
 
@@ -2444,6 +2511,76 @@ def log_ext_order(internal_order_id, supplier_id, ext_product_id, quantity,
     conn.commit(); conn.close()
 
 
+def _supplier_order_qty_from_name(order):
+    """Extract the exact customer-requested quantity for supplier API.
+
+    🔧 v111 rule:
+      • Buy Now stores order_qty=1 → supplier API gets qty=1.
+      • Buy Multiple stores order_qty=user typed qty → supplier API gets that.
+      • Old DB rows without order_qty fall back to legacy "Product × 5" suffix.
+    """
+    try:
+        oq = order.get('order_qty') if hasattr(order, 'get') else order['order_qty']
+        if oq is not None and str(oq).strip() != '':
+            return max(1, min(100, int(oq)))
+    except Exception:
+        pass
+    try:
+        name = str((order.get('product_name') if hasattr(order, 'get') else order['product_name']) or '')
+        m = re.search(r'(?:×|x)\s*(\d+)\s*$', name, flags=re.I)
+        if m:
+            return max(1, min(100, int(m.group(1))))
+    except Exception:
+        pass
+    return 1
+
+
+def _claim_supplier_order_for_processing(order_id):
+    """Atomic idempotency guard for supplier fulfillment.
+
+    Payment verification can be triggered by a background job + user retry at
+    nearly the same time. Without a claim step, the same paid order can call the
+    supplier API more than once. We mark the order as supplier_processing under
+    BEGIN IMMEDIATE before the API call; any duplicate worker sees that status
+    and exits without buying/delivering extra stock.
+    """
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        c.execute("SELECT status FROM orders WHERE id=?", (int(order_id),))
+        row = c.fetchone()
+        if not row:
+            conn.rollback(); conn.close(); return False, "missing"
+        status = str(row['status'] or '')
+        if status in ("delivered", "supplier_processing", "refunded", "cancelled", "rejected"):
+            conn.rollback(); conn.close(); return False, status
+        c.execute("UPDATE orders SET status='supplier_processing' WHERE id=?", (int(order_id),))
+        conn.commit(); conn.close(); return True, "claimed"
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
+        logger.warning(f"[router] supplier order claim failed for #{order_id}: {e}")
+        return False, "claim_failed"
+
+
+def _supplier_result_cost_usd(result, fallback):
+    """Prefer supplier-returned total_usd when present; otherwise use fallback."""
+    for v in (result.get('total_usd'),):
+        if v is not None and v != "":
+            try: return float(v)
+            except (TypeError, ValueError): pass
+    raw = result.get('raw')
+    data = raw.get('data') if isinstance(raw, dict) else {}
+    for key in ("total_usd", "totalUsd", "amount_usd", "cost_usd"):
+        v = data.get(key) if isinstance(data, dict) else None
+        if v is not None and v != "":
+            try: return float(v)
+            except (TypeError, ValueError): pass
+    return float(fallback or 0)
+
+
 async def route_order_to_supplier(bot, order):
     """CORE ROUTER. Called by fulfill_paid_product_order for supplier-linked
     products. Steps:
@@ -2485,15 +2622,14 @@ async def route_order_to_supplier(bot, order):
         logger.error(f"[router] order #{order['id']}: broken link ep={ep} sup={sup}")
         return False
 
-    # Detect quantity from stored order
-    qty = 1
-    try:
-        # If admin/customer used bulk quantity, stored in product_name suffix like "×5"
-        import re as _re
-        m = _re.search(r"×\s*(\d+)", order.get('product_name') or "")
-        if m: qty = int(m.group(1))
-    except Exception:
-        pass
+    # Detect exactly what the customer paid for (single buy = 1; bulk = suffix).
+    qty = _supplier_order_qty_from_name(order)
+
+    # Idempotency/concurrency guard: claim before calling the paid supplier API.
+    claimed, claim_reason = _claim_supplier_order_for_processing(order['id'])
+    if not claimed:
+        logger.info(f"[router] order #{order['id']} already handled/locked: {claim_reason}")
+        return True
 
     ad = get_adapter_for_supplier(sup)
     if not ad:
@@ -2507,33 +2643,71 @@ async def route_order_to_supplier(bot, order):
         result = await asyncio.to_thread(ad.create_order, ep['remote_id'], qty)
     except Exception as e:
         logger.error(f"[router] adapter crashed: {e}")
+        log_ext_order(
+            internal_order_id=order['id'], supplier_id=ext_sid, ext_product_id=ext_pid,
+            quantity=qty, cost_usd=(ep.get('cost_usd') or 0) * qty,
+            remote_order_id="", status="failed", raw_response="", error_msg=f"Adapter error: {e}")
         await _refund_and_notify(bot, order, sup, ep, qty, f"Adapter error: {e}")
         return True
 
-    log_ext_order(
-        internal_order_id=order['id'],
-        supplier_id=ext_sid, ext_product_id=ext_pid,
-        quantity=qty, cost_usd=(ep.get('cost_usd') or 0) * qty,
-        remote_order_id=result.get('order_id', ''),
-        status=("delivered" if result.get('ok') else "failed"),
-        raw_response=json.dumps(result.get('raw', ''), default=str)[:5000],
-        error_msg=result.get('error', ''),
-    )
+    raw_dump = json.dumps(result.get('raw', ''), default=str, ensure_ascii=False)[:5000]
+    supplier_cost = _supplier_result_cost_usd(result, (ep.get('cost_usd') or 0) * qty)
 
     if not result.get('ok'):
         logger.error(f"[router] supplier returned error: {result.get('error')}")
+        log_ext_order(
+            internal_order_id=order['id'], supplier_id=ext_sid, ext_product_id=ext_pid,
+            quantity=qty, cost_usd=supplier_cost,
+            remote_order_id=result.get('order_id', ''), status="failed",
+            raw_response=raw_dump, error_msg=result.get('error', 'unknown'))
         await _refund_and_notify(bot, order, sup, ep, qty, result.get('error', 'unknown'))
         return True
 
-    items = result.get('items') or []
-    if not items:
-        await _refund_and_notify(bot, order, sup, ep, qty,
-                                  "Supplier returned no items.")
+    items = [str(x).strip() for x in (result.get('items') or []) if str(x).strip()]
+    received_count = len(items)
+    if received_count < qty:
+        reason = f"Supplier returned only {received_count}/{qty} item(s)."
+        log_ext_order(
+            internal_order_id=order['id'], supplier_id=ext_sid, ext_product_id=ext_pid,
+            quantity=qty, cost_usd=supplier_cost,
+            remote_order_id=result.get('order_id', ''), status="failed",
+            raw_response=raw_dump, error_msg=reason)
+        await _refund_and_notify(bot, order, sup, ep, qty, reason)
         return True
 
+    # 🔧 v111 over-delivery guard (MMOStore Outlook case): if customer ordered 1
+    # but supplier response contains 10 accounts, do NOT pass the free extras to
+    # the customer. Deliver exactly the paid quantity and alert admin below.
+    overdelivery_note = ""
+    if received_count > qty:
+        overdelivery_note = (f"⚠️ Supplier returned {received_count} item(s) for qty {qty}; "
+                             f"customer delivery was capped to {qty}.")
+        logger.warning(f"[router] order #{order['id']}: {overdelivery_note}")
+        items = items[:qty]
+
+    log_ext_order(
+        internal_order_id=order['id'], supplier_id=ext_sid, ext_product_id=ext_pid,
+        quantity=qty, cost_usd=supplier_cost,
+        remote_order_id=result.get('order_id', ''), status="delivered",
+        raw_response=raw_dump, error_msg=overdelivery_note)
+
     # ✅ Success — build v83 FORMAT-AWARE byte-perfect delivery
-    # Use per-product delivery_format (auto-detected or admin-overridden)
+    # Use per-product delivery_format (auto-detected or admin-overridden). If an
+    # older DB row still has an auto-detected default (email_pass) but the latest
+    # detector now recognises this product as Outlook/email_multi, heal it at
+    # delivery time without requiring a manual re-sync.
     fmt_key = ep.get('delivery_format') or 'email_pass'
+    try:
+        if int(ep.get('format_detected') or 0) == 1:
+            raw_meta = json.loads(ep.get('raw_json') or '{}') if ep.get('raw_json') else {}
+            merged = dict(raw_meta) if isinstance(raw_meta, dict) else {}
+            merged['name'] = ep.get('name') or merged.get('name') or ''
+            merged['description'] = ep.get('description') or merged.get('description') or ''
+            auto_fmt = detect_product_format(merged)
+            if auto_fmt and auto_fmt != fmt_key:
+                fmt_key = auto_fmt
+    except Exception:
+        pass
     delivery_text = render_v83_delivery(
         items, fmt_key=fmt_key,
         product_name=order.get('product_name') or ep['name'],
@@ -2594,6 +2768,8 @@ async def route_order_to_supplier(bot, order):
     # Notify admin
     try:
         from config import ADMIN_ID as _AID
+        sold_usd = float(order.get('price') or 0)
+        warn_line = f"\n\n⚠️ {escape_md(overdelivery_note)}" if overdelivery_note else ""
         await bot.send_message(_AID,
             f"✅ *Supplier order delivered!*\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -2601,8 +2777,9 @@ async def route_order_to_supplier(bot, order):
             f"🏬 Supplier: {sup['name']}\n"
             f"📦 Product: {escape_md(ep['name'][:40])}\n"
             f"🔢 Qty: {qty}\n"
-            f"💰 Cost: `${(ep.get('cost_usd') or 0)*qty:.2f}` · Sold: `{fmt_price(order['price'])}`\n"
-            f"📈 Profit: `{fmt_price(order['price'] - (ep.get('cost_usd') or 0)*qty)}`",
+            f"💰 Cost: `${supplier_cost:.2f}` · Sold: `{fmt_price(sold_usd)}`\n"
+            f"📈 Profit: `{fmt_price(sold_usd - supplier_cost)}`"
+            f"{warn_line}",
             parse_mode="Markdown")
     except Exception:
         pass
