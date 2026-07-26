@@ -837,6 +837,10 @@ class CanbosoAdapter(SupplierAdapterBase):
     DEFAULT_BASE_URL = "https://canboso.com"
     DOCS_URL = "https://canboso.com/api/swagger"
     AUTH_STYLE = "x_api_key"
+    # v118: Canboso Swagger changed to Buyer API v2.1.0.
+    PRODUCTS_PATH = "/api/v2/telegram-buyer/products"
+    BALANCE_PATH = "/api/v2/telegram-buyer/balance"
+    PURCHASE_PATH = "/api/v2/telegram-buyer/purchase"
 
     def _params(self):
         """Canboso Buyer API docs require ?key=API_KEY on GET endpoints.
@@ -851,10 +855,20 @@ class CanbosoAdapter(SupplierAdapterBase):
         """🐛 v99 FIX: also fetch wallet balance so admin dashboard shows
         the correct Canboso balance (was always $0 because 'balance' key
         was missing from the extra dict — callers do `extra.get("balance", 0)`)."""
-        r = self._get("/api/telegram-buyer/products")
+        r = self._get(self.PRODUCTS_PATH)
         if r is None or r.status_code != 200:
-            code = r.status_code if r else "no-response"
-            return False, f"HTTP {code}", {}
+            code = r.status_code if r is not None else "no-response"
+            detail = ""
+            if r is not None:
+                try:
+                    jerr = r.json()
+                    detail = jerr.get("message") or jerr.get("code") or ""
+                    retry_after = r.headers.get("Retry-After") if hasattr(r, "headers") else None
+                    if retry_after:
+                        detail = (detail + f" (retry after {retry_after}s)").strip()
+                except Exception:
+                    detail = (getattr(r, "text", "") or "")[:120]
+            return False, f"HTTP {code}" + (f": {detail}" if detail else ""), {}
         try:
             j = r.json()
             if not j.get("success"):
@@ -899,7 +913,7 @@ class CanbosoAdapter(SupplierAdapterBase):
         Old code returned 0.0 as a placeholder — admin dashboard always
         showed Canboso balance as $0.00. Fixed by hitting the real endpoint.
         """
-        r = self._get("/api/telegram-buyer/balance")
+        r = self._get(self.BALANCE_PATH)
         if r is None or r.status_code != 200:
             return None
         try:
@@ -920,8 +934,8 @@ class CanbosoAdapter(SupplierAdapterBase):
             return None
 
     def fetch_products(self):
-        r = self._get("/api/telegram-buyer/products")
-        if not r or r.status_code != 200:
+        r = self._get(self.PRODUCTS_PATH)
+        if r is None or r.status_code != 200:
             return []
         try:
             j = r.json()
@@ -993,7 +1007,7 @@ class CanbosoAdapter(SupplierAdapterBase):
         # Canboso v1.4 docs require Idempotency-Key for purchases. The router
         # already prevents duplicate paid calls; this header satisfies the API
         # and keeps a retry from creating a second supplier order.
-        url = self.base_url + "/api/telegram-buyer/purchase"
+        url = self.base_url + self.PURCHASE_PATH
         headers = self._headers()
         headers["Idempotency-Key"] = f"bite-{remote_id}-{qty}-{_uu.uuid4().hex[:16]}"
         try:
