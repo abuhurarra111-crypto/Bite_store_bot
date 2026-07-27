@@ -290,8 +290,28 @@ def capture_user_text(message):
     )
     # Promote to HTML form ONLY when premium emoji is present so we don't
     # break admin's existing Markdown-style messages.
-    if html_v and has_custom_emoji:
-        return "[[HTML]]" + html_v
+    if has_custom_emoji:
+        if html_v:
+            return "[[HTML]]" + html_v
+        # Fallback for tests/clients where text_html_urled is unavailable:
+        # wrap custom emoji fallback chars with <tg-emoji>. Offsets are usually
+        # UTF-16 in Telegram, but for leading emojis/text-input use this safe
+        # best-effort rather than dropping the premium emoji entirely.
+        try:
+            pieces = []
+            last = 0
+            for e in sorted([x for x in entities if getattr(x, 'type', '') == 'custom_emoji'], key=lambda x: getattr(x, 'offset', 0)):
+                off = int(getattr(e, 'offset', 0) or 0)
+                ln = int(getattr(e, 'length', 1) or 1)
+                eid = getattr(e, 'custom_emoji_id', '') or ''
+                pieces.append(_html.escape(raw[last:off]))
+                fallback = _html.escape(raw[off:off+ln] or '⭐')
+                pieces.append(f'<tg-emoji emoji-id="{_html.escape(str(eid))}">{fallback}</tg-emoji>')
+                last = off + ln
+            pieces.append(_html.escape(raw[last:]))
+            return "[[HTML]]" + ''.join(pieces)
+        except Exception:
+            return raw
     # If admin used formatting but no premium emoji, keep plain text so the
     # rest of the code path (which expects Markdown) still works.
     return raw
@@ -572,10 +592,15 @@ def safe_edit_or_send(query, text, **kwargs):
 
 
 async def notify_admin(bot, message, parse_mode="Markdown"):
-    """🆕 Send a tracking message to admin (silent if fails)"""
+    """Send a tracking message to admin (silent if fails).
+
+    v132: premium-emoji safe globally — if message contains [[HTML]]/<tg-emoji>,
+    smart_text_and_mode automatically switches to HTML so premium emojis render.
+    """
     try:
         from config import ADMIN_ID
-        await bot.send_message(ADMIN_ID, message, parse_mode=parse_mode)
+        send_text, send_mode = smart_text_and_mode(message, parse_mode)
+        await bot.send_message(ADMIN_ID, send_text, parse_mode=send_mode)
     except Exception:
         pass
 

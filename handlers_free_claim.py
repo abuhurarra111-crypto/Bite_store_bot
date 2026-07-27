@@ -979,8 +979,12 @@ async def freeclaim_share_callback(update: Update, context: ContextTypes.DEFAULT
         "📊 You have: *{available}*\n\n"
         "🔗 *Tap below to copy your unique link:*\n"
         "`{link}`\n\n"
-        "📲 *Use the buttons below to share on any platform.*\n"
-        "_When someone clicks your link and signs up, you instantly get *1 referral point*!_\n\n"
+        "📲 *Use the buttons below to share on any platform.*\n\n"
+        "📌 *How product referrals count:*\n"
+        "1️⃣ Friend must open this product link and press */start*.\n"
+        "2️⃣ If Force Join is enabled, they must verify required channel/group.\n"
+        "3️⃣ This product referral is approved when they open *Shop* or stay active for about 30 seconds.\n"
+        "4️⃣ Product referrals count only for this product's free claim progress.\n\n"
         "📝 *Preview of share message:*\n"
         "```\n{preview}\n```")
     cfg = get_product_free_config(pid)

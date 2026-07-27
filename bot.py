@@ -295,7 +295,9 @@ from handlers_referral_admin import (
     refadm_ban_start, refadm_unban_start, refadm_adjust_start,
     refadm_tpl_panel_callback, refadm_tpl_edit_callback,
     refadm_tpl_ready_callback, refadm_tpl_apply_callback,
-    refadm_tpl_reset_all_callback,
+    refadm_tpl_preview_callback, refadm_tpl_reset_all_callback,
+    refadm_btn_panel_callback, refadm_btn_edit_callback,
+    refadm_btn_color_callback, refadm_btn_reset_callback,
     refadm_text_received,
 )
 # 🆕 v50: Screen-by-Screen Editor (drill-down user-side editor)
@@ -337,6 +339,15 @@ async def _flush_tier_notifications(context):
 
 async def handle_text(update, context):
     t = update.message.text
+    # v132: global premium-emoji capture foundation. Any future text-input
+    # feature can read these keys instead of losing premium emoji entities.
+    try:
+        from utils import capture_user_text, has_premium_emoji
+        context.user_data['_last_captured_text'] = capture_user_text(update.message) or (t or '')
+        context.user_data['_last_has_premium_emoji'] = bool(has_premium_emoji(update.message))
+    except Exception:
+        context.user_data['_last_captured_text'] = t or ''
+        context.user_data['_last_has_premium_emoji'] = False
     # 🔧 BUG FIX #3: Removed _flush_tier_notifications() from here.
     # It was called on EVERY text message from EVERY user, querying the DB
     # and trying to send messages. The background job (every 30s) already
@@ -1727,7 +1738,12 @@ def main():
         ("^refadm_tpl_edit_", refadm_tpl_edit_callback),
         ("^refadm_tpl_ready_", refadm_tpl_ready_callback),
         ("^refadm_tpl_apply_", refadm_tpl_apply_callback),
+        ("^refadm_tpl_preview_", refadm_tpl_preview_callback),
         ("^refadm_tpl_reset_all$", refadm_tpl_reset_all_callback),
+        ("^refadm_btn_panel$", refadm_btn_panel_callback),
+        ("^refadm_btn_edit$", refadm_btn_edit_callback),
+        ("^refadm_btn_color_", refadm_btn_color_callback),
+        ("^refadm_btn_reset$", refadm_btn_reset_callback),
         # 🆕 v49: Per-product broadcast button editor
         ("^fcb_panel_",         fcb_panel_callback),
         ("^fcb_settext_",       fcb_settext_callback),

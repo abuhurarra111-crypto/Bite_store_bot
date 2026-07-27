@@ -126,6 +126,18 @@ def _render_referral_template(setting_key, default_template, values):
         return default_template.format(**safe_values)
 
 
+async def _send_referral_message(bot, chat_id, text, **kwargs):
+    send_text, send_mode = smart_text_and_mode(text, "Markdown")
+    try:
+        return await bot.send_message(chat_id, send_text, parse_mode=send_mode, **kwargs)
+    except Exception:
+        kwargs.pop('reply_markup', None)
+        try:
+            return await bot.send_message(chat_id, send_text, parse_mode=send_mode)
+        except Exception:
+            return None
+
+
 async def _send_direct_referral_notifications(context, referrer_id, new_user, reward_points, direct_count):
     """Notify referrer + admin for accepted direct referral and pay milestone."""
     try:
@@ -151,10 +163,9 @@ async def _send_direct_referral_notifications(context, referrer_id, new_user, re
     }
     # Referrer notification
     try:
-        await context.bot.send_message(
-            referrer_id,
-            _render_referral_template('ref_tpl_referrer', _DEFAULT_REFERRER_REFERRAL_TEMPLATE, values),
-            parse_mode='Markdown')
+        await _send_referral_message(
+            context.bot, referrer_id,
+            _render_referral_template('ref_tpl_referrer', _DEFAULT_REFERRER_REFERRAL_TEMPLATE, values))
     except Exception:
         pass
     # Admin notification
@@ -172,10 +183,9 @@ async def _send_direct_referral_notifications(context, referrer_id, new_user, re
                 add_points(referrer_id, REFERRAL_MILESTONE_BONUS_POINTS, tx_type='referral_milestone', description='20 referral milestone', event_id=f"ref_milestone_{int(referrer_id)}_{int(direct_count)}")
                 set_setting(key, str(int(direct_count)))
                 values['next_milestone'] = int(direct_count) + REFERRAL_MILESTONE_EVERY
-                await context.bot.send_message(
-                    referrer_id,
-                    _render_referral_template('ref_tpl_milestone', _DEFAULT_MILESTONE_TEMPLATE, values),
-                    parse_mode='Markdown')
+                await _send_referral_message(
+                    context.bot, referrer_id,
+                    _render_referral_template('ref_tpl_milestone', _DEFAULT_MILESTONE_TEMPLATE, values))
     except Exception:
         pass
 
@@ -200,19 +210,23 @@ async def _send_product_referral_notifications(context, referrer_id, new_user,
     }
     try:
         if unlocked:
-            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-            kb = InlineKeyboardMarkup([[
-                InlineKeyboardButton("🎁 Claim FREE Now", callback_data=f"freeclaim_do_{int(product_id)}")
-            ]])
-            await context.bot.send_message(
-                referrer_id,
+            from telegram import InlineKeyboardMarkup
+            try:
+                from button_system import build_button, wrap_button
+                btn = build_button('ref_unlock_claim_btn', '🎁 Claim FREE Now', callback_data=f"freeclaim_do_{int(product_id)}")
+                btn = wrap_button('ref_unlock_claim_btn', btn)
+            except Exception:
+                from telegram import InlineKeyboardButton
+                btn = InlineKeyboardButton("🎁 Claim FREE Now", callback_data=f"freeclaim_do_{int(product_id)}")
+            kb = InlineKeyboardMarkup([[btn]])
+            await _send_referral_message(
+                context.bot, referrer_id,
                 _render_referral_template('ref_tpl_product_unlock', _DEFAULT_PRODUCT_UNLOCK_TEMPLATE, values),
-                parse_mode='Markdown', reply_markup=kb)
+                reply_markup=kb)
         else:
-            await context.bot.send_message(
-                referrer_id,
-                _render_referral_template('ref_tpl_product_referrer', _DEFAULT_PRODUCT_REFERRER_TEMPLATE, values),
-                parse_mode='Markdown')
+            await _send_referral_message(
+                context.bot, referrer_id,
+                _render_referral_template('ref_tpl_product_referrer', _DEFAULT_PRODUCT_REFERRER_TEMPLATE, values))
     except Exception:
         pass
     try:
@@ -699,6 +713,15 @@ async def referral_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = tpl.format(**fmt_dict)
     except KeyError:
         text = tpl.format_map(_SafeDict(**fmt_dict))
+    rules = (
+        "\n\n📌 *How your referral counts:*\n"
+        "1️⃣ Friend must open your link and press */start*.\n"
+        "2️⃣ If Force Join is enabled, they must join/verify required channel or group.\n"
+        "3️⃣ Referral reward is approved when they open *Shop* or stay active for about 30 seconds.\n"
+        "4️⃣ Self-referrals, duplicate users, or suspicious activity are blocked.\n\n"
+        "🎁 *Rewards:* +1 referral point per approved direct referral. Every 20 direct referrals = +10 wallet points bonus."
+    )
+    text += rules
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=back_btn(location="referral"))
 
 

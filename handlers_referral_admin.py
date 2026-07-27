@@ -66,6 +66,46 @@ REF_TPL_READYMADE = {
 REF_PLACEHOLDERS = """Placeholders:\n`{referrer_id}` `{referrer_name}` `{referrer_username}`\n`{referred_id}` `{referred_name}` `{referred_username}`\n`{reward_points}` `{total_referrals}` `{remaining_to_bonus}`\n`{milestone_bonus}` `{milestone_number}` `{next_milestone}`\nProduct-only: `{product_id}` `{product_name}` `{product_referrals}` `{product_required}` `{product_remaining}`"""
 
 
+REF_TPL_PLACEHOLDERS = {
+    "referrer": "Placeholders:\n`{referred_id}` `{referred_name}` `{referred_username}`\n`{reward_points}` `{total_referrals}` `{remaining_to_bonus}` `{milestone_bonus}`",
+    "admin": "Placeholders:\n`{referrer_id}` `{referrer_name}` `{referrer_username}`\n`{referred_id}` `{referred_name}` `{referred_username}`\n`{reward_points}` `{total_referrals}`",
+    "milestone": "Placeholders:\n`{milestone_number}` `{milestone_bonus}` `{next_milestone}`\n`{referrer_id}` `{referrer_name}`",
+    "product_referrer": "Placeholders:\n`{product_id}` `{product_name}` `{product_referrals}` `{product_required}` `{product_remaining}`\n`{referred_id}` `{referred_name}` `{referred_username}`",
+    "product_admin": "Placeholders:\n`{product_id}` `{product_name}` `{product_referrals}` `{product_required}` `{product_remaining}`\n`{referrer_id}` `{referrer_name}` `{referrer_username}`\n`{referred_id}` `{referred_name}` `{referred_username}`",
+    "product_unlock": "Placeholders:\n`{product_id}` `{product_name}` `{product_referrals}` `{product_required}`\n`{referrer_id}` `{referrer_name}`",
+}
+
+def _pad_ref_templates():
+    for kind in list(REF_TPL_DEFAULTS.keys()):
+        base = REF_TPL_DEFAULTS[kind]
+        if kind.startswith('product_'):
+            variants = [base,
+                "📦 *Product Referral*\n\nProduct: {product_name}\nNew user: `{referred_id}`\nProgress: {product_referrals}/{product_required}",
+                "🎁 *Free Claim Progress*\n\n{referred_name} joined for {product_name}. Need {product_remaining} more.",
+                "✅ *Product Referral Counted*\n\n{product_name}: {product_referrals}/{product_required}\nUser ID: `{referred_id}`",
+                "🚀 *Closer to Free!*\n\nProduct: {product_name}\nRemaining: {product_remaining}",
+                "📈 *Progress Update*\n\n{product_referrals}/{product_required} for {product_name}.",
+                "🎯 *Target Update*\n\nBring {product_remaining} more for free {product_name}.",
+                "🧾 *Product Referral Receipt*\n\nProduct #{product_id}\nReferrer `{referrer_id}`\nReferred `{referred_id}`",
+                "🌟 *Referral Added*\n\n{referred_name} counted toward {product_name}.",
+                "🏆 *Free Reward Path*\n\nProgress: {product_referrals}/{product_required}\nProduct: {product_name}"]
+        else:
+            variants = [base,
+                "✅ *Referral Update*\n\nUser `{referred_id}` joined. Reward: +{reward_points}. Total: {total_referrals}.",
+                "🚀 *New Referral!*\n\n{referred_name} (`{referred_id}`) joined via your link. Progress: {total_referrals}.",
+                "🎁 *Reward Added*\n\n+{reward_points} referral point for `{referred_id}`. Next bonus in {remaining_to_bonus}.",
+                "🌟 *Great work!*\n\nReferral ID `{referred_id}` counted. You now have {total_referrals} direct referrals.",
+                "📈 *Referral Progress*\n\nNew user: {referred_name}\nID: `{referred_id}`\nTotal: {total_referrals}",
+                "💎 *Earning Update*\n\n+{reward_points} point earned. Referred: `{referred_id}`.",
+                "🔥 *Another referral!*\n\n{referred_name} started the bot. Keep going for milestone rewards.",
+                "🧾 *Referral Receipt*\n\nReferrer `{referrer_id}` → Referred `{referred_id}`\nTotal: {total_referrals}",
+                "🏆 *Milestone Progress*\n\nCurrent: {total_referrals}\nNext bonus: {remaining_to_bonus} more → +{milestone_bonus} points."]
+        REF_TPL_READYMADE[kind] = variants[:10]
+_pad_ref_templates()
+
+REF_UNLOCK_BTN_KEY = "ref_unlock_claim_btn"
+
+
 def _tpl_key(kind):
     return f"ref_tpl_{kind}"
 
@@ -289,6 +329,9 @@ def _ref_tpl_panel_text_kb():
         [InlineKeyboardButton("🛡️ Product Admin Msg", callback_data="refadm_tpl_edit_product_admin")],
         [InlineKeyboardButton("🎉 Product Unlock Msg", callback_data="refadm_tpl_edit_product_unlock")],
         [InlineKeyboardButton("🎨 Readymade Templates", callback_data="refadm_tpl_ready_referrer")],
+        [InlineKeyboardButton("👁 Preview Referrer", callback_data="refadm_tpl_preview_referrer"),
+         InlineKeyboardButton("👁 Preview Product", callback_data="refadm_tpl_preview_product_referrer")],
+        [InlineKeyboardButton("🎛️ Unlock Button Editor", callback_data="refadm_btn_panel")],
         [InlineKeyboardButton("♻️ Reset All Defaults", callback_data="refadm_tpl_reset_all")],
         [InlineKeyboardButton("🔙 Back", callback_data="refadm_panel")],
     ])
@@ -318,10 +361,13 @@ async def refadm_tpl_edit_callback(update: Update, context: ContextTypes.DEFAULT
         f"✏️ *Edit {kind.title()} Referral Template*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"Current template:\n`{escape_md(current[:900])}`\n\n"
-        f"{REF_PLACEHOLDERS}\n\n"
-        f"Send the new template as your next message.",
+        f"{REF_TPL_PLACEHOLDERS.get(kind, REF_PLACEHOLDERS)}\n\n"
+        f"Send the new template as your next message. Premium emojis are supported.",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="refadm_tpl_panel")]]))
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("👁 Live Preview", callback_data=f"refadm_tpl_preview_{kind}")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="refadm_tpl_panel")],
+        ]))
 
 
 async def refadm_tpl_ready_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -366,6 +412,65 @@ async def refadm_tpl_apply_callback(update: Update, context: ContextTypes.DEFAUL
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
 
 
+def _ref_sample_values(kind):
+    vals = {
+        'referrer_id': 111111111,
+        'referrer_name': 'Alex Referrer',
+        'referrer_username': 'alex_ref',
+        'referred_id': 222222222,
+        'referred_name': 'New Friend',
+        'referred_username': 'new_friend',
+        'reward_points': '1',
+        'total_referrals': 7,
+        'remaining_to_bonus': 13,
+        'milestone_bonus': '10',
+        'milestone_number': 20,
+        'next_milestone': 40,
+        'product_id': 99,
+        'product_name': 'Sample Product',
+        'product_referrals': 3,
+        'product_required': 5,
+        'product_remaining': 2,
+    }
+    return vals
+
+
+def _render_preview(kind):
+    tpl = get_setting(_tpl_key(kind), REF_TPL_DEFAULTS.get(kind, '')) or REF_TPL_DEFAULTS.get(kind, '')
+    vals = _ref_sample_values(kind)
+    try:
+        return tpl.format(**vals)
+    except Exception as e:
+        return f"⚠️ Template format error: {e}\n\n{tpl}"
+
+
+async def refadm_tpl_preview_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer("👁 Preview")
+    kind = q.data.replace("refadm_tpl_preview_", "", 1)
+    if kind not in REF_TPL_DEFAULTS:
+        await q.answer("Invalid template", show_alert=True); return
+    preview = _render_preview(kind)
+    send_text, send_mode = smart_text_and_mode(preview, "Markdown")
+    rows = []
+    if kind == 'product_unlock':
+        try:
+            from button_system import build_button, wrap_button
+            btn = build_button(REF_UNLOCK_BTN_KEY, '🎁 Claim FREE Now', callback_data='preview_claim')
+            btn = wrap_button(REF_UNLOCK_BTN_KEY, btn)
+            rows.append([btn])
+        except Exception:
+            pass
+    rows.append([InlineKeyboardButton("✏️ Edit This Template", callback_data=f"refadm_tpl_edit_{kind}")])
+    rows.append([InlineKeyboardButton("🔙 Templates", callback_data="refadm_tpl_panel")])
+    await _safe_edit(q,
+        f"👁 *Live Preview — {kind.title()}*\n━━━━━━━━━━━━━━━━━━━━\n\n{send_text}",
+        parse_mode=send_mode,
+        reply_markup=InlineKeyboardMarkup(rows))
+
+
 async def refadm_tpl_reset_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
@@ -374,6 +479,91 @@ async def refadm_tpl_reset_all_callback(update: Update, context: ContextTypes.DE
     for kind, tpl in REF_TPL_DEFAULTS.items():
         set_setting(_tpl_key(kind), tpl)
     text, kb = _ref_tpl_panel_text_kb()
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
+
+
+def _unlock_btn_panel_text_kb():
+    try:
+        from button_system import get_button_text, get_button_emoji_id, get_button_style
+        txt = get_button_text(REF_UNLOCK_BTN_KEY, "🎁 Claim FREE Now")
+        emoji = get_button_emoji_id(REF_UNLOCK_BTN_KEY) or "none"
+        color = get_button_style(REF_UNLOCK_BTN_KEY) or "default"
+    except Exception:
+        txt, emoji, color = "🎁 Claim FREE Now", "none", "default"
+    body = (
+        "🎛️ *Product Unlock Button Editor*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Text: `{escape_md(txt)}`\n"
+        f"Premium icon: `{escape_md(emoji)}`\n"
+        f"Background: `{escape_md(color)}`\n\n"
+        "This button is sent with the Product Unlock notification."
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✏️ Edit Text/Icon", callback_data="refadm_btn_edit")],
+        [InlineKeyboardButton("🔵 Blue", callback_data="refadm_btn_color_primary"),
+         InlineKeyboardButton("🟢 Green", callback_data="refadm_btn_color_success"),
+         InlineKeyboardButton("🔴 Red", callback_data="refadm_btn_color_danger")],
+        [InlineKeyboardButton("⬜ Default Color", callback_data="refadm_btn_color_none")],
+        [InlineKeyboardButton("♻️ Reset Button", callback_data="refadm_btn_reset")],
+        [InlineKeyboardButton("🔙 Templates", callback_data="refadm_tpl_panel")],
+    ])
+    return body, kb
+
+
+async def refadm_btn_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    text, kb = _unlock_btn_panel_text_kb()
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
+
+
+async def refadm_btn_edit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    context.user_data['refadm_step'] = 'unlock_btn_text'
+    await _safe_edit(q,
+        "✏️ *Edit Product Unlock Button*\n\n"
+        "Send new button text. If you start the message with a premium emoji, "
+        "it will be saved as the button icon.\n\n"
+        "Example: `[premium emoji] Claim FREE Now`",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="refadm_btn_panel")]]))
+
+
+async def refadm_btn_color_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    color = q.data.replace('refadm_btn_color_', '', 1)
+    if color == 'none': color = ''
+    if color not in ('', 'primary', 'success', 'danger'):
+        await q.answer('Invalid color', show_alert=True); return
+    try:
+        from button_system import set_button_style
+        set_button_style(REF_UNLOCK_BTN_KEY, color)
+        await q.answer('✅ Color saved', show_alert=False)
+    except Exception as e:
+        await q.answer(f'⚠️ {e}', show_alert=True); return
+    text, kb = _unlock_btn_panel_text_kb()
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
+
+
+async def refadm_btn_reset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        from button_system import reset_button, set_button_style
+        reset_button(REF_UNLOCK_BTN_KEY)
+        set_button_style(REF_UNLOCK_BTN_KEY, '')
+        await q.answer('✅ Button reset', show_alert=False)
+    except Exception as e:
+        await q.answer(f'⚠️ {e}', show_alert=True); return
+    text, kb = _unlock_btn_panel_text_kb()
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
 
 
@@ -390,15 +580,27 @@ async def refadm_text_received(update: Update, context: ContextTypes.DEFAULT_TYP
     kb_back = InlineKeyboardMarkup([[InlineKeyboardButton(
         "🔙 Referral Panel", callback_data="refadm_panel")]])
 
+    if step == 'unlock_btn_text':
+        try:
+            from button_system import extract_custom_emoji, set_button, get_button_emoji_id
+            emoji_id, stripped = extract_custom_emoji(update.message)
+            text_value = (stripped or raw).strip()
+            set_button(REF_UNLOCK_BTN_KEY, text_value, emoji_id or get_button_emoji_id(REF_UNLOCK_BTN_KEY))
+            await update.message.reply_text("✅ Unlock button saved.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🎛️ Button Panel", callback_data="refadm_btn_panel")]]))
+        except Exception as e:
+            await update.message.reply_text(f"❌ Could not save button: {e}", reply_markup=kb_back)
+        return True
+
     if step.startswith("tpl_"):
         kind = step.replace("tpl_", "", 1)
         if kind not in REF_TPL_DEFAULTS:
             await update.message.reply_text("❌ Invalid template type.", reply_markup=kb_back)
             return True
-        if not raw:
+        captured = capture_user_text(update.message) or raw
+        if not captured.strip():
             await update.message.reply_text("❌ Template cannot be empty.", reply_markup=kb_back)
             return True
-        set_setting(_tpl_key(kind), raw)
+        set_setting(_tpl_key(kind), captured)
         await update.message.reply_text(
             f"✅ *{kind.title()} referral template saved!*\n\n"
             f"Use the panel to test by bringing a referral.",
