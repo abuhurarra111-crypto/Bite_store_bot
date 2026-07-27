@@ -77,14 +77,29 @@ async def _safe_edit(q, text, **kwargs):
         await q.edit_message_text(send_text, **send_kwargs); return
     except Exception:
         pass
+    # v130: hard fallback without parse_mode — prevents template editor screens
+    # from silently failing when custom placeholders/underscores break Markdown.
+    plain_kwargs = dict(send_kwargs)
+    plain_kwargs.pop("parse_mode", None)
+    try:
+        await q.edit_message_text(send_text, **plain_kwargs); return
+    except Exception:
+        pass
     try:
         await q.edit_message_caption(caption=send_text, **send_kwargs); return
     except Exception:
         pass
     try:
-        await q.message.reply_text(send_text, **send_kwargs)
+        await q.edit_message_caption(caption=send_text, **plain_kwargs); return
     except Exception:
         pass
+    try:
+        await q.message.reply_text(send_text, **send_kwargs)
+    except Exception:
+        try:
+            await q.message.reply_text(send_text, **plain_kwargs)
+        except Exception:
+            pass
 
 
 def _panel_kb():
