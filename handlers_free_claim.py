@@ -618,19 +618,17 @@ def _user_screen_text(user, prod, cfg, available_refs):
     required = int(cfg.get("required_refs") or 5)
     can_claim = available_refs >= required
 
-    if has_user_claimed_free(user.id, prod["id"]):
-        body = _r("freeclaim_already_claimed",
-                  "✅ *You already claimed this product for free.*\n\n"
-                  "Each user can claim a free product only once.")
-        return f"🎁 *Free Claim — {pname}*\n━━━━━━━━━━━━━━━━━━━━\n\n{body}"
-
+    # v126: repeatable product free claims. After a claim, product-specific
+    # referral counter resets to 0 and the user can earn the same product again
+    # by bringing the required referrals again.
     if can_claim:
         msg = _r("freeclaim_user_screen",
                  "🎁 *Get this product FREE!*\n\n"
                  "📦 *{product}*\n"
                  "👥 Required Referrals: *{required}*\n"
                  "✅ Your Available Referrals: *{available}*\n\n"
-                 "🎉 *You're eligible!* Tap *Claim Now* to receive your product instantly.")
+                 "🎉 *You're eligible!* Tap *Claim Now* to receive your product instantly.\n\n"
+                 "🔄 After claiming, this product's referral count resets so you can earn it again.")
     else:
         msg = _r("freeclaim_not_enough",
                  "🎁 *Get this product FREE!*\n\n"
@@ -655,15 +653,12 @@ def _user_screen_text(user, prod, cfg, available_refs):
 def _user_screen_kb(uid, prod, cfg, available_refs, bot_username):
     pid = prod["id"]
     required = int(cfg.get("required_refs") or 5)
-    already = has_user_claimed_free(uid, pid)
-    can_claim = (not already) and (available_refs >= required)
+    can_claim = (available_refs >= required)
 
     kb = []
-    if already:
-        kb.append([InlineKeyboardButton("🛒 Buy Normally", callback_data=f"buy_{pid}")])
-    elif can_claim:
-        kb.append([InlineKeyboardButton(f"🎁 Claim NOW (uses {required} refs)",
-                                        callback_data=f"freeclaim_do_{pid}")])
+    if can_claim:
+        kb.append([_build_free_claim_button(
+            pid, f"🎁 Claim NOW (uses {required} refs)", f"freeclaim_do_{pid}")])
         # 🆕 v48: Always show smart share — invite friends to earn even more
         kb.append([InlineKeyboardButton("🔗 Share this Product Link",
                                         callback_data=f"freeclaim_share_{pid}")])
@@ -731,13 +726,25 @@ async def freeclaim_do_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await _safe_edit(q, "ℹ️ Free claim is no longer enabled for this product.")
         return
 
-    # Re-verify (defend against double-tap / stale UI)
-    if has_user_claimed_free(uid, pid):
-        await _safe_edit(q,
-            "✅ You already claimed this product for free. Each user can claim only once.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
-                "🔙 Back to Product", callback_data=f"prod_{pid}")]]))
-        return
+    # v126: Repeatable free claim. We no longer block users who already claimed
+    # this product; each successful claim consumes/resets the current referral
+    # progress, then they can earn the next one from zero.
+    # v128: optional max_claims per product (0 = unlimited).
+    try:
+        max_claims = int(cfg.get("max_claims") or 0)
+        if max_claims > 0:
+            from database import get_connection
+            conn = get_connection(); cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM free_claims WHERE user_id=? AND product_id=?", (uid, pid))
+            used_claims = int(cur.fetchone()[0] or 0); conn.close()
+            if used_claims >= max_claims:
+                await _safe_edit(q,
+                    f"✅ You already reached the free-claim limit for this product (*{max_claims}*).",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Product", callback_data=f"prod_{pid}")]]))
+                return
+    except Exception:
+        pass
 
     required = int(cfg.get("required_refs") or 5)
     # 🆕 v102: dual-source eligibility — either general ref_points OR
@@ -866,12 +873,13 @@ async def freeclaim_do_callback(update: Update, context: ContextTypes.DEFAULT_TY
         logger.exception("[freeclaim] broadcast failed")
 
     # ── Confirmation in current chat ──
-    confirm = _r("freeclaim_success",
-                 "🎉 *Claim Successful!*\n\n"
-                 "📦 *{product}*\n"
-                 "👥 Referrals spent: *{refs}*\n\n"
-                 "✅ Your product has been delivered above.\n"
-                 "💡 Keep referring to claim more free products!")
+    confirm = _r("freeclaim_success_repeat",
+                 "🎉 *Free Reward Claimed!*\n"
+                 "━━━━━━━━━━━━━━━━━━━━\n\n"
+                 "📦 Product: *{product}*\n"
+                 "👥 You completed *{refs} referrals*, so this product was delivered to you for FREE.\n\n"
+                 "✅ Your reward has been delivered above.\n"
+                 "🔄 Want one more? Bring *{refs} more referrals* for this product and you can claim it again!")
     try:
         confirm = confirm.format(product=escape_md(prod["name"]), refs=required)
     except Exception:
@@ -1013,15 +1021,20 @@ def get_free_claim_button(product, user_id):
         return None
     if not cfg.get("enabled"):
         return None
-    if has_user_claimed_free(user_id, pid):
-        return None
+    # v126: button remains visible after previous claims; user can earn again
+    # after bringing the required product referrals again.
     required = int(cfg.get("required_refs") or 5)
-    available = count_eligible_unused_refs(user_id)
+    try:
+        from database import count_product_refs
+        available = max(count_eligible_unused_refs(user_id), count_product_refs(user_id, pid))
+    except Exception:
+        available = count_eligible_unused_refs(user_id)
     if available >= required:
         label = f"🎁 Claim FREE ({required} refs ✅)"
+        return _build_free_claim_button(pid, label, f"freeclaim_do_{pid}")
     else:
         label = f"🎁 Get FREE — need {required - available} more refs"
-    return InlineKeyboardButton(label, callback_data=f"freeclaim_open_{pid}")
+        return _build_free_claim_button(pid, label, f"freeclaim_open_{pid}")
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1050,9 +1063,20 @@ VALID_COLORS = ("", "primary", "success", "danger")
 
 
 def _fcb_key(pid):
-    """Return the persistent key used by template_buttons / button_styler /
-    button_registry for this product's broadcast button."""
+    """Return the persistent key used by button_system for this product's
+    Claim FREE button (and related free-claim broadcasts)."""
     return f"fc_btn_{int(pid)}"
+
+
+def _build_free_claim_button(pid, default_text, callback_data):
+    """Build a per-product Claim FREE button with custom text/premium icon."""
+    try:
+        from button_system import build_button as _bb, wrap_button as _wrap
+        k = _fcb_key(pid)
+        btn = _bb(k, default_text, callback_data=callback_data)
+        return _wrap(k, btn)
+    except Exception:
+        return InlineKeyboardButton(default_text, callback_data=callback_data)
 
 
 def fc_btn_has_custom(pid):
@@ -1080,7 +1104,7 @@ def _fcb_panel_text(pid, prod):
     from button_system import get_button_style
 
     k = _fcb_key(pid)
-    text   = get_button_text(k, "") or "🛒 Buy Now"
+    text   = get_button_text(k, "") or "🎁 Claim FREE"
     emoji  = get_button_emoji_id(k) or ""
     style  = get_style(k)
     color  = get_button_style(k) or "none"
@@ -1096,7 +1120,7 @@ def _fcb_panel_text(pid, prod):
     }.get(color if color != "none" else "", "⬜ Default")
 
     return (
-        f"🎨 *Broadcast Button Editor*\n"
+        f"🎨 *Claim FREE Button Editor*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📦 Product: *{pname}*\n\n"
         f"🔤 *Text:* `{text}`\n"
@@ -1105,8 +1129,8 @@ def _fcb_panel_text(pid, prod):
         f"↔️ *Alignment:* `{style['align']}`\n"
         f"📐 *Padding:* `{style['pad']}`\n"
         f"🎨 *Background:* {color_label}\n\n"
-        f"_This button appears below the broadcast announcement when\n"
-        f"someone claims this product for free. Tap any option to edit._"
+        f"_This button appears as the product's Claim/Get FREE button.\n"
+        f"You can send a premium emoji + text in Edit Text; the first premium emoji will be used as button icon._"
     )
 
 
@@ -1114,8 +1138,8 @@ def _fcb_panel_kb(pid):
     """Build the editor panel keyboard."""
     k = _fcb_key(pid)
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✏️ Edit Text",        callback_data=f"fcb_settext_{pid}"),
-         InlineKeyboardButton("⭐ Set Premium Icon", callback_data=f"fcb_setemoji_{pid}")],
+        [InlineKeyboardButton("✏️ Edit Text/Icon",  callback_data=f"fcb_settext_{pid}"),
+         InlineKeyboardButton("⭐ Set Icon Only",    callback_data=f"fcb_setemoji_{pid}")],
         [InlineKeyboardButton("📏 Size / Alignment / Padding",
                               callback_data=f"fcb_styler_{pid}")],
         [InlineKeyboardButton("🎨 Background Color", callback_data=f"fcb_color_{pid}")],
@@ -1163,16 +1187,17 @@ async def fcb_settext_callback(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data["fcb_pid"] = pid
     from button_system import get_button_text
     k = _fcb_key(pid)
-    current = get_button_text(k, "") or "🛒 Buy Now"
+    current = get_button_text(k, "") or "🎁 Claim FREE"
     await _safe_edit(q,
-        f"✏️ *Edit Button Text*\n"
+        f"✏️ *Edit Claim Button Text / Premium Icon*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📌 *Current:* `{current}`\n\n"
-        f"📥 Type the new button text:\n"
-        f"_e.g._ `🎁 Get Yours Now`\n\n"
-        f"💡 *Tip:* You can include standard emojis (🎁 🛒 ⚡ etc.)\n"
-        f"_Premium emojis go in the separate ⭐ Premium Icon option._\n\n"
-        f"_Send_ `/clear` _to reset to default ('🛒 Buy Now')._",
+        f"📥 Type the new button text.\n"
+        f"_Example:_ `🎁 Claim FREE Now`\n\n"
+        f"⭐ *Premium emoji support:* Send a message starting with your premium emoji, then the text.\n"
+        f"Example: `[premium emoji] Claim FREE Now`\n"
+        f"The premium emoji entity will be saved as the button icon.\n\n"
+        f"_Send_ `/clear` _to reset to default._",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
             "❌ Cancel", callback_data=f"fcb_panel_{pid}")]]))
@@ -1320,7 +1345,7 @@ async def fcb_preview_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         from button_system import build_button as _bb
         from button_system import wrap_button as _wrap
         k = _fcb_key(pid)
-        btn = _bb(k, "🛒 Buy Now", callback_data=f"buy_{pid}")
+        btn = _bb(k, "🎁 Claim FREE", callback_data=f"freeclaim_open_{pid}")
         # Apply per-key size/align/pad styler
         btn = _wrap(k, btn)
     except Exception as e:
@@ -1396,16 +1421,24 @@ async def fcb_text_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Text edit ──
     if step == "text":
         from button_system import (
-            set_button as _set_btn, get_button_emoji_id as _get_em
+            set_button as _set_btn, get_button_emoji_id as _get_em,
+            extract_custom_emoji as _xc,
         )
         if raw.lower() in ("/clear", "clear", "reset", "/reset"):
-            # Preserve existing emoji if any — only clear text
-            _set_btn(k, "", _get_em(k))
-            msg = "✅ Button text cleared. Will use default '🛒 Buy Now'."
+            _set_btn(k, "", "")
+            msg = "✅ Claim button reset to default."
         else:
-            # Preserve existing emoji
-            _set_btn(k, raw, _get_em(k))
-            msg = f"✅ *Button text saved:* `{escape_md(raw)}`"
+            emoji_id, stripped_text = _xc(update.message)
+            final_text = (stripped_text or raw).strip()
+            # If no premium emoji was detected, preserve existing icon.
+            final_emoji = emoji_id or _get_em(k)
+            _set_btn(k, final_text, final_emoji)
+            if emoji_id:
+                msg = (f"✅ *Claim button saved!*\n\n"
+                       f"⭐ Premium icon detected and saved.\n"
+                       f"🔤 Text: `{escape_md(final_text)}`")
+            else:
+                msg = f"✅ *Claim button text saved:* `{escape_md(final_text)}`"
         context.user_data.pop("fcb_step", None)
         context.user_data.pop("fcb_pid", None)
         await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=kb_back)
@@ -1450,7 +1483,7 @@ async def fcb_text_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ════════════════════════════════════════════════════════════════
-# Hook to expose the new "🎨 Edit Broadcast Button" option in the existing
+# Hook to expose the new "🎨 Edit Claim FREE Button" option in the existing
 # Free Claim admin panel. We don't want to touch _admin_panel_kb every time
 # we add a feature — instead we patch it once here.
 # ════════════════════════════════════════════════════════════════
@@ -1462,7 +1495,7 @@ def _admin_panel_kb(pid, cfg):  # noqa: F811 — intentional override
     base = _orig_admin_panel_kb(pid, cfg)
     rows = list(base.inline_keyboard)
     # Find the "Recent Claims" row to insert above it (keeps Back as last)
-    new_row = [InlineKeyboardButton("🎨 Edit Broadcast Button",
+    new_row = [InlineKeyboardButton("🎨 Edit Claim FREE Button",
                                     callback_data=f"fcb_panel_{pid}")]
     insert_at = None
     for i, row in enumerate(rows):

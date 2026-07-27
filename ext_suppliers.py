@@ -26,7 +26,7 @@ import logging
 import re
 import time
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import requests
@@ -34,8 +34,8 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from config import ADMIN_ID
-from database import get_connection, ensure_column, get_setting, set_setting, ensure_product_accounts_table
-from utils import escape_md, html_code_block, html_escape_plain, smart_text_and_mode, fmt_price
+from database import get_connection, ensure_column, get_setting, set_setting, ensure_product_accounts_table, ensure_default_free_claim_for_product
+from utils import escape_md, html_code_block, html_escape_plain, smart_text_and_mode, fmt_price, points_from_usd, fmt_points
 
 logger = logging.getLogger(__name__)
 
@@ -473,6 +473,13 @@ def mirror_ext_to_products(ext_product_id):
                   (pid, int(ep.get("id"))))
 
     conn.commit(); conn.close()
+    # v127: Every NEW supplier-mirrored product gets Free-via-Referrals
+    # defaults automatically. Existing product rows keep their admin settings.
+    if was_new:
+        try:
+            ensure_default_free_claim_for_product(pid)
+        except Exception:
+            pass
     return pid, was_new
 
 
@@ -1807,6 +1814,20 @@ async def ext_sup_view_callback(update, context):
     total_p = c.fetchone()[0] or 0
     c.execute("SELECT COUNT(*) FROM ext_products WHERE supplier_id=? AND active=1", (sid,))
     active_p = c.fetchone()[0] or 0
+    # v128: 24h supplier health summary from ext_orders
+    try:
+        c.execute("""SELECT status, COUNT(*) AS n FROM ext_orders
+                     WHERE supplier_id=? AND datetime(created_at) >= datetime('now','-24 hours')
+                     GROUP BY status""", (sid,))
+        hrows = c.fetchall()
+        hmap = {str((r['status'] if hasattr(r, 'keys') else r[0]) or 'unknown'): int((r['n'] if hasattr(r, 'keys') else r[1]) or 0) for r in hrows}
+        c.execute("""SELECT error_msg FROM ext_orders
+                     WHERE supplier_id=? AND status='failed'
+                     ORDER BY id DESC LIMIT 1""", (sid,))
+        er = c.fetchone()
+        last_fail = ((er['error_msg'] if hasattr(er, 'keys') else er[0]) if er else '') or ''
+    except Exception:
+        hmap = {}; last_fail = ''
     conn.close()
 
     status = "🟢 Enabled" if s["enabled"] else "🔴 Disabled"
@@ -1827,6 +1848,8 @@ async def ext_sup_view_callback(update, context):
         f"🔄 Product auto-sync: `{auto_label}`\n"
         f"💡 Balance refresh: `manual Test & Refresh + after orders only`\n"
         f"📦 Products: *{active_p}/{total_p}* active\n"
+        f"🩺 24h Health: ✅ {hmap.get('delivered',0)} delivered · ❌ {hmap.get('failed',0)} failed · 💸 {hmap.get('refunded',0)} refunded\n"
+        + (f"⚠️ Last failure: `{escape_md(last_fail[:90])}`\n" if last_fail else "")
     )
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 Test & Refresh", callback_data=f"ext_sup_test_{sid}"),
@@ -2824,7 +2847,27 @@ def _refresh_product_stock_with_local_pool(c, shop_product_id):
         logger.debug(f"[bonus_pool] stock refresh failed for product #{shop_product_id}: {e}")
 
 
-def _add_bonus_items_to_local_pool(shop_product_id, bonus_items):
+def _delivery_quality_warnings(items, fmt_key):
+    """Detect obvious supplier delivery format mismatches for admin warning."""
+    expected = {
+        "email_pass": 2,
+        "email_pass_2fa": 3,
+        "email_pass_recovery": 3,
+        "email_multi": 4,
+    }.get(str(fmt_key or ""))
+    if not expected:
+        return []
+    bad = []
+    for idx, item in enumerate(items or [], start=1):
+        parts = [p for p in str(item).split('|') if p != '']
+        if len(parts) < expected:
+            bad.append((idx, len(parts), expected))
+            if len(bad) >= 5:
+                break
+    return bad
+
+
+def _add_bonus_items_to_local_pool(shop_product_id, bonus_items, *, source_order_id=0, source_supplier_id=0, source_ext_order_id=0):
     """Store supplier bonus/over-delivered accounts in same product's local pool.
 
     These are not delivered free to the current customer. They become available
@@ -2846,8 +2889,10 @@ def _add_bonus_items_to_local_pool(shop_product_id, bonus_items):
             if not key or key in existing:
                 skipped += 1
                 continue
-            c.execute("INSERT INTO product_accounts (product_id, account_data, status) VALUES (?, ?, 'available')",
-                      (int(shop_product_id), item))
+            c.execute("""INSERT INTO product_accounts
+                         (product_id, account_data, status, source, source_order_id, source_supplier_id, source_ext_order_id)
+                         VALUES (?, ?, 'available', 'supplier_bonus', ?, ?, ?)""",
+                      (int(shop_product_id), item, int(source_order_id or 0), int(source_supplier_id or 0), int(source_ext_order_id or 0)))
             existing.add(key)
             added += 1
         if added:
@@ -2894,6 +2939,50 @@ def _consume_local_pool_if_enough(shop_product_id, order_id, buyer_uid, qty):
         except Exception: pass
         logger.warning(f"[bonus_pool] consume failed for product #{shop_product_id}: {e}")
         return []
+
+
+async def _try_failover_supplier_order(primary_ext_product_id, qty):
+    """Try configured backup ext_products for a failed supplier order.
+
+    Uses ext_failover(primary_id, backup1_id, backup2_id). Returns a dict with
+    ep/sup/result/ext ids on success, else None.
+    """
+    try:
+        ensure_ext_supplier_tables()
+        conn=get_connection(); c=conn.cursor()
+        c.execute("SELECT backup1_id, backup2_id FROM ext_failover WHERE primary_id=?", (int(primary_ext_product_id),))
+        row=c.fetchone(); conn.close()
+        if not row:
+            return None
+        backup_ids=[int(row['backup1_id'] or 0), int(row['backup2_id'] or 0)]
+    except Exception:
+        return None
+    for bid in backup_ids:
+        if not bid:
+            continue
+        try:
+            bep=get_ext_product(bid)
+            if not bep or not int(bep.get('active') or 0):
+                continue
+            bsup=get_supplier(int(bep.get('supplier_id') or 0))
+            if not bsup or not int(bsup.get('enabled') or 0):
+                continue
+            bad=get_adapter_for_supplier(bsup)
+            if not bad:
+                continue
+            bres=await asyncio.to_thread(bad.create_order, bep['remote_id'], int(qty))
+            bitems=[str(x).strip() for x in (bres.get('items') or []) if str(x).strip()]
+            if bres.get('ok') and len(bitems) >= int(qty):
+                return {
+                    'ep': bep, 'sup': bsup,
+                    'ext_pid': int(bep['id']), 'ext_sid': int(bsup['id']),
+                    'result': bres,
+                    'note': f"✅ Primary supplier failed; delivered via failover ext_product #{bid}."
+                }
+        except Exception as e:
+            logger.warning(f"[failover] backup ext#{bid} failed: {e}")
+            continue
+    return None
 
 
 async def route_order_to_supplier(bot, order):
@@ -2962,6 +3051,16 @@ async def route_order_to_supplier(bot, order):
         supplier_cost = 0.0
         overdelivery_note = "✅ Fulfilled from local bonus pool; supplier API was not called."
     else:
+        # v128: after-payment stock re-check. If local pool cannot fulfill and
+        # latest visible stock is below paid qty, do not continue to supplier.
+        try:
+            fresh_p = get_product(order['product_id']) or p
+            if int((dict(fresh_p) if fresh_p else {}).get('stock') or 0) < int(qty):
+                await _refund_and_notify(bot, order, sup, ep, qty,
+                                          "Product went out of stock after payment.")
+                return True
+        except Exception:
+            pass
         ad = get_adapter_for_supplier(sup)
         if not ad:
             logger.error(f"[router] no adapter for supplier #{ext_sid}")
@@ -2991,8 +3090,17 @@ async def route_order_to_supplier(bot, order):
                 quantity=qty, cost_usd=supplier_cost,
                 remote_order_id=result.get('order_id', ''), status="failed",
                 raw_response=raw_dump, error_msg=result.get('error', 'unknown'))
-            await _refund_and_notify(bot, order, sup, ep, qty, result.get('error', 'unknown'))
-            return True
+            fo = await _try_failover_supplier_order(ext_pid, qty)
+            if fo:
+                ep, sup = fo['ep'], fo['sup']
+                ext_pid, ext_sid = fo['ext_pid'], fo['ext_sid']
+                result = fo['result']
+                raw_dump = json.dumps(result.get('raw', ''), default=str, ensure_ascii=False)[:5000]
+                supplier_cost = _supplier_result_cost_usd(result, (ep.get('cost_usd') or 0) * qty)
+                overdelivery_note = fo.get('note', '')
+            else:
+                await _refund_and_notify(bot, order, sup, ep, qty, result.get('error', 'unknown'))
+                return True
 
     items = [str(x).strip() for x in (result.get('items') or []) if str(x).strip()]
     received_count = len(items)
@@ -3003,8 +3111,19 @@ async def route_order_to_supplier(bot, order):
             quantity=qty, cost_usd=supplier_cost,
             remote_order_id=result.get('order_id', ''), status="failed",
             raw_response=raw_dump, error_msg=reason)
-        await _refund_and_notify(bot, order, sup, ep, qty, reason)
-        return True
+        fo = await _try_failover_supplier_order(ext_pid, qty)
+        if fo:
+            ep, sup = fo['ep'], fo['sup']
+            ext_pid, ext_sid = fo['ext_pid'], fo['ext_sid']
+            result = fo['result']
+            raw_dump = json.dumps(result.get('raw', ''), default=str, ensure_ascii=False)[:5000]
+            supplier_cost = _supplier_result_cost_usd(result, (ep.get('cost_usd') or 0) * qty)
+            items = [str(x).strip() for x in (result.get('items') or []) if str(x).strip()]
+            received_count = len(items)
+            overdelivery_note = fo.get('note', '')
+        else:
+            await _refund_and_notify(bot, order, sup, ep, qty, reason)
+            return True
 
     # 🔧 v111/v114 over-delivery guard: if supplier returns bonus/extra
     # accounts, do NOT pass freebies to the current customer. Deliver exactly
@@ -3015,7 +3134,9 @@ async def route_order_to_supplier(bot, order):
         overdelivery_note = ""
     if received_count > qty:
         bonus_items = items[qty:]
-        added_bonus, skipped_bonus = _add_bonus_items_to_local_pool(order['product_id'], bonus_items)
+        added_bonus, skipped_bonus = _add_bonus_items_to_local_pool(
+            order['product_id'], bonus_items,
+            source_order_id=order['id'], source_supplier_id=ext_sid, source_ext_order_id=ext_pid)
         overdelivery_note = (
             f"⚠️ Supplier returned {received_count} item(s) for qty {qty}; "
             f"customer delivery was capped to {qty}. "
@@ -3029,6 +3150,11 @@ async def route_order_to_supplier(bot, order):
         quantity=qty, cost_usd=supplier_cost,
         remote_order_id=result.get('order_id', ''), status="delivered",
         raw_response=raw_dump, error_msg=overdelivery_note)
+    # v128: reset repeated-failure counter after successful delivery.
+    try:
+        set_setting(f"supplier_fail_count_{int(order['product_id'])}", "0")
+    except Exception:
+        pass
 
     # ✅ Success — build v83 FORMAT-AWARE byte-perfect delivery
     # Use per-product delivery_format (auto-detected or admin-overridden). If an
@@ -3045,6 +3171,18 @@ async def route_order_to_supplier(bot, order):
             auto_fmt = detect_product_format(merged)
             if auto_fmt and auto_fmt != fmt_key:
                 fmt_key = auto_fmt
+    except Exception:
+        pass
+    try:
+        qwarn = _delivery_quality_warnings(items, fmt_key)
+        if qwarn:
+            details = ", ".join(f"#{i}: {got}/{exp} fields" for i, got, exp in qwarn)
+            await notify_admin(bot,
+                f"⚠️ *Delivery Format Warning*\n"
+                f"Order: `#{order['id']}`\n"
+                f"Product: {escape_md((ep or {}).get('name','?')[:60])}\n"
+                f"Format: `{fmt_key}`\n"
+                f"Issues: {escape_md(details)}")
     except Exception:
         pass
     delivery_text = render_v83_delivery(
@@ -3104,6 +3242,47 @@ async def route_order_to_supplier(bot, order):
         except Exception as e:
             logger.warning(f"[router] bulk .txt file send failed: {e}")
 
+    # v120: refresh same supplier balance BEFORE admin notification so the
+    # delivered alert can show API balance before/after this order.
+    supplier_balance_before = float(sup.get('balance_usd') or 0)
+    supplier_balance_after = supplier_balance_before
+    try:
+        if ad is not None:
+            from async_adapter_helpers import async_fetch_balance
+            bal = await async_fetch_balance(ad)
+            if bal is not None:
+                supplier_balance_after = float(bal)
+                update_supplier(ext_sid, balance_usd=supplier_balance_after,
+                                balance_updated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                try:
+                    from types import SimpleNamespace
+                    from supplier_automation import _maybe_send_low_balance_alert, DEFAULT_LOW_BAL_THRESHOLD
+                    fresh_sup = get_supplier(ext_sid) or sup
+                    threshold = float(fresh_sup.get("low_bal_threshold") or DEFAULT_LOW_BAL_THRESHOLD)
+                    if threshold > 0 and supplier_balance_after < threshold:
+                        await _maybe_send_low_balance_alert(SimpleNamespace(bot=bot), fresh_sup, supplier_balance_after, threshold)
+                except Exception as _lb_err:
+                    logger.debug(f"[router] low-balance alert check failed: {_lb_err}")
+    except Exception:
+        supplier_balance_after = supplier_balance_before
+
+    # User wallet points before/after order. For wallet payments, points were
+    # already deducted before route_order_to_supplier() is called, so reconstruct
+    # before using order.binance_amount (stored as points cost for wallet orders).
+    try:
+        urow = get_user(order['user_id'])
+        user_wallet_after = float((urow['points'] if urow and 'points' in urow.keys() else 0) or 0)
+    except Exception:
+        user_wallet_after = 0.0
+    user_wallet_before = user_wallet_after
+    try:
+        if str(order.get('payment_method') or '').lower() == 'wallet':
+            user_wallet_before = user_wallet_after + float(order.get('binance_amount') or 0)
+    except Exception:
+        pass
+
+    pk_time = datetime.now(timezone(timedelta(hours=5))).strftime("%Y-%m-%d %I:%M:%S %p PKT")
+
     # Notify admin
     try:
         from config import ADMIN_ID as _AID
@@ -3113,36 +3292,18 @@ async def route_order_to_supplier(bot, order):
             f"✅ *Supplier order delivered!*\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"🛒 Order: `#{order['id']}`\n"
+            f"🕒 Time: `{pk_time}`\n"
+            f"👤 User ID: `{order['user_id']}`\n"
             f"🏬 Supplier: {sup['name']}\n"
             f"📦 Product: {escape_md(ep['name'][:40])}\n"
             f"🔢 Qty: {qty}\n"
-            f"💰 Cost: `${supplier_cost:.2f}` · Sold: `{fmt_price(sold_usd)}`\n"
+            f"💳 Payment: `{escape_md(order.get('payment_method') or '-')}`\n"
+            f"💎 User Wallet: `{fmt_points(user_wallet_before)}` → `{fmt_points(user_wallet_after)}`\n"
+            f"🔌 API Balance: `{fmt_price(supplier_balance_before)}` → `{fmt_price(supplier_balance_after)}`\n"
+            f"💰 Cost: `{fmt_price(supplier_cost)}` · Sold: `{fmt_price(sold_usd)}`\n"
             f"📈 Profit: `{fmt_price(sold_usd - supplier_cost)}`"
             f"{warn_line}",
             parse_mode="Markdown")
-    except Exception:
-        pass
-
-    # v117 policy: after a successful customer order, refresh ONLY this
-    # supplier's balance (because this order just spent supplier wallet).
-    # No periodic/global balance polling is used anymore.
-    try:
-        if ad is not None:
-            from async_adapter_helpers import async_fetch_balance
-            bal = await async_fetch_balance(ad)
-            if bal is not None:
-                bal_f = float(bal)
-                update_supplier(ext_sid, balance_usd=bal_f,
-                                balance_updated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-                try:
-                    from types import SimpleNamespace
-                    from supplier_automation import _maybe_send_low_balance_alert, DEFAULT_LOW_BAL_THRESHOLD
-                    fresh_sup = get_supplier(ext_sid) or sup
-                    threshold = float(fresh_sup.get("low_bal_threshold") or DEFAULT_LOW_BAL_THRESHOLD)
-                    if threshold > 0 and bal_f < threshold:
-                        await _maybe_send_low_balance_alert(SimpleNamespace(bot=bot), fresh_sup, bal_f, threshold)
-                except Exception as _lb_err:
-                    logger.debug(f"[router] low-balance alert check failed: {_lb_err}")
     except Exception:
         pass
 
@@ -3154,17 +3315,42 @@ async def _refund_and_notify(bot, order, sup, ep, qty, reason):
     from database import add_points, update_order_status, get_user
     from config import POINTS_PER_DOLLAR
     price_usd = float(order.get('price') or 0)
-    refund_points = int(round(price_usd * POINTS_PER_DOLLAR))
-    # Micro-priced products (e.g. $0.05) used to round to 0 points due Python's
-    # banker rounding. If a paid order fails, never show/admin-refund 0 points.
-    if price_usd > 0 and refund_points < 1:
-        refund_points = 1
+    refund_points = points_from_usd(price_usd)
+    # Micro-priced products still get a tiny proportional refund. If your store
+    # wants minimum 1-point refunds, this can be changed, but exact math avoids
+    # hidden loss/gain on decimal-priced products.
     # Refund to points wallet (customer can use immediately)
     try:
-        add_points(order['user_id'], refund_points)
+        add_points(order['user_id'], refund_points, tx_type='refund', description='Supplier auto-refund', event_id=f"supplier_refund_{order['id']}", order_id=order['id'])
     except Exception as e:
         logger.error(f"[refund] add_points failed: {e}")
     update_order_status(order['id'], 'refunded')
+    # v128: auto-disable a supplier product after 3 consecutive fulfillment failures.
+    try:
+        pid = int(order.get('product_id') or 0)
+        if pid:
+            key = f"supplier_fail_count_{pid}"
+            fail_count = int(get_setting(key, "0") or 0) + 1
+            set_setting(key, str(fail_count))
+            if fail_count >= 3:
+                conn = get_connection(); cur = conn.cursor()
+                cur.execute("UPDATE products SET is_active=0, stock=0 WHERE id=?", (pid,))
+                try:
+                    if ep and ep.get('id'):
+                        cur.execute("UPDATE ext_products SET active=0 WHERE id=?", (int(ep.get('id')),))
+                except Exception:
+                    pass
+                conn.commit(); conn.close()
+                try:
+                    await notify_admin(bot,
+                        f"🚨 *Product Auto-Disabled*\n"
+                        f"Product ID: `{pid}`\n"
+                        f"Reason: *{fail_count} consecutive supplier failures*\n"
+                        f"Last error: `{escape_md(str(reason)[:160])}`")
+                except Exception:
+                    pass
+    except Exception as _af_err:
+        logger.debug(f"[auto-disable] failed: {_af_err}")
 
     # Notify customer
     try:
@@ -3176,7 +3362,7 @@ async def _refund_and_notify(bot, order, sup, ep, qty, reason):
             f"📦 {escape_md(order.get('product_name','?')[:60])}\n\n"
             f"We could not complete this order from our supplier right now:\n"
             f"_{escape_md(str(reason)[:150])}_\n\n"
-            f"💎 *{refund_points} points* have been refunded to your wallet.\n"
+            f"💎 *{fmt_points(refund_points)} points* have been refunded to your wallet.\n"
             f"You can use them to buy this or any other product.\n\n"
             f"Sorry for the inconvenience! 🙏",
             parse_mode="Markdown",
@@ -3200,7 +3386,7 @@ async def _refund_and_notify(bot, order, sup, ep, qty, reason):
             f"📦 Product: {escape_md((ep or {}).get('name','?')[:40])}\n"
             f"🔢 Qty: {qty}\n"
             f"💰 Amount: `${price_usd:.2f}`\n"
-            f"💎 Refunded: `{refund_points}` points to user `{order['user_id']}`\n\n"
+            f"💎 Refunded: `{fmt_points(refund_points)}` points to user `{order['user_id']}`\n\n"
             f"❌ *Reason:* `{escape_md(str(reason)[:200])}`",
             parse_mode="Markdown")
     except Exception:

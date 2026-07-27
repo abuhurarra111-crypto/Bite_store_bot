@@ -21,7 +21,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from config import *
 from database import *
 from keyboards import *
-from utils import escape_md, format_pkr, nav_push, build_manual_order_whatsapp_url, get_product_mode_tag, smart_text_and_mode, contains_premium_markup, fmt_price
+from utils import escape_md, format_pkr, nav_push, build_manual_order_whatsapp_url, get_product_mode_tag, smart_text_and_mode, contains_premium_markup, fmt_price, points_from_usd, fmt_points
 import re
 import logging
 import secrets
@@ -415,7 +415,7 @@ def _binance_instruction_text(order_id, title, amount, note_id):
         f"🔶 *Binance Payment*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{title}\n"
-        f"💵 Amount: *${float(amount):.2f}*\n\n"
+        f"💵 Amount: *{fmt_price(amount)}*\n\n"
         f"📋 *Send payment to:*\n"
         f"• Binance Pay ID: `{bid}`\n"
         f"• Account Name: *{escape_md(holder)}*\n\n"
@@ -439,7 +439,7 @@ async def _start_binance_note_order(update, context, *, is_points=False, product
     save_user(u.id, u.username or '', u.first_name or '')
 
     note_id = _generate_transfer_note_id()
-    amount = round(float(amount), 2)
+    amount = float(amount)
     if amount <= 0:
         await _safe_send(q, context, "❌ Invalid amount.", reply_markup=back_btn())
         return
@@ -451,9 +451,10 @@ async def _start_binance_note_order(update, context, *, is_points=False, product
         context.user_data.pop(k, None)
 
     if is_points:
-        pts = int(amount * POINTS_PER_DOLLAR)
-        oid = create_order(u.id, un, 0, f"💎 {pts} Points", amount, 'binance', note_id, amount, 'USDT', 'points')
-        title = f"💎 Deposit for *{pts} Points*"
+        pts = points_from_usd(amount)
+        pts_txt = fmt_points(pts)
+        oid = create_order(u.id, un, 0, f"💎 {pts_txt} Points", amount, 'binance', note_id, amount, 'USDT', 'points')
+        title = f"💎 Deposit for *{pts_txt} Points*"
     else:
         p = product
         if not p:
@@ -488,12 +489,12 @@ def _binance_orderid_instructions(*, title, amount, order_id_for_display=None):
         "━━━━━━━━━━━━━━━━━━━━",
         "",
         title,
-        f"💵 Amount: *${float(amount):.2f}*",
+        f"💵 Amount: *{fmt_price(amount)}*",
         "",
         "📋 *Step 1 — Send the payment*",
         f"  • Pay ID:  `{bid}`",
         f"  • Name:    *{escape_md(holder)}*",
-        f"  • Amount:  *${float(amount):.2f}*",
+        f"  • Amount:  *{fmt_price(amount)}*",
         "",
         "📨 *Step 2 — Send your Order ID*",
         "After completing the payment, open the transaction "
@@ -514,18 +515,19 @@ async def _start_binance_order_id_flow(update, context, *, is_points, product, q
     un = u.first_name or str(u.id)
     save_user(u.id, u.username or "", u.first_name or "")
 
-    amount = round(float(amount), 2)
+    amount = float(amount)
     if amount <= 0:
         await _safe_send(q, context, "❌ Invalid amount.", reply_markup=back_btn())
         return
 
     if is_points:
-        pts = int(amount * POINTS_PER_DOLLAR)
+        pts = points_from_usd(amount)
+        pts_txt = fmt_points(pts)
         oid = create_order(
-            u.id, un, 0, f"💎 {pts} Points",
+            u.id, un, 0, f"💎 {pts_txt} Points",
             amount, "binance", "", amount, "USDT", "points",
         )
-        title = f"💎 You will receive *{pts} Points*"
+        title = f"💎 You will receive *{pts_txt} Points*"
     else:
         p = product
         if not p:
@@ -860,21 +862,30 @@ async def verify_order_id_callback(update, context):
 
 
 async def _send_deposit_success(bot, order, paid_amount):
-    pts = int(float(paid_amount or order['price'] or 0) * POINTS_PER_DOLLAR)
+    # v120 safety: never credit the same points deposit twice if a retry/race
+    # calls this helper after the order is already delivered.
+    try:
+        fresh = get_order(order['id']) or order
+        if fresh and str(fresh.get('status') or '') == 'delivered':
+            return True
+        order = fresh or order
+    except Exception:
+        pass
+    pts = points_from_usd(float(paid_amount or order['price'] or 0))
     if pts <= 0:
-        pts = int(float(order['price'] or 0) * POINTS_PER_DOLLAR)
+        pts = points_from_usd(float(order['price'] or 0))
     save_user(order['user_id'], '', order['user_name'] or '')
-    add_points(order['user_id'], pts)
+    add_points(order['user_id'], pts, tx_type='deposit', description='Points deposit', event_id=f"deposit_order_{order['id']}", order_id=order['id'])
     update_order_status(order['id'], 'delivered')
     total_pts = get_user_points(order['user_id'])
     text = (
         f"🎉 *Deposit Successful!*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"✅ Your payment has been confirmed.\n"
-        f"💎 Points Added: *{pts}*\n"
+        f"💎 Points Added: *{fmt_points(pts)}*\n"
         f"💰 Amount: *{fmt_price(float(paid_amount or order['price'] or 0))}*\n"
         f"🧾 Order ID: `#{order['id']}`\n\n"
-        f"📊 New Points Balance: *{total_pts}*\n\n"
+        f"📊 New Points Balance: *{fmt_points(total_pts)}*\n\n"
         f"Thank you for your deposit!"
     )
     kb = InlineKeyboardMarkup([
@@ -909,13 +920,10 @@ async def _send_static_media_delivery(bot, order, product, method, amount, pts_b
         f"📦 Product: *{_fmt_msg_name(order['product_name'])}*\n"
         f"💳 Payment: *{escape_md(method)}*\n"
     )
-    # 🆕 v66: Tier progress hint (notify_tier_upgrade still fires separately if upgraded)
-    # 🆕 v68: Per-order tier bonus (admin-configured points credit)
+    # v121: Tier progress hint only. Per-order bonus points are disabled so
+    # payment success/product delivery never grants extra points.
     try:
-        from loyalty_extras import build_tier_progress_line, credit_tier_bonus
-        _bonus_pts = credit_tier_bonus(order['user_id'])
-        if _bonus_pts > 0:
-            header += f"💎 *Tier bonus: +{_bonus_pts} points*\n"
+        from loyalty_extras import build_tier_progress_line
         tier_line = build_tier_progress_line(order['user_id'])
         if tier_line:
             header += f"{tier_line}\n"
@@ -1090,12 +1098,9 @@ async def fulfill_paid_product_order(bot, order, paid_amount=None, *, payment_me
         f"💳 Payment: *{escape_md(method)}*\n\n"
         f"📨 *{delivery_label}* — see the next message."
     )
-    # 🆕 v66: Tier progress hint  +  🆕 v68: Tier bonus credit
+    # v121: Tier progress hint only. No extra points on payment success.
     try:
-        from loyalty_extras import build_tier_progress_line, credit_tier_bonus
-        _bonus_pts = credit_tier_bonus(order['user_id'])
-        if _bonus_pts > 0:
-            text += f"\n\n💎 *Tier bonus: +{_bonus_pts} points*"
+        from loyalty_extras import build_tier_progress_line
         tier_line = build_tier_progress_line(order['user_id'])
         if tier_line:
             text += f"\n\n{tier_line}"
@@ -1294,8 +1299,8 @@ async def payment_binance_callback(update, context):
     await _safe_send(q, context,
         f"🔶 *Binance Payment*\n━━━━━━━━━━━━━━━━━━━━\n"
         f"📦 *{_fmt_msg_name(p['name'])}*{qty_text}\n"
-        f"💰 *Total: ${total:.2f}*\n\n"
-        f"📋 *Send ${total:.2f} to:*\n"
+        f"💰 *Total: {fmt_price(total)}*\n\n"
+        f"📋 *Send {fmt_price(total)} to:*\n"
         f"• Binance Pay ID: `{bid}`\n"
         f"• Account Name: *{escape_md(bn_holder)}*\n\n"
         f"✅ *Step 1/2:* Enter your *Binance sender name* below.\n"
@@ -1384,9 +1389,10 @@ async def binance_amount_received(update, context):
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel Payment", callback_data="cancel_order")]]))
             return True
         amt = expected_amount
-        pts = int(expected_amount * POINTS_PER_DOLLAR)
-        oid = create_order(u.id, un, 0, f"💎 {pts} Points", expected_amount, 'binance', sender_name, expected_amount, 'USDT', 'points')
-        pname = f"💎 {pts} Points"
+        pts = points_from_usd(expected_amount)
+        pts_txt = fmt_points(pts)
+        oid = create_order(u.id, un, 0, f"💎 {pts_txt} Points", expected_amount, 'binance', sender_name, expected_amount, 'USDT', 'points')
+        pname = f"💎 {pts_txt} Points"
     else:
         p = get_product(pid)
         if not p:
@@ -1828,8 +1834,8 @@ async def ep_amount_received(update, context):
 # ════════════════════════════════════════════
 def _points_from_order_name(order):
     try:
-        m = re.search(r'(\d+)', order['product_name'] or '')
-        return int(m.group(1)) if m else int(float(order['price'] or 0) * POINTS_PER_DOLLAR)
+        m = re.search(r'(\d+(?:\.\d+)?)', order['product_name'] or '')
+        return float(m.group(1)) if m else points_from_usd(float(order['price'] or 0))
     except Exception:
         return 0
 
@@ -1927,18 +1933,18 @@ async def _process_points_tid_payment(target, context, oid, *, platform, callbac
         pts = _points_from_order_name(o)
         mark_txid_used(tid, o['user_id'], oid, actual_rs, 'PKR')
         if pts > 0:
-            add_points(o['user_id'], pts)
+            add_points(o['user_id'], pts, tx_type='deposit', description='Points deposit', event_id=f"points_order_{oid}", order_id=oid)
         update_order_status(oid, 'delivered')
         total_pts = get_user_points(o['user_id'])
         text = (
             f"🎉 *Deposit Successful!*\n"
             f"━━━━━━━━━━━━━━━━━━━━\n\n"
             f"✅ Your payment has been confirmed.\n"
-            f"💎 Points Added: *{pts}*\n"
+            f"💎 Points Added: *{fmt_points(pts)}*\n"
             f"💰 Amount: *Rs.{actual_rs:.0f}*\n"
             f"🧾 Order ID: `#{oid}`\n"
             f"🔢 Transaction ID: `{tid}`\n\n"
-            f"📊 New Points Balance: *{total_pts}*\n\n"
+            f"📊 New Points Balance: *{fmt_points(total_pts)}*\n\n"
             f"Thank you for your deposit!"
         )
         # clear state
@@ -2150,11 +2156,10 @@ async def ep_verify_callback(update, context):
         is_points = ((o['order_type'] if 'order_type' in o.keys() and o['order_type'] else 'product') == 'points' or
                      (not o['product_id'] and 'Points' in (o['product_name'] or '')))
         if is_points:
-            m = re.search(r'(\d+)', o['product_name'] or '')
-            pts = int(m.group(1)) if m else 0
-            if pts > 0: add_points(o['user_id'], pts)
+            pts = _points_from_order_name(o)
+            if pts > 0: add_points(o['user_id'], pts, tx_type='deposit', description='Points deposit', event_id=f"points_order_{oid}", order_id=oid)
             msg = (f"🎉 *Payment Verified!* ✅\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                   f"💎 *{pts} Points* added to your account!\n\n"
+                   f"💎 *{fmt_points(pts)} Points* added to your account!\n\n"
                    f"💰 Amount: Rs.{actual_rs:.0f}\n👤 From: {sender_name}\n🔢 TID: `{tid}`\n\nThank you! 🙏")
         else:
             order_qty = 1
@@ -2163,7 +2168,7 @@ async def ep_verify_callback(update, context):
             
             p = get_product(o['product_id'])
             is_manual = (dict(p) if p else {}).get('delivery_mode') == 'manual'
-            pts_bonus = int(o['price'] * POINTS_PER_DOLLAR)
+            pts_bonus = points_from_usd(o['price'])
             
             if is_manual:
                 req_type = (dict(p) if p else {}).get('req_account_type', 'none')
@@ -2206,12 +2211,9 @@ async def ep_verify_callback(update, context):
                     await context.bot.send_message(o['user_id'], delivery)
                 except Exception:
                     pass
-                # 🆕 v66: tier progress hint  +  🆕 v68: tier bonus credit
+                # v121: Tier progress hint only. No extra points on payment success.
                 try:
-                    from loyalty_extras import build_tier_progress_line, credit_tier_bonus
-                    _bonus_pts = credit_tier_bonus(o['user_id'])
-                    if _bonus_pts > 0:
-                        msg += f"\n\n💎 *Tier bonus: +{_bonus_pts} points*"
+                    from loyalty_extras import build_tier_progress_line
                     tline = build_tier_progress_line(o['user_id'])
                     if tline:
                         msg += f"\n\n{tline}"
@@ -2301,11 +2303,11 @@ async def ep_verify_callback(update, context):
 # ════════════════════════════════════════════
 async def points_amount_callback(update, context):
     q = update.callback_query; await q.answer()
-    amt = int(q.data.split("_")[1]); pts = amt * POINTS_PER_DOLLAR
+    amt = int(q.data.split("_")[1]); pts = points_from_usd(amt)
     context.user_data['points_amount'] = amt
     await q.edit_message_text(
-        f"💎 *Buy {pts} Points*\n━━━━━━━━━━━━━━━━━━━━\n"
-        f"💰 ${amt} = {pts} Points\n\nSelect payment method:",
+        f"💎 *Buy {fmt_points(pts)} Points*\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 ${amt} = {fmt_points(pts)} Points\n\nSelect payment method:",
         parse_mode="Markdown", reply_markup=points_payment_keyboard(amt))
 
 
@@ -2325,9 +2327,9 @@ async def points_custom_amount_received(update, context):
     if amt <= 0: await update.message.reply_text("❌ > 0!"); return True
     context.user_data['points_amount'] = amt
     context.user_data.pop('points_step', None)
-    pts = int(amt * POINTS_PER_DOLLAR)
+    pts = points_from_usd(amt)
     await update.message.reply_text(
-        f"💎 *{pts} Points* — ${amt}\n\nSelect payment method:",
+        f"💎 *{fmt_points(pts)} Points* — ${amt}\n\nSelect payment method:",
         parse_mode="Markdown", reply_markup=points_payment_keyboard(amt))
     return True
 
@@ -2336,7 +2338,7 @@ async def points_binance_callback(update, context):
     """🔶 Binance Buy Points → Order-ID flow (when API toggle ON) or legacy sender-name flow."""
     q = update.callback_query; await q.answer()
     amt = float(q.data.split("_")[2])
-    pts = int(amt * POINTS_PER_DOLLAR)
+    pts = points_from_usd(amt)
 
     for k in ['ep_step','ep_amount','ep_tid','binance_step','binance_amount',
               'binance_txid','binance_product_id','binance_qty','binance_name','binance_order_id',
@@ -2362,9 +2364,9 @@ async def points_binance_callback(update, context):
     bn_holder = get_setting("binance_name", get_setting("account_name", ACCOUNT_NAME))
     await _safe_send(q, context,
         f"🔶 *Binance Deposit*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"💎 You will receive: *{pts} Points*\n"
-        f"💰 Amount: *${amt:.2f}*\n\n"
-        f"📋 *Send ${amt:.2f} to:*\n"
+        f"💎 You will receive: *{fmt_points(pts)} Points*\n"
+        f"💰 Amount: *{fmt_price(amt)}*\n\n"
+        f"📋 *Send {fmt_price(amt)} to:*\n"
         f"• Binance Pay ID: `{bid}`\n"
         f"• Account Name: *{escape_md(bn_holder)}*\n\n"
         f"✅ *Step 1/2:* Enter your *Binance sender name* below.\n"
@@ -2377,7 +2379,7 @@ async def points_easypaisa_callback(update, context):
     """🆕 v31: EasyPaisa Points — TID only flow"""
     q = update.callback_query; await q.answer()
     amt = float(q.data.split("_")[2])
-    pts = int(amt * POINTS_PER_DOLLAR)
+    pts = points_from_usd(amt)
     rs_amount = amt * _pkr_rate()
     u = q.from_user
     un = u.first_name or str(u.id)
@@ -2388,7 +2390,7 @@ async def points_easypaisa_callback(update, context):
         context.user_data.pop(k, None)
 
     # Create pending order NOW
-    oid = create_order(u.id, un, 0, f"💎 {pts} Points", amt, 'easypaisa', '', rs_amount, 'PKR', 'points')
+    oid = create_order(u.id, un, 0, f"💎 {fmt_points(pts)} Points", amt, 'easypaisa', '', rs_amount, 'PKR', 'points')
     update_order_status(oid, 'screenshot_sent')
 
     context.user_data['ep_product_id'] = None
@@ -2404,8 +2406,8 @@ async def points_easypaisa_callback(update, context):
     an = get_setting("easypaisa_name", legacy_name)
 
     await _safe_send(q, context,
-        f"📱 *Order #{oid} — EasyPaisa Buy {pts} Points*\n━━━━━━━━━━━━━━━━━━━━\n"
-        f"💎 You will receive: *{pts} Points*\n"
+        f"📱 *Order #{oid} — EasyPaisa Buy {fmt_points(pts)} Points*\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"💎 You will receive: *{fmt_points(pts)} Points*\n"
         f"💰 Pay: *Rs.{rs_amount:.0f}* (= ${amt})\n\n"
         f"📲 *Send Rs.{rs_amount:.0f} to:*\n"
         f"  Number: `{num}`\n"
@@ -2425,7 +2427,7 @@ async def points_jazzcash_callback(update, context):
     """🆕 v40.2: JazzCash Points — Auto-verify via TID."""
     q = update.callback_query; await q.answer()
     amt = float(q.data.split("_")[2])
-    pts = int(amt * POINTS_PER_DOLLAR)
+    pts = points_from_usd(amt)
     rs_amount = amt * _pkr_rate()
     u = q.from_user
     un = u.first_name or str(u.id)
@@ -2436,7 +2438,7 @@ async def points_jazzcash_callback(update, context):
         context.user_data.pop(k, None)
 
     # Create pending order
-    oid = create_order(u.id, un, 0, f"💎 {pts} Points", amt, 'jazzcash', '', rs_amount, 'PKR', 'points')
+    oid = create_order(u.id, un, 0, f"💎 {fmt_points(pts)} Points", amt, 'jazzcash', '', rs_amount, 'PKR', 'points')
     update_order_status(oid, 'screenshot_sent')
 
     context.user_data['jc_product_id'] = None
@@ -2451,8 +2453,8 @@ async def points_jazzcash_callback(update, context):
     an = get_setting("jazzcash_name", legacy_name)
 
     await _safe_send(q, context,
-        f"📱 *Order #{oid} — JazzCash Buy {pts} Points*\n━━━━━━━━━━━━━━━━━━━━\n"
-        f"💎 You will receive: *{pts} Points*\n"
+        f"📱 *Order #{oid} — JazzCash Buy {fmt_points(pts)} Points*\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"💎 You will receive: *{fmt_points(pts)} Points*\n"
         f"💰 Pay: *Rs.{rs_amount:.0f}* (= ${amt})\n\n"
         f"📲 *Send Rs.{rs_amount:.0f} to:*\n"
         f"  Number: `{num}`\n"
@@ -2946,11 +2948,10 @@ async def jc_verify_callback(update, context):
         is_points = ((o['order_type'] if 'order_type' in o.keys() and o['order_type'] else 'product') == 'points' or
                      (not o['product_id'] and 'Points' in (o['product_name'] or '')))
         if is_points:
-            m = re.search(r'(\d+)', o['product_name'] or '')
-            pts = int(m.group(1)) if m else 0
-            if pts > 0: add_points(o['user_id'], pts)
+            pts = _points_from_order_name(o)
+            if pts > 0: add_points(o['user_id'], pts, tx_type='deposit', description='Points deposit', event_id=f"points_order_{oid}", order_id=oid)
             msg = (f"🎉 *Payment Verified!* ✅\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                   f"💎 *{pts} Points* added to your account!\n\n"
+                   f"💎 *{fmt_points(pts)} Points* added to your account!\n\n"
                    f"💰 Amount: Rs.{actual_rs:.0f}\n"
                    + (f"👤 From: {sender_name}\n" if sender_name else "")
                    + f"🔢 TID: `{tid}`\n\nThank you! 🙏")
@@ -2961,7 +2962,7 @@ async def jc_verify_callback(update, context):
             
             p = get_product(o['product_id'])
             is_manual = (dict(p) if p else {}).get('delivery_mode') == 'manual'
-            pts_bonus = int(o['price'] * POINTS_PER_DOLLAR)
+            pts_bonus = points_from_usd(o['price'])
             
             if is_manual:
                 req_type = (dict(p) if p else {}).get('req_account_type', 'none')
@@ -3004,12 +3005,9 @@ async def jc_verify_callback(update, context):
                     await context.bot.send_message(o['user_id'], delivery)
                 except Exception:
                     pass
-                # 🆕 v66: tier progress hint  +  🆕 v68: tier bonus credit
+                # v121: Tier progress hint only. No extra points on payment success.
                 try:
-                    from loyalty_extras import build_tier_progress_line, credit_tier_bonus
-                    _bonus_pts = credit_tier_bonus(o['user_id'])
-                    if _bonus_pts > 0:
-                        msg += f"\n\n💎 *Tier bonus: +{_bonus_pts} points*"
+                    from loyalty_extras import build_tier_progress_line
                     tline = build_tier_progress_line(o['user_id'])
                     if tline:
                         msg += f"\n\n{tline}"
@@ -3572,16 +3570,16 @@ async def pay_pts_callback(update, context):
     balance = user['points'] if (user is not None and 'points' in user.keys()) else 0
     
     cost_usd = _get_eff_price(p) * qty
-    cost_pts = int(cost_usd * POINTS_PER_DOLLAR)
+    cost_pts = points_from_usd(cost_usd)
     
     if balance < cost_pts:
         missing = cost_pts - balance
         txt = (f"❌ *Insufficient Wallet Balance*\n"
                f"━━━━━━━━━━━━━━━━━━━━\n\n"
                f"📦 Product: *{_fmt_msg_name(p['name'])}* (x{qty})\n"
-               f"💰 Required: *{cost_pts} 💎*\n"
-               f"💳 Your Balance: *{balance} 💎*\n"
-               f"📉 Short by: *{missing} 💎*\n\n"
+               f"💰 Required: *{fmt_points(cost_pts)} 💎*\n"
+               f"💳 Your Balance: *{fmt_points(balance)} 💎*\n"
+               f"📉 Short by: *{fmt_points(missing)} 💎*\n\n"
                f"_Top up your points balance to complete this purchase._")
         
         kb = [
@@ -3592,7 +3590,7 @@ async def pay_pts_callback(update, context):
         return
 
     # --- 🟢 SUFFICIENT POINTS: Process Instant Checkout ---
-    deduct_points(q.from_user.id, cost_pts)
+    deduct_points(q.from_user.id, cost_pts, tx_type='purchase', description=f"Product #{pid}")
     new_balance = balance - cost_pts
     
     un = q.from_user.username or q.from_user.first_name
@@ -3603,15 +3601,15 @@ async def pay_pts_callback(update, context):
     await _safe_send(q, context,
         f"✅ *Wallet Payment Successful!*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"💰 Old Balance: `{balance}` 💎\n"
-        f"➖ Deducted: `-{cost_pts}` 💎\n"
-        f"💳 New Balance: *{new_balance}* 💎\n\n"
+        f"💰 Old Balance: `{fmt_points(balance)}` 💎\n"
+        f"➖ Deducted: `-{fmt_points(cost_pts)}` 💎\n"
+        f"💳 New Balance: *{fmt_points(new_balance)}* 💎\n\n"
         f"⏳ Processing your order...",
         parse_mode="Markdown")
 
     order = get_order(oid)
     await fulfill_paid_product_order(context.bot, order, cost_pts,
-                                     payment_method_label=f"Wallet / Points (-{cost_pts} 💎)",
+                                     payment_method_label=f"Wallet / Points (-{fmt_points(cost_pts)} 💎)",
                                      award_bonus=False)
 
 

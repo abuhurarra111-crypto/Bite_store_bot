@@ -16,9 +16,58 @@ from database import (
     get_referral_log, get_referral_bans,
     ban_referrer, unban_referrer, is_referrer_banned,
     add_ref_points, get_ref_points, get_user,
+    get_setting, set_setting,
 )
 
 logger = logging.getLogger(__name__)
+
+REF_TPL_DEFAULTS = {
+    "referrer": """🎉 *New Referral Joined!*\n━━━━━━━━━━━━━━━━━━━━\n\n👤 Referred user: *{referred_name}*\n🆔 Referred ID: `{referred_id}`\n\n✅ Reward: *+{reward_points} referral point*\n📊 Your direct referrals: *{total_referrals}*\n🎯 Next bonus: *{remaining_to_bonus}* more referrals → *+{milestone_bonus} wallet points* ($1)\n\nKeep sharing your link and earning rewards! 🚀""",
+    "admin": """🎁 *New Direct Referral*\n━━━━━━━━━━━━━━━━━━━━\n\n👑 Referrer:\n• Name: *{referrer_name}*\n• Username: @{referrer_username}\n• ID: `{referrer_id}`\n\n🆕 Referred User:\n• Name: *{referred_name}*\n• Username: @{referred_username}\n• ID: `{referred_id}`\n\n🎯 Reward: +{reward_points} referral point\n📊 Referrer's direct referrals: {total_referrals}""",
+    "milestone": """🏆 *Referral Milestone Unlocked!*\n━━━━━━━━━━━━━━━━━━━━\n\n🔥 You reached *{milestone_number} direct referrals*!\n🎁 Bonus reward: *+{milestone_bonus} wallet points* ($1)\n💎 Wallet bonus has been added to your balance.\n\nNext milestone: *{next_milestone} referrals* 🚀""",
+    "product_referrer": """🎁 *Product Referral Counted!*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 Product: *{product_name}*\n👤 New user: *{referred_name}*\n🆔 User ID: `{referred_id}`\n\n📊 Your progress: *{product_referrals}/{product_required}*\n🎯 Need *{product_remaining}* more referral(s) to claim this product free.\n\nKeep sharing this product link! 🚀""",
+    "product_admin": """🎁 *Product Referral Counted*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 Product: *{product_name}* (`#{product_id}`)\n📊 Progress: *{product_referrals}/{product_required}*\n🎯 Remaining: *{product_remaining}*\n\n👑 Referrer:\n• Name: *{referrer_name}*\n• Username: @{referrer_username}\n• ID: `{referrer_id}`\n\n🆕 Referred User:\n• Name: *{referred_name}*\n• Username: @{referred_username}\n• ID: `{referred_id}`""",
+    "product_unlock": """🎉 *Free Product Unlocked!*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 Product: *{product_name}*\n✅ Progress complete: *{product_referrals}/{product_required}*\n\nYou can now claim this product for FREE. Tap the button below.""",
+}
+
+REF_TPL_READYMADE = {
+    "referrer": [
+        REF_TPL_DEFAULTS["referrer"],
+        """✅ *Referral Reward Added!*\n\nYour friend `{referred_id}` started the bot from your link.\n\n🎁 You earned *+{reward_points} referral point*.\n📊 Total direct referrals: *{total_referrals}*\n🏆 Bonus progress: *{remaining_to_bonus}* more for +{milestone_bonus} wallet points.""",
+        """🚀 *Nice! New Referral*\n\n👤 {referred_name} (`{referred_id}`) joined via your link.\n💎 Reward: +{reward_points} referral point\n📈 Your total: {total_referrals}\n🎯 Every 20 referrals = +{milestone_bonus} wallet points.""",
+    ],
+    "admin": [
+        REF_TPL_DEFAULTS["admin"],
+        """🛡️ *Referral Counted*\n\nReferrer: {referrer_name} (`{referrer_id}`) @{referrer_username}\nNew User: {referred_name} (`{referred_id}`) @{referred_username}\nReward: +{reward_points} ref point\nTotal: {total_referrals}""",
+        """🎁 *Referral Activity*\n━━━━━━━━━━━━━━━━━━━━\n`{referrer_id}` brought `{referred_id}`\nReferrer: {referrer_name}\nJoined user: {referred_name}\nTotal referrals: {total_referrals}""",
+    ],
+    "milestone": [
+        REF_TPL_DEFAULTS["milestone"],
+        """🎉 *20 Referral Bonus!*\n\nYou hit *{milestone_number}* referrals.\n+{milestone_bonus} wallet points have been added.\nNext target: {next_milestone}.""",
+        """🏆 *Milestone Reward Paid*\n\nDirect referrals: {milestone_number}\nBonus: +{milestone_bonus} wallet points ($1)\nKeep going — next bonus at {next_milestone}!""",
+    ],
+    "product_referrer": [
+        REF_TPL_DEFAULTS["product_referrer"],
+        """📦 *Product Referral Progress*\n\n{referred_name} (`{referred_id}`) joined for *{product_name}*.\nProgress: {product_referrals}/{product_required}\nNeed {product_remaining} more to claim free.""",
+        """🎁 *One Step Closer!*\n\nProduct: {product_name}\nNew referral ID: `{referred_id}`\nYour count: {product_referrals}/{product_required}\nRemaining: {product_remaining}""",
+    ],
+    "product_admin": [
+        REF_TPL_DEFAULTS["product_admin"],
+        """🛡️ *Product Referral*\nProduct: {product_name} (`#{product_id}`)\nReferrer: {referrer_name} `{referrer_id}`\nNew user: {referred_name} `{referred_id}`\nProgress: {product_referrals}/{product_required}""",
+        """🎁 *Free-Claim Referral Counted*\n`{referrer_id}` brought `{referred_id}` for product `#{product_id}`.\nProduct: {product_name}\nRemaining: {product_remaining}""",
+    ],
+    "product_unlock": [
+        REF_TPL_DEFAULTS["product_unlock"],
+        """🎉 *Claim Ready!*\n\nYou completed {product_referrals}/{product_required} referrals for *{product_name}*.\nTap below to claim it free.""",
+        """🏆 *Free Product Unlocked*\nProduct: {product_name}\nProgress: {product_referrals}/{product_required}\nClaim button is below.""",
+    ],
+}
+
+REF_PLACEHOLDERS = """Placeholders:\n`{referrer_id}` `{referrer_name}` `{referrer_username}`\n`{referred_id}` `{referred_name}` `{referred_username}`\n`{reward_points}` `{total_referrals}` `{remaining_to_bonus}`\n`{milestone_bonus}` `{milestone_number}` `{next_milestone}`\nProduct-only: `{product_id}` `{product_name}` `{product_referrals}` `{product_required}` `{product_remaining}`"""
+
+
+def _tpl_key(kind):
+    return f"ref_tpl_{kind}"
 
 
 async def _safe_edit(q, text, **kwargs):
@@ -47,6 +96,7 @@ def _panel_kb():
         [InlineKeyboardButton("🔓 Unban a User", callback_data="refadm_unban_start")],
         [InlineKeyboardButton("📋 Banned List",  callback_data="refadm_banlist")],
         [InlineKeyboardButton("💎 Adjust Ref Points", callback_data="refadm_adjust_start")],
+        [InlineKeyboardButton("✉️ Notification Templates", callback_data="refadm_tpl_panel")],
         [InlineKeyboardButton("🔙 Back to Admin", callback_data="admin_panel")],
     ])
 
@@ -206,6 +256,112 @@ async def refadm_adjust_start(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="refadm_panel")]]))
 
 
+def _ref_tpl_panel_text_kb():
+    text = (
+        "✉️ *Referral Notification Templates*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Edit messages sent when a direct referral is counted.\n\n"
+        "• 👤 Referrer message — sent to the user who invited someone\n"
+        "• 🛡️ Admin message — sent to admin with both user details\n"
+        "• 🏆 Milestone message — sent every 20 direct referrals when +10 wallet points are awarded\n\n"
+        f"{REF_PLACEHOLDERS}"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("👤 Direct Referrer Msg", callback_data="refadm_tpl_edit_referrer")],
+        [InlineKeyboardButton("🛡️ Direct Admin Msg", callback_data="refadm_tpl_edit_admin")],
+        [InlineKeyboardButton("🏆 Direct Milestone Msg", callback_data="refadm_tpl_edit_milestone")],
+        [InlineKeyboardButton("📦 Product Referrer Msg", callback_data="refadm_tpl_edit_product_referrer")],
+        [InlineKeyboardButton("🛡️ Product Admin Msg", callback_data="refadm_tpl_edit_product_admin")],
+        [InlineKeyboardButton("🎉 Product Unlock Msg", callback_data="refadm_tpl_edit_product_unlock")],
+        [InlineKeyboardButton("🎨 Readymade Templates", callback_data="refadm_tpl_ready_referrer")],
+        [InlineKeyboardButton("♻️ Reset All Defaults", callback_data="refadm_tpl_reset_all")],
+        [InlineKeyboardButton("🔙 Back", callback_data="refadm_panel")],
+    ])
+    return text, kb
+
+
+async def refadm_tpl_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    text, kb = _ref_tpl_panel_text_kb()
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
+
+
+async def refadm_tpl_edit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    kind = q.data.replace("refadm_tpl_edit_", "", 1)
+    if kind not in REF_TPL_DEFAULTS:
+        await q.answer("Invalid template", show_alert=True); return
+    current = get_setting(_tpl_key(kind), REF_TPL_DEFAULTS[kind]) or REF_TPL_DEFAULTS[kind]
+    context.user_data["refadm_step"] = f"tpl_{kind}"
+    await _safe_edit(q,
+        f"✏️ *Edit {kind.title()} Referral Template*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Current template:\n`{escape_md(current[:900])}`\n\n"
+        f"{REF_PLACEHOLDERS}\n\n"
+        f"Send the new template as your next message.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="refadm_tpl_panel")]]))
+
+
+async def refadm_tpl_ready_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    kind = q.data.replace("refadm_tpl_ready_", "", 1)
+    if kind not in REF_TPL_READYMADE:
+        kind = "referrer"
+    rows = []
+    for i, tpl in enumerate(REF_TPL_READYMADE[kind]):
+        rows.append([InlineKeyboardButton(f"Template {i+1}: {tpl.splitlines()[0][:30]}", callback_data=f"refadm_tpl_apply_{kind}_{i}")])
+    rows.append([InlineKeyboardButton("👤 Direct Referrer", callback_data="refadm_tpl_ready_referrer"),
+                 InlineKeyboardButton("🛡️ Direct Admin", callback_data="refadm_tpl_ready_admin")])
+    rows.append([InlineKeyboardButton("🏆 Direct Milestone", callback_data="refadm_tpl_ready_milestone")])
+    rows.append([InlineKeyboardButton("📦 Product Referrer", callback_data="refadm_tpl_ready_product_referrer")])
+    rows.append([InlineKeyboardButton("🛡️ Product Admin", callback_data="refadm_tpl_ready_product_admin"),
+                 InlineKeyboardButton("🎉 Product Unlock", callback_data="refadm_tpl_ready_product_unlock")])
+    rows.append([InlineKeyboardButton("🔙 Back", callback_data="refadm_tpl_panel")])
+    await _safe_edit(q,
+        f"🎨 *Readymade Templates — {kind.title()}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Pick one to apply instantly, or go back and edit custom.",
+        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+
+
+async def refadm_tpl_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        rest = q.data.replace("refadm_tpl_apply_", "", 1)
+        kind, idx_s = rest.rsplit("_", 1)
+        idx = int(idx_s)
+        tpl = REF_TPL_READYMADE[kind][idx]
+    except Exception:
+        await q.answer("Invalid template", show_alert=True); return
+    set_setting(_tpl_key(kind), tpl)
+    await q.answer("✅ Template applied", show_alert=True)
+    text, kb = _ref_tpl_panel_text_kb()
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
+
+
+async def refadm_tpl_reset_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer("✅ Reset", show_alert=True)
+    for kind, tpl in REF_TPL_DEFAULTS.items():
+        set_setting(_tpl_key(kind), tpl)
+    text, kb = _ref_tpl_panel_text_kb()
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
+
+
 async def refadm_text_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Router for refadm text input. Called from bot.py::handle_text."""
     if update.effective_user.id != ADMIN_ID:
@@ -218,6 +374,22 @@ async def refadm_text_received(update: Update, context: ContextTypes.DEFAULT_TYP
 
     kb_back = InlineKeyboardMarkup([[InlineKeyboardButton(
         "🔙 Referral Panel", callback_data="refadm_panel")]])
+
+    if step.startswith("tpl_"):
+        kind = step.replace("tpl_", "", 1)
+        if kind not in REF_TPL_DEFAULTS:
+            await update.message.reply_text("❌ Invalid template type.", reply_markup=kb_back)
+            return True
+        if not raw:
+            await update.message.reply_text("❌ Template cannot be empty.", reply_markup=kb_back)
+            return True
+        set_setting(_tpl_key(kind), raw)
+        await update.message.reply_text(
+            f"✅ *{kind.title()} referral template saved!*\n\n"
+            f"Use the panel to test by bringing a referral.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✉️ Templates", callback_data="refadm_tpl_panel")]]))
+        return True
 
     try:
         parts = raw.split(None, 1)

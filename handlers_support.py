@@ -6,7 +6,7 @@ from telegram.ext import ConversationHandler  # 🔧 BUG FIX: used (Conversation
 from config import ADMIN_ID, DEFAULT_RESPONSES, POINTS_PER_DOLLAR
 from database import *
 from keyboards import back_btn
-from utils import escape_md, nav_push, set_cb_data, smart_text_and_mode, contains_premium_markup, fmt_price
+from utils import escape_md, nav_push, set_cb_data, smart_text_and_mode, contains_premium_markup, fmt_price, points_from_usd, fmt_points
 from datetime import datetime
 from templates_bundle import render_delivery_bundle, normalize_product_format, format_label, format_hint, format_example
 # 🆕 v73: two-way ticket chat (text + photo + video + document)
@@ -1139,8 +1139,8 @@ async def adm_wr_approve_callback(update, context):
 
     # If refund → add points back to user
     if w['request_type'] == 'refund' and o:
-        pts_refund = int(o['price'] * POINTS_PER_DOLLAR)
-        add_points(w['user_id'], pts_refund)
+        pts_refund = points_from_usd(o['price'])
+        add_points(w['user_id'], pts_refund, tx_type='warranty_refund', description='Warranty refund', event_id=f"warranty_refund_{o['id'] if o else w['id']}", order_id=(o['id'] if o else 0))
     else:
         pts_refund = 0
 
@@ -1149,7 +1149,7 @@ async def adm_wr_approve_callback(update, context):
     user_msg = f"✅ *{type_label} Request Approved!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
     user_msg += f"📦 Order #{w['order_id']}\n"
     if pts_refund > 0:
-        user_msg += f"💎 *{pts_refund} points* refunded to your account!\n"
+        user_msg += f"💎 *{fmt_points(pts_refund)} points* refunded to your account!\n"
     else:
         user_msg += "Admin will process your warranty claim shortly.\n"
 

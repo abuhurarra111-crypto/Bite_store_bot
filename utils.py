@@ -7,6 +7,39 @@ from datetime import datetime
 from urllib.parse import quote
 import re
 import html as _html
+from decimal import Decimal, InvalidOperation
+
+
+def _to_decimal(value, default="0"):
+    try:
+        return Decimal(str(value if value is not None and value != "" else default))
+    except (InvalidOperation, ValueError, TypeError):
+        return Decimal(str(default))
+
+
+def points_from_usd(amount, rate=None):
+    """Convert USD to wallet points without truncating cents.
+
+    v120: Old code used int(amount * POINTS_PER_DOLLAR), so $1.05 became
+    10 points instead of 10.5. This helper preserves decimal points.
+    """
+    if rate is None:
+        try:
+            from config import POINTS_PER_DOLLAR as _R
+            rate = _R
+        except Exception:
+            rate = 10
+    return float(_to_decimal(amount) * _to_decimal(rate))
+
+
+def fmt_points(value, suffix=""):
+    """Pretty points display: 10.5000 -> 10.5, 10.000 -> 10."""
+    d = _to_decimal(value)
+    if d == d.to_integral_value():
+        s = str(d.quantize(Decimal("1")))
+    else:
+        s = format(d.normalize(), "f").rstrip("0").rstrip(".")
+    return f"{s}{suffix}"
 
 
 def escape_md(text):

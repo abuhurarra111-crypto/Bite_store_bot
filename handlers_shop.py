@@ -246,6 +246,12 @@ def _set_user_shop_filter(context, mode):
 async def shop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+    # v128: opening Shop verifies pending referrals immediately.
+    try:
+        from handlers_start import approve_pending_referral_for_user
+        await approve_pending_referral_for_user(context, q.from_user.id, reason='shop_open')
+    except Exception:
+        pass
     nav_push(context, 'shop')  # 🔙 Track navigation
     # 🆕 v59: Apply stock-based filter (all/available/unavailable)
     from database import get_products_filtered

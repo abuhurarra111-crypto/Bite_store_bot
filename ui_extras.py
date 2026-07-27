@@ -227,10 +227,11 @@ def _build_how_to_hub_text_and_kb():
     text = (
         "📚 *How to Use — Complete Guide*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Welcome! Pick any topic below to learn how to use that feature step-by-step.\n\n"
+        "Welcome! This guide is updated for the latest Bite Store flow. Pick any topic below.\n\n"
         "_Every guide shows exact buttons to tap, what to type, and what to expect._\n\n"
-        "📌 *Quick tip:* The 🏠 Main Menu button (anywhere in the bot) always "
-        "takes you back to the start — even mid-payment or mid-form."
+        "📌 *Quick rules:* Buy Now = 1 item, Buy Multiple = quantity you type, "
+        "and Points are calculated exactly from USD (no rounding down).\n\n"
+        "🏠 *Main Menu* always resets the bot if you get stuck."
     )
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🛒 How to Buy a Product",      callback_data="guide_buy_product")],
@@ -275,35 +276,54 @@ async def how_to_hub_from_text(update, context):
 
 _GUIDES = {
     "buy_product": (
-        "🛒 *How to Buy a Product*\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "*Step 1:* From Main Menu, tap *🛒 Shop Now*\n\n"
-        "*Step 2:* Browse categories OR tap *📊 Price List* to see all products\n\n"
-        "*Step 3:* Tap the product you want\n\n"
-        "*Step 4:* Tap *💳 Buy Now*\n\n"
-        "*Step 5:* Pick how many units (quantity)\n\n"
-        "*Step 6:* Choose a payment method:\n"
-        "  • 🪙 Binance Pay (fastest — auto-verify)\n"
-        "  • 📱 EasyPaisa\n"
-        "  • 📞 JazzCash\n"
-        "  • 💰 Points (use your wallet balance)\n\n"
-        "*Step 7:* Follow the payment screen instructions. After payment, your "
-        "account/code is *delivered automatically* in a new message.\n\n"
-        "✅ Done! Your order also shows up in *📜 Order History*."
+        '🛒 *How to Buy a Product*\n'
+        '━━━━━━━━━━━━━━━━━━━━\n'
+        '\n'
+        '*Step 1:* From Main Menu, tap *🛒 Shop Now* or *📊 Price List*.\n'
+        '\n'
+        '*Step 2:* Open the product you want.\n'
+        '\n'
+        '*Step 3:* Choose one:\n'
+        '  • *Buy Now* → buys exactly *1 item/account*\n'
+        '  • *Buy Multiple* → bot asks quantity; it buys exactly the number you type\n'
+        '\n'
+        '*Step 4:* Choose payment method:\n'
+        '  • 🪙 Binance Pay\n'
+        '  • 📱 EasyPaisa\n'
+        '  • 📞 JazzCash\n'
+        '  • 💰 Points Wallet\n'
+        '\n'
+        '*Step 5:* Pay the exact amount shown by the bot and follow verify steps.\n'
+        '\n'
+        '*Delivery rules:*\n'
+        '  • 1-9 items: details are sent in chat text\n'
+        '  • 10+ Outlook/Hotmail-style items: clean message + `.txt` file\n'
+        '  • If supplier gives bonus/extra accounts, customer still receives only paid quantity; extras go to store stock.\n'
+        '\n'
+        '✅ Delivered orders appear in *📜 Order History* so you can re-open details later.'
     ),
     "deposit": (
-        "💎 *How to Buy Points / Deposit*\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Points are bot wallet balance — pay once, then buy multiple products without "
-        "re-entering payment each time.\n\n"
-        "*Step 1:* From Main Menu, tap *💎 Buy Points*\n\n"
-        "*Step 2:* Enter the amount in USD (e.g. `5`, `10`, `20`)\n\n"
-        "*Step 3:* Pick payment method (Binance / EasyPaisa / JazzCash)\n\n"
-        "*Step 4:* Pay & follow on-screen verify steps\n\n"
-        "*Step 5:* Once verified, points land in your wallet *instantly*\n\n"
-        "📊 *Conversion:* 1 USD = 10 points (default — admin may adjust)\n\n"
-        "💡 *Pro tip:* Bigger deposits sometimes unlock bonus points "
-        "(see *🏆 Loyalty Tiers* for current rates)."
+        '💎 *How to Buy Points / Deposit*\n'
+        '━━━━━━━━━━━━━━━━━━━━\n'
+        '\n'
+        'Points are your bot wallet balance. Deposit once, then buy products with Points.\n'
+        '\n'
+        '*Step 1:* From Main Menu, tap *💎 Buy Points*.\n'
+        '\n'
+        '*Step 2:* Choose preset amount or enter custom USD amount.\n'
+        '\n'
+        '*Exact conversion:*\n'
+        '  • `$1` → `10 points`\n'
+        '  • `$1.05` → `10.5 points`\n'
+        '  • `$1.000507` → `10.00507 points`\n'
+        '\n'
+        '*Step 3:* Pick Binance / EasyPaisa / JazzCash.\n'
+        '\n'
+        '*Step 4:* Pay and verify.\n'
+        '\n'
+        '*Step 5:* Once verified, exact points are added to your wallet.\n'
+        '\n'
+        '⚠️ Product purchases do *not* give extra bonus points. Points only increase from deposits, refunds, admin updates, or referral/free-claim systems.'
     ),
     "pay_overview": (
         "💳 *Payment Methods — Overview*\n"
@@ -366,16 +386,29 @@ _GUIDES = {
         "be rejected."
     ),
     "pay_points": (
-        "💰 *Pay with Points*\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "If you already deposited points (see *💎 Buy Points* guide), you can pay "
-        "from your wallet — instantly, no external payment needed.\n\n"
-        "*Step 1:* At product checkout, pick *💰 Points*\n\n"
-        "*Step 2:* Bot shows your current balance + price in points\n\n"
-        "*Step 3:* Tap *✅ Confirm*\n\n"
-        "*Step 4:* Points deducted → product delivered *immediately*\n\n"
-        "💡 *Conversion:* Most products cost (USD price × 10) points.\n\n"
-        "📊 Check your balance anytime in *📊 My Account*."
+        '💰 *Pay with Points*\n'
+        '━━━━━━━━━━━━━━━━━━━━\n'
+        '\n'
+        'Use wallet points to buy products instantly.\n'
+        '\n'
+        '*Step 1:* At product checkout, pick *💰 Points*.\n'
+        '\n'
+        '*Step 2:* Bot shows:\n'
+        '  • Required points\n'
+        '  • Your current balance\n'
+        '  • Short amount if balance is low\n'
+        '\n'
+        '*Exact price rule:*\n'
+        '  Product USD price × 10 = required points\n'
+        '\n'
+        'Examples:\n'
+        '  • `$1` product → `10 points`\n'
+        '  • `$1.05` product → `10.5 points`\n'
+        '  • `$0.038` product → `0.38 points`\n'
+        '\n'
+        '*Step 3:* Confirm. Points deduct exactly, then product is delivered.\n'
+        '\n'
+        '✅ No rounding down: if product is `$1.05`, it cannot be bought for only 10 points.'
     ),
     "ticket": (
         "🎫 *How to Create a Support Ticket*\n"
@@ -443,55 +476,76 @@ _GUIDES = {
         "(if you haven't already)."
     ),
     "referral": (
-        "🎁 *Free Account / Referral Program*\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Earn points (or even free products) by inviting friends.\n\n"
-        "*Step 1:* From Main Menu, tap *🎁 Refer & Earn* (if available)\n\n"
-        "*Step 2:* Copy your unique referral link OR scan your QR code\n\n"
-        "*Step 3:* Share with friends — when they start the bot via your link, "
-        "they're tagged as your referral\n\n"
-        "*Step 4:* For every friend who joins AND makes a purchase:\n"
-        "  • You get bonus points credited\n"
-        "  • They may get a welcome bonus too\n\n"
-        "*Step 5:* Track your referrals + earned points in *📊 My Account*\n\n"
-        "🎁 *Free Account:* If admin has enabled *Free via Referrals*, refer X friends "
-        "to unlock a free claim — check the *🎁 Free Claim* button if visible."
+        '🎁 *Referral Program*\n'
+        '━━━━━━━━━━━━━━━━━━━━\n'
+        '\n'
+        'There are two referral types:\n'
+        '\n'
+        '*1) Direct Referral Link*\n'
+        'Use your general referral link from *🎁 Refer & Earn*.\n'
+        '\n'
+        'When someone starts the bot with your link:\n'
+        '  • You get a notification\n'
+        '  • You earn *+1 referral point*\n'
+        "  • The message shows the referred user's ID\n"
+        '  • Every *20 direct referrals* = *+10 wallet points* ($1 bonus)\n'
+        '\n'
+        '*2) Product Referral Link*\n'
+        'Some products may have *Free via Referrals* enabled.\n'
+        "Share that product's referral link.\n"
+        '\n'
+        'When someone starts the bot through that product link:\n'
+        '  • You get a product-progress notification\n'
+        '  • It shows product name, referred user ID, and progress\n'
+        '  • Example: if admin set 5 referrals, after 1 referral it says you need 4 more\n'
+        '  • When you reach the required count, you can claim that product free\n'
+        '\n'
+        '⚠️ Product referrals and direct referrals are counted separately.\n'
+        '\n'
+        '⚠️ Self-referrals, duplicate accounts, or abuse may be blocked automatically.'
     ),
     "tier": (
-        "🏆 *Tier System & Loyalty Points*\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Buy more → climb tiers → get better rewards.\n\n"
-        "Typical tiers (admin customizable):\n"
-        "  🥉 *Bronze* — newcomers\n"
-        "  🥈 *Silver* — regular buyers\n"
-        "  🥇 *Gold* — frequent buyers\n"
-        "  💎 *Diamond* — top buyers\n\n"
-        "*How to climb:* Every purchase adds to your spend total. When you cross a "
-        "tier threshold, you're upgraded automatically and get a *bonus*.\n\n"
-        "*Check your tier:* Main Menu → *🏆 Loyalty* (or *📊 My Account*)\n\n"
-        "*What you see:*\n"
-        "  • Current tier badge\n"
-        "  • Total spent (USD)\n"
-        "  • Progress bar to next tier\n"
-        "  • Bonus you'll unlock next\n\n"
-        "💡 Bonus is usually free points or a discount %."
+        '🏆 *Tier System & Loyalty*\n'
+        '━━━━━━━━━━━━━━━━━━━━\n'
+        '\n'
+        'Buying products increases your lifetime spend and can upgrade your tier.\n'
+        '\n'
+        'Typical tiers:\n'
+        '  🥉 Bronze\n'
+        '  🥈 Silver\n'
+        '  🥇 Gold\n'
+        '  💎 Diamond\n'
+        '\n'
+        '*What tiers show:*\n'
+        '  • Current tier badge\n'
+        '  • Total spent in USD\n'
+        '  • Progress to next tier\n'
+        '  • Upgrade messages when you cross thresholds\n'
+        '\n'
+        '⚠️ Latest store rule: product payment success does *not* give extra points. Tier progress may show your status, but no per-order points bonus is credited.'
     ),
     "orders": (
-        "📜 *Order History & Tracking*\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "See every order you've ever placed.\n\n"
-        "*Step 1:* From Main Menu, tap *📜 Order History*\n\n"
-        "*Step 2:* List shows your orders newest first with status:\n"
-        "  • ✅ Delivered\n"
-        "  • ⏳ Pending\n"
-        "  • 💸 Refunded\n"
-        "  • ❌ Cancelled\n\n"
-        "*Step 3:* Tap any order → see full details:\n"
-        "  • Product name & price\n"
-        "  • Date\n"
-        "  • Delivery content (re-view your account/code)\n"
-        "  • Action buttons:  🛡️ Claim Warranty · 🔁 Replacement · ⭐ Review · 🎫 Support\n\n"
-        "💡 Lost your delivery message? Open the order here — full delivery is shown again."
+        '📜 *Order History & Tracking*\n'
+        '━━━━━━━━━━━━━━━━━━━━\n'
+        '\n'
+        'See every order you placed.\n'
+        '\n'
+        '*Step 1:* From Main Menu, tap *📜 Order History*.\n'
+        '\n'
+        '*Step 2:* Tap an order to see:\n'
+        '  • Product name & price\n'
+        '  • Quantity\n'
+        '  • Status\n'
+        '  • Delivery content\n'
+        '  • Support / warranty / replacement buttons when available\n'
+        '\n'
+        'Statuses:\n'
+        '  • ✅ Delivered\n'
+        '  • ⏳ Pending / processing\n'
+        '  • 💸 Refunded\n'
+        '  • ❌ Cancelled / rejected\n'
+        '\n'
+        '💡 Lost your account/code? Open the delivered order here — delivery content is saved for re-view.'
     ),
     "price_list": (
         "📊 *Price List & Filters*\n"
@@ -515,24 +569,29 @@ _GUIDES = {
         "💡 You can switch back anytime — same place."
     ),
     "faq": (
-        "❓ *Common Issues / FAQ*\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "*Q: My payment was sent but not confirmed.*\n"
-        "→ Tap *🔄 Check Again* on the payment screen. If still pending after "
-        "5 min, create a *🎫 Support Ticket* with your TID/Order ID.\n\n"
+        '❓ *Common Issues / FAQ*\n'
+        '━━━━━━━━━━━━━━━━━━━━\n'
+        '\n'
+        '*Q: Buy Now gave how many accounts?*\n'
+        '→ Buy Now always means *1 item/account*. Use Buy Multiple for quantity.\n'
+        '\n'
+        '*Q: I paid but not confirmed yet.*\n'
+        '→ Tap *🔄 Check Again*. If still pending after a few minutes, create a support ticket with your TID / Binance Order ID.\n'
+        '\n'
+        '*Q: How are points calculated?*\n'
+        '→ Exact formula: USD × 10. `$1.05 = 10.5 points`; no rounding down.\n'
+        '\n'
+        '*Q: Do product purchases give extra points?*\n'
+        '→ No. Extra points on payment success are disabled. Points only come from deposits, refunds, admin updates, or referral/free-claim rules.\n'
+        '\n'
         "*Q: Account doesn't work after delivery.*\n"
-        "→ Open *📜 Order History* → tap order → *🔁 Replacement* (within window) "
-        "or *🛡️ Warranty* (after window).\n\n"
-        "*Q: I got logged out / bot is stuck on some screen.*\n"
-        "→ Tap *🏠 Main Menu* — that always resets everything. Or send `/start`.\n\n"
-        "*Q: Where are my points?*\n"
-        "→ *📊 My Account* shows current balance + spending history.\n\n"
-        "*Q: How do I delete my account?*\n"
-        "→ Open a *🎫 Support Ticket* asking for data removal.\n\n"
-        "*Q: I have a special request / bulk order.*\n"
-        "→ Open a Support Ticket — admin replies usually within hours.\n\n"
-        "*Q: Bot stopped replying.*\n"
-        "→ Send `/start` to reset. If still nothing, check that Telegram itself is online."
+        '→ Open *📜 Order History* → order → *🔁 Replacement* or *🛡️ Warranty* if available.\n'
+        '\n'
+        '*Q: Bot stuck?*\n'
+        '→ Tap *🏠 Main Menu* or send `/start`.\n'
+        '\n'
+        '*Q: Supplier/API balance looks old?*\n'
+        '→ Balance is last-known. Admin refreshes it manually or after successful orders; bot does not spam supplier balance API in background.'
     ),
 }
 

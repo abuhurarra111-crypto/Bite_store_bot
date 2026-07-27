@@ -5,7 +5,7 @@ from telegram.ext import ConversationHandler
 from config import *
 from database import *
 from keyboards import *
-from utils import escape_md, nav_push, set_cb_data, location_back_callback, smart_text_and_mode, has_premium_emoji, fmt_price
+from utils import escape_md, nav_push, set_cb_data, location_back_callback, smart_text_and_mode, has_premium_emoji, fmt_price, points_from_usd, fmt_points
 from templates_bundle import (
     FORMAT_EMAIL_PASS, FORMAT_REDEEM_LINK, FORMAT_COUPON_CODES,
     format_label as delivery_format_label,
@@ -770,7 +770,7 @@ async def approve_order_callback(u,c):
     if is_points:
         import re
         m = re.search(r'(\d+)', o['product_name'] or '')
-        pts = int(m.group(1)) if m else int((o['price'] or 0) * POINTS_PER_DOLLAR)
+        pts = int(m.group(1)) if m else points_from_usd(o['price'] or 0)
         if pts > 0: add_points(o['user_id'], pts)
         # Points orders are always auto-delivered
         update_order_status(o['id'], 'delivered')
@@ -3952,6 +3952,17 @@ async def admin_backup_callback(u, c):
     size_kb = db_size / 1024
     size_str = f"{size_kb:.1f} KB" if size_kb < 1024 else f"{size_kb/1024:.1f} MB"
 
+    # v128: Backup health — written by the scheduled cloud-backup job.
+    try:
+        last_bk_status = get_setting('backup_last_status', 'never')
+        last_bk_at = get_setting('backup_last_at', 'never')
+        last_bk_size = get_setting('backup_last_size_kb', '')
+        last_bk_line = f"  • Last auto-backup: `{escape_md(last_bk_status)}` at `{escape_md(last_bk_at)}`"
+        if last_bk_size:
+            last_bk_line += f" ({escape_md(last_bk_size)} KB)"
+    except Exception:
+        last_bk_line = "  • Last auto-backup: `unknown`"
+
     text = f"""💾 *Backup & Restore Database*
 ━━━━━━━━━━━━━━━━━━━━
 
@@ -3959,6 +3970,7 @@ async def admin_backup_callback(u, c):
   • File: `shop.db`
   • Size: *{size_str}*
   • Last modified: {last_modified}
+{last_bk_line}
 
 📥 *Download Backup:*
 Download a copy of your bot database.
@@ -6406,6 +6418,23 @@ async def manage_product_accounts_callback(u, c):
     av = count_product_accounts(pid, 'available')
     so = count_product_accounts(pid, 'sold')
     to = count_product_accounts(pid, 'all')
+    bonus_av = manual_av = other_av = 0
+    try:
+        conn = get_connection(); cur = conn.cursor()
+        ensure_product_accounts_table(cur)
+        cur.execute("""SELECT COALESCE(source,'manual') AS src, COUNT(*) AS n
+                       FROM product_accounts
+                       WHERE product_id=? AND status='available'
+                       GROUP BY COALESCE(source,'manual')""", (pid,))
+        for rr in cur.fetchall():
+            src = (rr['src'] if hasattr(rr, 'keys') else rr[0]) or 'manual'
+            n = int((rr['n'] if hasattr(rr, 'keys') else rr[1]) or 0)
+            if src == 'supplier_bonus': bonus_av += n
+            elif src == 'manual': manual_av += n
+            else: other_av += n
+        conn.close()
+    except Exception:
+        pass
     
     p = get_product(pid)
     pname = escape_md(p['name']) if p else f"#{pid}"
@@ -6417,6 +6446,9 @@ async def manage_product_accounts_callback(u, c):
         f"✅ *Available:* {av}\n"
         f"💰 *Sold:* {so}\n"
         f"📊 *Total:* {to}\n"
+        f"🎁 *Supplier Bonus Pool:* {bonus_av}\n"
+        f"✍️ *Manual Pool:* {manual_av}\n"
+        + (f"📦 *Other Pool:* {other_av}\n" if other_av else "") +
         f"🧩 *Expected Format:* {delivery_format_label(fmt)}\n"
         f"📌 *Upload Rule:* {escape_md(delivery_format_hint(fmt))}\n\n"
         f"_When order is approved, bot auto-picks one available account._\n"
@@ -7210,7 +7242,7 @@ async def deliver_command(update, context):
                                       product_id=(o['product_id'] if o else 0))
 
     if o['status'] != 'delivered':
-        pts = int(o['price'] * POINTS_PER_DOLLAR)
+        pts = points_from_usd(o['price'])
         if pts > 0: msg += f"\n\n💎 You earned {pts} points!"
         
     try:
@@ -7257,45 +7289,139 @@ async def adm_pts_uid_received(u, c):
         return 901
         
     c.user_data['adm_pts_uid'] = uid
-    await u.message.reply_text(f"👤 User found: *{escape_md(user['first_name'])}*\n💎 Current Points: *{user['points']}*\n\nEnter the amount to ADD or DEDUCT.\n(Use `-` for deduction, e.g. `50` to add, `-20` to deduct):", parse_mode="Markdown", reply_markup=inline_cancel_btn())
+    c.user_data.pop('adm_pts_mode', None)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💎 Add/Deduct by Points", callback_data="adm_pts_mode_points")],
+        [InlineKeyboardButton("💵 Add/Deduct by Dollars", callback_data="adm_pts_mode_usd")],
+        [InlineKeyboardButton("📜 Wallet Audit", callback_data=f"adm_pts_audit_{uid}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="conv_cancel")],
+    ])
+    await u.message.reply_text(
+        f"👤 User found: *{escape_md(user['first_name'])}*\n"
+        f"💎 Current Points: *{fmt_points(user['points'])}*\n\n"
+        f"Choose how you want to update this user's balance:",
+        parse_mode="Markdown", reply_markup=kb)
+    return 902
+
+async def adm_pts_mode_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID: return ConversationHandler.END
+    await q.answer()
+    mode = q.data.replace('adm_pts_mode_', '', 1)
+    if mode not in ('points', 'usd'):
+        await q.answer("Invalid mode", show_alert=True); return 902
+    c.user_data['adm_pts_mode'] = mode
+    if mode == 'usd':
+        txt = ("💵 *Dollar Mode*\n\n"
+               "Enter USD amount to add/deduct.\n"
+               "Examples:\n"
+               "`1.05` → adds 10.5 points\n"
+               "`-0.50` → deducts 5 points")
+    else:
+        txt = ("💎 *Points Mode*\n\n"
+               "Enter points amount to add/deduct.\n"
+               "Examples:\n"
+               "`50` → adds 50 points\n"
+               "`-20.5` → deducts 20.5 points")
+    await q.edit_message_text(txt, parse_mode="Markdown", reply_markup=inline_cancel_btn())
     return 902
 
 async def adm_pts_amt_received(u, c):
     if u.effective_user.id != ADMIN_ID: return ConversationHandler.END
-    val = u.message.text.strip()
+    val = (u.message.text or '').strip().replace('$', '').replace(',', '')
     try:
-        amt = int(val)
-    except:
+        amt_input = float(val)
+    except Exception:
         await u.message.reply_text("❌ Amount must be a number.", reply_markup=inline_cancel_btn())
         return 902
-        
+
     uid = c.user_data.pop('adm_pts_uid', None)
+    mode = c.user_data.pop('adm_pts_mode', 'points')
     if not uid: return ConversationHandler.END
-    
-    from database import add_points, get_connection
-    if amt != 0:
-        if amt > 0:
-            add_points(uid, amt)
+
+    if mode == 'usd':
+        pts_delta = points_from_usd(amt_input)
+        mode_label = f"${amt_input} = {fmt_points(abs(pts_delta))} points"
+    else:
+        pts_delta = amt_input
+        mode_label = f"{fmt_points(abs(pts_delta))} points"
+
+    from database import add_points, deduct_points, get_user_points
+    if abs(pts_delta) > 0:
+        if pts_delta > 0:
+            add_points(uid, pts_delta)
             action = "added to"
+            sign = "+"
         else:
-            conn = get_connection(); cur = conn.cursor()
-            cur.execute("UPDATE users SET points = MAX(0, points - ?) WHERE user_id=?", (abs(amt), uid))
-            conn.commit(); conn.close()
+            deduct_points(uid, abs(pts_delta))
             action = "deducted from"
-            
-        await u.message.reply_text(f"✅ Successfully {action} user `{uid}`'s balance by {abs(amt)} points.", parse_mode="Markdown", reply_markup=back_btn("admin_panel"))
-        
+            sign = "-"
+        new_bal = get_user_points(uid)
+        await u.message.reply_text(
+            f"✅ Successfully {action} user `{uid}`'s balance by *{fmt_points(abs(pts_delta))} points*.\n"
+            f"🧮 Mode: `{mode_label}`\n"
+            f"💎 New balance: *{fmt_points(new_bal)}*",
+            parse_mode="Markdown", reply_markup=back_btn("admin_panel"))
+
         # Notify user
         try:
-            sign = "+" if amt > 0 else "-"
-            msg = f"🔔 *Wallet Update!*\n\n{sign}{abs(amt)} 💎 Points have been {action} your balance by the Admin.\nTap '👤 My Account' to view your new balance."
+            msg = (f"🔔 *Wallet Update!*\n\n"
+                   f"{sign}{fmt_points(abs(pts_delta))} 💎 Points have been {action} your balance by the Admin.\n"
+                   f"💎 New balance: *{fmt_points(new_bal)}*\n"
+                   f"Tap '👤 My Account' to view your balance.")
             await c.bot.send_message(uid, msg, parse_mode="Markdown")
-        except: pass
+        except Exception:
+            pass
     else:
         await u.message.reply_text("Cancelled (amount was 0).", reply_markup=back_btn("admin_panel"))
-        
+
     from telegram.ext import ConversationHandler
     return ConversationHandler.END
+
+
+async def adm_pts_audit_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        uid = int(q.data.replace("adm_pts_audit_", "", 1))
+    except Exception:
+        await q.answer("Invalid user", show_alert=True); return
+    await q.answer()
+    try:
+        from database import get_points_ledger, get_user_points
+        rows = get_points_ledger(uid, limit=20)
+        bal = get_user_points(uid)
+    except Exception as e:
+        await _safe_edit(q, f"⚠️ Could not load wallet audit: `{e}`", parse_mode="Markdown"); return
+    lines = [
+        f"📜 *Wallet Audit — `{uid}`*",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"💎 Current balance: *{fmt_points(bal)}*",
+        ""
+    ]
+    if not rows:
+        lines.append("_No wallet ledger entries yet._")
+    else:
+        for r in rows:
+            try:
+                amount = float(r['amount'])
+                sign = "+" if amount >= 0 else ""
+                at = (r['created_at'] or '')[:16]
+                typ = escape_md(r['tx_type'] or '-')
+                desc = escape_md((r['description'] or '')[:40])
+                lines.append(
+                    f"{sign}{fmt_points(amount)} 💎 · `{typ}` · {at}\n"
+                    f"   {fmt_points(r['balance_before'])} → {fmt_points(r['balance_after'])}"
+                    + (f" · _{desc}_" if desc else "")
+                )
+            except Exception:
+                pass
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 Manage This User", callback_data="adm_manage_pts")],
+        [InlineKeyboardButton("🏠 Admin Panel", callback_data="admin_panel")],
+    ])
+    await _safe_edit(q, "\n".join(lines), parse_mode="Markdown", reply_markup=kb)
 
 async def flash_toggle_callback(u, c):
     q = u.callback_query

@@ -293,6 +293,9 @@ from handlers_free_claim import (
 from handlers_referral_admin import (
     refadm_panel_callback, refadm_log_callback, refadm_banlist_callback,
     refadm_ban_start, refadm_unban_start, refadm_adjust_start,
+    refadm_tpl_panel_callback, refadm_tpl_edit_callback,
+    refadm_tpl_ready_callback, refadm_tpl_apply_callback,
+    refadm_tpl_reset_all_callback,
     refadm_text_received,
 )
 # 🆕 v50: Screen-by-Screen Editor (drill-down user-side editor)
@@ -547,6 +550,17 @@ async def post_init(app):
     except Exception as e:
         print(f'[CloudBackup] Job setup error: {e}')
 
+    # 🧹 Auto-cancel unpaid payment-waiting orders older than 60 minutes
+    try:
+        if app.job_queue:
+            app.job_queue.run_repeating(
+                _cancel_unpaid_orders_job, interval=900, first=240,
+                name="cancel_unpaid_old_orders",
+            )
+            print("[AutoCancel] Scheduled — cancels unpaid orders older than 60 min")
+    except Exception as e:
+        print(f'[AutoCancel] Job setup error: {e}')
+
     # 🗑️ Auto-purge sold accounts older than 2 months (runs daily)
     try:
         if app.job_queue:
@@ -677,11 +691,45 @@ async def _cloud_backup_job(context):
                 ),
                 parse_mode="Markdown",
             )
+        try:
+            from database import set_setting
+            set_setting('backup_last_status', 'ok')
+            set_setting('backup_last_at', _dt.now().strftime('%Y-%m-%d %H:%M:%S'))
+            set_setting('backup_last_size_kb', f'{size_kb:.1f}')
+        except Exception:
+            pass
         try: os.remove(tmp)
         except Exception: pass
     except Exception as e:
+        try:
+            from database import set_setting
+            set_setting('backup_last_status', f'error: {str(e)[:160]}')
+            set_setting('backup_last_at', _dt.now().strftime('%Y-%m-%d %H:%M:%S'))
+        except Exception:
+            pass
         import logging
         logging.getLogger(__name__).error(f"[CloudBackup] {e}")
+
+
+async def _cancel_unpaid_orders_job(context):
+    """Cancel unpaid payment-waiting orders older than 60 minutes."""
+    try:
+        from database import get_connection
+        conn = get_connection(); c = conn.cursor()
+        c.execute("""
+            UPDATE orders
+               SET status='cancelled'
+             WHERE status IN ('binance_waiting','screenshot_sent','pending')
+               AND LOWER(COALESCE(payment_method,'')) IN ('binance','easypaisa','jazzcash')
+               AND datetime(created_at, '+60 minutes') < CURRENT_TIMESTAMP
+        """)
+        changed = c.rowcount
+        conn.commit(); conn.close()
+        if changed:
+            print(f"[AutoCancel] cancelled {changed} unpaid old order(s)")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"[AutoCancel] {e}")
 
 
 async def _purge_sold_accounts_job(context):
@@ -923,7 +971,10 @@ def main():
         entry_points=[CallbackQueryHandler(adm_manage_pts_callback, pattern="^adm_manage_pts$")],
         states={
             901: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_pts_uid_received)],
-            902: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_pts_amt_received)]
+            902: [
+                CallbackQueryHandler(adm_pts_mode_callback, pattern="^adm_pts_mode_"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, adm_pts_amt_received),
+            ]
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation),
                    CallbackQueryHandler(conv_cancel_callback, pattern="^conv_cancel$")]
@@ -1481,6 +1532,7 @@ def main():
         # 📊 Admin Deposit History
         ("^admin_deposits$", admin_deposit_history_callback),
         ("^adm_diagnostics$", adm_diagnostics_callback),
+        ("^adm_pts_audit_", adm_pts_audit_callback),
         ("^dephist_", admin_deposit_page_callback),
         ("^depview_", admin_deposit_detail_callback),
         # 💰 Sold Accounts (delivered accounts log)
@@ -1671,6 +1723,11 @@ def main():
         ("^refadm_ban_start$",  refadm_ban_start),
         ("^refadm_unban_start$", refadm_unban_start),
         ("^refadm_adjust_start$", refadm_adjust_start),
+        ("^refadm_tpl_panel$", refadm_tpl_panel_callback),
+        ("^refadm_tpl_edit_", refadm_tpl_edit_callback),
+        ("^refadm_tpl_ready_", refadm_tpl_ready_callback),
+        ("^refadm_tpl_apply_", refadm_tpl_apply_callback),
+        ("^refadm_tpl_reset_all$", refadm_tpl_reset_all_callback),
         # 🆕 v49: Per-product broadcast button editor
         ("^fcb_panel_",         fcb_panel_callback),
         ("^fcb_settext_",       fcb_settext_callback),

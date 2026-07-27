@@ -6,7 +6,7 @@ from telegram.ext import ContextTypes
 from config import *
 from keyboards import *
 from database import *
-from utils import escape_md, format_date, notify_admin, nav_push, nav_pop, set_cb_data, smart_text_and_mode, fmt_price
+from utils import escape_md, format_date, notify_admin, nav_push, nav_pop, set_cb_data, smart_text_and_mode, fmt_price, fmt_points
 
 def _r(key, user_id=None):
     """🆕 v79: Optional user_id triggers per-language lookup first.
@@ -71,8 +71,159 @@ async def _safe_edit(q, text, **kwargs):
 # ════════════════════════════════════════════════════════════════
 # 🆕 v48: Referral attribution with anti-fake checks (instant, no delay)
 # ════════════════════════════════════════════════════════════════
+
+REFERRAL_MILESTONE_EVERY = 20
+REFERRAL_MILESTONE_BONUS_POINTS = 10
+
+_DEFAULT_REFERRER_REFERRAL_TEMPLATE = """🎉 *New Referral Joined!*\n━━━━━━━━━━━━━━━━━━━━\n\n👤 Referred user: *{referred_name}*\n🆔 Referred ID: `{referred_id}`\n\n✅ Reward: *+{reward_points} referral point*\n📊 Your direct referrals: *{total_referrals}*\n🎯 Next bonus: *{remaining_to_bonus}* more referrals → *+{milestone_bonus} wallet points* ($1)\n\nKeep sharing your link and earning rewards! 🚀"""
+
+_DEFAULT_ADMIN_REFERRAL_TEMPLATE = """🎁 *New Direct Referral*\n━━━━━━━━━━━━━━━━━━━━\n\n👑 Referrer:\n• Name: *{referrer_name}*\n• Username: @{referrer_username}\n• ID: `{referrer_id}`\n\n🆕 Referred User:\n• Name: *{referred_name}*\n• Username: @{referred_username}\n• ID: `{referred_id}`\n\n🎯 Reward: +{reward_points} referral point\n📊 Referrer's direct referrals: {total_referrals}"""
+
+_DEFAULT_MILESTONE_TEMPLATE = """🏆 *Referral Milestone Unlocked!*\n━━━━━━━━━━━━━━━━━━━━\n\n🔥 You reached *{milestone_number} direct referrals*!\n🎁 Bonus reward: *+{milestone_bonus} wallet points* ($1)\n💎 Wallet bonus has been added to your balance.\n\nNext milestone: *{next_milestone} referrals* 🚀"""
+
+_DEFAULT_PRODUCT_REFERRER_TEMPLATE = """🎁 *Product Referral Counted!*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 Product: *{product_name}*\n👤 New user: *{referred_name}*\n🆔 User ID: `{referred_id}`\n\n📊 Your progress: *{product_referrals}/{product_required}*\n🎯 Need *{product_remaining}* more referral(s) to claim this product free.\n\nKeep sharing this product link! 🚀"""
+
+_DEFAULT_PRODUCT_UNLOCK_TEMPLATE = """🎉 *Free Product Unlocked!*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 Product: *{product_name}*\n✅ Progress complete: *{product_referrals}/{product_required}*\n\nYou can now claim this product for FREE. Tap the button below."""
+
+_DEFAULT_PRODUCT_ADMIN_TEMPLATE = """🎁 *Product Referral Counted*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 Product: *{product_name}* (`#{product_id}`)\n📊 Progress: *{product_referrals}/{product_required}*\n🎯 Remaining: *{product_remaining}*\n\n👑 Referrer:\n• Name: *{referrer_name}*\n• Username: @{referrer_username}\n• ID: `{referrer_id}`\n\n🆕 Referred User:\n• Name: *{referred_name}*\n• Username: @{referred_username}\n• ID: `{referred_id}`"""
+
+
+def _ref_display_user(user_or_row, fallback_id=0):
+    """Return safe referral display data for Telegram user object or DB row."""
+    try:
+        uid = int(getattr(user_or_row, 'id', 0) or (user_or_row.get('user_id') if hasattr(user_or_row, 'get') else user_or_row['user_id']) or fallback_id)
+    except Exception:
+        uid = int(fallback_id or 0)
+    try:
+        first = getattr(user_or_row, 'first_name', None)
+        if first is None:
+            first = user_or_row.get('first_name') if hasattr(user_or_row, 'get') else user_or_row['first_name']
+    except Exception:
+        first = ''
+    try:
+        username = getattr(user_or_row, 'username', None)
+        if username is None:
+            username = user_or_row.get('username') if hasattr(user_or_row, 'get') else user_or_row['username']
+    except Exception:
+        username = ''
+    return {
+        'id': uid,
+        'name': escape_md(first or 'User'),
+        'username': escape_md((username or 'no_username').lstrip('@')),
+    }
+
+
+def _render_referral_template(setting_key, default_template, values):
+    try:
+        from database import get_setting
+        tpl = get_setting(setting_key, default_template) or default_template
+    except Exception:
+        tpl = default_template
+    safe_values = {k: escape_md(v) if isinstance(v, str) else v for k, v in (values or {}).items()}
+    try:
+        return tpl.format(**safe_values)
+    except Exception:
+        return default_template.format(**safe_values)
+
+
+async def _send_direct_referral_notifications(context, referrer_id, new_user, reward_points, direct_count):
+    """Notify referrer + admin for accepted direct referral and pay milestone."""
+    try:
+        from database import get_user, add_points, get_setting, set_setting
+        ref_row = get_user(referrer_id)
+    except Exception:
+        ref_row = None
+    ref = _ref_display_user(ref_row, referrer_id)
+    new = _ref_display_user(new_user, getattr(new_user, 'id', 0))
+    remaining = REFERRAL_MILESTONE_EVERY - (int(direct_count) % REFERRAL_MILESTONE_EVERY)
+    if remaining == REFERRAL_MILESTONE_EVERY:
+        remaining = 0
+    next_milestone = ((int(direct_count) // REFERRAL_MILESTONE_EVERY) + 1) * REFERRAL_MILESTONE_EVERY
+    values = {
+        'referrer_id': ref['id'], 'referrer_name': ref['name'], 'referrer_username': ref['username'],
+        'referred_id': new['id'], 'referred_name': new['name'], 'referred_username': new['username'],
+        'reward_points': fmt_points(reward_points),
+        'total_referrals': int(direct_count),
+        'remaining_to_bonus': int(remaining),
+        'milestone_bonus': fmt_points(REFERRAL_MILESTONE_BONUS_POINTS),
+        'milestone_number': int(direct_count),
+        'next_milestone': int(next_milestone),
+    }
+    # Referrer notification
+    try:
+        await context.bot.send_message(
+            referrer_id,
+            _render_referral_template('ref_tpl_referrer', _DEFAULT_REFERRER_REFERRAL_TEMPLATE, values),
+            parse_mode='Markdown')
+    except Exception:
+        pass
+    # Admin notification
+    try:
+        await notify_admin(context.bot,
+            _render_referral_template('ref_tpl_admin', _DEFAULT_ADMIN_REFERRAL_TEMPLATE, values))
+    except Exception:
+        pass
+    # Every 20 direct referrals: +10 wallet points bonus, paid once per milestone.
+    try:
+        if int(direct_count) > 0 and int(direct_count) % REFERRAL_MILESTONE_EVERY == 0:
+            key = f"ref_milestone_paid_{int(referrer_id)}"
+            last_paid = int(get_setting(key, '0') or 0)
+            if last_paid < int(direct_count):
+                add_points(referrer_id, REFERRAL_MILESTONE_BONUS_POINTS, tx_type='referral_milestone', description='20 referral milestone', event_id=f"ref_milestone_{int(referrer_id)}_{int(direct_count)}")
+                set_setting(key, str(int(direct_count)))
+                values['next_milestone'] = int(direct_count) + REFERRAL_MILESTONE_EVERY
+                await context.bot.send_message(
+                    referrer_id,
+                    _render_referral_template('ref_tpl_milestone', _DEFAULT_MILESTONE_TEMPLATE, values),
+                    parse_mode='Markdown')
+    except Exception:
+        pass
+
+
+async def _send_product_referral_notifications(context, referrer_id, new_user,
+                                               product_id, product_name,
+                                               current, required, unlocked=False):
+    try:
+        from database import get_user
+        ref_row = get_user(referrer_id)
+    except Exception:
+        ref_row = None
+    ref = _ref_display_user(ref_row, referrer_id)
+    new = _ref_display_user(new_user, getattr(new_user, 'id', 0))
+    remaining = max(0, int(required) - int(current))
+    values = {
+        'referrer_id': ref['id'], 'referrer_name': ref['name'], 'referrer_username': ref['username'],
+        'referred_id': new['id'], 'referred_name': new['name'], 'referred_username': new['username'],
+        'product_id': int(product_id), 'product_name': product_name,
+        'product_referrals': int(current), 'product_required': int(required),
+        'product_remaining': int(remaining),
+    }
+    try:
+        if unlocked:
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🎁 Claim FREE Now", callback_data=f"freeclaim_do_{int(product_id)}")
+            ]])
+            await context.bot.send_message(
+                referrer_id,
+                _render_referral_template('ref_tpl_product_unlock', _DEFAULT_PRODUCT_UNLOCK_TEMPLATE, values),
+                parse_mode='Markdown', reply_markup=kb)
+        else:
+            await context.bot.send_message(
+                referrer_id,
+                _render_referral_template('ref_tpl_product_referrer', _DEFAULT_PRODUCT_REFERRER_TEMPLATE, values),
+                parse_mode='Markdown')
+    except Exception:
+        pass
+    try:
+        await notify_admin(context.bot,
+            _render_referral_template('ref_tpl_product_admin', _DEFAULT_PRODUCT_ADMIN_TEMPLATE, values))
+    except Exception:
+        pass
+
+
 async def _process_referral_attribution(context, new_user, referrer_id, is_new_user,
-                                          product_id=0):
+                                        product_id=0, approve_now=False):
     """Process a referral attempt instantly. Always logs to referral_log.
 
     🆕 v102: `product_id` param. When set (>0), this is a "free-via-referrals"
@@ -112,7 +263,7 @@ async def _process_referral_attribution(context, new_user, referrer_id, is_new_u
         get_user, set_referred_by, increment_referral_count,
         add_ref_points, is_referrer_banned, log_referral_attempt,
         count_referrals_by_referrer_recent, get_recent_referred_first_names,
-        get_referral_count,
+        get_referral_count, add_pending_referral, mark_pending_referral_done,
     )
 
     def _reject(reason):
@@ -185,7 +336,38 @@ async def _process_referral_attribution(context, new_user, referrer_id, is_new_u
     if not new_fn and not new_un:
         return _reject("empty_name_and_username")
 
-    # ─────────────  ACCEPTED — INSTANT AWARD ─────────────
+    # ── v128: pending approval gate ──
+    # Referral is recorded after /start + force-join check, but reward is only
+    # credited when the referred user opens Shop or stays active for 30 seconds.
+    if not approve_now:
+        try:
+            add_pending_referral(referrer_id, new_user.id, int(product_id or 0), 'start_complete')
+            log_referral_attempt(referrer_id, new_user.id, 'pending', f'pending_pid_{int(product_id or 0)}')
+            # Schedule 30-second active approval as fallback; opening Shop also approves immediately.
+            try:
+                if getattr(context, 'job_queue', None):
+                    context.job_queue.run_once(_pending_referral_job, 30, data={'uid': int(new_user.id)}, name=f'pending_ref_{int(new_user.id)}')
+            except Exception:
+                pass
+            try:
+                await notify_admin(context.bot,
+                    f"⏳ *Referral Pending*\n"
+                    f"Referrer: `{referrer_id}`\n"
+                    f"New user: `{new_user.id}` ({escape_md(new_user.first_name or 'N/A')})\n"
+                    f"Product: `{int(product_id or 0)}`\n"
+                    f"Reward will be approved when user opens Shop or stays active 30s.")
+            except Exception:
+                pass
+        except Exception:
+            pass
+        return True
+
+    try:
+        mark_pending_referral_done(new_user.id, 'approved', 'activity_verified')
+    except Exception:
+        pass
+
+    # ─────────────  ACCEPTED — AWARD AFTER APPROVAL ─────────────
     set_referred_by(new_user.id, referrer_id)
     increment_referral_count(referrer_id)  # lifetime stat (both modes)
 
@@ -215,70 +397,20 @@ async def _process_referral_attribution(context, new_user, referrer_id, is_new_u
             except Exception:
                 pname_display = pname
 
-            # Notify referrer with progress bar
-            try:
-                if current < required:
-                    await context.bot.send_message(
-                        referrer_id,
-                        f"🎁 *Referral counted!*\n"
-                        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                        f"👤 {escape_md(new_user.first_name or 'Someone')} joined via your product link!\n"
-                        f"📦 Product: *{escape_md(pname_display)}*\n"
-                        f"📊 Progress: *{current}/{required}*\n"
-                        f"🎯 Need *{required - current}* more → you get it FREE!",
-                        parse_mode="Markdown")
-                else:
-                    # Requirement met → auto-deliver + reset counter
-                    kb = InlineKeyboardMarkup([[
-                        InlineKeyboardButton("🎁 Claim FREE Now",
-                                             callback_data=f"freeclaim_do_{int(product_id)}")
-                    ]])
-                    await context.bot.send_message(
-                        referrer_id,
-                        f"🎉 *You unlocked FREE {escape_md(pname_display)}!*\n"
-                        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                        f"You brought *{current}/{required}* friends via this product link.\n"
-                        f"Tap the button below to claim your free product instantly!",
-                        parse_mode="Markdown", reply_markup=kb)
-            except Exception:
-                pass
-
-            # Notify admin
-            try:
-                await notify_admin(context.bot,
-                    f"🎁 *Product-Referral Counted!*\n"
-                    f"Referrer: `{referrer_id}`\n"
-                    f"Product: `#{product_id}` — {escape_md(pname_display)}\n"
-                    f"Progress: {current}/{required}\n"
-                    f"New user: `{new_user.id}`")
-            except Exception:
-                pass
+            # Product-specific referral notifications (separate from direct referral rewards)
+            await _send_product_referral_notifications(
+                context, referrer_id, new_user, int(product_id),
+                pname_display, current, required, unlocked=(current >= required))
     else:
         # General direct referral: +1 spendable ref_point
         add_ref_points(referrer_id, REFERRAL_POINTS)
         log_referral_attempt(referrer_id, new_user.id, "counted", "ok")
         try:
-            ref_total = get_referral_count(referrer_id)
-            await context.bot.send_message(
-                referrer_id,
-                f"🎁 *New Referral!*\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"👤 {escape_md(new_user.first_name or 'Someone')} joined via your link!\n"
-                f"➕ *+{REFERRAL_POINTS}* Referral Point added\n"
-                f"📊 Total Referrals: *{ref_total}*\n\n"
-                f"💡 Spend referral points on free products!",
-                parse_mode="Markdown")
+            direct_total = get_direct_referral_count(referrer_id)
         except Exception:
-            pass
-
-        # Notify admin
-        try:
-            await notify_admin(context.bot,
-                f"🎁 *Referral Success!*\n"
-                f"{escape_md(new_user.first_name or 'N/A')} (`{new_user.id}`) joined via "
-                f"`{referrer_id}`\n+{REFERRAL_POINTS} ref_point awarded")
-        except Exception:
-            pass
+            direct_total = get_referral_count(referrer_id)
+        await _send_direct_referral_notifications(
+            context, referrer_id, new_user, REFERRAL_POINTS, direct_total)
 
     # Broadcast (existing fake-activity destination)
     try:
@@ -304,6 +436,43 @@ async def _process_referral_attribution(context, new_user, referrer_id, is_new_u
         pass
 
     return True
+
+
+async def approve_pending_referral_for_user(context, user_id, reason='activity'):
+    """Approve one pending referral after Shop open or 30s active fallback."""
+    try:
+        from database import get_pending_referral_for_user, get_user, mark_pending_referral_done
+        row = get_pending_referral_for_user(int(user_id))
+        if not row:
+            return False
+        urow = get_user(int(user_id))
+        if not urow:
+            return False
+        class _User:
+            pass
+        u = _User()
+        u.id = int(user_id)
+        u.first_name = urow['first_name'] if 'first_name' in urow.keys() else ''
+        u.username = urow['username'] if 'username' in urow.keys() else ''
+        u.is_bot = False
+        ok = await _process_referral_attribution(
+            context, u, int(row['referrer_id']), False,
+            product_id=int(row['product_id'] or 0), approve_now=True)
+        if not ok:
+            mark_pending_referral_done(int(user_id), 'blocked', f'approval_failed_{reason}')
+        return bool(ok)
+    except Exception as e:
+        logging.getLogger(__name__).debug(f"[pending-ref] approve failed: {e}")
+        return False
+
+
+async def _pending_referral_job(context):
+    try:
+        uid = int((context.job.data or {}).get('uid') or 0)
+    except Exception:
+        uid = 0
+    if uid:
+        await approve_pending_referral_for_user(context, uid, reason='30s_active')
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

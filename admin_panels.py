@@ -232,7 +232,7 @@ from config import ADMIN_ID, POINTS_PER_DOLLAR
 from database import (
     get_order, update_order_status, add_points, get_user_points,
 )
-from utils import escape_md, smart_text_and_mode
+from utils import escape_md, smart_text_and_mode, points_from_usd, fmt_points
 
 logger = logging.getLogger(__name__)
 
@@ -262,7 +262,7 @@ async def adm_refund_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     price = float(o["price"] or 0)
-    pts = int(price * POINTS_PER_DOLLAR)
+    pts = points_from_usd(price)
     text = (
         f"🔄 *Refund Order #{oid}*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -271,7 +271,7 @@ async def adm_refund_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"💰 Amount paid: *${price:.2f}*\n\n"
         f"⚠️ Refund action:\n"
         f"  • Order status → `refunded`\n"
-        f"  • Customer will be credited *{pts} Points* "
+        f"  • Customer will be credited *{fmt_points(pts)} Points* "
         f"(equivalent of ${price:.2f})\n"
         f"  • Customer notified via bot\n\n"
         f"Confirm?"
@@ -300,14 +300,14 @@ async def adm_refund_confirm_callback(update: Update, context: ContextTypes.DEFA
         await q.answer(f"Already {o['status']}", show_alert=True); return
 
     price = float(o["price"] or 0)
-    pts = int(price * POINTS_PER_DOLLAR)
+    pts = points_from_usd(price)
     user_id = o["user_id"]
     pname = o.get("product_name", "") or "your order"
 
     update_order_status(oid, "refunded")
     if pts > 0:
         try:
-            add_points(user_id, pts)
+            add_points(user_id, pts, tx_type='refund', description='Admin refund', event_id=f"admin_refund_{oid}", order_id=oid)
         except Exception as e:
             logger.warning(f"[Refund] add_points failed for uid={user_id}: {e}")
 
@@ -321,9 +321,9 @@ async def adm_refund_confirm_callback(update: Update, context: ContextTypes.DEFA
         f"📦 Order: `#{oid}`\n"
         f"📌 Product: *{escape_md(pname)}*\n"
         f"💰 Amount: *${price:.2f}*\n\n"
-        f"✅ *{pts} Points have been credited* to your wallet "
+        f"✅ *{fmt_points(pts)} Points have been credited* to your wallet "
         f"as an instant refund.\n"
-        f"💎 New balance: *{new_balance} Points*\n\n"
+        f"💎 New balance: *{fmt_points(new_balance)} Points*\n\n"
         f"You can use these Points to buy other products in the store. "
         f"We apologise for the inconvenience."
     )
@@ -343,8 +343,8 @@ async def adm_refund_confirm_callback(update: Update, context: ContextTypes.DEFA
         f"✅ *Refund Completed*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"Order #{oid} refunded.\n"
-        f"Customer `{user_id}` credited with *{pts} Points*.\n"
-        f"New balance: {new_balance} Points."
+        f"Customer `{user_id}` credited with *{fmt_points(pts)} Points*.\n"
+        f"New balance: {fmt_points(new_balance)} Points."
     )
     await q.edit_message_text(admin_msg, parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([

@@ -5,6 +5,13 @@
 import os
 import sqlite3
 
+
+def _points_float(value):
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -620,32 +627,144 @@ def get_wallet_balance(uid):
 def get_user_points(uid):
     u = get_user(uid); return u['points'] if u else 0
 
+# ════════════════════════════════════════════════════════════════
+# v128: POINTS LEDGER + REFERRAL PENDING APPROVAL
+# ════════════════════════════════════════════════════════════════
+
+def ensure_points_ledger_table(c=None):
+    own = False
+    if c is None:
+        conn = get_connection(); c = conn.cursor(); own = True
+    else:
+        conn = None
+    c.execute("""CREATE TABLE IF NOT EXISTS points_ledger (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        amount REAL NOT NULL,
+        balance_before REAL DEFAULT 0,
+        balance_after REAL DEFAULT 0,
+        tx_type TEXT DEFAULT '',
+        description TEXT DEFAULT '',
+        event_id TEXT DEFAULT '',
+        order_id INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(event_id)
+    )""")
+    if own:
+        conn.commit(); conn.close()
+
+
+def get_points_ledger(user_id=None, limit=50):
+    conn=get_connection(); c=conn.cursor(); ensure_points_ledger_table(c)
+    if user_id is None:
+        c.execute("SELECT * FROM points_ledger ORDER BY id DESC LIMIT ?", (int(limit),))
+    else:
+        c.execute("SELECT * FROM points_ledger WHERE user_id=? ORDER BY id DESC LIMIT ?", (int(user_id), int(limit)))
+    rows=c.fetchall(); conn.close(); return rows
+
+
+def ensure_pending_referrals_table(c=None):
+    own=False
+    if c is None:
+        conn=get_connection(); c=conn.cursor(); own=True
+    else:
+        conn=None
+    c.execute("""CREATE TABLE IF NOT EXISTS pending_referrals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        referrer_id INTEGER NOT NULL,
+        referred_id INTEGER NOT NULL UNIQUE,
+        product_id INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'pending',
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        approved_at TEXT DEFAULT '',
+        reason TEXT DEFAULT ''
+    )""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_pending_ref_status ON pending_referrals(status, created_at)")
+    if own:
+        conn.commit(); conn.close()
+
+
+def add_pending_referral(referrer_id, referred_id, product_id=0, reason='start'):
+    ensure_pending_referrals_table()
+    conn=get_connection(); c=conn.cursor(); ensure_pending_referrals_table(c)
+    try:
+        c.execute("""INSERT OR IGNORE INTO pending_referrals
+                     (referrer_id, referred_id, product_id, status, reason)
+                     VALUES (?, ?, ?, 'pending', ?)""",
+                  (int(referrer_id), int(referred_id), int(product_id or 0), str(reason or 'start')))
+        changed=c.rowcount>0
+        conn.commit(); conn.close(); return changed
+    except Exception:
+        try: conn.rollback(); conn.close()
+        except Exception: pass
+        return False
+
+
+def get_pending_referral_for_user(referred_id):
+    conn=get_connection(); c=conn.cursor(); ensure_pending_referrals_table(c)
+    c.execute("SELECT * FROM pending_referrals WHERE referred_id=? AND status='pending' ORDER BY id DESC LIMIT 1", (int(referred_id),))
+    r=c.fetchone(); conn.close(); return r
+
+
+def get_pending_referrals_due(seconds=30, limit=50):
+    conn=get_connection(); c=conn.cursor(); ensure_pending_referrals_table(c)
+    c.execute("""SELECT * FROM pending_referrals
+                 WHERE status='pending'
+                   AND datetime(created_at, '+' || ? || ' seconds') <= CURRENT_TIMESTAMP
+                 ORDER BY id ASC LIMIT ?""", (int(seconds), int(limit)))
+    rows=c.fetchall(); conn.close(); return rows
+
+
+def mark_pending_referral_done(referred_id, status='approved', reason=''):
+    conn=get_connection(); c=conn.cursor(); ensure_pending_referrals_table(c)
+    c.execute("""UPDATE pending_referrals SET status=?, reason=?, approved_at=CURRENT_TIMESTAMP
+                 WHERE referred_id=? AND status='pending'""", (str(status), str(reason or ''), int(referred_id)))
+    conn.commit(); conn.close()
+
 # 🔧 BUG #12 FIX: add_wallet_balance removed (wallet feature unused)
 # Column kept for backward compatibility with old databases
 
-def add_points(uid, pts):
-    """Add points to a user, creating a minimal user row if needed.
+def add_points(uid, pts, tx_type='credit', description='', event_id='', order_id=0):
+    """Add points with optional ledger/idempotency support.
 
-    🔧 v115: Older code only did UPDATE. If a refund/bonus ran before the user
-    row existed (rare but possible on imported/edge-case orders), rowcount=0 and
-    points were silently lost. Now it is an idempotent upsert-style operation.
+    Existing calls still work. If event_id is provided and already exists in
+    points_ledger, the credit is skipped to prevent double rewards.
     """
     conn = get_connection(); c = conn.cursor()
     try:
         uid = int(uid)
-        pts = int(pts or 0)
+        pts = _points_float(pts)
     except Exception:
-        conn.close(); return
-    c.execute("UPDATE users SET points=COALESCE(points,0)+? WHERE user_id=?", (pts, uid))
-    if c.rowcount == 0:
+        conn.close(); return False
+    ensure_points_ledger_table(c)
+    if event_id:
         try:
-            c.execute("""INSERT INTO users
-                         (user_id, username, first_name, wallet_balance, points)
-                         VALUES (?, '', '', 0.0, ?)""", (uid, pts))
+            c.execute("SELECT 1 FROM points_ledger WHERE event_id=? LIMIT 1", (str(event_id),))
+            if c.fetchone():
+                conn.close(); return False
         except Exception:
-            # Race-safe fallback: if another worker inserted the row, update it.
-            c.execute("UPDATE users SET points=COALESCE(points,0)+? WHERE user_id=?", (pts, uid))
-    conn.commit(); conn.close()
+            pass
+    c.execute("SELECT COALESCE(points,0) FROM users WHERE user_id=?", (uid,))
+    row = c.fetchone()
+    before = _points_float(row[0]) if row else 0.0
+    if row:
+        c.execute("UPDATE users SET points=COALESCE(points,0)+? WHERE user_id=?", (pts, uid))
+    else:
+        c.execute("""INSERT INTO users
+                     (user_id, username, first_name, wallet_balance, points)
+                     VALUES (?, '', '', 0.0, ?)""", (uid, pts))
+    after = before + pts
+    try:
+        c.execute("""INSERT OR IGNORE INTO points_ledger
+                     (user_id, amount, balance_before, balance_after,
+                      tx_type, description, event_id, order_id)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                  (uid, pts, before, after, str(tx_type or 'credit'),
+                   str(description or ''), str(event_id or ''), int(order_id or 0)))
+    except Exception:
+        pass
+    conn.commit(); conn.close(); return True
+
 
 def set_referred_by(uid, ref_id):
     conn = get_connection(); c = conn.cursor()
@@ -657,6 +776,26 @@ def increment_referral_count(uid):
 
 def get_referral_count(uid):
     u = get_user(uid); return u['referral_count'] if u else 0
+
+
+def get_direct_referral_count(uid):
+    """Count accepted DIRECT/general referrals for a referrer.
+
+    Product-specific referrals use reason product_ref_pid_* and are excluded
+    because they belong to free-via-referrals product pools.
+    """
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("""
+            SELECT COUNT(*) FROM referral_log
+            WHERE referrer_id=?
+              AND status='counted'
+              AND (reason IS NULL OR reason='' OR reason='ok')
+        """, (int(uid),))
+        n = int(c.fetchone()[0] or 0)
+    except Exception:
+        n = 0
+    conn.close(); return n
 
 
 # ── Categories ──
@@ -683,6 +822,48 @@ def delete_category(cid):
 
 # ── Products ──
 # 🔧 UPDATED: Now accepts warranty, quantity, photo_id
+# v127: Default Free-via-Referrals settings for every NEW product.
+# Safe rule: INSERT OR IGNORE only — never overwrites admin custom settings.
+DEFAULT_FREE_CLAIM_ENABLED = 1
+DEFAULT_FREE_CLAIM_REQUIRED_REFS = 5
+
+
+def ensure_default_free_claim_for_product(pid, enabled=DEFAULT_FREE_CLAIM_ENABLED,
+                                          required_refs=DEFAULT_FREE_CLAIM_REQUIRED_REFS):
+    """Create default Free-via-Referrals config for a product if missing.
+
+    Called when a NEW local/admin product is added and when a NEW supplier
+    product is mirrored into products. Existing rows are preserved.
+    """
+    if not pid:
+        return False
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS product_free_claim (
+                product_id     INTEGER PRIMARY KEY,
+                enabled        INTEGER DEFAULT 0,
+                required_refs  INTEGER DEFAULT 5,
+                tpl_index      INTEGER DEFAULT -1,
+                custom_text    TEXT    DEFAULT '',
+                updated_at     TEXT    DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        c.execute("""
+            INSERT OR IGNORE INTO product_free_claim
+                (product_id, enabled, required_refs, tpl_index, custom_text)
+            VALUES (?, ?, ?, -1, '')
+        """, (int(pid), int(enabled), int(required_refs)))
+        changed = c.rowcount > 0
+        conn.commit(); conn.close()
+        return changed
+    except Exception as e:
+        try: conn.rollback(); conn.close()
+        except Exception: pass
+        print(f"⚠️ default free-claim config failed for product {pid}: {e}")
+        return False
+
+
 def add_product(category_id, name, description, price, cost_price, stock,
                 delivery_text="", warranty="", quantity="", photo_id=""):
     conn = get_connection(); c = conn.cursor()
@@ -692,7 +873,14 @@ def add_product(category_id, name, description, price, cost_price, stock,
         (category_id,name,description,price,cost_price,stock,delivery_text,warranty,quantity,photo_id)
         VALUES (?,?,?,?,?,?,?,?,?,?)""",
         (category_id,name,description,price,cost_price,stock,delivery_text,warranty,quantity,photo_id))
-    i = c.lastrowid; conn.commit(); conn.close(); return i
+    i = c.lastrowid; conn.commit(); conn.close()
+    # v127: Every NEW product gets Free-via-Referrals defaults automatically.
+    # Existing/admin-customized settings are never overwritten.
+    try:
+        ensure_default_free_claim_for_product(i)
+    except Exception:
+        pass
+    return i
 
 def set_product_static_delivery(pid, text="", file_id="", file_type="", file_name="", caption=""):
     """Set static delivery payload for a product (text and/or media/document)."""
@@ -902,6 +1090,14 @@ def ensure_product_accounts_table(c=None):
             c.execute("ALTER TABLE product_accounts ADD COLUMN sold_at TEXT DEFAULT NULL")
         if 'sold_to' not in cols:
             c.execute("ALTER TABLE product_accounts ADD COLUMN sold_to INTEGER DEFAULT NULL")
+        if 'source' not in cols:
+            c.execute("ALTER TABLE product_accounts ADD COLUMN source TEXT DEFAULT 'manual'")
+        if 'source_order_id' not in cols:
+            c.execute("ALTER TABLE product_accounts ADD COLUMN source_order_id INTEGER DEFAULT 0")
+        if 'source_supplier_id' not in cols:
+            c.execute("ALTER TABLE product_accounts ADD COLUMN source_supplier_id INTEGER DEFAULT 0")
+        if 'source_ext_order_id' not in cols:
+            c.execute("ALTER TABLE product_accounts ADD COLUMN source_ext_order_id INTEGER DEFAULT 0")
     except Exception:
         pass
     if own:
@@ -3624,10 +3820,33 @@ def get_restock_requests():
     return res
 
 
-def deduct_points(user_id, amount):
+def deduct_points(user_id, amount, tx_type='debit', description='', event_id='', order_id=0):
+    amount = _points_float(amount)
     conn = get_connection(); c = conn.cursor()
-    c.execute("UPDATE users SET points = MAX(0, points - ?) WHERE user_id=?", (amount, user_id))
-    conn.commit(); conn.close()
+    ensure_points_ledger_table(c)
+    try:
+        user_id = int(user_id)
+    except Exception:
+        conn.close(); return False
+    if event_id:
+        c.execute("SELECT 1 FROM points_ledger WHERE event_id=? LIMIT 1", (str(event_id),))
+        if c.fetchone():
+            conn.close(); return False
+    c.execute("SELECT COALESCE(points,0) FROM users WHERE user_id=?", (user_id,))
+    row = c.fetchone(); before = _points_float(row[0]) if row else 0.0
+    after = max(0.0, before - amount)
+    c.execute("UPDATE users SET points=? WHERE user_id=?", (after, user_id))
+    try:
+        c.execute("""INSERT OR IGNORE INTO points_ledger
+                     (user_id, amount, balance_before, balance_after,
+                      tx_type, description, event_id, order_id)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                  (user_id, -abs(amount), before, after, str(tx_type or 'debit'),
+                   str(description or ''), str(event_id or ''), int(order_id or 0)))
+    except Exception:
+        pass
+    conn.commit(); conn.close(); return True
+
 
 def add_stock_alert(pid, uid):
     conn = get_connection(); c = conn.cursor()
@@ -4086,6 +4305,7 @@ def setup_free_claim_tables():
             required_refs  INTEGER DEFAULT 5,
             tpl_index      INTEGER DEFAULT -1,
             custom_text    TEXT    DEFAULT '',
+            max_claims     INTEGER DEFAULT 0,
             updated_at     TEXT    DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -4110,6 +4330,10 @@ def setup_free_claim_tables():
             UNIQUE(referrer_id, product_id, referred_id)
         )
     """)
+    try:
+        ensure_column(c, "product_free_claim", "max_claims", "INTEGER DEFAULT 0")
+    except Exception:
+        pass
     # Indexes for fast lookup
     try:
         c.execute("CREATE INDEX IF NOT EXISTS idx_free_claims_user ON free_claims(user_id)")
@@ -4162,7 +4386,7 @@ def clear_product_refs(referrer_id, product_id):
 
 
 def set_product_free_config(pid, *, enabled=None, required_refs=None,
-                             tpl_index=None, custom_text=None):
+                             tpl_index=None, custom_text=None, max_claims=None):
     """Insert or update a product's free-claim config. Only provided fields are changed."""
     setup_free_claim_tables()
     conn = get_connection(); c = conn.cursor()
@@ -4171,14 +4395,15 @@ def set_product_free_config(pid, *, enabled=None, required_refs=None,
     if not exists:
         c.execute("""
             INSERT INTO product_free_claim
-                (product_id, enabled, required_refs, tpl_index, custom_text)
-            VALUES (?, ?, ?, ?, ?)
+                (product_id, enabled, required_refs, tpl_index, custom_text, max_claims)
+            VALUES (?, ?, ?, ?, ?, ?)
         """, (
             int(pid),
             1 if enabled else 0,
             int(required_refs) if required_refs is not None else 5,
             int(tpl_index) if tpl_index is not None else -1,
             str(custom_text) if custom_text is not None else "",
+            int(max_claims) if max_claims is not None else 0,
         ))
     else:
         sets, vals = [], []
@@ -4190,6 +4415,8 @@ def set_product_free_config(pid, *, enabled=None, required_refs=None,
             sets.append("tpl_index=?"); vals.append(int(tpl_index))
         if custom_text is not None:
             sets.append("custom_text=?"); vals.append(str(custom_text))
+        if max_claims is not None:
+            sets.append("max_claims=?"); vals.append(int(max_claims))
         sets.append("updated_at=CURRENT_TIMESTAMP")
         if sets:
             vals.append(int(pid))
@@ -4210,6 +4437,7 @@ def get_product_free_config(pid):
             "required_refs": 5,
             "tpl_index": -1,
             "custom_text": "",
+            "max_claims": 0,
         }
     d = dict(row)
     # Sanity defaults
@@ -4217,6 +4445,7 @@ def get_product_free_config(pid):
     d["required_refs"] = max(1, int(d.get("required_refs") or 5))
     d["tpl_index"] = int(d.get("tpl_index") if d.get("tpl_index") is not None else -1)
     d["custom_text"] = d.get("custom_text") or ""
+    d["max_claims"] = max(0, int(d.get("max_claims") or 0))
     return d
 
 

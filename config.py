@@ -53,8 +53,8 @@ def validate_required_config():
 #   4. Paste the ID below.
 # Set to 0 to send backups to the admin's private chat instead.
 BACKUP_CHANNEL_ID = 0
-# How often to auto-backup (in hours). e.g. 6 = every 6 hours.
-BACKUP_INTERVAL_HOURS = 6
+# How often to auto-backup (in hours). v120: owner requested every 3 hours.
+BACKUP_INTERVAL_HOURS = 3
 
 # 💰 Payment
 EASYPAISA_NUMBER = "923193840214"
