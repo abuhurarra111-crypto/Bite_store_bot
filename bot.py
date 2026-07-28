@@ -2069,51 +2069,50 @@ def main():
         )
 
     else:
-        # Polling mode (local / VPS)
-        import asyncio
-        import time
-        from telegram.error import Conflict
-        
-        try:
-            loop = asyncio.get_event_loop_policy().get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-        # 🆕 v96: startup self-heal — clear dest_chat_id if it points to bot's own username
-        # (would silently break broadcasts). One-time cleanup for admins who set this
-        # before v95 added the validation guard.
-        try:
-            from database import get_setting, set_setting
-            _dest = (get_setting("dest_chat_id", "") or "").strip()
-            if _dest:
-                # Best-effort get_me — swallow errors so bot always starts
-                try:
-                    import asyncio as _a
-                    _loop = _a.new_event_loop()
-                    _me = _loop.run_until_complete(app.bot.get_me())
-                    _loop.close()
-                    _own_lc = f"@{(_me.username or '').lower()}"
-                    if _dest.lower() in (_own_lc, _own_lc.lstrip("@")):
-                        set_setting("dest_chat_id", "")
-                        print(f"🆕 v96 self-heal: cleared dest_chat_id (was bot's own username '{_dest}')")
-                except Exception as _e:
-                    pass
-        except Exception:
-            pass
-
-        # Robust polling loop to survive Render's zero-downtime deploy conflicts
-        while True:
-            try:
-                app.run_polling(drop_pending_updates=True)
-                break
-            except Conflict:
-                print("⚠️ Conflict error: Another bot instance is running. Retrying in 10 seconds...")
-                time.sleep(10)
-            except Exception as e:
-                print(f"⚠️ Polling error: {e}. Retrying in 5 seconds...")
-                time.sleep(5)
+        # Polling mode (Render Background Worker / local / VPS)
+        #
+        # 🔧 v136 CRASH FIX:
+        # Do NOT run app.bot.get_me() on a temporary event loop before polling.
+        # That binds PTB/httpx internals to a loop that is then closed, causing:
+        #   RuntimeError("Event loop is closed")
+        #   RuntimeWarning: Updater.start_polling was never awaited
+        #
+        # Also do NOT retry app.run_polling() with the same Application object
+        # after an exception. If polling crashes, the __main__ supervisor below
+        # creates a fresh Application and fresh event loop.
+        print("🤖 Bot running via polling (Render Background Worker safe)")
+        app.run_polling(drop_pending_updates=True, close_loop=False)
 
 
 if __name__ == "__main__":
-    main()
+    # Render Worker safe supervisor: on transient Telegram/network startup
+    # errors, rebuild the whole Application instead of reusing a possibly
+    # closed event loop / half-started updater.
+    import time as _time
+    import logging as _logging
+    try:
+        from telegram.error import Conflict as _PTBConflict, NetworkError as _PTBNetworkError, TimedOut as _PTBTimedOut
+    except Exception:  # compile/test fallback
+        _PTBConflict = type("_PTBConflict", (Exception,), {})
+        _PTBNetworkError = type("_PTBNetworkError", (Exception,), {})
+        _PTBTimedOut = type("_PTBTimedOut", (Exception,), {})
+
+    while True:
+        try:
+            main()
+            break  # graceful shutdown
+        except _PTBConflict as _e:
+            print(f"⚠️ Telegram polling conflict (another instance/webhook). Retrying fresh in 15s: {_e}")
+            _time.sleep(15)
+        except (_PTBNetworkError, _PTBTimedOut) as _e:
+            print(f"⚠️ Telegram network error. Retrying fresh in 15s: {_e}")
+            _time.sleep(15)
+        except RuntimeError as _e:
+            if "event loop is closed" in str(_e).lower():
+                print("⚠️ Event loop was closed by previous polling attempt. Rebuilding fresh in 5s...")
+                _time.sleep(5)
+                continue
+            raise
+        except Exception as _e:
+            _logging.exception("💥 Bot crashed; rebuilding fresh in 15s")
+            _time.sleep(15)
