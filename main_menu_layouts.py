@@ -63,6 +63,21 @@ _CORE_BASE = [
 ]
 _ADMIN = ["main_admin"]
 
+_LAYOUT_I18N_MAP = {
+    "main_shop": "menu_shop",
+    "main_points": "menu_buy_points",
+    "main_account": "menu_my_account",
+    "main_orders": "menu_my_orders",
+    "main_transactions": "menu_transactions",
+    "main_referral": "menu_referral",
+    "main_admin": "menu_admin",
+    "main_support": "menu_support",
+    "main_warranty": "menu_warranty",
+    "main_reviews": "menu_reviews",
+    "main_loyalty": "menu_loyalty",
+    "main_language": "menu_language",
+}
+
 LAYOUTS = {
 
     # ══════════════════════════════════════════════════════════
@@ -973,6 +988,24 @@ def _make_button(btn_id, label_override=None, style=None,
         label = get_button_label(btn_id, size)
         if label is None:
             return None  # button hidden
+
+    # v134: display-time translation for current user's language.
+    # Does not mutate admin button labels/settings.
+    try:
+        from i18n import get_user_lang, t, tr_user
+        lang = get_user_lang(user_id) if user_id else "en"
+        if lang != "en":
+            key = _LAYOUT_I18N_MAP.get(btn_id)
+            if key:
+                static = t(key, lang=lang)
+                if static and static != key:
+                    label = static
+                else:
+                    label = tr_user(label, user_id=user_id, lang=lang)
+            else:
+                label = tr_user(label, user_id=user_id, lang=lang)
+    except Exception:
+        pass
 
     # Extract premium emoji id if present in label
     emoji_id = ""

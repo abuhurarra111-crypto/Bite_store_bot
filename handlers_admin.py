@@ -8,7 +8,7 @@ from keyboards import *
 from utils import escape_md, nav_push, set_cb_data, location_back_callback, smart_text_and_mode, has_premium_emoji, fmt_price, points_from_usd, fmt_points
 from templates_bundle import (
     FORMAT_EMAIL_PASS, FORMAT_REDEEM_LINK, FORMAT_COUPON_CODES,
-    format_label as delivery_format_label,
+    format_label as delivery_format_label, get_product_format_choices,
     get_template_style, get_template_choices,
     normalize_product_format, format_hint as delivery_format_hint,
     format_example as delivery_format_example,
@@ -245,8 +245,9 @@ async def delete_category_callback(u,c):
 async def admin_products_callback(u,c):
     q=u.callback_query
     if q.from_user.id!=ADMIN_ID: await q.answer("❌",show_alert=True); return
-    # 🆕 v60: admin sees ALL products (including hidden ones) so they can unhide/edit
-    await q.answer(); await _safe_edit(q, "🛍️ *Add Products:*",parse_mode="Markdown",reply_markup=admin_products_keyboard(get_all_products(include_hidden=True)))
+    # 🆕 v135: admin sees ALL products (including hidden/deactivated ones)
+    # so restored DB products can be edited/reactivated safely.
+    await q.answer(); await _safe_edit(q, "🛍️ *Add Products:*",parse_mode="Markdown",reply_markup=admin_products_keyboard(get_all_products(include_hidden=True, include_inactive=True)))
 
 async def add_product_callback(u,c):
     q=u.callback_query
@@ -397,19 +398,22 @@ async def _ask_delivery_type(u_or_q, c, is_query=False):
 async def _ask_product_format(u_or_q, c, is_query=False):
     """Ask which stock format this product will use."""
     current = normalize_product_format(c.user_data.get('p_format', 'email_pass'))
-    rows = [
-        [InlineKeyboardButton(f"📧 Email+Pass{' ✅' if current == FORMAT_EMAIL_PASS else ''}", callback_data=f"pfmt_{FORMAT_EMAIL_PASS}")],
-        [InlineKeyboardButton(f"🖇️ Redeem Link{' ✅' if current == FORMAT_REDEEM_LINK else ''}", callback_data=f"pfmt_{FORMAT_REDEEM_LINK}")],
-        [InlineKeyboardButton(f"🎁 Coupon Codes{' ✅' if current == FORMAT_COUPON_CODES else ''}", callback_data=f"pfmt_{FORMAT_COUPON_CODES}")],
+    rows = []
+    for fmt in get_product_format_choices():
+        mark = " ✅" if current == normalize_product_format(fmt) else ""
+        rows.append([InlineKeyboardButton(f"{delivery_format_label(fmt)}{mark}", callback_data=f"pfmt_{fmt}")])
+    rows.extend([
         [InlineKeyboardButton("🔙 Back", callback_data="prodback_delivery")],
         [InlineKeyboardButton("❌ Cancel", callback_data="conv_cancel")],
-    ]
+    ])
     text = (
         "🧩 *Step 9:* Product format?\n\n"
         "Choose how this product will be uploaded and delivered:\n\n"
         "• 📧 *Email+Pass* — account credentials\n"
+        "• 🔐 *Email+Pass+2FA* — accounts with 2FA secret\n"
+        "• 🎯 *Email+Pass+Token+Client ID* — Outlook/Hotmail style lines\n"
         "• 🖇️ *Redeem Link* — one unique link per order\n"
-        "• 🎁 *Coupon Codes* — one unique code per order\n\n"
+        "• 🎁 *Coupon / Code* — one unique code per order\n\n"
         "_Whichever format you select, stock upload will accept only that format._"
     )
     if is_query:
@@ -6233,8 +6237,8 @@ async def ds_format_pick_callback(u, c):
     p = get_product(pid)
     current = normalize_product_format((dict(p) if p else {}).get('product_format', 'email_pass'))
     rows = []
-    for fmt in (FORMAT_EMAIL_PASS, FORMAT_REDEEM_LINK, FORMAT_COUPON_CODES):
-        mark = " ✅" if fmt == current else ""
+    for fmt in get_product_format_choices():
+        mark = " ✅" if normalize_product_format(fmt) == current else ""
         rows.append([InlineKeyboardButton(f"{delivery_format_label(fmt)}{mark}", callback_data=f"dsfmt_{fmt}_{pid}")])
     rows.append([InlineKeyboardButton("🔙 Back", callback_data=f"delset_{pid}")])
     text = (
@@ -6329,23 +6333,36 @@ async def view_product_callback(u, c):
     
     product_format = normalize_product_format(dict(p).get('product_format', 'email_pass'))
     template_id = int(dict(p).get('delivery_template', 1) or 1)
-    dmode_label = '✋ Manual' if dict(p).get('delivery_mode') == 'manual' else '🤖 Auto'
+    dmode_label = '✋ Manual' if dict(p).get('delivery_mode') == 'manual' else '🤖 Auto Delivery'
+    is_active_now = int(dict(p).get('is_active', 1) or 0) == 1
+    active_label = '✅ Active' if is_active_now else '🚫 Deactivated'
+    hidden_label = '🙈 Hidden from Shop' if is_product_hidden(pid) else '👁️ Visible in Shop'
+    try:
+        from handlers_shop import _clean_product_description as _shop_clean_desc, _build_display_note as _shop_display_note
+        clean_desc = _shop_clean_desc(p['description'])
+        display_note = _shop_display_note(p['description'], dict(p).get('customer_note', ''))
+    except Exception:
+        clean_desc = p['description']
+        display_note = dict(p).get('customer_note', '')
     text = (
         f"📦 *Product Details*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📦 *Name:* {escape_md(p['name'])}\n"
+        f"🚦 *Status:* {active_label} | {hidden_label}\n"
+        f"📦 *Delivery Type:* {dmode_label}\n"
+        f"🧩 *Format:* {delivery_format_label(product_format)}\n"
+        f"🎁 *Template:* #{template_id} {escape_md(get_template_style(template_id)['name'])}\n"
         f"💰 *Selling Price:* {fmt_price(p['price'])}\n"
         f"💵 *Cost Price:* {fmt_price(p['cost_price'])}\n"
         f"📊 *Stock:* {p['stock']}\n"
         f"🛡️ *Warranty:* {escape_md(p['warranty']) or 'None'}\n"
         f"🔢 *Min Order Qty:* {escape_md(str(p['quantity'])) or '1'}\n"
-        f"🧩 *Format:* {delivery_format_label(product_format)}\n"
-        f"🎁 *Template:* #{template_id} {escape_md(get_template_style(template_id)['name'])}\n"
         f"🔥 *Sold (shown):* {int(dict(p).get('fake_sold',0) or 0) + int(dict(p).get('real_sold',0) or 0)} "
-        f"_(fake {int(dict(p).get('fake_sold',0) or 0)} + real {int(dict(p).get('real_sold',0) or 0)})_\n"
-        f"📦 *Delivery:* {dmode_label}\n\n"
-        f"📝 *Description:*\n"
-        f"{escape_md(p['description']) or 'None'}\n\n"
+        f"_(fake {int(dict(p).get('fake_sold',0) or 0)} + real {int(dict(p).get('real_sold',0) or 0)})_\n\n"
+        f"📌 *Customer Note (single display):*\n"
+        f"{escape_md(display_note) or 'None'}\n\n"
+        f"📝 *Description (clean display):*\n"
+        f"{escape_md(clean_desc) or 'None'}\n\n"
         f"📨 *Account Pool* (customer gets 1 account per order):\n"
         f"✅ Available: *{acct_available}* | 💰 Sold: *{acct_sold}* | 📊 Total: *{acct_total}*\n"
         f"_{'Ready — sells one account at a time.' if acct_available > 0 else '⚠️ No accounts left! Add via Manage Accounts.'}_"
@@ -6354,6 +6371,7 @@ async def view_product_callback(u, c):
     kb = [
         [InlineKeyboardButton("✏️ Edit Name", callback_data=f"editfield_name_{pid}"),
          InlineKeyboardButton("📝 Edit Description", callback_data=f"editfield_description_{pid}")],
+        [InlineKeyboardButton("📌 Edit Customer Note", callback_data=f"editfield_customernote_{pid}")],
         [InlineKeyboardButton("💰 Edit Price", callback_data=f"editfield_price_{pid}"),
          InlineKeyboardButton("💵 Edit Cost Price", callback_data=f"editfield_costprice_{pid}")],
         [InlineKeyboardButton("🛡️ Edit Warranty", callback_data=f"editfield_warranty_{pid}"),
@@ -6376,10 +6394,33 @@ async def view_product_callback(u, c):
             callback_data=f"prodhide_{pid}")],
         # 🆕 v71: Replacement window — per-product setting
         [_v71_replacement_window_button(pid)],
-        [InlineKeyboardButton("🗑️ Delete Product", callback_data=f"delprod_{pid}")],
-        [InlineKeyboardButton("🔙 Back to Add Products", callback_data="admin_products")]
     ]
+    if is_active_now:
+        kb.append([InlineKeyboardButton("🚫 Deactivate Product", callback_data=f"delprod_{pid}")])
+    else:
+        kb.append([InlineKeyboardButton("✅ Reactivate Product", callback_data=f"prodactive_1_{pid}")])
+    kb.extend([
+        [InlineKeyboardButton("🔙 Back to Add Products", callback_data="admin_products")]
+    ])
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def toggle_product_active_callback(u, c):
+    """Admin-only activate/reactivate product without deleting DB data."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        raw = q.data.replace("prodactive_", "")
+        active_s, pid_s = raw.split("_", 1)
+        active = bool(int(active_s))
+        pid = int(pid_s)
+    except Exception:
+        await q.answer("❌ Bad product id", show_alert=True); return
+    set_product_active(pid, active)
+    await q.answer("✅ Product reactivated" if active else "🚫 Product deactivated", show_alert=False)
+    set_cb_data(u, f"viewprod_{pid}")
+    await view_product_callback(u, c)
 
 
 # 🆕 v59: Toggle product hide/unhide
@@ -6574,13 +6615,13 @@ async def delete_product_confirm_callback(u, c):
     pid = int(q.data.replace("delprod_", ""))
     
     text = (
-        f"⚠️ *DELETE PRODUCT — CONFIRM*\n"
+        f"⚠️ *DEACTIVATE PRODUCT — CONFIRM*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Are you sure you want to delete this product?\n\n"
-        f"This action cannot be undone."
+        f"Are you sure you want to deactivate this product?\n\n"
+        f"It will disappear from user shop, but stay safe in admin panel and can be reactivated anytime."
     )
     kb = [
-        [InlineKeyboardButton("✅ YES, Delete", callback_data=f"delproddo_{pid}"),
+        [InlineKeyboardButton("✅ YES, Deactivate", callback_data=f"delproddo_{pid}"),
          InlineKeyboardButton("❌ No, Cancel", callback_data=f"viewprod_{pid}")]
     ]
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
@@ -6595,7 +6636,7 @@ async def delete_product_do_callback(u, c):
     pid = int(q.data.replace("delproddo_", ""))
     
     delete_product(pid)
-    await q.answer("Product deleted safely ✅")
+    await q.answer("Product deactivated safely ✅")
     
     # Refresh items view
     set_cb_data(u, "admin_products")
@@ -6649,7 +6690,7 @@ async def edit_product_field_callback(u, c):
     if field != 'accounts':
         if p:
             field_map = {
-                "name": p['name'], "description": p['description'],
+                "name": p['name'], "description": p['description'], "customernote": dict(p).get('customer_note',''),
                 "price": f"{p['price']:.2f}", "costprice": f"{p['cost_price']:.2f}",
                 "stock": str(p['stock']), "warranty": p['warranty'],
                 "quantity": p['quantity'], "deliverytext": p['delivery_text'],
@@ -6757,6 +6798,18 @@ async def edit_product_field_received(u, c):
             if html_v and has_premium_emoji(u.message):
                 val = "[[HTML]]" + html_v
             cur.execute("UPDATE products SET description=? WHERE id=?", (val, pid))
+        elif field == 'customernote':
+            if val.strip() == '-':
+                val = ''
+            else:
+                try:
+                    from utils import capture_user_text
+                    val = capture_user_text(u.message) or val
+                except Exception:
+                    pass
+            from database import ensure_column
+            ensure_column(cur, "products", "customer_note", "TEXT DEFAULT ''")
+            cur.execute("UPDATE products SET customer_note=? WHERE id=?", (val, pid))
         elif field == 'price':
             num = float(val.replace('$','').replace(',','').strip())
             # 🆕 v66: capture OLD price so we can offer a price-drop broadcast

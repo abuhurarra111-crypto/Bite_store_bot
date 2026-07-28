@@ -19,6 +19,108 @@ LANGUAGES = {
 
 DEFAULT_LANG = "en"
 
+# Display-time translation cache. This never mutates products/supplier DB data.
+# It only translates what is shown to a user and caches result in bot_settings.
+def _display_lang_code(lang):
+    if not lang:
+        return DEFAULT_LANG
+    # i18n.py uses "ru" for Roman Urdu and "ru_lang" for Russian.
+    return str(lang)
+
+
+def _display_lang_name(lang):
+    lang = _display_lang_code(lang)
+    return {
+        "en": "English",
+        "ur": "Urdu",
+        "ru": "Roman Urdu (Urdu written in English/Latin letters)",
+        "hi": "Hinglish (Hindi/Urdu style written in English/Latin letters)",
+        "ar": "Arabic",
+        "es": "Spanish",
+        "fr": "French",
+        "ru_lang": "Russian",
+        "zh": "Chinese",
+        "de": "German",
+    }.get(lang, LANGUAGES.get(lang, {}).get('name', lang))
+
+
+def _display_cache_key(text, lang):
+    import hashlib
+    raw = f"{lang}||{text}".encode('utf-8', errors='ignore')
+    return "i18n_display_" + hashlib.md5(raw).hexdigest()[:24]
+
+
+def translate_display_text(text, user_id=None, lang=None, max_len=1800):
+    """Translate user-visible text at display-time only.
+
+    Source DB/product/supplier data is never changed. If Gemini/API is not
+    configured or translation fails, original text is returned safely.
+    """
+    if text is None:
+        return ""
+    text = str(text)
+    if not text.strip():
+        return text
+    try:
+        lang = lang or get_user_lang(user_id)
+    except Exception:
+        lang = lang or DEFAULT_LANG
+    lang = _display_lang_code(lang)
+    if lang == DEFAULT_LANG:
+        return text
+    # Avoid translating huge deliveries/account data. Product descriptions and
+    # UI screens are okay, credentials are handled elsewhere.
+    if len(text) > max_len:
+        return text
+    # Keep pure URLs / code-ish strings unchanged.
+    if text.strip().startswith(('http://', 'https://')):
+        return text
+    try:
+        from database import get_setting, set_setting
+        key = _display_cache_key(text, lang)
+        cached = get_setting(key, "")
+        if cached:
+            return cached
+    except Exception:
+        key = ""
+    try:
+        import google.generativeai as genai
+        from config import GEMINI_API_KEY
+        if not GEMINI_API_KEY:
+            return text
+        genai.configure(api_key=GEMINI_API_KEY)
+        model = genai.GenerativeModel(model_name="gemini-2.5-flash")
+        target = _display_lang_name(lang)
+        prompt = (
+            f"Translate the following Telegram bot UI text to {target}.\n"
+            "Rules:\n"
+            "1. Preserve emojis exactly.\n"
+            "2. Preserve HTML tags and [[HTML]] markers exactly.\n"
+            "3. Preserve placeholders like {name}, {price}, {qty}, and callback-like IDs.\n"
+            "4. Preserve URLs, emails, codes, and text inside <code> or `backticks`.\n"
+            "5. Do not translate brand/product names like ChatGPT, Netflix, Adobe, Canva, Binance, EasyPaisa, JazzCash.\n"
+            "6. Keep line breaks and separators. Output only translated text.\n\n"
+            f"Text:\n{text}"
+        )
+        resp = model.generate_content(prompt, generation_config={"temperature":0.15, "max_output_tokens": max(500, int(len(text)*2.5))})
+        out = (getattr(resp, 'text', '') or '').strip()
+        if not out:
+            return text
+        out = out.strip('`').strip()
+        try:
+            if key:
+                set_setting(key, out)
+        except Exception:
+            pass
+        return out
+    except Exception:
+        return text
+
+
+def tr_user(text, user_id=None, lang=None):
+    return translate_display_text(text, user_id=user_id, lang=lang)
+
+
 # ── Master translations dictionary ──
 TRANSLATIONS = {
     # ══════════ COMMON ══════════

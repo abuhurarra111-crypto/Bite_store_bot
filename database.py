@@ -125,6 +125,7 @@ def ensure_column(c, table, column, col_def):
 # Render DB can never crash with "no such column: ...".
 _PRODUCT_COLUMNS = [
     ("description", "TEXT DEFAULT ''"),
+    ("customer_note", "TEXT DEFAULT ''"),
     ("cost_price", "REAL DEFAULT 0"),
     ("stock", "INTEGER DEFAULT 0"),
     ("delivery_text", "TEXT DEFAULT ''"),
@@ -195,7 +196,7 @@ def setup_database():
 
     c.execute("""CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT, category_id INTEGER,
-        name TEXT NOT NULL, description TEXT DEFAULT '', price REAL NOT NULL,
+        name TEXT NOT NULL, description TEXT DEFAULT '', customer_note TEXT DEFAULT '', price REAL NOT NULL,
         cost_price REAL DEFAULT 0, stock INTEGER DEFAULT 0,
         delivery_text TEXT DEFAULT '', delivery_file_id TEXT DEFAULT '',
         delivery_file_type TEXT DEFAULT '', delivery_file_name TEXT DEFAULT '',
@@ -824,7 +825,7 @@ def delete_category(cid):
 # 🔧 UPDATED: Now accepts warranty, quantity, photo_id
 # v127: Default Free-via-Referrals settings for every NEW product.
 # Safe rule: INSERT OR IGNORE only — never overwrites admin custom settings.
-DEFAULT_FREE_CLAIM_ENABLED = 1
+DEFAULT_FREE_CLAIM_ENABLED = 0
 DEFAULT_FREE_CLAIM_REQUIRED_REFS = 5
 
 
@@ -972,6 +973,14 @@ def delete_product(pid):
     c.execute("UPDATE products SET is_active=0 WHERE id=?", (pid,)); conn.commit(); conn.close()
 
 
+def set_product_active(pid, active=True):
+    """Activate/deactivate a product without deleting DB data."""
+    conn = get_connection(); c = conn.cursor()
+    ensure_column(c, "products", "is_active", "INTEGER DEFAULT 1")
+    c.execute("UPDATE products SET is_active=? WHERE id=?", (1 if active else 0, int(pid)))
+    conn.commit(); conn.close()
+
+
 # ════════════════════════════════════════════════════════════════
 # 🆕 v59: HIDE / UNHIDE products (admin can toggle without deleting)
 # 'is_hidden' is separate from 'is_active' (which = deleted).
@@ -1038,23 +1047,28 @@ try:
 except Exception as _e:
     print(f"⚠️ v59 is_hidden column migration failed: {_e}")
 
-def get_all_products(include_hidden=False):
-    """🆕 v60: By default excludes admin-hidden products so fake-activity
-    pickers (fake_broadcast / per_user_activity / fake_reviews) never pick
-    a hidden product to advertise.
+def get_all_products(include_hidden=False, include_inactive=False):
+    """Return products for admin/user lists.
 
-    Pass include_hidden=True to get the FULL admin view (e.g. Edit Products
-    panel where admin needs to see hidden products to un-hide them).
+    Default stays user-safe: active + not hidden only.
+    Admin product manager can pass include_hidden=True, include_inactive=True so
+    restored DBs show deactivated products too and admin can reactivate them.
     """
     try:
         _ensure_is_hidden_column()
     except Exception:
         pass
     conn = get_connection(); c = conn.cursor()
-    if include_hidden:
-        c.execute("SELECT p.*, c.name as category_name, c.emoji as category_emoji FROM products p LEFT JOIN categories c ON p.category_id=c.id WHERE p.is_active=1")
-    else:
-        c.execute("SELECT p.*, c.name as category_name, c.emoji as category_emoji FROM products p LEFT JOIN categories c ON p.category_id=c.id WHERE p.is_active=1 AND COALESCE(p.is_hidden, 0)=0")
+    base = "SELECT p.*, c.name as category_name, c.emoji as category_emoji FROM products p LEFT JOIN categories c ON p.category_id=c.id"
+    where = []
+    if not include_inactive:
+        where.append("p.is_active=1")
+    if not include_hidden:
+        where.append("COALESCE(p.is_hidden, 0)=0")
+    if where:
+        base += " WHERE " + " AND ".join(where)
+    base += " ORDER BY COALESCE(p.is_active,1) DESC, p.id DESC"
+    c.execute(base)
     r = c.fetchall(); conn.close(); return r
 
 

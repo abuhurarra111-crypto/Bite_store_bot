@@ -184,7 +184,7 @@ def markdownish_to_html(text):
         s = re.sub(pattern, _sub, s, flags=flags)
 
     # Protect premium emoji tags + already-saved safe HTML tags before escaping.
-    _protect(r'<tg-emoji\s+emoji-id=["\']\d+["\']\s*>[^<]*</tg-emoji>', 'TG')
+    _protect(r'<tg-emoji\s+emoji-id=["\'][^"\']+["\']\s*>[^<]*</tg-emoji>', 'TG')
     # 🆕 v58: Protect ENTIRE <pre>...</pre> and <code>...</code> blocks
     # (CONTENT included) so Markdown chars inside them don't get converted.
     # Critical when admin opens "Edit Text" screen for a response that contains

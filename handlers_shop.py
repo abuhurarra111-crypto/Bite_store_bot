@@ -63,6 +63,231 @@ def _get_resp(key, user_id=None):
     return get_response_with_auto_register(key, DEFAULT_RESPONSES.get(key, ""))
 
 
+def _display_text_normalize_newlines(value):
+    """Normalize supplier text for display only (DB stays unchanged)."""
+    if value is None:
+        return ""
+    text = str(value)
+    prefix = "[[HTML]]" if text.startswith("[[HTML]]") else ""
+    body = text[len(prefix):] if prefix else text
+    # Actual CR/LF first, then literal "\\n" sequences from JSON/supplier dumps.
+    body = body.replace("\r\n", "\n").replace("\r", "\n")
+    body = (body.replace("\\r\\n", "\n")
+                .replace("\\n", "\n")
+                .replace("\\t", "\t"))
+    return prefix + body if prefix else body
+
+def _split_display_prefix(value):
+    text = _display_text_normalize_newlines(value)
+    prefix = "[[HTML]]" if text.startswith("[[HTML]]") else ""
+    return prefix, text[len(prefix):] if prefix else text
+
+
+def _strip_bullet_prefix(line):
+    import re
+    s = str(line or "").strip()
+    # Remove common supplier bullets: +)  -  •  1) etc.
+    s = re.sub(r"^\s*(?:[+\-*•●▪◦]+\s*\)?\s*|\d+[.)]\s*)+", "", s).strip()
+    return s
+
+
+def _is_separator_line(line):
+    import re
+    return bool(re.match(r"^\s*[=━─\-_*]{5,}\s*$", str(line or "")))
+
+
+def _line_key(line):
+    import re
+    s = _strip_bullet_prefix(html_strip_tags(str(line or "")))
+    s = re.sub(r"(?i)^usage\s*:\s*", "", s).strip()
+    s = re.sub(r"(?i)^notes?\s*[⚠️❗!\s]*[:：\-–—]*\s*", "", s).strip()
+    s = re.sub(r"(?i)^important(?:\s+note)?\s*[:：\-–—]*\s*", "", s).strip()
+    s = re.sub(r"(?i)^format\s*[:：\-–—]*\s*", "", s).strip()
+    s = re.sub(r"\s+", " ", s).strip().lower()
+    s = s.replace("refresh tokens", "refresh token")
+    s = s.strip(" .,:;|-_=*()[]{}'\"")
+    return s
+
+
+def _is_format_line(line):
+    import re
+    s = _strip_bullet_prefix(line)
+    low = html_strip_tags(s).strip().lower()
+    if not low:
+        return False
+    if re.match(r"^(format|delivery\s*format|account\s*format|định\s*dạng)\s*[:：\-–—]", low):
+        return True
+    if low.startswith("usage:"):
+        rest = low.split(":", 1)[1].strip()
+        if rest.startswith(("format:", "format ")):
+            return True
+        if "|" in rest and any(w in rest for w in ("email", "mail", "pass", "password", "token", "client", "2fa", "link", "code")):
+            return True
+    return False
+
+
+def _note_payload(line):
+    import re
+    s = _strip_bullet_prefix(line)
+    plain = html_strip_tags(s).strip()
+    m = re.match(r"(?is)^(?:important\s+note|notes?|note)\s*[⚠️❗!\s]*[:：\-–—]*\s*(.+)$", plain)
+    if not m:
+        return None
+    payload = m.group(1).strip()
+    return payload or None
+
+
+def _drop_duplicate_supplier_blocks(body):
+    """Skip repeated supplier blocks after ===== separators when they repeat keys."""
+    import re
+    text = str(body or "")
+    blocks = [b.strip() for b in re.split(r"(?m)^\s*[=━─\-_*]{5,}\s*$", text) if b.strip()]
+    if len(blocks) <= 1:
+        return text
+    kept = []
+    seen = set()
+    for block in blocks:
+        keys = set()
+        for ln in block.splitlines():
+            if not ln.strip() or _is_separator_line(ln):
+                continue
+            k = _line_key(ln)
+            if k:
+                keys.add(k)
+        # Supplier often repeats the same product in another language after =====.
+        # If the block shares useful keys (format/url/note lines), keep only first.
+        if kept and (len(keys & seen) >= 2 or any(_is_format_line(x) and _line_key(x) in seen for x in block.splitlines())):
+            continue
+        kept.append(block)
+        seen |= keys
+    return "\n\n".join(kept).strip()
+
+
+def _clean_product_description(desc):
+    """Clean duplicate supplier description blocks at display time only.
+
+    - DB original text is never changed (supplier mapping/order safety).
+    - Repeated Format/Note lines are removed from the description because the
+      product detail screen shows Format and Note as their own single sections.
+    - Exact/near duplicate Usage/URL lines are collapsed.
+    """
+    if not desc:
+        return ""
+    prefix, body = _split_display_prefix(desc)
+    body = _drop_duplicate_supplier_blocks(body)
+    lines = body.splitlines()
+    out = []
+    seen = set()
+    prev_blank = False
+    for ln in lines:
+        stripped = ln.strip()
+        if not stripped:
+            if not prev_blank and out:
+                out.append("")
+            prev_blank = True
+            continue
+        if _is_separator_line(stripped):
+            continue
+        if _is_format_line(stripped):
+            continue
+        if _note_payload(stripped) is not None:
+            continue
+        prev_blank = False
+        key = _line_key(stripped)
+        if not key:
+            continue
+        usage_rest_key = ""
+        if _strip_bullet_prefix(stripped).lower().startswith("usage:"):
+            usage_rest_key = _line_key(_strip_bullet_prefix(stripped).split(":", 1)[1])
+            if usage_rest_key and usage_rest_key in seen:
+                continue
+        if key in seen:
+            continue
+        seen.add(key)
+        if usage_rest_key:
+            seen.add(usage_rest_key)
+        out.append(stripped)
+    cleaned = "\n".join(out).strip()
+    return prefix + cleaned if (prefix and cleaned) else cleaned
+
+
+def _extract_notes_from_description(desc):
+    if not desc:
+        return ""
+    _prefix, body = _split_display_prefix(desc)
+    body = _drop_duplicate_supplier_blocks(body)
+    notes = []
+    seen = set()
+    for ln in body.splitlines():
+        payload = _note_payload(ln)
+        if not payload:
+            continue
+        key = _line_key(payload)
+        if key and key not in seen:
+            seen.add(key)
+            notes.append(payload)
+    return "\n".join(notes).strip()
+
+
+def _dedupe_multiline_display_text(text):
+    if not text:
+        return ""
+    prefix, body = _split_display_prefix(text)
+    out = []
+    seen = set()
+    for ln in body.splitlines():
+        stripped = ln.strip()
+        if not stripped:
+            continue
+        key = _line_key(stripped)
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        out.append(stripped)
+    joined = "\n".join(out).strip()
+    return prefix + joined if (prefix and joined) else joined
+
+
+def _build_display_note(desc, customer_note=""):
+    """Return one customer note block from DB note + supplier Note lines."""
+    parts = []
+    if customer_note:
+        parts.append(_dedupe_multiline_display_text(customer_note))
+    auto_note = _extract_notes_from_description(desc)
+    if auto_note:
+        parts.append(auto_note)
+    out = []
+    seen = set()
+    for part in parts:
+        for ln in str(part or "").splitlines():
+            stripped = ln.strip()
+            if not stripped:
+                continue
+            key = _line_key(stripped)
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            out.append(stripped)
+    return "\n".join(out).strip()
+
+
+def _product_format_label(p):
+    try:
+        from templates_bundle import format_label as _fmt_label, normalize_product_format
+        return _fmt_label(normalize_product_format((dict(p) if p else {}).get('product_format', 'email_pass')))
+    except Exception:
+        return "📧 Email+Pass"
+
+
+def _product_status_label(p):
+    try:
+        active = int((dict(p) if p else {}).get('is_active', 1) or 0) == 1
+    except Exception:
+        active = True
+    return "✅ Active" if active else "🚫 Deactivated"
+
 def _sold_line(p):
     """🆕 '🔥 Sold: N' line shown to customers (fake base + real sales).
     Controlled by the 'show_sold' toggle (ON by default). Returns '' if hidden."""
@@ -87,8 +312,12 @@ def _get_display_format():
 # 🆕 v42: Build the product detail text in either Markdown OR HTML mode,
 # depending on whether the product name was saved with a premium-emoji
 # HTML representation. Returns (text, parse_mode).
-def _build_detail_text(p):
+def _build_detail_text(p, user_id=None):
     import html as _html
+    try:
+        from i18n import tr_user as _tr_user
+    except Exception:
+        _tr_user = lambda x, user_id=None: x
     name_html_aware = is_html_value(p['name'])
     rate = float(get_setting("usd_pkr_rate", USD_TO_PKR_RATE))
     pkr = format_pkr(p['price'], rate)
@@ -104,6 +333,15 @@ def _build_detail_text(p):
     except (IndexError, KeyError): warranty = ""
     try: quantity = p['quantity']
     except (IndexError, KeyError): quantity = ""
+    try: customer_note = p['customer_note']
+    except (IndexError, KeyError): customer_note = ""
+
+    raw_description = p.get('description', '') if hasattr(p, 'get') else p['description']
+    desc_clean = _clean_product_description(raw_description)
+    display_note = _build_display_note(raw_description, customer_note)
+    delivery_label = get_product_mode_tag(p)
+    status_label = _product_status_label(p)
+    fmt_label = _product_format_label(p)
 
     # 🐛 v106 FIX: also switch to HTML mode when description contains
     # regular HTML tags (<b>, <blockquote>, <i>, etc.) — many suppliers
@@ -121,21 +359,23 @@ def _build_detail_text(p):
             s, flags=_re_desc_ck.I))
 
     html_needed = (name_html_aware
-                   or contains_premium_markup(p.get('description', ''))
+                   or contains_premium_markup(desc_clean)
                    or contains_premium_markup(warranty)
                    or contains_premium_markup(quantity)
-                   or _has_html_tags(p.get('description', ''))
+                   or contains_premium_markup(display_note)
+                   or _has_html_tags(desc_clean)
                    or _has_html_tags(warranty)
-                   or _has_html_tags(quantity))
+                   or _has_html_tags(quantity)
+                   or _has_html_tags(display_note))
     if html_needed:
         # HTML mode — premium emojis render anywhere in product content
-        title = name_for_message_html(p['name'])
+        title = name_for_message_html(_tr_user(html_strip_tags(p['name']), user_id=user_id))
         text = f"📦 <b>{title}</b>\n"
         text += "━━━━━━━━━━━━━━━━━━━━\n\n"
-        if p['description']:
+        if desc_clean:
             # 🐛 v106: preserve HTML formatting — supplier <b>/<blockquote>/etc.
             # renders properly for customer instead of showing as literal text.
-            _d = str(p['description'])
+            _d = str(_tr_user(desc_clean, user_id=user_id))
             if contains_premium_markup(_d):
                 desc_html = name_for_message_html(_d)
             elif _has_html_tags(_d):
@@ -144,14 +384,29 @@ def _build_detail_text(p):
             else:
                 desc_html = _html.escape(html_strip_tags(_d))
             text += f"📝 {desc_html}\n\n"
+        if display_note:
+            _cn = str(_tr_user(display_note, user_id=user_id))
+            if contains_premium_markup(_cn):
+                cn_html = name_for_message_html(_cn)
+            elif _has_html_tags(_cn):
+                cn_html = _cn[len("[[HTML]]"):] if _cn.startswith("[[HTML]]") else _cn
+            else:
+                cn_html = _html.escape(html_strip_tags(_cn))
+            text += f"📌 <b>Important Note:</b> {cn_html}\n\n"
         if is_flash:
             text += (f"💰 Price: <s>{fmt_price(p['price'])}</s> ⚡ "
                      f"<b>${f_price:.2f}</b> ≈ <b>{_html.escape(pkr_f)}</b>\n")
         else:
             text += f"💰 Price: <b>{fmt_price(p['price'])}</b> ≈ <b>{_html.escape(pkr)}</b>\n"
+        _status = _html.escape(html_strip_tags(str(_tr_user(status_label, user_id=user_id))))
+        _delivery = _html.escape(html_strip_tags(str(_tr_user(delivery_label, user_id=user_id))))
+        _format = _html.escape(html_strip_tags(str(_tr_user(fmt_label, user_id=user_id))))
+        text += f"🚦 <b>Status:</b> {_status}\n"
+        text += f"📦 <b>Delivery Type:</b> {_delivery}\n"
+        text += f"🧩 <b>Format:</b> {_format}\n"
         if show_warranty and warranty:
             # 🐛 v106: preserve HTML tags in warranty text (supplier formatting)
-            _w = str(warranty)
+            _w = str(_tr_user(warranty, user_id=user_id))
             if contains_premium_markup(_w):
                 warranty_html = name_for_message_html(_w)
             elif _has_html_tags(_w):
@@ -160,7 +415,7 @@ def _build_detail_text(p):
                 warranty_html = _html.escape(html_strip_tags(_w))
             text += f"🛡️ Warranty: <b>{warranty_html}</b>\n"
         if show_quantity and quantity:
-            _q = str(quantity)
+            _q = str(_tr_user(quantity, user_id=user_id))
             if contains_premium_markup(_q):
                 qty_html = name_for_message_html(_q)
             elif _has_html_tags(_q):
@@ -174,18 +429,23 @@ def _build_detail_text(p):
         return text, "HTML"
 
     # Default Markdown path (unchanged behaviour)
-    text = f"📦 *{escape_md(p['name'])}*\n"
+    text = f"📦 *{escape_md(_tr_user(p['name'], user_id=user_id))}*\n"
     text += "━━━━━━━━━━━━━━━━━━━━\n\n"
-    if p['description']:
-        text += f"📝 {escape_md(p['description'])}\n\n"
+    if desc_clean:
+        text += f"📝 {escape_md(_tr_user(desc_clean, user_id=user_id))}\n\n"
+    if display_note:
+        text += f"📌 *Important Note:* {escape_md(_tr_user(display_note, user_id=user_id))}\n\n"
     if is_flash:
         text += f"💰 Price: ~{fmt_price(p['price'])}~ ⚡ *${f_price:.2f}* ≈ *{pkr_f}*\n"
     else:
         text += f"💰 Price: *{fmt_price(p['price'])}* ≈ *{pkr}*\n"
+    text += f"🚦 *Status:* {escape_md(_tr_user(status_label, user_id=user_id))}\n"
+    text += f"📦 *Delivery Type:* {escape_md(_tr_user(delivery_label, user_id=user_id))}\n"
+    text += f"🧩 *Format:* {escape_md(_tr_user(fmt_label, user_id=user_id))}\n"
     if show_warranty and warranty:
-        text += f"🛡️ Warranty: *{escape_md(warranty)}*\n"
+        text += f"🛡️ Warranty: *{escape_md(_tr_user(warranty, user_id=user_id))}*\n"
     if show_quantity and quantity:
-        text += f"📦 Quantity: *{escape_md(quantity)}*\n"
+        text += f"📦 Quantity: *{escape_md(_tr_user(quantity, user_id=user_id))}*\n"
     if show_stock:
         text += f"📊 In Stock: *{p['stock']}*\n"
     text += _sold_line(p)
@@ -490,10 +750,10 @@ def _carousel_keyboard(idx, total, product, user=None):
     ])
 
 
-def _build_carousel_caption(p, idx, total):
+def _build_carousel_caption(p, idx, total, user_id=None):
     """Build product caption text for carousel.
     Returns plain text (Markdown). Premium-emoji aware variant returns HTML."""
-    text, mode = _build_detail_text(p)
+    text, mode = _build_detail_text(p, user_id=user_id)
     # Append carousel footer in matching syntax
     if mode == "HTML":
         text += "\n━━━━━━━━━━━━━━━━━━━━\n"
@@ -512,7 +772,7 @@ async def _show_carousel(update, context, products, idx, is_initial=False, user=
     context.user_data['carousel_idx'] = idx
 
     p = products[idx]
-    caption, parse_mode = _build_carousel_caption(p, idx, len(products))
+    caption, parse_mode = _build_carousel_caption(p, idx, len(products), user_id=q.from_user.id)
     kb = _carousel_keyboard(idx, len(products), p, user=user)
 
     show_photo = get_toggle("show_photo") == "1"
@@ -637,7 +897,7 @@ async def product_detail_callback(update: Update, context: ContextTypes.DEFAULT_
     except (IndexError, KeyError): photo_id = ""
 
     # 🆕 v42: HTML or Markdown rendering based on premium-emoji presence in name
-    text, parse_mode = _build_detail_text(p)
+    text, parse_mode = _build_detail_text(p, user_id=q.from_user.id)
     kb = product_detail_keyboard(p, user=q.from_user)
 
     if show_photo and photo_id:
@@ -674,7 +934,7 @@ async def show_product_detail_direct(bot, user_id, product_id):
     except (IndexError, KeyError): photo_id = ""
 
     # 🆕 v42: HTML/Markdown switch for premium-emoji product names
-    text, parse_mode = _build_detail_text(p)
+    text, parse_mode = _build_detail_text(p, user_id=user_id)
     kb = product_detail_keyboard(p, user={'id': user_id})
 
     if show_photo and photo_id:

@@ -572,13 +572,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     shop = get_setting("shop_name", SHOP_NAME)
     text = _r("welcome", user_id=u.id).format(shop_name=shop, user_id=u.id)
-    # 🆕 v70: prepend pinned announcements at top of main menu
-    try:
-        from loyalty_extras import format_pins_for_menu
-        pins = format_pins_for_menu()
-        if pins:
-            text = pins + text
-    except Exception: pass
+    # v133: Pinned announcements are real pinned messages only; do not prepend them to welcome.
     send_text, send_mode = smart_text_and_mode(text, "Markdown")
     await update.message.reply_text("👋", reply_markup=persistent_menu())
     await update.message.reply_text(send_text, parse_mode=send_mode,
@@ -641,13 +635,7 @@ async def handle_main_menu_button(update: Update, context: ContextTypes.DEFAULT_
 
     shop = get_setting("shop_name", SHOP_NAME)
     text = _r("welcome", user_id=u.id).format(shop_name=shop, user_id=u.id)
-    # 🆕 v70: prepend pinned announcements
-    try:
-        from loyalty_extras import format_pins_for_menu
-        pins = format_pins_for_menu()
-        if pins:
-            text = pins + text
-    except Exception: pass
+    # v133: Pinned announcements are real pinned messages only; do not prepend them to welcome.
     send_text, send_mode = smart_text_and_mode(text, "Markdown")
     await update.message.reply_text(send_text, parse_mode=send_mode,
         reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
@@ -657,13 +645,7 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     nav_push(context, 'main_menu')  # 🔙 Track navigation
     shop = get_setting("shop_name", SHOP_NAME)
     text = _r("welcome", user_id=u.id).format(shop_name=shop, user_id=u.id)
-    # 🆕 v70: prepend pinned announcements
-    try:
-        from loyalty_extras import format_pins_for_menu
-        pins = format_pins_for_menu()
-        if pins:
-            text = pins + text
-    except Exception: pass
+    # v133: Pinned announcements are real pinned messages only; do not prepend them to welcome.
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
 
 async def my_account_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

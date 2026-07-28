@@ -41,8 +41,15 @@ from utils import html_strip_tags
 # [v77-merge] self-bundle import removed: from raw_delivery import wrap_raw_for_telegram, html_safe_for_code_block
 
 FORMAT_EMAIL_PASS = "email_pass"
+FORMAT_EMAIL_PASS_2FA = "email_pass_2fa"
+FORMAT_EMAIL_PASS_RECOVERY = "email_pass_recovery"
+FORMAT_EMAIL_MULTI = "email_multi"
 FORMAT_REDEEM_LINK = "redeem_link"
-FORMAT_COUPON_CODES = "coupon_codes"
+# Canonical value is singular because supplier sync already stores `coupon_code`.
+# The old plural value is still accepted by normalize_product_format().
+FORMAT_COUPON_CODES = "coupon_code"
+FORMAT_COUPON_CODES_LEGACY = "coupon_codes"
+FORMAT_RAW_TEXT = "raw_text"
 
 FORMAT_META = {
     FORMAT_EMAIL_PASS: {
@@ -50,18 +57,56 @@ FORMAT_META = {
         "icon": "📧",
         "hint": "One account per line: email|password",
         "example": "demo@gmail.com|MyPass123",
+        "spec": "Email | Password",
+        "min_parts": 2,
+    },
+    FORMAT_EMAIL_PASS_2FA: {
+        "label": "Email+Pass+2FA",
+        "icon": "🔐",
+        "hint": "One account per line: email|password|2FA",
+        "example": "demo@gmail.com|MyPass123|JBSWY3DPEHPK3PXP",
+        "spec": "Email | Password | 2FA",
+        "min_parts": 3,
+    },
+    FORMAT_EMAIL_PASS_RECOVERY: {
+        "label": "Email+Pass+Recovery",
+        "icon": "🛡️",
+        "hint": "One account per line: email|password|recovery",
+        "example": "demo@gmail.com|MyPass123|recovery@example.com",
+        "spec": "Email | Password | Recovery",
+        "min_parts": 3,
+    },
+    FORMAT_EMAIL_MULTI: {
+        "label": "Email+Pass+Token+Client ID",
+        "icon": "🎯",
+        "hint": "One account per line: email|password|refresh_token|client_id",
+        "example": "demo@hotmail.com|MyPass123|refresh_token_here|client_id_here",
+        "spec": "Email | Password | Refresh Token | Client ID",
+        "min_parts": 4,
     },
     FORMAT_REDEEM_LINK: {
         "label": "Redeem Link",
         "icon": "🖇️",
         "hint": "One redeem link per line: https://...",
         "example": "https://redeem.example.com/claim/ABC123",
+        "spec": "Redeem Link",
+        "min_parts": 1,
     },
     FORMAT_COUPON_CODES: {
-        "label": "Coupon Codes",
+        "label": "Coupon / Redemption Code",
         "icon": "🎁",
-        "hint": "One coupon code per line",
+        "hint": "One coupon/redemption code per line",
         "example": "BITE-STORE-2026-PRO",
+        "spec": "Code",
+        "min_parts": 1,
+    },
+    FORMAT_RAW_TEXT: {
+        "label": "Raw Text",
+        "icon": "📝",
+        "hint": "One raw delivery item per line (no strict validation)",
+        "example": "any-delivery-text",
+        "spec": "Content",
+        "min_parts": 1,
     },
 }
 
@@ -155,7 +200,40 @@ def get_template_choices():
 
 
 def normalize_product_format(value):
-    value = str(value or "").strip().lower()
+    """Return a restore-safe canonical product format.
+
+    Older/supplier DBs may contain values like `coupon_codes`, `coupon_code`,
+    `email_pass_2fa`, or `email_multi`.  Do NOT downgrade those to email_pass;
+    doing so makes restored DB products show the wrong format and can validate
+    local stock incorrectly.
+    """
+    value = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "": FORMAT_EMAIL_PASS,
+        "mail_pass": FORMAT_EMAIL_PASS,
+        "email_password": FORMAT_EMAIL_PASS,
+        "email_password_2fa": FORMAT_EMAIL_PASS_2FA,
+        "mail_pass_2fa": FORMAT_EMAIL_PASS_2FA,
+        "2fa": FORMAT_EMAIL_PASS_2FA,
+        "email_password_recovery": FORMAT_EMAIL_PASS_RECOVERY,
+        "email_recovery": FORMAT_EMAIL_PASS_RECOVERY,
+        "email_token": FORMAT_EMAIL_MULTI,
+        "outlook": FORMAT_EMAIL_MULTI,
+        "hotmail": FORMAT_EMAIL_MULTI,
+        "email_refresh_token": FORMAT_EMAIL_MULTI,
+        "link": FORMAT_REDEEM_LINK,
+        "url": FORMAT_REDEEM_LINK,
+        "redeem_url": FORMAT_REDEEM_LINK,
+        "activation_link": FORMAT_REDEEM_LINK,
+        "coupon": FORMAT_COUPON_CODES,
+        "code": FORMAT_COUPON_CODES,
+        "codes": FORMAT_COUPON_CODES,
+        "coupon_codes": FORMAT_COUPON_CODES,
+        "coupon_code": FORMAT_COUPON_CODES,
+        "raw": FORMAT_RAW_TEXT,
+        "text": FORMAT_RAW_TEXT,
+    }
+    value = aliases.get(value, value)
     return value if value in FORMAT_META else FORMAT_EMAIL_PASS
 
 
@@ -177,6 +255,43 @@ def format_example(value):
 def format_short_badge(value):
     meta = FORMAT_META.get(normalize_product_format(value), FORMAT_META[FORMAT_EMAIL_PASS])
     return f"{meta['icon']} {meta['label']}"
+
+
+def get_product_format_choices():
+    """Formats shown in Add/Edit product format pickers.
+
+    Includes old supplier-detected formats so restored DBs using email_multi,
+    email_pass_2fa, or coupon_code keep showing the correct selected option.
+    """
+    return [
+        FORMAT_EMAIL_PASS,
+        FORMAT_EMAIL_PASS_2FA,
+        FORMAT_EMAIL_MULTI,
+        FORMAT_EMAIL_PASS_RECOVERY,
+        FORMAT_REDEEM_LINK,
+        FORMAT_COUPON_CODES,
+        FORMAT_RAW_TEXT,
+    ]
+
+
+def is_email_like_format(value):
+    return normalize_product_format(value) in {
+        FORMAT_EMAIL_PASS, FORMAT_EMAIL_PASS_2FA,
+        FORMAT_EMAIL_PASS_RECOVERY, FORMAT_EMAIL_MULTI,
+    }
+
+
+def format_spec(value):
+    fmt = normalize_product_format(value)
+    return FORMAT_META.get(fmt, FORMAT_META[FORMAT_EMAIL_PASS]).get("spec", "Email | Password")
+
+
+def format_min_parts(value):
+    fmt = normalize_product_format(value)
+    try:
+        return int(FORMAT_META.get(fmt, FORMAT_META[FORMAT_EMAIL_PASS]).get("min_parts", 1) or 1)
+    except Exception:
+        return 1
 
 
 def _split_instructions(raw):
@@ -228,7 +343,7 @@ def parse_delivery_item(raw, product_format=FORMAT_EMAIL_PASS):
         "code": "",
     }
 
-    if fmt == FORMAT_EMAIL_PASS:
+    if is_email_like_format(fmt):
         lower_lines = [ln.lower() for ln in lines]
         if len(lines) >= 2 and lower_lines[0].startswith("email:") and lower_lines[1].startswith("password:"):
             data["email"] = lines[0].split(":", 1)[1].strip()
@@ -237,9 +352,9 @@ def parse_delivery_item(raw, product_format=FORMAT_EMAIL_PASS):
         first_line = visual_first
         sep = "|" if "|" in first_line else (":" if ":" in first_line else None)
         if sep:
-            left, _, right = first_line.partition(sep)
-            data["email"] = left.strip()
-            data["password"] = right.strip()
+            parts = [x.strip() for x in first_line.split(sep)]
+            data["email"] = parts[0] if parts else ""
+            data["password"] = parts[1] if len(parts) > 1 else ""
         else:
             data["email"] = first_line.strip()
             data["password"] = ""
@@ -270,16 +385,19 @@ def validate_account_line(raw, product_format=FORMAT_EMAIL_PASS):
     if not line:
         return False, "Empty line"
 
-    if fmt == FORMAT_EMAIL_PASS:
+    if is_email_like_format(fmt):
         sep = "|" if "|" in line else (":" if ":" in line else None)
         if not sep:
-            return False, "Use format: email|password"
-        email_part, _, pass_part = line.partition(sep)
-        email_part = email_part.strip()
-        pass_part = pass_part.strip()
-        if not email_part or not pass_part:
-            return False, "Both email and password are required"
-        if "@" not in email_part:
+            return False, f"Use format: {format_spec(fmt)}"
+        parts = [p.strip() for p in line.split(sep)]
+        expected = format_min_parts(fmt)
+        if len([p for p in parts if p]) < expected:
+            return False, f"Use format: {format_spec(fmt)}"
+        if not parts[0] or not parts[1]:
+            return False, "Email and password are required"
+        # Keep the historical email check for the simple account format, but
+        # be more tolerant for supplier-style extended formats restored from DB.
+        if fmt == FORMAT_EMAIL_PASS and "@" not in parts[0]:
             return False, "Email part must contain @"
         return True, ""
 
@@ -327,11 +445,11 @@ def _render_body_block_html(parsed, order_id=0, product_id=0):
         # Should never happen, but fail-safe: deliver plain text
         return ("⚠️ <b>Integrity check failed</b> — please contact admin.")
 
-    if fmt == FORMAT_EMAIL_PASS:
+    if is_email_like_format(fmt):
         return (
             f"📧 <b>Account Details:</b>\n"
             f"{wrapped}\n"
-            f"<i>Format: email|password (one per line)</i>"
+            f"<i>Format: {html_safe_for_code_block(format_spec(fmt))} (one per line)</i>"
         )
 
     if fmt == FORMAT_REDEEM_LINK:
@@ -351,10 +469,16 @@ def _render_body_block_html(parsed, order_id=0, product_id=0):
 
 def _render_format_tip(parsed):
     fmt = parsed["format"]
-    if fmt == FORMAT_EMAIL_PASS:
+    if is_email_like_format(fmt):
+        if fmt == FORMAT_EMAIL_MULTI:
+            return "Save the full line securely — token/client ID fields are part of the account."
+        if fmt == FORMAT_EMAIL_PASS_2FA:
+            return "Save the 2FA secret safely; you may need it for login codes."
         return "Change the password after first login for extra security."
     if fmt == FORMAT_REDEEM_LINK:
         return "If the link does not open instantly, copy it and open it in your browser/app."
+    if fmt == FORMAT_RAW_TEXT:
+        return "Keep this delivery text safe and private."
     return "Keep this code private and use it before it expires."
 
 

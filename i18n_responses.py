@@ -263,6 +263,16 @@ def get_translated_response(key: str, user_id=None, lang=None) -> str:
     if not lang or lang == "en":
         return None
     entry = RESPONSE_TRANSLATIONS.get(key)
-    if not entry:
-        return None
-    return entry.get(lang)
+    if entry and entry.get(lang):
+        return entry.get(lang)
+    # v134: Dynamic display-time fallback for any DEFAULT_RESPONSES key not
+    # manually translated above. Does not mutate source responses/products.
+    try:
+        from config import DEFAULT_RESPONSES
+        from i18n import translate_display_text
+        base = DEFAULT_RESPONSES.get(key)
+        if base:
+            return translate_display_text(base, user_id=user_id, lang=lang)
+    except Exception:
+        pass
+    return None

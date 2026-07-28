@@ -1405,7 +1405,8 @@ def main():
         ("^dstpl_", ds_set_template_callback),
         ("^ds_", ds_toggle_callback),
         ("^viewprod_", view_product_callback),
-        # 🆕 v59: Hide / Unhide product toggle
+        # Admin product active/deactivated + hide/unhide toggles
+        ("^prodactive_", toggle_product_active_callback),
         ("^prodhide_", toggle_product_hidden_callback),
         ("^delcatdo_", delete_category_do_callback),
         ("^delproddo_", delete_product_do_callback),

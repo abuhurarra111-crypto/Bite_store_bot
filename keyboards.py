@@ -55,7 +55,16 @@ def _translate_btn_label(btn_id, default_label, user_id=None):
         lang = get_user_lang(user_id) if user_id else "en"
         if lang == "en":
             return default_label
-        return t(key, lang=lang)
+        if key:
+            static = t(key, lang=lang)
+            if static != key:
+                return static
+        # Dynamic display-time fallback for admin/custom/hardcoded labels.
+        try:
+            from i18n import tr_user
+            return tr_user(default_label, user_id=user_id, lang=lang)
+        except Exception:
+            return default_label
     except Exception:
         return default_label
 
@@ -330,6 +339,7 @@ def all_products_keyboard(products, page=1, per_page=10, user=None, filter_mode=
         make_premium_button = None
         extract_emoji_from_html = None
     kb = []
+    user_id = getattr(user, 'id', None) if user is not None else None
     for p in page_prods:
         s = p['stock']
         p = dict(p)
@@ -355,6 +365,11 @@ def all_products_keyboard(products, page=1, per_page=10, user=None, filter_mode=
             label = f"{this_prod_emoji}{p['name']} [{s}] — {fmt_price(p['price'])}" if s > 0 else f"{this_prod_emoji}{p['name']} ❌ — {fmt_price(p['price'])}"
         else:
             label = f"{this_prod_emoji}{p['name']} [Stock: {s}] — {fmt_price(p['price'])}" if s > 0 else f"{this_prod_emoji}{p['name']} ❌ Out of Stock — {fmt_price(p['price'])}"
+        try:
+            from i18n import tr_user
+            label = tr_user(label, user_id=user_id)
+        except Exception:
+            pass
         from button_system import is_styled
         if is_styled(f"prod_{p['id']}"):
             label = _apply_styler(f"prod_{p['id']}", label)
@@ -431,6 +446,7 @@ def all_products_keyboard(products, page=1, per_page=10, user=None, filter_mode=
 
 def product_detail_keyboard(product, user=None):
     pid = product['id'] if isinstance(product, dict) or hasattr(product, '__getitem__') else product
+    user_id = getattr(user, 'id', None) if user is not None and not isinstance(user, dict) else (user.get('id') if isinstance(user, dict) else (user if isinstance(user, int) else None))
     # 🔧 BUG FIX: `'stock' in product` on a sqlite3.Row checks VALUES not keys.
     # Use a key list that works for both dict and Row.
     _pkeys = product.keys() if hasattr(product, 'keys') else (product if isinstance(product, dict) else [])
@@ -438,17 +454,17 @@ def product_detail_keyboard(product, user=None):
     size = _get_size()
     rows = []
     if stock > 0:
-        buy_lbl = _apply_styler("prod_buy", {"small": "🛒", "medium": "🛒 Buy",
-                     "large": "🛒 Buy Now", "xl": "🛒 Buy Now — Order this item"}.get(size, "🛒 Buy"))
-        buyx_lbl = _apply_styler("prod_buyx", {"small": "🛒×", "medium": "🛒× Buy Multiple",
-                      "large": "🛒× Buy Multiple (Bulk)", "xl": "🛒× Buy Multiple — Bulk order"}.get(size, "🛒× Buy Multiple"))
+        buy_lbl = _apply_styler("prod_buy", _translate_btn_label("prod_buy", {"small": "🛒", "medium": "🛒 Buy",
+                     "large": "🛒 Buy Now", "xl": "🛒 Buy Now — Order this item"}.get(size, "🛒 Buy"), user_id=user_id))
+        buyx_lbl = _apply_styler("prod_buyx", _translate_btn_label("prod_buyx", {"small": "🛒×", "medium": "🛒× Buy Multiple",
+                      "large": "🛒× Buy Multiple (Bulk)", "xl": "🛒× Buy Multiple — Bulk order"}.get(size, "🛒× Buy Multiple"), user_id=user_id))
         rows.append([InlineKeyboardButton(decorate(buy_lbl), callback_data=f"buy_{pid}")])
         rows.append([InlineKeyboardButton(decorate(buyx_lbl), callback_data=f"buyx_{pid}")])
     else:
-        req_lbl = _apply_styler("prod_req", "🔔 Notify Me When Available")
+        req_lbl = _apply_styler("prod_req", _translate_btn_label("prod_req", "🔔 Notify Me When Available", user_id=user_id))
         rows.append([InlineKeyboardButton(decorate(req_lbl), callback_data=f"req_restock_{pid}")])
         
-    rev_lbl = _apply_styler("prod_review", "⭐ View Reviews")
+    rev_lbl = _apply_styler("prod_review", _translate_btn_label("prod_review", "⭐ View Reviews", user_id=user_id))
     rows.append([InlineKeyboardButton(rev_lbl, callback_data=f"prodrev_{pid}")])
 
     # 🆕 v70: Share Product button — hidden if Free-via-Referrals is enabled
@@ -758,7 +774,28 @@ def admin_products_keyboard(prods):
             ne_id, plain = extract_emoji_from_html(raw)
         else:
             ne_id, plain = "", raw
-        lbl = f"📦 {plain} [Stock: {p['stock']}]"
+        try:
+            active = int((p.get('is_active', 1) if hasattr(p, 'get') else p['is_active']) or 0) == 1
+        except Exception:
+            active = True
+        try:
+            hidden = int((p.get('is_hidden', 0) if hasattr(p, 'get') else p['is_hidden']) or 0) == 1
+        except Exception:
+            hidden = False
+        try:
+            dmode = (p.get('delivery_mode', 'auto') if hasattr(p, 'get') else p['delivery_mode'])
+        except Exception:
+            dmode = 'auto'
+        try:
+            from templates_bundle import format_short_badge as _fmt_badge
+            fmt_badge = _fmt_badge(p.get('product_format', 'email_pass') if hasattr(p, 'get') else p['product_format'])
+        except Exception:
+            fmt_badge = '📧 Email+Pass'
+        status_tag = '🚫 DEACTIVATED' if not active else ('🙈 HIDDEN' if hidden else '✅ ACTIVE')
+        mode_tag = '✋ Manual' if str(dmode or 'auto').lower() == 'manual' else '🤖 Auto'
+        lbl = f"{status_tag} {mode_tag} | {fmt_badge} | {plain} [Stock: {p['stock']}]"
+        if len(lbl) > 120:
+            lbl = lbl[:117] + '...'
         if is_styled(f"prod_{p['id']}"):
             lbl = _apply_styler(f"prod_{p['id']}", lbl)
         else:
@@ -1526,6 +1563,7 @@ def shop_category_products_keyboard(products, cat_id, page=1, per_page=10, user=
         make_premium_button = None
         extract_emoji_from_html = None
     kb = []
+    user_id = getattr(user, 'id', None) if user is not None else None
     for p in page_prods:
         s = p['stock']
         p = dict(p)
@@ -1549,6 +1587,11 @@ def shop_category_products_keyboard(products, cat_id, page=1, per_page=10, user=
             label = f"{prefix}{this_prod_emoji}{p['name']} [{s}] — {fmt_price(p['price'])}" if s > 0 else f"{prefix}{this_prod_emoji}{p['name']} ❌ — {fmt_price(p['price'])}"
         else:
             label = f"{prefix}{this_prod_emoji}{p['name']} [Stock: {s}] — {fmt_price(p['price'])}" if s > 0 else f"{prefix}{this_prod_emoji}{p['name']} ❌ Out of Stock — {fmt_price(p['price'])}"
+        try:
+            from i18n import tr_user
+            label = tr_user(label, user_id=user_id)
+        except Exception:
+            pass
         from button_system import is_styled
         if is_styled(f"prod_{p['id']}"):
             label = _apply_styler(f"prod_{p['id']}", label)
