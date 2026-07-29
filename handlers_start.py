@@ -68,6 +68,43 @@ async def _safe_edit(q, text, **kwargs):
             except Exception:
                 pass
 
+
+async def _panic_reset_user_session(update: Update, context: ContextTypes.DEFAULT_TYPE, *, keep_language=True):
+    """Force-close every active conversation/session for this user.
+
+    Used by /start and persistent 🏠 Main Menu. This is intentionally aggressive:
+    any admin/user flow, payment step, supplier wizard, broadcast state, etc. is
+    wiped so the requested command/menu runs cleanly.
+    """
+    try:
+        safe_keys = {"language"} if keep_language else set()
+        ud = context.user_data
+        if ud is not None:
+            for k in list(ud.keys()):
+                if k not in safe_keys:
+                    ud.pop(k, None)
+    except Exception:
+        pass
+    try:
+        from telegram.ext import ConversationHandler
+        chat_id = update.effective_chat.id if update.effective_chat else 0
+        user_id = update.effective_user.id if update.effective_user else 0
+        app = context.application if hasattr(context, "application") else None
+        if app is not None and (chat_id or user_id):
+            for _group, handlers in list(app.handlers.items()):
+                for h in handlers:
+                    if not isinstance(h, ConversationHandler):
+                        continue
+                    conv_map = getattr(h, "_conversations", None)
+                    if conv_map is None:
+                        continue
+                    for key in list(conv_map.keys()):
+                        if isinstance(key, tuple) and ((chat_id and chat_id in key) or (user_id and user_id in key)):
+                            conv_map.pop(key, None)
+    except Exception as _e:
+        import logging as _l
+        _l.getLogger(__name__).debug(f"[panic_reset] end-conv err: {_e}")
+
 # ════════════════════════════════════════════════════════════════
 # 🆕 v48: Referral attribution with anti-fake checks (instant, no delay)
 # ════════════════════════════════════════════════════════════════
@@ -490,6 +527,7 @@ async def _pending_referral_job(context):
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _panic_reset_user_session(update, context)
     u = update.effective_user
     # 🔗 Force Join check — must be FIRST before any other logic
     try:
@@ -597,41 +635,8 @@ async def handle_main_menu_button(update: Update, context: ContextTypes.DEFAULT_
     in (mid-payment / mid-form / mid-supplier-wizard), tapping 🏠 gives
     them a clean fresh main menu.
     """
-    from telegram.ext import ConversationHandler
     u = update.effective_user; save_user(u.id, u.username or "", u.first_name or "")
-
-    # 🆕 v81.1: WIPE all user_data except safe keys
-    _SAFE_KEYS = {"language", "nav_stack"}
-    try:
-        ud = context.user_data
-        if ud is not None:
-            for k in list(ud.keys()):
-                if k not in _SAFE_KEYS:
-                    ud.pop(k, None)
-    except Exception:
-        pass
-
-    # 🆕 v81.1: forcibly end every active ConversationHandler for this user
-    try:
-        chat_id = update.effective_chat.id if update.effective_chat else 0
-        user_id = u.id if u else 0
-        app = context.application if hasattr(context, "application") else None
-        if app is not None and (chat_id or user_id):
-            for group, handlers in list(app.handlers.items()):
-                for h in handlers:
-                    if not isinstance(h, ConversationHandler):
-                        continue
-                    conv_map = getattr(h, "_conversations", None)
-                    if conv_map is None:
-                        continue
-                    for key in list(conv_map.keys()):
-                        if isinstance(key, tuple) and (
-                            (chat_id and chat_id in key) or (user_id and user_id in key)
-                        ):
-                            conv_map.pop(key, None)
-    except Exception as _e:
-        import logging as _l
-        _l.getLogger(__name__).debug(f"[main_menu_button] end-conv err: {_e}")
+    await _panic_reset_user_session(update, context)
 
     shop = get_setting("shop_name", SHOP_NAME)
     text = _r("welcome", user_id=u.id).format(shop_name=shop, user_id=u.id)

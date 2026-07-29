@@ -327,8 +327,20 @@ async def maint_toggle_callback(update, context):
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
-    set_maintenance(not is_maintenance_on())
+    new_state = not is_maintenance_on()
+    set_maintenance(new_state)
     await q.answer("Toggled ✅")
+    if new_state:
+        # Broadcast selected maintenance template to the same destination used by
+        # Fake Activity. bypass_maintenance=True is intentional: all other fake
+        # broadcasts remain blocked while this official maintenance notice goes out.
+        try:
+            from fake_engagement import broadcast_store_message
+            sent = await broadcast_store_message(context.bot, get_maintenance_message(), bypass_maintenance=True)
+            if sent:
+                await q.message.reply_text(f"📢 Maintenance notice broadcast sent: {sent}")
+        except Exception as e:
+            logger.debug(f"[Maint] broadcast on enable failed: {e}")
     await _safe_edit(q, _panel_text(), parse_mode="Markdown",
                      reply_markup=_panel_kb(), disable_web_page_preview=True)
 

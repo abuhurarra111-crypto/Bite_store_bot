@@ -1483,73 +1483,248 @@ async def admin_terms_callback(u,c):
     if q.from_user.id!=ADMIN_ID: await q.answer("❌",show_alert=True); return
     await q.answer(); await _safe_edit(q, _r("terms"),parse_mode="Markdown",reply_markup=admin_settings_keyboard())
 
+
+# ── Broadcast/media helpers ──
+def _admin_extract_media_payload(msg):
+    """Return broadcast payload supporting text/photo/video/voice/document."""
+    from utils import html_escape_plain
+    media_type = "text"; media_id = ""; file_name = ""
+    raw_text = ""
+    html_text = ""
+    if getattr(msg, "photo", None):
+        media_type = "photo"; media_id = msg.photo[-1].file_id
+        raw_text = msg.caption or ""; html_text = getattr(msg, "caption_html_urled", None) or getattr(msg, "caption_html", None) or ""
+    elif getattr(msg, "video", None):
+        media_type = "video"; media_id = msg.video.file_id
+        raw_text = msg.caption or ""; html_text = getattr(msg, "caption_html_urled", None) or getattr(msg, "caption_html", None) or ""
+    elif getattr(msg, "voice", None):
+        media_type = "voice"; media_id = msg.voice.file_id
+        raw_text = msg.caption or ""; html_text = getattr(msg, "caption_html_urled", None) or getattr(msg, "caption_html", None) or ""
+    elif getattr(msg, "document", None):
+        media_type = "document"; media_id = msg.document.file_id
+        file_name = getattr(msg.document, "file_name", "") or ""
+        raw_text = msg.caption or ""; html_text = getattr(msg, "caption_html_urled", None) or getattr(msg, "caption_html", None) or ""
+    else:
+        raw_text = msg.text or ""; html_text = getattr(msg, "text_html_urled", None) or getattr(msg, "text_html", None) or ""
+    if html_text:
+        body = html_text
+    else:
+        body = html_escape_plain(raw_text or "")
+    title = "📢 <b>Announcement</b>"
+    text = f"{title}\n\n{body}" if body else title
+    return {"media_type": media_type, "media_id": media_id, "file_name": file_name, "text": text, "parse_mode": "HTML", "raw_text": raw_text}
+
+
+def _admin_button_from_state(context, bot_username=""):
+    data = context.user_data.get('broadcast_button') or {}
+    if not data:
+        return None
+    label = data.get('label') or 'Open Bot'
+    color = data.get('color') or ''
+    prefix = {'red': '🔴', 'blue': '🔵', 'green': '🟢'}.get(color, '')
+    label_for_button = f"{prefix} {label}".strip()
+    url = f"https://t.me/{bot_username}" if bot_username else "https://t.me/"
+    try:
+        from button_system import make_premium_button
+        btn = make_premium_button(label_for_button, url=url)
+    except Exception:
+        btn = InlineKeyboardButton(label_for_button, url=url)
+    return InlineKeyboardMarkup([[btn]])
+
+
+async def _send_payload(bot, chat_id, payload, reply_markup=None):
+    mt = payload.get('media_type') or 'text'
+    text = payload.get('text') or ''
+    mode = payload.get('parse_mode') or 'HTML'
+    mid = payload.get('media_id') or ''
+    if mt == 'photo':
+        return await bot.send_photo(chat_id, mid, caption=text[:1024] if text else None, parse_mode=mode, reply_markup=reply_markup)
+    if mt == 'video':
+        return await bot.send_video(chat_id, mid, caption=text[:1024] if text else None, parse_mode=mode, reply_markup=reply_markup)
+    if mt == 'voice':
+        return await bot.send_voice(chat_id, mid, caption=text[:1024] if text else None, parse_mode=mode, reply_markup=reply_markup)
+    if mt == 'document':
+        return await bot.send_document(chat_id, mid, caption=text[:1024] if text else None, parse_mode=mode, reply_markup=reply_markup)
+    return await bot.send_message(chat_id, text, parse_mode=mode, reply_markup=reply_markup, disable_web_page_preview=True)
+
+
+async def _broadcast_payload_to_all_users(bot, payload, reply_markup=None):
+    users = get_all_users_for_broadcast() if 'get_all_users_for_broadcast' in globals() else get_all_users()
+    s = f = 0
+    for usr in users:
+        try:
+            await _send_payload(bot, usr['user_id'], payload, reply_markup=reply_markup)
+            s += 1
+        except Exception:
+            f += 1
+    return s, f
+
+
+async def _broadcast_payload_to_fake_destination(bot, payload, reply_markup=None):
+    """One-time send to configured Fake Activity destination."""
+    mode = get_setting('dest_mode', 'bot_only')
+    dest_chat = get_setting('dest_chat_id', '').strip()
+    s = f = 0
+    if mode in ('bot_only', 'both'):
+        ss, ff = await _broadcast_payload_to_all_users(bot, payload, reply_markup=reply_markup)
+        s += ss; f += ff
+    if mode in ('group_only', 'both') and dest_chat:
+        try:
+            await _send_payload(bot, dest_chat, payload, reply_markup=reply_markup)
+            s += 1
+        except Exception:
+            f += 1
+    return s, f
+
+
+async def _send_global_broadcast_now(update, context):
+    payload = context.user_data.pop('broadcast_payload', None)
+    if not payload:
+        await update.effective_message.reply_text("❌ Broadcast payload missing.")
+        return
+    markup = None
+    if context.user_data.get('broadcast_button'):
+        try:
+            me = await context.bot.get_me()
+            markup = _admin_button_from_state(context, getattr(me, 'username', '') or '')
+        except Exception:
+            markup = _admin_button_from_state(context, '')
+    context.user_data.pop('broadcast_button', None)
+    s, f = await _broadcast_payload_to_all_users(context.bot, payload, reply_markup=markup)
+    await update.effective_message.reply_text(f"✅ Broadcast sent: {s} | ❌ Failed: {f}", reply_markup=admin_menu_keyboard())
+
+
+async def broadcast_button_choice_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    choice = q.data.replace('bcbtn_', '')
+    await q.answer()
+    if choice == 'no':
+        await _send_global_broadcast_now(update, context); return
+    context.user_data['broadcast_button_step'] = 'name'
+    await _safe_edit(q, "🔘 Send button name/text now. Premium emojis supported.", parse_mode="Markdown", reply_markup=inline_cancel_btn())
+
+
+async def broadcast_button_name_received(update, context):
+    if update.effective_user.id != ADMIN_ID or context.user_data.get('broadcast_button_step') != 'name':
+        return False
+    msg = update.message
+    try:
+        label = msg.text_html_urled or msg.text_html or msg.text or 'Open Bot'
+    except Exception:
+        label = msg.text or 'Open Bot'
+    context.user_data['broadcast_button'] = {'label': label}
+    context.user_data['broadcast_button_step'] = 'color'
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton('🔴 Red', callback_data='bcbtn_color_red'), InlineKeyboardButton('🔵 Blue', callback_data='bcbtn_color_blue'), InlineKeyboardButton('🟢 Green', callback_data='bcbtn_color_green')],
+        [InlineKeyboardButton('❌ Cancel', callback_data='bcbtn_cancel')],
+    ])
+    await msg.reply_text('🎨 Button color select karo:', reply_markup=kb)
+    return True
+
+
+async def broadcast_button_color_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    data = q.data
+    if data == 'bcbtn_cancel':
+        context.user_data.pop('broadcast_payload', None); context.user_data.pop('broadcast_button', None); context.user_data.pop('broadcast_button_step', None)
+        await q.answer('Cancelled'); await _safe_edit(q, '❌ Broadcast cancelled.', reply_markup=admin_menu_keyboard()); return
+    color = data.replace('bcbtn_color_', '')
+    context.user_data.setdefault('broadcast_button', {})['color'] = color
+    context.user_data.pop('broadcast_button_step', None)
+    try:
+        me = await context.bot.get_me()
+        markup = _admin_button_from_state(context, getattr(me, 'username', '') or '')
+    except Exception:
+        markup = _admin_button_from_state(context, '')
+    await q.answer('Preview')
+    await _safe_edit(q, '👀 *Preview:*\n\nBroadcast with this button?', parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([
+        [markup.inline_keyboard[0][0]],
+        [InlineKeyboardButton('✅ Yes Broadcast', callback_data='bcbtn_send_yes'), InlineKeyboardButton('❌ No', callback_data='bcbtn_send_no')]
+    ]))
+
+
+async def broadcast_button_send_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    if q.data == 'bcbtn_send_no':
+        context.user_data.pop('broadcast_payload', None); context.user_data.pop('broadcast_button', None)
+        await _safe_edit(q, '❌ Broadcast cancelled.', reply_markup=admin_menu_keyboard()); return
+    await _send_global_broadcast_now(update, context)
+
+
+async def fake_custom_broadcast_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer('❌', show_alert=True); return
+    await q.answer()
+    context.user_data['fake_custom_broadcast'] = True
+    await _safe_edit(q,
+        '📤 *Custom One-Time Broadcast*\n\nSend text/photo/video/voice/document. Premium emojis supported. It will go to Fake Activity destination once.',
+        parse_mode='Markdown', reply_markup=inline_cancel_btn())
+
+
+async def handle_fake_custom_broadcast_message(update, context):
+    if update.effective_user.id != ADMIN_ID or not context.user_data.get('fake_custom_broadcast'):
+        return False
+    context.user_data.pop('fake_custom_broadcast', None)
+    payload = _admin_extract_media_payload(update.message)
+    s, f = await _broadcast_payload_to_fake_destination(context.bot, payload)
+    await update.message.reply_text(f"✅ Custom broadcast sent: {s} | ❌ Failed: {f}", reply_markup=admin_menu_keyboard())
+    return True
+
+
+async def handle_static_delivery_media_message(update, context):
+    if update.effective_user.id != ADMIN_ID:
+        return False
+    if context.user_data.get('edit_field') != 'deliverytext' or not context.user_data.get('edit_pid'):
+        return False
+    msg = update.message
+    payload = _admin_extract_media_payload(msg)
+    if payload.get('media_type') == 'text':
+        return False
+    pid = int(context.user_data.pop('edit_pid'))
+    context.user_data.pop('edit_field', None)
+    mt = payload['media_type']; mid = payload['media_id']; caption = payload.get('raw_text') or ''
+    try:
+        set_product_static_delivery(pid, caption, mid, mt, getattr(getattr(msg, 'document', None), 'file_name', '') or '', caption)
+        sync_product_stock_from_accounts(pid)
+    except Exception as e:
+        await msg.reply_text(f"❌ Static media save failed: {e}")
+        return True
+    await msg.reply_text("✅ Static delivery media saved.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🔙 Back to Product', callback_data=f'viewprod_{pid}')]]))
+    return True
+
 # ── Broadcast ──
 async def broadcast_callback(u,c):
     q=u.callback_query
     if q.from_user.id!=ADMIN_ID: await q.answer("❌",show_alert=True); return
-    await q.answer(); await _safe_edit(q, "🌐 Type the announcement message:", parse_mode="Markdown", reply_markup=inline_cancel_btn())
+    await q.answer(); await _safe_edit(q, "🌐 Send broadcast message now. Text/photo/video/voice/file supported.", parse_mode="Markdown", reply_markup=inline_cancel_btn())
     c.user_data['broadcasting']=True
 
 async def handle_broadcast_message(u,c):
-    """🆕 v96: auto-detect premium emojis in admin broadcast messages.
-
-    If admin's message contains custom_emoji entities (Telegram Premium),
-    convert to HTML with <tg-emoji> tags and send in HTML mode.
-    Otherwise fall back to Markdown as before.
-
-    Also gated by maintenance mode: if maintenance ON, skip broadcast.
-    """
+    """Global broadcast input: supports text/photo/video/voice/document + optional button."""
     if u.effective_user.id!=ADMIN_ID: return
     if not c.user_data.get('broadcasting'): return
     c.user_data['broadcasting']=False
-
-    # 🆕 v96: maintenance mode gate
     try:
         from maintenance_mode import is_maintenance_on
         if is_maintenance_on():
-            await u.message.reply_text(
-                "🛠️ *Maintenance ON* — broadcast skipped.\n"
-                "Maintenance off karo phir broadcast dubara try karo.",
-                parse_mode="Markdown", reply_markup=admin_menu_keyboard()
-            )
+            await u.message.reply_text("🛠️ *Maintenance ON* — broadcast skipped.", parse_mode="Markdown", reply_markup=admin_menu_keyboard())
             return
     except Exception:
         pass
-
-    # 🆕 v96: auto-detect premium emoji entities
-    msg = u.message
-    entities = msg.entities or []
-    has_premium = any(getattr(e, "type", "") == "custom_emoji" for e in entities)
-
-    if has_premium:
-        # Use HTML mode with tg-emoji preserved via text_html_urled
-        try:
-            html_body = msg.text_html_urled or msg.text_html or msg.text
-        except Exception:
-            html_body = msg.text
-        text_to_send = f"📢 <b>Announcement</b>\n\n{html_body}"
-        parse_mode = "HTML"
-    else:
-        text_to_send = f"📢 *Announcement*\n\n{escape_md(msg.text)}"
-        parse_mode = "Markdown"
-
-    users=get_all_users(); s=f=0
-    for usr in users:
-        try:
-            await c.bot.send_message(usr['user_id'], text_to_send, parse_mode=parse_mode)
-            s+=1
-        except Exception:
-            # Retry once as plain text if formatting failed
-            try:
-                await c.bot.send_message(usr['user_id'], msg.text)
-                s+=1
-            except Exception:
-                f+=1
-    premium_note = " 🎨 (premium emojis detected)" if has_premium else ""
-    await u.message.reply_text(
-        f"✅ {s} | ❌ {f}{premium_note}",
-        reply_markup=admin_menu_keyboard()
-    )
+    payload = _admin_extract_media_payload(u.message)
+    c.user_data['broadcast_payload'] = payload
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton('✅ Yes, add button', callback_data='bcbtn_yes'), InlineKeyboardButton('❌ No button', callback_data='bcbtn_no')]
+    ])
+    await u.message.reply_text('🔘 Broadcast ke sath button add karna hai?', reply_markup=kb)
 
 async def cancel_conversation(u,c):
     # 🔧 BUG FIX #2: Only clear conversation-specific keys, NOT everything.
@@ -6835,7 +7010,7 @@ async def edit_product_field_callback(u, c):
         "fakesold": "Enter the *fake base sold count* (number, e.g. `5`).\nDisplayed sold = this + real purchases. Real sales keep counting up from here.",
         "warranty": "Enter Warranty text (e.g. `30 Days`):",
         "quantity": "Enter the *minimum order quantity* (a number, e.g. `5`). Customer must order at least this many:",
-        "deliverytext": "Enter new Delivery Text (fallback if account pool empty):",
+        "deliverytext": "Send new Static Delivery (text/photo/video/voice/file). Used if account pool is empty:",
         "accounts": (
             f"📋 *Paste stock items — one per line.*\n\n"
             f"🧩 *Required Format:* {delivery_format_label(prod_format)}\n"

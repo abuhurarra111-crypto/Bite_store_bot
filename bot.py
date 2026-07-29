@@ -7,7 +7,7 @@ import os
 import warnings
 from telegram.warnings import PTBUserWarning
 from telegram.ext import (Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, ConversationHandler, filters)
+    MessageHandler, ConversationHandler, filters, ApplicationHandlerStop)
 from telegram.request import HTTPXRequest
 
 # Keep Render logs clean: PTB emits noisy ConversationHandler warnings for
@@ -465,6 +465,10 @@ async def handle_text(update, context):
     # 🆕 Bulk qty input
     if context.user_data.get('bulk_step') == 'waiting_qty':
         if await bulk_qty_received(update, context): return
+    if context.user_data.get('broadcast_button_step') == 'name':
+        if await broadcast_button_name_received(update, context): return
+    if context.user_data.get('fake_custom_broadcast'):
+        if await handle_fake_custom_broadcast_message(update, context): return
     if context.user_data.get('broadcasting'):
         await handle_broadcast_message(update, context); return
     # 🆕 FIX: Payment-email edit (Change Email / Change App Password)
@@ -480,7 +484,23 @@ async def handle_text(update, context):
         if await edit_account_field_received(update, context): return
 
 
+async def force_main_menu_text_callback(update, context):
+    """High-priority persistent keyboard Main Menu panic reset."""
+    await handle_main_menu_button(update, context)
+    raise ApplicationHandlerStop
+
+
+def _jobs_paused_for_maintenance() -> bool:
+    try:
+        from maintenance_mode import is_maintenance_on
+        return bool(is_maintenance_on())
+    except Exception:
+        return False
+
+
 async def _tier_flush_job(context):
+    if _jobs_paused_for_maintenance():
+        return
     """🆕 v37: Periodic flush of pending tier upgrade notifications."""
     try:
         from database import pop_pending_tier_upgrades
@@ -491,6 +511,8 @@ async def _tier_flush_job(context):
 
 
 async def _flash_expiry_job(context):
+    if _jobs_paused_for_maintenance():
+        return
     """🆕 Auto-disable flash sales whose timer has ended."""
     try:
         from database import expire_old_flash_sales
@@ -500,6 +522,8 @@ async def _flash_expiry_job(context):
 
 
 async def _purchase_broadcast_job(context):
+    if _jobs_paused_for_maintenance():
+        return
     """🆕 Drain queued REAL purchases → broadcast to fake-activity destination."""
     try:
         from database import pop_pending_purchase_broadcasts
@@ -815,6 +839,22 @@ async def unhandled_cbq_fallback(update, context):
     except:
         pass
     return
+
+async def handle_media_router(update, context):
+    """Route admin media to broadcast/static-delivery flows before payment screenshot handler."""
+    try:
+        if update.effective_user and update.effective_user.id == ADMIN_ID:
+            if context.user_data.get('broadcasting'):
+                await handle_broadcast_message(update, context); return
+            if context.user_data.get('fake_custom_broadcast'):
+                if await handle_fake_custom_broadcast_message(update, context): return
+            if context.user_data.get('edit_field') == 'deliverytext' and context.user_data.get('edit_pid'):
+                if await handle_static_delivery_media_message(update, context): return
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[media_router] admin media route failed: {e}")
+    # Fallback to existing payment screenshot/document handler
+    await handle_screenshot(update, context)
+
 def main():
     print("=" * 50)
     print("🤖 BITE STORE")
@@ -1058,6 +1098,9 @@ def main():
     app.add_handler(CallbackQueryHandler(force_main_menu_callback,
                                          pattern=r"^main_menu$"),
                     group=-50)
+    app.add_handler(MessageHandler(filters.Regex(r"^🏠 Main Menu$"),
+                                   force_main_menu_text_callback),
+                    group=-49)
 
     # 🆕 v84: Conversation — admin sets custom maintenance text
     from telegram.ext import ConversationHandler as _CH
@@ -1144,7 +1187,7 @@ def main():
         per_message=False, allow_reentry=True,
     ), group=0)
 
-    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("start", start_command), group=-49)
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("deliver", deliver_command))
 
@@ -1470,6 +1513,11 @@ def main():
         ("^admin_terms$", admin_terms_callback),
         ("^admin_responses$", admin_responses_callback),
         ("^admin_broadcast$", broadcast_callback),
+        ("^bcbtn_(yes|no)$", broadcast_button_choice_callback),
+        ("^bcbtn_color_", broadcast_button_color_callback),
+        ("^bcbtn_cancel$", broadcast_button_color_callback),
+        ("^bcbtn_send_", broadcast_button_send_callback),
+        ("^fake_custom_broadcast$", fake_custom_broadcast_callback),
         ("^admin_profit$", admin_profit_callback),
         ("^profit_all$", profit_all_callback),
         # 🆕 Customization handlers
@@ -2072,7 +2120,7 @@ def main():
         fallbacks=[CommandHandler("cancel", _cancel_adm_deliver)],
     ))
 
-    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.ALL, handle_screenshot))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.VOICE | filters.Document.ALL, handle_media_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     app.add_handler(CallbackQueryHandler(catch_all_callback))

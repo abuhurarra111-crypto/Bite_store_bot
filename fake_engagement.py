@@ -3617,7 +3617,7 @@ async def _buy_now_keyboard(bot, pid, btn_key="sb_buy_generic"):
 # 📤 DESTINATION-AWARE BROADCAST
 # ════════════════════════════════════════════════════════════════
 
-async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None):
+async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None, bypass_maintenance=False, reply_markup=None):
     """Send `text` to the destination configured for fake activity:
        bot_only  → all bot users (DM)
        group_only→ the configured group/channel
@@ -3639,7 +3639,7 @@ async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None
     # 🆕 v96: maintenance mode gate — nothing goes out during maintenance
     try:
         from maintenance_mode import is_maintenance_on
-        if is_maintenance_on():
+        if is_maintenance_on() and not bypass_maintenance:
             logger.info(f"[broadcast_store_message] SKIPPED — maintenance ON")
             return 0
     except Exception:
@@ -3668,7 +3668,7 @@ async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None
 
     sent = 0
 
-    private_kb = group_kb = None
+    private_kb = group_kb = reply_markup
     if pid is not None:
         # Priority 1: explicit tpl_id (NEW v44 — used by Edit Templates → Test)
         if tpl_id:

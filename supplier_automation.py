@@ -72,6 +72,12 @@ async def autosync_price_stock_job(context):
     🆕 v89: adapter HTTP calls wrapped in asyncio.to_thread → non-blocking.
     """
     global _AUTOSYNC_PS_RUNNING
+    try:
+        from maintenance_mode import is_maintenance_on
+        if is_maintenance_on():
+            return
+    except Exception:
+        pass
     if _AUTOSYNC_PS_RUNNING:
         logger.warning("[AutoSync] previous price+stock tick still running — skipping this tick")
         return
@@ -335,6 +341,12 @@ async def autosync_price_stock_job(context):
 async def autosync_balance_job(context):
     """Auto-refresh supplier balances and notify admin on changes/low balance."""
     global _AUTOSYNC_BAL_RUNNING
+    try:
+        from maintenance_mode import is_maintenance_on
+        if is_maintenance_on():
+            return
+    except Exception:
+        pass
     if _AUTOSYNC_BAL_RUNNING:
         logger.warning("[AutoBalance] previous balance tick still running — skipping")
         return
