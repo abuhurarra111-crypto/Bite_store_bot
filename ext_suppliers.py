@@ -548,14 +548,36 @@ def mirror_all_supplier_products(supplier_id):
 
 
 def unmirror_ext_product(ext_product_id):
-    """When admin deletes/hides a supplier product, deactivate the shop row too."""
+    """Unsync supplier product by deleting its shop mirror completely.
+
+    Requirement: unsynced supplier products must disappear from BOTH user shop
+    and admin Edit Items. Old orders remain safe because orders store product
+    name/price/status independently.
+    """
     ep = get_ext_product(ext_product_id)
-    if not ep or not ep.get("shop_product_id"):
-        return
-    conn = get_connection(); c = conn.cursor()
-    c.execute("UPDATE products SET is_active=0, stock=0 WHERE id=?",
-              (int(ep["shop_product_id"]),))
-    conn.commit(); conn.close()
+    if not ep:
+        return {"deleted": 0, "shop_product_id": 0}
+    shop_pid = int(ep.get("shop_product_id") or 0)
+    deleted = 0
+    if shop_pid > 0:
+        try:
+            from database import delete_product_permanently
+            stats = delete_product_permanently(shop_pid)
+            deleted = int((stats or {}).get("products") or 0)
+        except Exception as e:
+            logger.warning(f"[unmirror] hard delete failed ext#{ext_product_id} shop#{shop_pid}: {e}")
+            # Fallback: at least hide if hard-delete fails.
+            try:
+                conn = get_connection(); c = conn.cursor()
+                c.execute("UPDATE products SET is_active=0, stock=0 WHERE id=?", (shop_pid,))
+                conn.commit(); conn.close()
+            except Exception:
+                pass
+    try:
+        update_ext_product(int(ext_product_id), synced_to_shop=0, shop_product_id=0)
+    except Exception:
+        pass
+    return {"deleted": deleted, "shop_product_id": shop_pid}
 
 
 # ────────────────────────────────────────────────────────────
@@ -2367,7 +2389,7 @@ async def ext_prod_view_callback(update, context):
     kb = [
         # 🆕 v83: SYNC TO SHOP button (per-product manual sync)
         [InlineKeyboardButton(
-            "🔴 Unsync (Hide from Shop)" if synced else "🔄 Sync to Shop (Make Live)",
+            "🗑 Unsync & Delete from Shop/Edit Items" if synced else "🔄 Sync to Shop (Make Live)",
             callback_data=f"ext_prod_sync_{eid}")],
         # 🆕 v107: FORCE REFRESH — pro-user Shopify-style overwrite mode.
         # Re-fetches THIS product from supplier API + updates ext_product +
@@ -4361,10 +4383,12 @@ async def ext_prod_sync_callback(update, context):
     if not p: return
 
     if p.get("synced_to_shop"):
-        # Currently synced → UNSYNC (deactivate shop mirror)
-        update_ext_product(eid, synced_to_shop=0)
-        unmirror_ext_product(eid)
-        await q.answer("🔴 Unsynced from Shop", show_alert=True)
+        # Currently synced → UNSYNC: delete shop mirror so it disappears from
+        # both user shop and admin Edit Items.
+        stats = unmirror_ext_product(eid)
+        await q.answer(
+            f"🗑 Unsynced + deleted from shop/admin (product #{stats.get('shop_product_id',0)})",
+            show_alert=True)
     else:
         # Not synced → SYNC (create/update shop mirror + activate)
         update_ext_product(eid, synced_to_shop=1)
