@@ -3019,10 +3019,10 @@ async def _schedule_supplier_retry_or_refund(bot, order, sup, ep, qty, reason, r
             f"⚠️ *Order #{order['id']} — Delivery retrying*\n"
             f"━━━━━━━━━━━━━━━━━━━━\n\n"
             f"📦 {escape_md(order.get('product_name','?')[:70])}\n\n"
-            f"Supplier delivery is temporarily unavailable. Admin has a short retry window.\n\n"
-            f"⏳ If not delivered by *{escape_md(due_txt)}*, your wallet will be automatically refunded.\n"
+            f"We’re completing your order through an alternate delivery attempt.\n\n"
+            f"⏳ If delivery is not completed by *{escape_md(due_txt)}*, your wallet will be automatically refunded.\n"
             f"💎 Refund amount: *{fmt_points(refund_points)} points*\n\n"
-            f"Sorry for the inconvenience — no action needed from you. 🙏",
+            f"You may also buy another product anytime. Thank you for your patience. 🙏",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📜 Order History", callback_data="my_orders")],
@@ -3758,11 +3758,10 @@ async def _refund_and_notify(bot, order, sup, ep, qty, reason):
             f"⚠️ *Order #{order['id']} — Refund issued*\n"
             f"━━━━━━━━━━━━━━━━━━━━\n\n"
             f"📦 {escape_md(order.get('product_name','?')[:60])}\n\n"
-            f"We could not complete this order from our supplier right now:\n"
-            f"_{escape_md(str(reason)[:150])}_\n\n"
+            f"We could not complete this order due to a temporary availability issue.\n\n"
             f"💎 *{fmt_points(refund_points)} points* have been refunded to your wallet.\n"
-            f"You can use them to buy this or any other product.\n\n"
-            f"Sorry for the inconvenience! 🙏",
+            f"You can buy another product now, or try this one again after some time.\n\n"
+            f"Sorry for the inconvenience — thank you for understanding. 🙏",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🛒 Shop Now",     callback_data="shop")],

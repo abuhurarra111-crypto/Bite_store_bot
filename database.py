@@ -1001,6 +1001,47 @@ def delete_product(pid):
     c.execute("UPDATE products SET is_active=0 WHERE id=?", (pid,)); conn.commit(); conn.close()
 
 
+
+
+def delete_product_permanently(pid):
+    """Hard-delete product row + related product config, but keep orders/history.
+
+    Used by admin Delete Product and bulk delete. Orders table is NOT touched;
+    old order history/profit rows keep product_name/price/status.
+    """
+    pid = int(pid)
+    conn = get_connection(); c = conn.cursor()
+    stats = {"products": 0, "accounts": 0}
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        # Break supplier mirror link if any.
+        try:
+            c.execute("UPDATE ext_products SET shop_product_id=0, synced_to_shop=0 WHERE shop_product_id=?", (pid,))
+        except Exception:
+            pass
+        # Product account pool.
+        try:
+            ensure_product_accounts_table(c)
+            c.execute("DELETE FROM product_accounts WHERE product_id=?", (pid,))
+            stats["accounts"] = c.rowcount if c.rowcount is not None else 0
+        except Exception:
+            pass
+        # Optional linked config/history rows. Keep orders untouched.
+        for table in ("product_free_claim", "product_ref_pool", "stock_alerts", "restock_requests", "product_reviews", "product_commission"):
+            try:
+                c.execute(f"DELETE FROM {table} WHERE product_id=?", (pid,))
+            except Exception:
+                pass
+        c.execute("DELETE FROM products WHERE id=?", (pid,))
+        stats["products"] = c.rowcount if c.rowcount is not None else 0
+        conn.commit(); conn.close(); return stats
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
+        raise
+
 def set_product_active(pid, active=True):
     """Activate/deactivate a product without deleting DB data."""
     conn = get_connection(); c = conn.cursor()

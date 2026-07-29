@@ -107,6 +107,7 @@ async def autosync_price_stock_job(context):
         total_updated = 0
         total_price_changes = 0
         total_stock_changes = 0
+        change_details = []
 
         for sid in live_sup_ids:
             try:
@@ -151,6 +152,17 @@ async def autosync_price_stock_job(context):
                             update_ext_product(int(ep["id"]), stock=0)
                             total_updated += 1
                             total_stock_changes += 1
+                            change_details.append({
+                                "supplier": sup.get("name", f"Supplier #{sid}"),
+                                "product": ep.get("name") or f"Remote {remote_id}",
+                                "type": "missing",
+                                "old_stock": old_stock_missing,
+                                "new_stock": 0,
+                                "old_cost": float(ep.get("cost_usd") or 0),
+                                "new_cost": float(ep.get("cost_usd") or 0),
+                                "old_sell": float(ep.get("sell_price") or 0),
+                                "new_sell": float(ep.get("sell_price") or 0),
+                            })
                             try:
                                 alert_key = f"supplier_missing_alert_{int(ep['id'])}"
                                 if (get_setting(alert_key, "") or "") != remote_id:
@@ -182,6 +194,7 @@ async def autosync_price_stock_job(context):
                     new_stock = int(fresh_p.get("stock") or 0)
                     old_cost = float(ep.get("cost_usd") or 0)
                     old_stock = int(ep.get("stock") or 0)
+                    old_sell = float(ep.get("sell_price") or 0)
 
                     # Recompute sell using SMART LOCK
                     new_sell = _compute_sell_price(
@@ -207,6 +220,17 @@ async def autosync_price_stock_job(context):
                     )
                     if cost_changed: total_price_changes += 1
                     if stock_changed: total_stock_changes += 1
+                    change_details.append({
+                        "supplier": sup.get("name", f"Supplier #{sid}"),
+                        "product": ep.get("name") or fresh_p.get("name") or f"Remote {remote_id}",
+                        "type": "price_stock" if cost_changed and stock_changed else ("price" if cost_changed else "stock"),
+                        "old_stock": old_stock,
+                        "new_stock": new_stock,
+                        "old_cost": old_cost,
+                        "new_cost": new_cost,
+                        "old_sell": old_sell,
+                        "new_sell": new_sell,
+                    })
 
                     # Mirror to shop products table (in-place UPDATE)
                     shop_pid = int(ep.get("shop_product_id") or 0)
@@ -245,23 +269,65 @@ async def autosync_price_stock_job(context):
                 f"stock changes: {total_stock_changes} | "
                 f"elapsed: {elapsed:.1f}s"
             )
-            # Admin summary notification with cooldown to avoid 30s spam.
+            # Detailed admin notification. Price changes are always important;
+            # stock-only changes keep a cooldown to avoid notification spam.
             try:
+                important = total_price_changes > 0
                 now = time.time()
                 last = float(get_setting("autosync_stock_notify_last", "0") or 0)
-                if (now - last) >= 600:  # at most once every 10 minutes
+                if important or (now - last) >= 600:
                     set_setting("autosync_stock_notify_last", str(now))
+                    lines = [
+                        "🔄 *Auto Stock/Price Sync — Details*",
+                        "━━━━━━━━━━━━━━━━━━━━",
+                        f"📦 Products refreshed: *{total_updated}*",
+                        f"💰 Price changes: *{total_price_changes}*",
+                        f"📊 Stock changes: *{total_stock_changes}*",
+                        f"⏱ Took: `{elapsed:.1f}s`",
+                        "",
+                    ]
+                    for ch in change_details[:8]:
+                        product = escape_md(str(ch.get("product") or "?")[:70])
+                        supplier_name = escape_md(str(ch.get("supplier") or "?")[:40])
+                        old_cost = float(ch.get("old_cost") or 0)
+                        new_cost = float(ch.get("new_cost") or 0)
+                        old_sell = float(ch.get("old_sell") or 0)
+                        new_sell = float(ch.get("new_sell") or 0)
+                        old_profit = old_sell - old_cost
+                        new_profit = new_sell - new_cost
+                        def _margin(profit, sell):
+                            return (profit / sell * 100.0) if sell > 0 else 0.0
+                        price_icon = "➖"
+                        if new_cost > old_cost:
+                            price_icon = "📈 Supplier price increased"
+                        elif new_cost < old_cost:
+                            price_icon = "📉 Supplier price decreased"
+                        elif ch.get("type") == "missing":
+                            price_icon = "⚠️ Supplier product missing/unavailable"
+                        else:
+                            price_icon = "📊 Stock changed"
+                        lines.append(f"{price_icon}")
+                        lines.append(f"🏬 Supplier: *{supplier_name}*")
+                        lines.append(f"📦 Product: *{product}*")
+                        if abs(new_cost - old_cost) >= 0.001:
+                            lines.append(f"🔌 Supplier cost: `${old_cost:.4f}` → `${new_cost:.4f}`")
+                            lines.append(f"🏷 Your shop price: `${old_sell:.4f}` → `${new_sell:.4f}`")
+                            lines.append(
+                                f"📈 Your profit: `${old_profit:.4f}` ({_margin(old_profit, old_sell):.1f}%) → "
+                                f"`${new_profit:.4f}` ({_margin(new_profit, new_sell):.1f}%)"
+                            )
+                        if int(ch.get("old_stock") or 0) != int(ch.get("new_stock") or 0):
+                            lines.append(f"📊 Stock: `{int(ch.get('old_stock') or 0)}` → `{int(ch.get('new_stock') or 0)}`")
+                        lines.append("")
+                    if len(change_details) > 8:
+                        lines.append(f"…and *{len(change_details)-8}* more changes.")
                     await context.bot.send_message(
                         ADMIN_ID,
-                        f"🔄 *Auto Stock/Price Sync*\n"
-                        f"━━━━━━━━━━━━━━━━━━━━\n"
-                        f"📦 Products refreshed: *{total_updated}*\n"
-                        f"💰 Price changes: *{total_price_changes}*\n"
-                        f"📊 Stock changes: *{total_stock_changes}*\n"
-                        f"⏱ Took: `{elapsed:.1f}s`",
+                        "\n".join(lines)[:3900],
                         parse_mode="Markdown")
             except Exception as _notify_err:
-                logger.debug(f"[AutoSync] admin summary notify failed: {_notify_err}")
+                logger.debug(f"[AutoSync] admin detailed notify failed: {_notify_err}")
+
     finally:
         _AUTOSYNC_PS_RUNNING = False
 

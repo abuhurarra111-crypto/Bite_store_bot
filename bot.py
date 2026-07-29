@@ -642,10 +642,9 @@ async def post_init(app):
     except Exception as e:
         print(f'[Activity] Restore error: {e}')
 
-    # 🆕 v85/v117: Supplier auto-sync jobs
+    # 🆕 v85/v138: Supplier auto-sync jobs
     #   - Every 30s: price+stock refresh for products with synced_to_shop=1
-    #   - Balance polling job REMOVED by owner request. Balance updates only on
-    #     manual Test & Refresh or after a successful customer order.
+    #   - Every 5 min: balance refresh + admin notifications/cooldowns
     try:
         if app.job_queue:
             app.job_queue.run_repeating(
@@ -675,6 +674,14 @@ async def post_init(app):
             print("[SupplierRetry] Auto-refund job scheduled — checks every 30s")
     except Exception as e:
         print(f'[SupplierRetry] Job setup error: {e}')
+
+    # 🆕 v138: Admin startup/live notification for Render deploys.
+    try:
+        from config import ADMIN_ID as _LIVE_ADMIN_ID
+        if _LIVE_ADMIN_ID:
+            await app.bot.send_message(_LIVE_ADMIN_ID, "BOSS BOT IS LIVE")
+    except Exception as e:
+        print(f'[LiveNotify] failed: {e}')
 
 
 # 🔧 v39 Bug #21: Proper async cancel handlers (replacing broken sync lambdas)
@@ -1434,6 +1441,12 @@ def main():
         ("^prodhide_", toggle_product_hidden_callback),
         ("^delcatdo_", delete_category_do_callback),
         ("^delproddo_", delete_product_do_callback),
+        ("^bulkprod_start$", bulk_product_delete_start_callback),
+        ("^bulkprod_tgl_", bulk_product_delete_toggle_callback),
+        ("^bulkprod_page_", bulk_product_delete_page_callback),
+        ("^bulkprod_clear_", bulk_product_delete_clear_callback),
+        ("^bulkprod_confirm$", bulk_product_delete_confirm_callback),
+        ("^bulkprod_do$", bulk_product_delete_do_callback),
         ("^togglemode_", toggle_delivery_mode_callback),
         # 🆕 v71: replacement window picker — MUST come before generic ^editfield_
         ("^editfield_repwin_", admin_repwin_picker_callback),

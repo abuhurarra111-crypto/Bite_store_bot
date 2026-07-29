@@ -249,6 +249,164 @@ async def admin_products_callback(u,c):
     # so restored DB products can be edited/reactivated safely.
     await q.answer(); await _safe_edit(q, "🛍️ *Add Products:*",parse_mode="Markdown",reply_markup=admin_products_keyboard(get_all_products(include_hidden=True, include_inactive=True)))
 
+async def bulk_product_delete_start_callback(u, c):
+    """Start multi-select product delete screen."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    c.user_data['bulk_delete_products'] = set()
+    await _bulk_product_delete_screen(u, c, page=0)
+
+
+async def _bulk_product_delete_screen(u, c, page=0):
+    q = u.callback_query
+    selected = c.user_data.setdefault('bulk_delete_products', set())
+    try:
+        selected = {int(x) for x in selected}
+    except Exception:
+        selected = set()
+    c.user_data['bulk_delete_products'] = selected
+    products = list(get_all_products(include_hidden=True, include_inactive=True))
+    per_page = 12
+    total_pages = max(1, (len(products) + per_page - 1) // per_page)
+    page = max(0, min(int(page or 0), total_pages - 1))
+    chunk = products[page * per_page:(page + 1) * per_page]
+    text = (
+        f"🗑️ *Bulk Delete Products*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Select products to delete.\n"
+        f"Selected: *{len(selected)}*\n"
+        f"Page: *{page+1}/{total_pages}*\n\n"
+        f"⚠️ Product rows will be removed from shop/admin. Old orders remain safe."
+    )
+    kb = []
+    try:
+        from button_system import extract_emoji_from_html
+    except Exception:
+        extract_emoji_from_html = None
+    for p in chunk:
+        pid = int(p['id'])
+        name = p['name'] or f"Product #{pid}"
+        if extract_emoji_from_html:
+            _, name = extract_emoji_from_html(name)
+        name = (name or f"Product #{pid}").replace('\n', ' ')
+        if len(name) > 54:
+            name = name[:51] + '...'
+        mark = "✅" if pid in selected else "☐"
+        kb.append([InlineKeyboardButton(f"{mark} {name}", callback_data=f"bulkprod_tgl_{pid}_{page}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"bulkprod_page_{page-1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"bulkprod_page_{page+1}"))
+    if nav:
+        kb.append(nav)
+    if selected:
+        kb.append([InlineKeyboardButton(f"🗑 Delete Selected ({len(selected)})", callback_data="bulkprod_confirm")])
+        kb.append([InlineKeyboardButton("🧹 Clear Selection", callback_data=f"bulkprod_clear_{page}")])
+    kb.append([InlineKeyboardButton("❌ Cancel", callback_data="admin_products")])
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def bulk_product_delete_toggle_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        raw = q.data.replace("bulkprod_tgl_", "")
+        pid_s, page_s = raw.rsplit("_", 1)
+        pid, page = int(pid_s), int(page_s)
+    except Exception:
+        await q.answer("Bad product", show_alert=True); return
+    selected = c.user_data.setdefault('bulk_delete_products', set())
+    try:
+        selected = {int(x) for x in selected}
+    except Exception:
+        selected = set()
+    if pid in selected:
+        selected.remove(pid)
+        await q.answer("Removed")
+    else:
+        selected.add(pid)
+        await q.answer("Selected")
+    c.user_data['bulk_delete_products'] = selected
+    await _bulk_product_delete_screen(u, c, page=page)
+
+
+async def bulk_product_delete_page_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        page = int(q.data.replace("bulkprod_page_", ""))
+    except Exception:
+        page = 0
+    await q.answer()
+    await _bulk_product_delete_screen(u, c, page=page)
+
+
+async def bulk_product_delete_clear_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        page = int(q.data.replace("bulkprod_clear_", ""))
+    except Exception:
+        page = 0
+    c.user_data['bulk_delete_products'] = set()
+    await q.answer("Selection cleared")
+    await _bulk_product_delete_screen(u, c, page=page)
+
+
+async def bulk_product_delete_confirm_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    selected = c.user_data.get('bulk_delete_products') or set()
+    selected = sorted({int(x) for x in selected})
+    if not selected:
+        await q.answer("No products selected", show_alert=True); return
+    await q.answer()
+    text = (
+        f"⚠️ *Confirm Bulk Delete*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Products selected: *{len(selected)}*\n\n"
+        f"This removes product rows from shop/admin. Old orders remain safe."
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"✅ YES, Delete {len(selected)}", callback_data="bulkprod_do")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="bulkprod_page_0")],
+    ])
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
+
+
+async def bulk_product_delete_do_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    selected = c.user_data.pop('bulk_delete_products', set()) or set()
+    selected = sorted({int(x) for x in selected})
+    deleted = failed = 0
+    for pid in selected:
+        try:
+            delete_product_permanently(pid)
+            deleted += 1
+        except Exception:
+            failed += 1
+    await q.answer(f"Deleted {deleted}, failed {failed}", show_alert=True)
+    await _safe_edit(q,
+        f"✅ *Bulk Delete Complete*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🗑 Deleted: *{deleted}*\n"
+        f"⚠️ Failed: *{failed}*\n\n"
+        f"Old orders/history remain safe.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🛍️ Back to Edit Items", callback_data="admin_products")]
+        ]))
+
+
 async def add_product_callback(u,c):
     q=u.callback_query
     if q.from_user.id!=ADMIN_ID: await q.answer("❌",show_alert=True); return ConversationHandler.END
@@ -6400,10 +6558,7 @@ async def view_product_callback(u, c):
         # 🆕 v71: Replacement window — per-product setting
         [_v71_replacement_window_button(pid)],
     ]
-    if is_active_now:
-        kb.append([InlineKeyboardButton("🗑️ Delete Product", callback_data=f"delprod_{pid}")])
-    else:
-        kb.append([InlineKeyboardButton("✅ Reactivate Product", callback_data=f"prodactive_1_{pid}")])
+    kb.append([InlineKeyboardButton("🗑️ Delete Product", callback_data=f"delprod_{pid}")])
     kb.extend([
         [InlineKeyboardButton("🔙 Back to Add Products", callback_data="admin_products")]
     ])
@@ -6634,15 +6789,15 @@ async def delete_product_confirm_callback(u, c):
 
 
 async def delete_product_do_callback(u, c):
-    """Actually perform soft delete of product."""
+    """Permanently remove product from shop/admin, keep orders history."""
     q = u.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
     await q.answer()
     pid = int(q.data.replace("delproddo_", ""))
     
-    delete_product(pid)
-    await q.answer("Product deleted from shop safely ✅")
+    delete_product_permanently(pid)
+    await q.answer("Product deleted from shop/admin ✅")
     
     # Refresh items view
     set_cb_data(u, "admin_products")

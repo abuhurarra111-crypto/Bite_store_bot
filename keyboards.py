@@ -802,6 +802,7 @@ def admin_products_keyboard(prods):
         else:
             kb.append([InlineKeyboardButton(lbl, callback_data=f"viewprod_{p['id']}")])
     kb.append([_btn("➕", "➕ Add", "➕ Add Item", "➕ Add New Product", callback_data="add_product")])
+    kb.append([InlineKeyboardButton("🗑️ Bulk Delete Items", callback_data="bulkprod_start")])
     kb.append([_btn("🔙", "🔙 Return", "🔙 Return", "🔙 Back to Admin Panel", callback_data="admin_panel")])
     return InlineKeyboardMarkup(kb)
 
