@@ -90,6 +90,8 @@ from handlers_admin import (flash_toggle_callback, edit_product_field_callback, 
                              EDIT_PRODUCT_VALUE, EDIT_CATEGORY_VALUE)
 from handlers_support import (support_menu_callback, st_list_callback, st_view_callback,
                                st_new_callback, st_subject_received, st_desc_received,
+                               admin_direct_chat_start_callback, admin_direct_chat_uid_received,
+                               ADMIN_DIRECT_CHAT_UID, ADMIN_DIRECT_CHAT_MSG,
                                warranty_menu_callback, wr_order_callback, wr_type_callback,
                                wr_reason_received,
                                adm_tickets_callback, adm_tickets_list_callback,
@@ -142,6 +144,7 @@ from admin_panels import (
 from ext_suppliers import (
     admin_suppliers_callback, ext_sup_add_callback, ext_sup_add_type_callback,
     ext_sup_api_key_received, ext_sup_view_callback, ext_sup_test_callback,
+    ext_sup_api_update_callback, ext_sup_api_update_received,
     ext_sup_toggle_callback, ext_sup_del_callback, ext_sup_del_confirm_callback,
     ext_sup_import_all_callback, ext_sup_import_pick_callback,
     ext_prod_view_callback, ext_prod_toggle_callback,
@@ -154,6 +157,8 @@ from ext_suppliers import (
     ext_prod_fixprice_received, ext_prod_fixprice_clear_callback,
     # 🆕 v83: Manual sync + format picker
     ext_prod_sync_callback, ext_prod_refresh_callback, ext_prod_fmt_callback, ext_prod_setfmt_callback,
+    # 🆕 v136: supplier failure retry window + delayed refund
+    supplier_retry_delivery_callback, supplier_retry_refund_job,
 )
 from support_replacement import (
     admin_replacement_history_callback, admin_replacement_filter_callback,
@@ -390,6 +395,9 @@ async def handle_text(update, context):
     # 🆕 v80: Admin editing payment method unavailable message
     if context.user_data.get('admin_pay_msg_editing'):
         if await admin_payment_msg_received(update, context): return
+    # 🆕 v136: External supplier API update for one existing supplier
+    if context.user_data.get('ext_sup_api_update_sid'):
+        if await ext_sup_api_update_received(update, context): return
     # 🆕 v81: External Suppliers — admin sending API key or premium emoji
     if context.user_data.get('ext_sup_wizard', {}).get('step') == 'waiting_api_key':
         if await ext_sup_api_key_received(update, context): return
@@ -620,10 +628,10 @@ async def post_init(app):
         if app.job_queue:
             from ai_misc import proxy_monitor_job
             app.job_queue.run_repeating(
-                proxy_monitor_job, interval=1800, first=900,
+                proxy_monitor_job, interval=600, first=120,
                 name="proxy_ai_scout_monitor",
             )
-            print("[ProxyScout] AI proxy monitor scheduled (every 30 min, auto-recovers when all proxies dead)")
+            print("[ProxyScout] AI proxy monitor scheduled (every 10 min, auto-recovers when all proxies dead)")
     except Exception as e:
         print(f'[ProxyScout] Job setup error: {e}')
 
@@ -646,11 +654,27 @@ async def post_init(app):
                 first=45,
                 name="v85_autosync_price_stock",
             )
+            app.job_queue.run_repeating(
+                autosync_balance_job,
+                interval=AUTOSYNC_BALANCE_INTERVAL,
+                first=75,
+                name="v85_autosync_balance",
+            )
             print(f"[v85 AutoSync] price+stock every {AUTOSYNC_PRICE_STOCK_INTERVAL}s; "
-                  "balance manual/order-only")
+                  f"balance every {AUTOSYNC_BALANCE_INTERVAL}s")
     except Exception as e:
         print(f'[v85 AutoSync] Job setup error: {e}')
 
+    # 🆕 v136: Supplier retry window auto-refund job
+    try:
+        if app.job_queue:
+            app.job_queue.run_repeating(
+                supplier_retry_refund_job, interval=30, first=30,
+                name="supplier_retry_auto_refund",
+            )
+            print("[SupplierRetry] Auto-refund job scheduled — checks every 30s")
+    except Exception as e:
+        print(f'[SupplierRetry] Job setup error: {e}')
 
 
 # 🔧 v39 Bug #21: Proper async cancel handlers (replacing broken sync lambdas)
@@ -1614,6 +1638,7 @@ def main():
         ("^ext_sup_add_type_",           ext_sup_add_type_callback),
         ("^ext_sup_view_",               ext_sup_view_callback),
         ("^ext_sup_test_",               ext_sup_test_callback),
+        ("^ext_sup_apiupd_",             ext_sup_api_update_callback),
         ("^ext_sup_toggle_",             ext_sup_toggle_callback),
         ("^ext_sup_del_confirm_",        ext_sup_del_confirm_callback),
         ("^ext_sup_del_",                ext_sup_del_callback),
@@ -1640,6 +1665,7 @@ def main():
         # 🆕 v107: force-refresh a single product from supplier (pro Shopify overwrite pattern)
         ("^ext_prod_refresh_",           ext_prod_refresh_callback),
         ("^ext_prod_fmt_",               ext_prod_fmt_callback),
+        ("^supplier_retry_",             supplier_retry_delivery_callback),
         # 🆕 v85: Bulk sync + low-bal threshold editor + finance + autosync toggle
         ("^ext_sup_bulk_sync_",          ext_sup_bulk_sync_callback),
         ("^admin_finance$",              admin_finance_callback),
@@ -1984,6 +2010,20 @@ def main():
         states={402: [MessageHandler(filters.TEXT & ~filters.COMMAND, wr_reason_received)]},
         fallbacks=[CommandHandler("cancel", cancel_conversation)],
     ))
+
+    # 🆕 v137: Admin initiated direct user chat — user ID → first message/media
+    app.add_handler(_CH(allow_reentry=True,
+        entry_points=[CallbackQueryHandler(admin_direct_chat_start_callback, pattern="^admin_direct_chat$")],
+        states={
+            ADMIN_DIRECT_CHAT_UID: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_direct_chat_uid_received)],
+            ADMIN_DIRECT_CHAT_MSG: [MessageHandler(
+                (filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL)
+                & ~filters.COMMAND,
+                adm_reply_received)],
+        },
+        fallbacks=[CommandHandler("cancel", _cancel_adm_reply)],
+    ))
+
     # 🆕 v73: admin reply now accepts text/photo/video/document
     app.add_handler(_CH(allow_reentry=True, 
         entry_points=[CallbackQueryHandler(adm_st_reply_callback, pattern="^adm_st_reply_")],

@@ -564,6 +564,79 @@ async def wr_reason_received(update, context):
     return ConversationHandler.END
 
 
+
+
+# ───────────────────────────────────────────
+# 🆕 v137: ADMIN-INITIATED DIRECT USER CHAT
+# ───────────────────────────────────────────
+ADMIN_DIRECT_CHAT_UID = 470
+ADMIN_DIRECT_CHAT_MSG = 471
+
+
+async def admin_direct_chat_start_callback(update, context):
+    """Admin starts a ticket/chat by entering a user ID."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return ConversationHandler.END
+    await q.answer()
+    context.user_data['admin_direct_chat_wait_uid'] = True
+    await _safe_edit(q,
+        "💬 *Start Direct User Chat*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Send the Telegram *user ID* you want to message.\n\n"
+        "After that, send your first message. It can be:\n"
+        "• Text\n"
+        "• Photo\n"
+        "• Video\n"
+        "• Document/file\n\n"
+        "_Note: Bot can DM only users who have started the bot before._",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Cancel", callback_data="admin_users")
+        ]]))
+    return ADMIN_DIRECT_CHAT_UID
+
+
+async def admin_direct_chat_uid_received(update, context):
+    """Receive target user ID, create ticket, ask for first message."""
+    if update.effective_user.id != ADMIN_ID:
+        return ConversationHandler.END
+    raw = (update.message.text or "").strip()
+    try:
+        uid = int(raw)
+    except Exception:
+        await update.message.reply_text("❌ Invalid user ID. Send numeric Telegram user ID or /cancel.")
+        return ADMIN_DIRECT_CHAT_UID
+    if uid <= 0:
+        await update.message.reply_text("❌ Invalid user ID. Try again or /cancel.")
+        return ADMIN_DIRECT_CHAT_UID
+
+    u = get_user(uid)
+    username = (u['username'] if u and 'username' in u.keys() else '') or ''
+    first_name = (u['first_name'] if u and 'first_name' in u.keys() else '') or ''
+    subject = "Admin Direct Chat"
+    desc = f"Admin started direct conversation with user {uid}."
+    tid = create_ticket(uid, subject, desc)
+    try:
+        update_ticket(tid, status='in_progress')
+    except Exception:
+        pass
+    context.user_data.pop('admin_direct_chat_wait_uid', None)
+    context.user_data['adm_reply_tid'] = tid
+
+    who = f"@{username}" if username else (first_name or str(uid))
+    await update.message.reply_text(
+        f"✅ *Direct chat ticket created*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎫 Ticket: `#{tid}`\n"
+        f"👤 User: {escape_md(who)} (`{uid}`)\n\n"
+        f"Now send your first message. Text/photo/video/file supported.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Cancel", callback_data=f"adm_st_view_{tid}")
+        ]]))
+    return ADMIN_DIRECT_CHAT_MSG
+
 # ════════════════════════════════════════════
 # 🎫 ADMIN — Support Ticket Management
 # ════════════════════════════════════════════

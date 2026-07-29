@@ -192,13 +192,58 @@ def update_supplier(sid, **fields):
 
 
 def delete_supplier(sid):
-    """Hard-delete a supplier (and CASCADE its products/orders)."""
+    """Delete supplier and every synced shop product linked to it.
+
+    Orders are intentionally preserved (orders table keeps product_name/price),
+    but supplier mirrors must disappear from both user shop and admin Edit Items.
+    """
     ensure_ext_supplier_tables()
+    sid = int(sid)
     conn = get_connection(); c = conn.cursor()
-    c.execute("DELETE FROM ext_products WHERE supplier_id=?", (int(sid),))
-    c.execute("DELETE FROM ext_orders   WHERE supplier_id=?", (int(sid),))
-    c.execute("DELETE FROM ext_suppliers WHERE id=?", (int(sid),))
-    conn.commit(); conn.close()
+    stats = {"shop_products": 0, "ext_products": 0, "ext_orders": 0, "accounts": 0}
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        # Collect linked shop products from both link directions for old DBs.
+        c.execute("""SELECT DISTINCT shop_product_id FROM ext_products
+                     WHERE supplier_id=? AND COALESCE(shop_product_id,0) > 0""", (sid,))
+        pids = {int(r[0]) for r in c.fetchall() if r[0]}
+        try:
+            c.execute("SELECT id FROM products WHERE COALESCE(ext_supplier_id,0)=?", (sid,))
+            pids.update(int(r[0]) for r in c.fetchall() if r[0])
+        except Exception:
+            pass
+
+        if pids:
+            qmarks = ",".join("?" for _ in pids)
+            pid_list = list(pids)
+            # Remove local/supplier bonus account pool for deleted supplier products.
+            try:
+                c.execute(f"DELETE FROM product_accounts WHERE product_id IN ({qmarks})", pid_list)
+                stats["accounts"] = c.rowcount if c.rowcount is not None else 0
+            except Exception:
+                pass
+            # Remove optional per-product config rows where present.
+            for table in ("product_free_claim", "product_ref_pool", "stock_alerts", "restock_requests", "product_reviews"):
+                try:
+                    c.execute(f"DELETE FROM {table} WHERE product_id IN ({qmarks})", pid_list)
+                except Exception:
+                    pass
+            c.execute(f"DELETE FROM products WHERE id IN ({qmarks})", pid_list)
+            stats["shop_products"] = c.rowcount if c.rowcount is not None else len(pid_list)
+
+        c.execute("DELETE FROM ext_products WHERE supplier_id=?", (sid,))
+        stats["ext_products"] = c.rowcount if c.rowcount is not None else 0
+        c.execute("DELETE FROM ext_orders WHERE supplier_id=?", (sid,))
+        stats["ext_orders"] = c.rowcount if c.rowcount is not None else 0
+        c.execute("DELETE FROM ext_suppliers WHERE id=?", (sid,))
+        conn.commit(); conn.close()
+        return stats
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
+        raise
 
 
 def _compute_sell_price(cost_usd, markup_pct, fixed_price, fixed_price_base):
@@ -388,6 +433,10 @@ def mirror_ext_to_products(ext_product_id):
         display_name = f'[[HTML]]<tg-emoji emoji-id="{emoji_id}">{emoji_char}</tg-emoji> {rest}'
     elif emoji_id and emoji_char:
         display_name = f'[[HTML]]<tg-emoji emoji-id="{emoji_id}">{emoji_char}</tg-emoji> {raw_name}'
+    elif emoji_char:
+        # Manual/fixed plain emoji (no premium ID). Keep it visible in shop/admin
+        # rows while avoiding duplicate if supplier name already starts with it.
+        display_name = raw_name if raw_name.startswith(emoji_char) else f"{emoji_char} {raw_name}"
     else:
         display_name = raw_name
 
@@ -541,11 +590,14 @@ class SupplierAdapterBase:
             return {"api_key": self.api_key}
         return {}
 
-    def _get(self, path, timeout=20):
+    def _get(self, path, timeout=20, extra_params=None):
         url = self.base_url + path
         try:
+            params = dict(self._params() or {})
+            if extra_params:
+                params.update(extra_params)
             r = requests.get(url, headers=self._headers(),
-                             params=self._params(), timeout=timeout)
+                             params=(params or None), timeout=timeout)
             return r
         except Exception as e:
             logger.warning(f"[{self.KEY_ID}] GET {path}: {e}")
@@ -755,6 +807,13 @@ class AkundingAdapter(SupplierAdapterBase):
     DOCS_URL = "https://akunding.shop/api/docs"
     AUTH_STYLE = "bearer"
 
+    def __init__(self, api_key, base_url=None):
+        super().__init__(api_key, base_url)
+        # Admin/live DB sometimes stores https://akunding.shop/api. The adapter
+        # appends /api/v1/... itself, so normalize to avoid /api/api/v1 404s.
+        if self.base_url.rstrip('/').endswith('/api'):
+            self.base_url = self.base_url.rstrip('/')[:-4].rstrip('/')
+
     def test_connection(self):
         r = self._get("/api/v1/me")
         if r is None or r.status_code != 200:
@@ -764,7 +823,7 @@ class AkundingAdapter(SupplierAdapterBase):
             j = r.json()
             bal = float(j.get("balance", 0) or 0)
             # Also fetch product count
-            r2 = self._get("/api/v1/products")
+            r2 = self._get("/api/v1/products", extra_params={"include_out_of_stock": "true"})
             count = len(r2.json()) if (r2 and r2.status_code == 200) else 0
             return True, f"Connected. Balance ${bal:.2f}, {count} products.", {
                 "balance": bal, "count": count, "user": j.get("username", "")
@@ -782,7 +841,7 @@ class AkundingAdapter(SupplierAdapterBase):
         return None
 
     def fetch_products(self):
-        r = self._get("/api/v1/products")
+        r = self._get("/api/v1/products", extra_params={"include_out_of_stock": "true"})
         if not r or r.status_code != 200:
             return []
         try:
@@ -811,8 +870,12 @@ class AkundingAdapter(SupplierAdapterBase):
         """
         import uuid as _uu
         body = {"product_id": int(remote_id), "quantity": int(quantity)}
-        # Use a stable idempotency key based on order body (retryable)
-        idem = f"{remote_id}-{quantity}-{_uu.uuid4().hex[:16]}"
+        internal_oid = str(getattr(self, "_current_internal_order_id", "") or "").strip()
+        # Use a stable idempotency key for the same bot order so a network retry
+        # cannot create duplicate paid Akunding orders. If no internal order
+        # context is available (rare failover/manual tests), fall back to random.
+        idem = (f"bite-store-{internal_oid}-{remote_id}-{quantity}"
+                if internal_oid else f"{remote_id}-{quantity}-{_uu.uuid4().hex[:16]}")
         # Custom POST with extra header (base class doesn't support extras)
         url = self.base_url + "/api/v1/orders"
         headers = self._headers()
@@ -828,10 +891,11 @@ class AkundingAdapter(SupplierAdapterBase):
             j = r.json()
         except Exception:
             return {"ok": False, "error": f"bad_response_{r.status_code}",
-                    "items": [], "raw": r.text[:500]}
+                    "items": [], "status_code": r.status_code, "raw": r.text[:500]}
         if r.status_code >= 400:
-            msg = j.get("message") or j.get("error") or f"HTTP {r.status_code}"
-            return {"ok": False, "error": str(msg), "items": [], "raw": j}
+            msg = j.get("message") or j.get("error") or j.get("detail") or f"HTTP {r.status_code}"
+            return {"ok": False, "error": str(msg), "items": [],
+                    "status_code": r.status_code, "raw": j}
         items = _extract_delivery_items(j)
         return {"ok": True, "items": items,
                 "order_id": _extract_order_id(j),
@@ -1846,7 +1910,7 @@ async def ext_sup_view_callback(update, context):
         f"💰 Balance: `${bal:.2f}` (last known: {bal_when})\n"
         f"⚠️ Low-bal threshold: `${s.get('low_bal_threshold', 5):.2f}`\n"
         f"🔄 Product auto-sync: `{auto_label}`\n"
-        f"💡 Balance refresh: `manual Test & Refresh + after orders only`\n"
+        f"💡 Balance refresh: `auto every 5 min + Test & Refresh + after orders`\n"
         f"📦 Products: *{active_p}/{total_p}* active\n"
         f"🩺 24h Health: ✅ {hmap.get('delivered',0)} delivered · ❌ {hmap.get('failed',0)} failed · 💸 {hmap.get('refunded',0)} refunded\n"
         + (f"⚠️ Last failure: `{escape_md(last_fail[:90])}`\n" if last_fail else "")
@@ -1864,6 +1928,8 @@ async def ext_sup_view_callback(update, context):
         # 🆕 v96: rename supplier (admin dashboard label only)
         [InlineKeyboardButton("✏️ Rename Supplier",
                               callback_data=f"ext_sup_rename_{sid}")],
+        [InlineKeyboardButton("🔑 Update API Key",
+                              callback_data=f"ext_sup_apiupd_{sid}")],
         [InlineKeyboardButton("🔴 Disable" if s["enabled"] else "🟢 Enable",
                               callback_data=f"ext_sup_toggle_{sid}")],
         [InlineKeyboardButton("🗑 Delete Supplier", callback_data=f"ext_sup_del_{sid}")],
@@ -1912,6 +1978,97 @@ async def ext_sup_test_callback(update, context):
     await ext_sup_view_callback(update, context)
 
 
+async def ext_sup_api_update_callback(update, context):
+    """Ask admin for a new API key for one supplier."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        sid = int(q.data.replace("ext_sup_apiupd_", "", 1))
+    except Exception:
+        await q.answer("❌ Bad supplier id", show_alert=True); return
+    s = get_supplier(sid)
+    if not s:
+        await q.answer("Supplier not found", show_alert=True); return
+    context.user_data["ext_sup_api_update_sid"] = sid
+    await _safe_edit(q,
+        f"🔑 *Update API Key — {escape_md(s.get('name','Supplier'))}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Send the NEW API key for this supplier in your next message.\n\n"
+        f"✅ Bot will test the key first.\n"
+        f"✅ If connection works, only this supplier will be updated.\n\n"
+        f"_Send /cancel to abort._",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("❌ Cancel", callback_data=f"ext_sup_view_{sid}")
+        ]]))
+
+
+async def ext_sup_api_update_received(update, context):
+    """Receive/test/save API key update for one supplier."""
+    sid = context.user_data.get("ext_sup_api_update_sid")
+    if not sid:
+        return False
+    if update.effective_user.id != ADMIN_ID:
+        return False
+    key = (update.message.text or "").strip()
+    if key.lower() in ("/cancel", "cancel"):
+        context.user_data.pop("ext_sup_api_update_sid", None)
+        await update.message.reply_text("❌ API update cancelled.")
+        return True
+    if len(key) < 8:
+        await update.message.reply_text("⚠️ API key too short. Send correct key or /cancel.")
+        return True
+    s = get_supplier(int(sid))
+    if not s:
+        context.user_data.pop("ext_sup_api_update_sid", None)
+        await update.message.reply_text("❌ Supplier not found.")
+        return True
+    cls = ADAPTERS.get(s.get("adapter"))
+    if not cls:
+        await update.message.reply_text("❌ Supplier adapter missing.")
+        return True
+
+    await update.message.reply_text("⏳ Testing new API key…")
+    try:
+        ad = cls(key, s.get("base_url", ""))
+        from async_adapter_helpers import async_test_connection
+        ok, msg, extra = await async_test_connection(ad)
+    except Exception as e:
+        ok, msg, extra = False, f"Test crashed: {e}", {}
+
+    if not ok:
+        await update.message.reply_text(
+            f"❌ *API key not saved*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Reason: `{escape_md(str(msg)[:300])}`\n\n"
+            f"Send another key or /cancel.",
+            parse_mode="Markdown")
+        return True
+
+    fields = {"api_key": key}
+    bal = extra.get("balance") if isinstance(extra, dict) else None
+    if bal is not None:
+        try:
+            fields["balance_usd"] = float(bal)
+            fields["balance_updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            pass
+    update_supplier(int(sid), **fields)
+    context.user_data.pop("ext_sup_api_update_sid", None)
+    await update.message.reply_text(
+        f"✅ *API Key Updated*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🏬 Supplier: *{escape_md(s.get('name','Supplier'))}*\n"
+        f"🔌 Test: `{escape_md(str(msg)[:200])}`",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("⚙️ Open Supplier", callback_data=f"ext_sup_view_{sid}")
+        ]]))
+    return True
+
+
 async def ext_sup_toggle_callback(update, context):
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
@@ -1942,7 +2099,11 @@ async def ext_sup_del_callback(update, context):
     text = (
         "🗑 *Delete Supplier?*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"This will delete supplier #{sid} + ALL its imported products + order history.\n\n"
+        f"This will delete supplier #{sid} and remove ALL synced products from:\n"
+        f"• 🛍 User shop\n"
+        f"• 🛠 Admin Edit Items list\n"
+        f"• 📦 Supplier imported products\n\n"
+        f"✅ Customer orders/history stay preserved in orders table.\n"
         f"⚠️ Cannot be undone. Are you sure?"
     )
     kb = InlineKeyboardMarkup([
@@ -1960,8 +2121,23 @@ async def ext_sup_del_confirm_callback(update, context):
         sid = int(q.data.replace("ext_sup_del_confirm_", "", 1))
     except Exception:
         return
-    delete_supplier(sid)
-    await q.answer("🗑 Deleted.", show_alert=True)
+    try:
+        stats = delete_supplier(sid)
+    except Exception as e:
+        await q.answer(f"❌ Delete failed: {e}"[:190], show_alert=True)
+        return
+    await q.answer("🗑 Supplier + synced products deleted.", show_alert=True)
+    try:
+        await q.message.reply_text(
+            f"✅ *Supplier Deleted*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📦 Shop products removed: *{stats.get('shop_products',0)}*\n"
+            f"🔌 Supplier products removed: *{stats.get('ext_products',0)}*\n"
+            f"🧾 Supplier order logs removed: *{stats.get('ext_orders',0)}*\n\n"
+            f"Old customer orders/history remain preserved.",
+            parse_mode="Markdown")
+    except Exception:
+        pass
     _set_q_data(q, "admin_suppliers")
     await admin_suppliers_callback(update, context)
 
@@ -2753,6 +2929,224 @@ def _supplier_order_qty_from_name(order):
     return 1
 
 
+
+
+_SUPPLIER_RETRY_WINDOW_SECONDS = 300  # 5 minutes
+
+
+def _ensure_supplier_retry_order_columns(c):
+    """Ensure delayed-refund columns exist on orders."""
+    ensure_column(c, "orders", "supplier_failure_reason", "TEXT DEFAULT ''")
+    ensure_column(c, "orders", "supplier_refund_due_at", "REAL DEFAULT 0")
+    ensure_column(c, "orders", "supplier_retry_count", "INTEGER DEFAULT 0")
+
+
+def _supplier_retry_due_text(epoch_ts):
+    try:
+        return datetime.fromtimestamp(float(epoch_ts), timezone(timedelta(hours=5))).strftime("%I:%M:%S %p PKT")
+    except Exception:
+        return "in 5 minutes"
+
+
+def _supplier_error_is_not_found(result=None, reason=""):
+    """Detect stale/removed supplier products so shop stock can be zeroed."""
+    result = result or {}
+    try:
+        if int(result.get("status_code") or 0) == 404:
+            return True
+    except Exception:
+        pass
+    text = (str(reason or "") + " " + str(result.get("error") or "") + " " + str(result.get("raw") or "")).lower()
+    return any(x in text for x in ("http 404", "404", "not found", "not_found", "does not exist", "unavailable"))
+
+
+def _mark_supplier_product_unavailable(ep, shop_product_id=0, reason=""):
+    """Set stale supplier product stock to 0 without deleting history."""
+    try:
+        if ep and ep.get("id"):
+            update_ext_product(int(ep["id"]), stock=0)
+    except Exception as e:
+        logger.debug(f"[supplier-stale] ext stock zero failed: {e}")
+    # Do not force products.stock=0 here. update_ext_product() mirrors remote
+    # stock as 0 while preserving any local supplier_bonus/manual pool stock.
+
+
+def _set_order_supplier_retry_pending(order_id, reason):
+    """Mark order as retry-pending and return (due_epoch, retry_count)."""
+    due = time.time() + _SUPPLIER_RETRY_WINDOW_SECONDS
+    conn = get_connection(); c = conn.cursor()
+    try:
+        _ensure_supplier_retry_order_columns(c)
+        c.execute("""UPDATE orders
+                     SET status='supplier_retry_pending',
+                         supplier_failure_reason=?,
+                         supplier_refund_due_at=?,
+                         supplier_retry_count=COALESCE(supplier_retry_count,0)+1
+                     WHERE id=?
+                       AND COALESCE(status,'') NOT IN ('delivered','refunded','cancelled','rejected')""",
+                  (str(reason or '')[:1000], float(due), int(order_id)))
+        c.execute("SELECT COALESCE(supplier_retry_count,0) AS n FROM orders WHERE id=?", (int(order_id),))
+        row = c.fetchone(); count = int((row['n'] if row else 0) or 0)
+        conn.commit(); conn.close()
+        return due, count
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
+        return due, 0
+
+
+async def _schedule_supplier_retry_or_refund(bot, order, sup, ep, qty, reason, result=None):
+    """Supplier failed → give admin 5 minutes to retry, then auto-refund.
+
+    This replaces the old immediate refund behavior. It protects users from
+    losing money while still giving admin a short window to retry transient
+    supplier/API failures.
+    """
+    if _supplier_error_is_not_found(result, reason):
+        _mark_supplier_product_unavailable(ep, order.get('product_id') or 0, reason)
+
+    due, retry_count = _set_order_supplier_retry_pending(order['id'], reason)
+    due_txt = _supplier_retry_due_text(due)
+    price_usd = float(order.get('price') or 0)
+    refund_points = points_from_usd(price_usd)
+
+    # Notify customer — professional, no raw API details beyond short reason.
+    try:
+        await bot.send_message(
+            order['user_id'],
+            f"⚠️ *Order #{order['id']} — Delivery retrying*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"📦 {escape_md(order.get('product_name','?')[:70])}\n\n"
+            f"Supplier delivery is temporarily unavailable. Admin has a short retry window.\n\n"
+            f"⏳ If not delivered by *{escape_md(due_txt)}*, your wallet will be automatically refunded.\n"
+            f"💎 Refund amount: *{fmt_points(refund_points)} points*\n\n"
+            f"Sorry for the inconvenience — no action needed from you. 🙏",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📜 Order History", callback_data="my_orders")],
+                [InlineKeyboardButton("🎫 Support", callback_data="support_menu")],
+            ])
+        )
+    except Exception as e:
+        logger.error(f"[supplier-retry] customer notify failed: {e}")
+
+    # Notify admin with Retry Delivery button.
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"⚠️ *SUPPLIER FAILURE — retry window*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🛒 Order: `#{order['id']}`\n"
+            f"🏬 Supplier: {escape_md(sup['name'] if sup else '?')}\n"
+            f"📦 Product: {escape_md((ep or {}).get('name','?')[:60])}\n"
+            f"🔢 Qty: `{qty}`\n"
+            f"💰 Amount: `${price_usd:.2f}`\n"
+            f"🔁 Retry count: `{retry_count}`\n"
+            f"⏳ Auto-refund at: `{escape_md(due_txt)}`\n"
+            f"💎 Refund if not delivered: `{fmt_points(refund_points)}` points\n\n"
+            f"❌ Reason: `{escape_md(str(reason)[:220])}`",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Retry Delivery", callback_data=f"supplier_retry_{order['id']}")],
+                [InlineKeyboardButton("📦 View Product", callback_data=f"viewprod_{order.get('product_id') or 0}")],
+            ])
+        )
+    except Exception as e:
+        logger.error(f"[supplier-retry] admin notify failed: {e}")
+    return True
+
+
+async def supplier_retry_refund_job(context):
+    """Background job: auto-refund supplier_retry_pending orders after 5 min."""
+    try:
+        conn = get_connection(); c = conn.cursor()
+        _ensure_supplier_retry_order_columns(c)
+        now = time.time()
+        c.execute("""SELECT * FROM orders
+                     WHERE status='supplier_retry_pending'
+                       AND COALESCE(supplier_refund_due_at,0) > 0
+                       AND supplier_refund_due_at <= ?
+                     ORDER BY supplier_refund_due_at ASC
+                     LIMIT 25""", (float(now),))
+        rows = [dict(r) for r in c.fetchall()]
+        conn.close()
+    except Exception as e:
+        logger.warning(f"[supplier-retry-job] scan failed: {e}")
+        return
+
+    for order in rows:
+        try:
+            from database import get_order, get_product
+            fresh = get_order(order['id'])
+            if not fresh or str(fresh.get('status') or '') != 'supplier_retry_pending':
+                continue
+            p = get_product(fresh['product_id']) if fresh.get('product_id') else None
+            ep = get_ext_product((dict(p).get('ext_product_id') if p else 0) or 0) if p else None
+            sup = get_supplier((dict(p).get('ext_supplier_id') if p else 0) or 0) if p else None
+            qty = _supplier_order_qty_from_name(fresh)
+            reason = (fresh.get('supplier_failure_reason') or order.get('supplier_failure_reason') or 'Supplier delivery failed')
+            await _refund_and_notify(context.bot, fresh, sup, ep, qty,
+                                     f"{reason} — retry window expired")
+        except Exception as e:
+            logger.warning(f"[supplier-retry-job] refund failed order#{order.get('id')}: {e}")
+
+
+async def supplier_retry_delivery_callback(update, context):
+    """Admin button: retry supplier delivery while order is still pending."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        oid = int(q.data.replace("supplier_retry_", ""))
+    except Exception:
+        await q.answer("Invalid order", show_alert=True); return
+
+    from database import get_order
+    order = get_order(oid)
+    if not order:
+        await q.answer("Order not found", show_alert=True); return
+    st = str(order.get('status') or '')
+    if st == 'delivered':
+        await q.answer("Already delivered ✅", show_alert=True); return
+    if st == 'refunded':
+        await q.answer("Already refunded — retry closed", show_alert=True); return
+    if st != 'supplier_retry_pending':
+        await q.answer(f"Cannot retry while status is {st}", show_alert=True); return
+
+    await q.answer("🔄 Retrying supplier delivery…", show_alert=False)
+    try:
+        await q.edit_message_text(
+            f"🔄 *Retrying supplier delivery…*\n━━━━━━━━━━━━━━━━━━━━\nOrder: `#{oid}`\n\nPlease wait.",
+            parse_mode="Markdown")
+    except Exception:
+        pass
+
+    await route_order_to_supplier(context.bot, order)
+    fresh = get_order(oid)
+    final_st = str(fresh.get('status') or '') if fresh else ''
+    try:
+        if final_st == 'delivered':
+            await q.edit_message_text(f"✅ *Retry successful*\nOrder `#{oid}` delivered.", parse_mode="Markdown")
+        elif final_st == 'supplier_retry_pending':
+            due_txt = _supplier_retry_due_text(fresh.get('supplier_refund_due_at') or 0)
+            await q.edit_message_text(
+                f"⚠️ *Retry failed again*\nOrder `#{oid}` is still pending.\n"
+                f"Auto-refund at `{escape_md(due_txt)}`.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Retry Again", callback_data=f"supplier_retry_{oid}")]
+                ])
+            )
+        elif final_st == 'refunded':
+            await q.edit_message_text(f"💎 Order `#{oid}` has been refunded.", parse_mode="Markdown")
+        else:
+            await q.edit_message_text(f"ℹ️ Retry finished. Current status: `{escape_md(final_st)}`", parse_mode="Markdown")
+    except Exception:
+        pass
+
+
 def _claim_supplier_order_for_processing(order_id):
     """Atomic idempotency guard for supplier fulfillment.
 
@@ -3056,7 +3450,7 @@ async def route_order_to_supplier(bot, order):
         try:
             fresh_p = get_product(order['product_id']) or p
             if int((dict(fresh_p) if fresh_p else {}).get('stock') or 0) < int(qty):
-                await _refund_and_notify(bot, order, sup, ep, qty,
+                await _schedule_supplier_retry_or_refund(bot, order, sup, ep, qty,
                                           "Product went out of stock after payment.")
                 return True
         except Exception:
@@ -3064,12 +3458,16 @@ async def route_order_to_supplier(bot, order):
         ad = get_adapter_for_supplier(sup)
         if not ad:
             logger.error(f"[router] no adapter for supplier #{ext_sid}")
-            await _refund_and_notify(bot, order, sup, ep, qty,
+            await _schedule_supplier_retry_or_refund(bot, order, sup, ep, qty,
                                       "Supplier adapter not available.")
             return True
 
         logger.info(f"[router] calling {sup['adapter']}.create_order(remote={ep['remote_id']}, qty={qty})")
         try:
+            try:
+                setattr(ad, "_current_internal_order_id", order['id'])
+            except Exception:
+                pass
             result = await asyncio.to_thread(ad.create_order, ep['remote_id'], qty)
         except Exception as e:
             logger.error(f"[router] adapter crashed: {e}")
@@ -3077,7 +3475,7 @@ async def route_order_to_supplier(bot, order):
                 internal_order_id=order['id'], supplier_id=ext_sid, ext_product_id=ext_pid,
                 quantity=qty, cost_usd=(ep.get('cost_usd') or 0) * qty,
                 remote_order_id="", status="failed", raw_response="", error_msg=f"Adapter error: {e}")
-            await _refund_and_notify(bot, order, sup, ep, qty, f"Adapter error: {e}")
+            await _schedule_supplier_retry_or_refund(bot, order, sup, ep, qty, f"Adapter error: {e}")
             return True
 
         raw_dump = json.dumps(result.get('raw', ''), default=str, ensure_ascii=False)[:5000]
@@ -3099,7 +3497,7 @@ async def route_order_to_supplier(bot, order):
                 supplier_cost = _supplier_result_cost_usd(result, (ep.get('cost_usd') or 0) * qty)
                 overdelivery_note = fo.get('note', '')
             else:
-                await _refund_and_notify(bot, order, sup, ep, qty, result.get('error', 'unknown'))
+                await _schedule_supplier_retry_or_refund(bot, order, sup, ep, qty, result.get('error', 'unknown'), result=result)
                 return True
 
     items = [str(x).strip() for x in (result.get('items') or []) if str(x).strip()]
@@ -3122,7 +3520,7 @@ async def route_order_to_supplier(bot, order):
             received_count = len(items)
             overdelivery_note = fo.get('note', '')
         else:
-            await _refund_and_notify(bot, order, sup, ep, qty, reason)
+            await _schedule_supplier_retry_or_refund(bot, order, sup, ep, qty, reason, result=result)
             return True
 
     # 🔧 v111/v114 over-delivery guard: if supplier returns bonus/extra

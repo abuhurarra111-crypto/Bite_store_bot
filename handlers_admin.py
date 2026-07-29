@@ -892,15 +892,19 @@ async def admin_users_callback(u,c):
         f"(showing {start+1}–{min(end, total)})\n\n"
     )
     for usr in slice_:
-        text += f"• `{usr['user_id']}` {escape_md(usr['first_name'] or '?')} 💎{usr['points']}\n"
+        uname = (usr['username'] or '').strip()
+        uname_txt = f"@{escape_md(uname)}" if uname else "_no username_"
+        fname = escape_md(usr['first_name'] or '?')
+        text += f"• `{usr['user_id']}` — {fname} ({uname_txt}) 💎{usr['points']}\n"
 
     kb = []
     # Per-user 📊 View Activity buttons (2 per row to save vertical space)
     row = []
     for i, usr in enumerate(slice_):
         uid = usr['user_id']
-        fname = (usr['first_name'] or '?')[:12]
-        row.append(InlineKeyboardButton(f"📊 {fname} {uid}", callback_data=f"adm_uact_{uid}"))
+        uname = (usr['username'] or '').strip()
+        label_name = (('@' + uname) if uname else (usr['first_name'] or '?'))[:18]
+        row.append(InlineKeyboardButton(f"📊 {label_name} {uid}", callback_data=f"adm_uact_{uid}"))
         if len(row) == 2:
             kb.append(row); row = []
     if row:
@@ -918,6 +922,7 @@ async def admin_users_callback(u,c):
         for i in range(0, len(nav), 2):
             kb.append(nav[i:i+2])
 
+    kb.append([InlineKeyboardButton("💬 Start User Chat", callback_data="admin_direct_chat")])
     kb.append([InlineKeyboardButton("💎 Manage User Points", callback_data="adm_manage_pts")])
     kb.append([InlineKeyboardButton("🧹 Wipe Activity Now",  callback_data="adm_uact_wipe_confirm")])
     kb.append([InlineKeyboardButton("🔙 Back to Admin",      callback_data="admin_panel")])
@@ -1062,8 +1067,8 @@ async def admin_settings_callback(u,c):
     bn_name = get_setting('binance_name', legacy_name)
     # Binance Gmail status
     try:
-        from payments import is_configured as _bn_cfg
-        bn_gmail_status = "✅ Connected" if _bn_cfg() else "❌ Not Set"
+        from payments import binance_api_is_configured as _bn_cfg
+        bn_gmail_status = "✅ API keys set" if _bn_cfg() else "❌ API keys missing"
     except: bn_gmail_status = "❓ Unknown"
     text=f"""⚙️ *Settings*
 ━━━━━━━━━━━━━━━━━━━━
@@ -1075,7 +1080,7 @@ async def admin_settings_callback(u,c):
 *🔶 Binance Pay:*
   ID: *{escape_md(get_setting('binance_id',BINANCE_PAY_ID))}*
   Name: *{escape_md(bn_name)}*
-  📧 Gmail: *{bn_gmail_status}*
+  🔌 API: *{bn_gmail_status}*
 
 *📱 EasyPaisa:*
   Number: *{escape_md(get_setting('easypaisa',EASYPAISA_NUMBER))}*
@@ -4602,8 +4607,8 @@ async def admin_test_binance_api_callback(u, c):
             parse_mode="Markdown")
     except: pass
 
-    from payments import test_connection, is_configured
-    if not is_configured():
+    from payments import screenshot_ai_test_connection, screenshot_ai_is_configured
+    if not screenshot_ai_is_configured():
         text = ("❌ Screenshot AI NOT Configured\n━━━━━━━━━━━━━━━━━━━━\n\n"
                 "📝 Fix Steps:\n"
                 "1. Get free Gemini key: aistudio.google.com/app/apikey\n"
@@ -4611,7 +4616,7 @@ async def admin_test_binance_api_callback(u, c):
                 "   GEMINI_API_KEY=your_key\n"
                 "3. Restart bot")
     else:
-        success, msg = test_connection()
+        success, msg = screenshot_ai_test_connection()
         if success:
             text = (f"✅ Screenshot AI Working!\n━━━━━━━━━━━━━━━━━━━━\n\n"
                     f"{msg}\n\n"
@@ -4641,8 +4646,8 @@ async def admin_test_email_callback(u, c):
             parse_mode="Markdown")
     except: pass
 
-    from payments import test_connection, is_configured
-    if not is_configured():
+    from payments import easypaisa_test_connection, easypaisa_is_configured
+    if not easypaisa_is_configured():
         text = ("❌ *Gmail NOT Configured*\n━━━━━━━━━━━━━━━━━━━━\n\n"
                 "📝 *Fix Steps:*\n"
                 "1. Get Gmail App Password:\n"
@@ -4652,7 +4657,7 @@ async def admin_test_email_callback(u, c):
                 "   `EMAIL_PASSWORD=app_password`\n"
                 "3. Restart bot")
     else:
-        success, msg = test_connection()
+        success, msg = easypaisa_test_connection()
         if success:
             text = (f"✅ *Gmail IMAP Working!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
                     f"{msg}\n\n"
@@ -4685,8 +4690,8 @@ async def admin_test_binance_gmail_callback(u, c):
             parse_mode="Markdown")
     except: pass
 
-    from payments import test_connection, is_configured
-    if not is_configured():
+    from payments import binance_email_test_connection, binance_email_is_configured
+    if not binance_email_is_configured():
         text = ("❌ *Binance Gmail NOT Configured*\n━━━━━━━━━━━━━━━━━━━━\n\n"
                 "📝 *Fix Steps:*\n"
                 "1. Add to `.env` file:\n"
@@ -4694,7 +4699,7 @@ async def admin_test_binance_gmail_callback(u, c):
                 "   `BINANCE_EMAIL_PASSWORD=your_app_password`\n"
                 "2. Restart bot")
     else:
-        success, msg = test_connection()
+        success, msg = binance_email_test_connection()
         if success:
             text = (f"✅ *Binance Gmail Working!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
                     f"{msg}\n\n"
@@ -4725,7 +4730,7 @@ async def admin_binance_api_panel_callback(u, c):
     await q.answer()
 
     from payments import (
-        is_configured as _api_cfg, is_proxy_configured as _proxy_cfg,
+        binance_api_is_configured as _api_cfg, is_proxy_configured as _proxy_cfg,
         BINANCE_API_BASE,
     )
     api_on  = (get_setting("binance_api_enabled", "0") == "1")
@@ -4744,8 +4749,7 @@ async def admin_binance_api_panel_callback(u, c):
         f"🌐 *Proxy:* {status_proxy}\n"
         f"🌍 *Endpoint:* `{BINANCE_API_BASE}`\n\n"
         "_When enabled, bot fetches payments directly from "
-        "Binance Pay API instead of (or in addition to) Gmail. "
-        "Gmail remains as a fallback._\n\n"
+        "Binance Pay API for automatic verification._\n\n"
         "⚠️ Render servers are blocked by Binance (HTTP 451). "
         "You MUST set `BINANCE_PROXY_URL` to a Pakistani/allowed-region "
         "HTTP(S) or SOCKS5 proxy in Render env vars."
@@ -4949,7 +4953,7 @@ async def admin_proxy_test_all_callback(u, c):
     except Exception:
         pass
     import asyncio as _aio
-    from payments import test_connection as _bp_test
+    from payments import binance_api_test_connection as _bp_test
     try:
         ok, msg = await _aio.to_thread(_bp_test)
     except Exception as e:
@@ -5010,6 +5014,7 @@ async def admin_proxy_ai_scout_callback(u, c):
         return
 
     srcs    = summary.get("fetched_sources", 0)
+    total_srcs = summary.get("total_sources", 3)
     cands   = summary.get("candidates", 0)
     working = summary.get("working", 0)
     added   = summary.get("added", 0)
@@ -5021,7 +5026,7 @@ async def admin_proxy_ai_scout_callback(u, c):
         lines = [
             "✅ *AI Scout Complete*",
             "━━━━━━━━━━━━━━━━━━━━", "",
-            f"📡 Sources fetched: {srcs}/3",
+            f"📡 Sources fetched: {srcs}/{total_srcs}",
             f"🧠 Method: `{method}`",
             f"🔍 Candidates found: {cands}",
             f"🧪 Working after test: *{working}*",
@@ -5038,7 +5043,7 @@ async def admin_proxy_ai_scout_callback(u, c):
         text = (
             "⚠️ *AI Scout — No Working Proxies Found*\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"📡 Sources fetched: {srcs}/3\n"
+            f"📡 Sources fetched: {srcs}/{total_srcs}\n"
             f"🔍 Candidates found: {cands}\n"
             f"🧪 Working: 0\n\n"
         )
@@ -5081,7 +5086,7 @@ async def admin_binance_api_test_callback(u, c):
     except Exception:
         pass
     import asyncio as _aio
-    from payments import test_connection as _bp_test
+    from payments import binance_api_test_connection as _bp_test
     try:
         ok, msg = await _aio.to_thread(_bp_test)
     except Exception as e:
@@ -5292,13 +5297,13 @@ async def admin_pem_test_callback(u, c):
     if method_id == 'binance':
         os.environ['BINANCE_EMAIL'] = cfg['email']
         os.environ['BINANCE_EMAIL_PASSWORD'] = cfg['password']
-        from payments import connect_imap
+        pass
     else:
         os.environ['EMAIL_ADDRESS'] = cfg['email']
         os.environ['EMAIL_PASSWORD'] = cfg['password']
-        from payments import connect_imap
     
-    mail = connect_imap()
+    from payments import imap_connect_with_credentials
+    mail = imap_connect_with_credentials(cfg['email'], cfg['password'])
     if mail:
         try:
             mail.select("INBOX")
@@ -5345,13 +5350,13 @@ async def admin_pem_test_all_callback(u, c):
             if m['id'] == 'binance':
                 os.environ['BINANCE_EMAIL'] = cfg['email']
                 os.environ['BINANCE_EMAIL_PASSWORD'] = cfg['password']
-                from payments import connect_imap
+                pass
             else:
                 os.environ['EMAIL_ADDRESS'] = cfg['email']
                 os.environ['EMAIL_PASSWORD'] = cfg['password']
-                from payments import connect_imap
             
-            mail = connect_imap()
+            from payments import imap_connect_with_credentials
+            mail = imap_connect_with_credentials(cfg['email'], cfg['password'])
             if mail:
                 try: mail.logout()
                 except: pass
@@ -6396,7 +6401,7 @@ async def view_product_callback(u, c):
         [_v71_replacement_window_button(pid)],
     ]
     if is_active_now:
-        kb.append([InlineKeyboardButton("🚫 Deactivate Product", callback_data=f"delprod_{pid}")])
+        kb.append([InlineKeyboardButton("🗑️ Delete Product", callback_data=f"delprod_{pid}")])
     else:
         kb.append([InlineKeyboardButton("✅ Reactivate Product", callback_data=f"prodactive_1_{pid}")])
     kb.extend([
@@ -6615,13 +6620,14 @@ async def delete_product_confirm_callback(u, c):
     pid = int(q.data.replace("delprod_", ""))
     
     text = (
-        f"⚠️ *DEACTIVATE PRODUCT — CONFIRM*\n"
+        f"⚠️ *DELETE PRODUCT — CONFIRM*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Are you sure you want to deactivate this product?\n\n"
-        f"It will disappear from user shop, but stay safe in admin panel and can be reactivated anytime."
+        f"Are you sure you want to delete this product from the shop?\n\n"
+        f"✅ Old orders, profit history, and customer history will stay safe.\n"
+        f"ℹ️ This is a safe soft-delete: product disappears from users but remains in DB."
     )
     kb = [
-        [InlineKeyboardButton("✅ YES, Deactivate", callback_data=f"delproddo_{pid}"),
+        [InlineKeyboardButton("✅ YES, Delete", callback_data=f"delproddo_{pid}"),
          InlineKeyboardButton("❌ No, Cancel", callback_data=f"viewprod_{pid}")]
     ]
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
@@ -6636,7 +6642,7 @@ async def delete_product_do_callback(u, c):
     pid = int(q.data.replace("delproddo_", ""))
     
     delete_product(pid)
-    await q.answer("Product deactivated safely ✅")
+    await q.answer("Product deleted from shop safely ✅")
     
     # Refresh items view
     set_cb_data(u, "admin_products")

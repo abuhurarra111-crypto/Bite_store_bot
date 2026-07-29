@@ -86,6 +86,8 @@ _DEFAULT_PROXY_POOL = [
     "http://103.198.154.151:8888",     # Play Broadband Lahore
 ]
 
+_LAST_GOOD_PROXY = None
+
 
 def _load_proxy_pool() -> list[str]:
     """
@@ -123,9 +125,23 @@ def _load_proxy_pool() -> list[str]:
         if p and p not in out:
             out.append(p)
 
-    # 4) defaults (only if nothing else set)
-    if not out:
-        out.extend(_DEFAULT_PROXY_POOL)
+    # 4) built-in defaults as LAST-RESORT fallback.
+    # Old behavior only used these when env/DB was empty. In production that
+    # meant one dead BINANCE_PROXY_URL could block recovery. Keep env/DB first,
+    # but still append defaults so rotation has emergency candidates.
+    for p in _DEFAULT_PROXY_POOL:
+        if p and p not in out:
+            out.append(p)
+
+    # Prefer last known good proxy from memory/DB so successful recovery sticks.
+    last_good = _LAST_GOOD_PROXY
+    try:
+        from database import get_setting
+        last_good = last_good or (get_setting("binance_proxy_last_good", "") or "").strip()
+    except Exception:
+        pass
+    if last_good and last_good in out:
+        out = [last_good] + [p for p in out if p != last_good]
 
     return out
 
@@ -144,6 +160,8 @@ def _is_in_cooldown(proxy_url: str) -> bool:
 
 
 def _mark_proxy_ok(proxy_url: str):
+    global _LAST_GOOD_PROXY
+    _LAST_GOOD_PROXY = proxy_url
     _PROXY_HEALTH[proxy_url] = {
         **(_PROXY_HEALTH.get(proxy_url) or {}),
         "status": "ok",
@@ -151,6 +169,12 @@ def _mark_proxy_ok(proxy_url: str):
         "cooldown_until": 0,
         "last_error": "",
     }
+    # Persist last good proxy lightly so Render restarts keep the best candidate.
+    try:
+        from database import set_setting
+        set_setting("binance_proxy_last_good", proxy_url)
+    except Exception:
+        pass
 
 
 def _mark_proxy_fail(proxy_url: str, reason: str = ""):
@@ -201,7 +225,7 @@ def _proxies():
     return _proxies_for(pool[0]) if pool else None
 
 
-def is_configured():
+def binance_api_is_configured():
     return bool(BINANCE_API_KEY and BINANCE_API_SECRET)
 
 
@@ -270,7 +294,7 @@ def _do_request(method_url: str, headers: dict, timeout: int):
 
 def _signed_get(path: str, params: dict | None = None, timeout: int = 15) -> tuple[int, dict | str]:
     """Signed GET with auto-rotating proxy pool."""
-    if not is_configured():
+    if not binance_api_is_configured():
         return -1, {"error": "BINANCE_API_KEY / BINANCE_API_SECRET not set"}
 
     params = dict(params or {})
@@ -297,10 +321,10 @@ def _signed_get(path: str, params: dict | None = None, timeout: int = 15) -> tup
 # ════════════════════════════════════════════
 # 🩺 DIAGNOSTIC / TEST
 # ════════════════════════════════════════════
-def test_connection() -> tuple[bool, str]:
+def binance_api_test_connection() -> tuple[bool, str]:
     """v63: Test each configured proxy until one works, plus signed account check.
        Used by admin panel "Test Binance API" button."""
-    if not is_configured():
+    if not binance_api_is_configured():
         return False, "❌ BINANCE_API_KEY / BINANCE_API_SECRET not set on server."
 
     pool = _load_proxy_pool()
@@ -407,7 +431,7 @@ def get_recent_pay_transactions(lookback_hours: int = 48, limit: int = 100) -> l
         }
     Only successful incoming-to-us transactions are returned.
     """
-    if not is_configured():
+    if not binance_api_is_configured():
         return []
 
     params = {
@@ -477,7 +501,7 @@ def get_recent_pay_transactions(lookback_hours: int = 48, limit: int = 100) -> l
 def get_recent_deposits(coin: str = "USDT", lookback_hours: int = 48, limit: int = 50) -> list[dict]:
     """GET /sapi/v1/capital/deposit/hisrec — recent on-chain deposits.
        Returns normalised dicts: {amount, currency, txid, address, time_ms, status}"""
-    if not is_configured():
+    if not binance_api_is_configured():
         return []
 
     params = {
@@ -532,7 +556,7 @@ def find_matching_payment(
         - sender_name provided → fuzzy match on counterparty
         - expected_amount → always required, must match within tolerance
     """
-    if not is_configured():
+    if not binance_api_is_configured():
         return None
     try:
         expected_amount = float(expected_amount)
@@ -602,7 +626,7 @@ def find_payment_by_order_id(
     Returns a normalised dict (same shape as get_recent_pay_transactions rows)
     or None.
     """
-    if not is_configured():
+    if not binance_api_is_configured():
         return None
     order_id = (order_id or "").strip()
     if len(order_id) < 6:
@@ -685,7 +709,7 @@ def verify_payment_unified(
         'txid': '', 'source': '',
     }
 
-    if is_configured():
+    if binance_api_is_configured():
         try:
             match = None
             # v62: Order ID match takes priority — most reliable
@@ -768,17 +792,17 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def connect_imap():
+def binance_email_connect_imap():
     """🚫 Disabled in v76 — Gmail IMAP method removed."""
     raise RuntimeError("Binance Gmail IMAP is disabled in v76. Use Binance Pay API instead.")
 
 
-def is_configured() -> bool:
+def binance_email_is_configured() -> bool:
     """🚫 Always returns False in v76 so all UI/code paths treat email as off."""
     return False
 
 
-def test_connection():
+def binance_email_test_connection():
     """🚫 Disabled in v76."""
     return False, "Binance Gmail IMAP disabled in v76. Use Binance Pay API."
 
@@ -866,7 +890,7 @@ if not EMAIL_ADDRESS:
 # ════════════════════════════════════════════
 # 🔌 IMAP CONNECTION
 # ════════════════════════════════════════════
-def connect_imap():
+def easypaisa_connect_imap():
     if not EMAIL_ADDRESS or not EMAIL_PASSWORD:
         logger.error("EMAIL_ADDRESS/PASSWORD not set in .env")
         return None
@@ -879,14 +903,14 @@ def connect_imap():
         return None
 
 
-def is_configured():
+def easypaisa_is_configured():
     return bool(EMAIL_ADDRESS and EMAIL_PASSWORD)
 
 
-def test_connection():
-    if not is_configured():
+def easypaisa_test_connection():
+    if not easypaisa_is_configured():
         return False, "EMAIL_ADDRESS / EMAIL_PASSWORD not set in .env file"
-    mail = connect_imap()
+    mail = easypaisa_connect_imap()
     if not mail:
         return False, "Failed to connect/login to Gmail. Check app password."
     try:
@@ -903,7 +927,7 @@ def test_connection():
 # ════════════════════════════════════════════
 # 🔍 EMAIL PARSING (FLEXIBLE — handles all formats)
 # ════════════════════════════════════════════
-def _decode_subject(raw_subject):
+def _ep_decode_subject(raw_subject):
     if not raw_subject: return ""
     out = ""
     for part, charset in decode_header(raw_subject):
@@ -915,7 +939,7 @@ def _decode_subject(raw_subject):
     return out
 
 
-def _get_email_body(msg):
+def _ep_get_email_body(msg):
     """v61: strip <script>/<style>/<!-- --> before tags to avoid CSS leakage."""
     body = ""
     if msg.is_multipart():
@@ -955,16 +979,16 @@ def _get_email_body(msg):
     return body
 
 
-def extract_payment_info(msg):
+def easypaisa_extract_payment_info(msg):
     """Parse SMSForwarder-EasyPaisa email — FLEXIBLE regex.
     Returns dict {amount, tid, name, type} or None if not matching.
     """
     # Subject check — flexible
-    subject = _decode_subject(msg.get("Subject", "")).lower()
+    subject = _ep_decode_subject(msg.get("Subject", "")).lower()
     if "easypaisa" not in subject and "smsforwarder" not in subject:
         return None
 
-    body = _get_email_body(msg)
+    body = _ep_get_email_body(msg)
     if not body:
         return None
 
@@ -1021,7 +1045,7 @@ def extract_payment_info(msg):
 # ════════════════════════════════════════════
 # ✅ VERIFY BY TRX ID ONLY (Simpler!)
 # ════════════════════════════════════════════
-def verify_by_tid_only(tid):
+def easypaisa_verify_by_tid_only(tid):
     """🆕 v31: Verify ONLY by TRX ID. Bot extracts everything else from email.
 
     Args:
@@ -1068,7 +1092,7 @@ def verify_by_tid_only(tid):
         logger.warning(f"DB check error: {e}")
 
     # Connect Gmail (backend — user never sees this)
-    mail = connect_imap()
+    mail = easypaisa_connect_imap()
     if not mail:
         result['status'] = 'imap_error'
         result['reason'] = ("Payment verification service temporarily unavailable. "
@@ -1106,7 +1130,7 @@ def verify_by_tid_only(tid):
                 status, fetch = mail.fetch(eid, "(RFC822)")
                 if status != "OK": continue
                 msg = email.message_from_bytes(fetch[0][1])
-                info = extract_payment_info(msg)
+                info = easypaisa_extract_payment_info(msg)
                 if info and info.get('tid') == tid:
                     matched_email = info
                     break
@@ -1198,7 +1222,7 @@ if not EMAIL_ADDRESS:
 # ════════════════════════════════════════════
 # 🔌 IMAP CONNECTION
 # ════════════════════════════════════════════
-def connect_imap():
+def jazzcash_connect_imap():
     if not EMAIL_ADDRESS or not EMAIL_PASSWORD:
         logger.error("EMAIL_ADDRESS/PASSWORD not set in .env")
         return None
@@ -1211,14 +1235,14 @@ def connect_imap():
         return None
 
 
-def is_configured():
+def jazzcash_is_configured():
     return bool(EMAIL_ADDRESS and EMAIL_PASSWORD)
 
 
-def test_connection():
-    if not is_configured():
+def jazzcash_test_connection():
+    if not jazzcash_is_configured():
         return False, "Email credentials not configured."
-    mail = connect_imap()
+    mail = jazzcash_connect_imap()
     if not mail:
         return False, "Failed to connect to email server."
     try:
@@ -1235,7 +1259,7 @@ def test_connection():
 # ════════════════════════════════════════════
 # 🔍 EMAIL PARSING
 # ════════════════════════════════════════════
-def _decode_subject(raw_subject):
+def _jc_decode_subject(raw_subject):
     if not raw_subject: return ""
     out = ""
     for part, charset in decode_header(raw_subject):
@@ -1247,7 +1271,7 @@ def _decode_subject(raw_subject):
     return out
 
 
-def _get_email_body(msg):
+def _jc_get_email_body(msg):
     """v61: strip <script>/<style>/<!-- --> before tags to avoid CSS leakage."""
     body = ""
     if msg.is_multipart():
@@ -1287,14 +1311,14 @@ def _get_email_body(msg):
     return body
 
 
-def extract_payment_info(msg):
+def jazzcash_extract_payment_info(msg):
     """Parse SMSForwarder-JazzCash email — FLEXIBLE regex.
 
     Returns dict {amount, tid, name, type} or None if not matching.
     """
     # Subject must mention JazzCash or SMSForwarder (case-insensitive)
-    subject = _decode_subject(msg.get("Subject", "")).lower()
-    body = _get_email_body(msg)
+    subject = _jc_decode_subject(msg.get("Subject", "")).lower()
+    body = _jc_get_email_body(msg)
 
     # Filter: must be JazzCash-related (either subject or body)
     is_jazzcash = ("jazzcash" in subject or "jazz cash" in subject
@@ -1381,7 +1405,7 @@ def extract_payment_info(msg):
 # ════════════════════════════════════════════
 # ✅ VERIFY BY TRX ID ONLY
 # ════════════════════════════════════════════
-def verify_by_tid_only(tid):
+def jazzcash_verify_by_tid_only(tid):
     """Verify ONLY by TRX ID. Bot extracts amount + name from email.
 
     Args:
@@ -1428,7 +1452,7 @@ def verify_by_tid_only(tid):
         logger.warning(f"DB check error: {e}")
 
     # Connect Gmail
-    mail = connect_imap()
+    mail = jazzcash_connect_imap()
     if not mail:
         result['status'] = 'imap_error'
         result['reason'] = "Payment verification service temporarily unavailable. Please try again in 2 minutes."
@@ -1466,7 +1490,7 @@ def verify_by_tid_only(tid):
                 status, fetch = mail.fetch(eid, "(RFC822)")
                 if status != "OK": continue
                 msg = email.message_from_bytes(fetch[0][1])
-                info = extract_payment_info(msg)
+                info = jazzcash_extract_payment_info(msg)
                 if info and info.get('tid') == tid:
                     matched_email = info
                     break
@@ -1633,7 +1657,7 @@ def _get_model():
         return None
 
 
-def is_configured():
+def screenshot_ai_is_configured():
     _get_model()
     return _model is not None and _init_error is None
 
@@ -2103,9 +2127,9 @@ def verify_payment_screenshot(image_bytes, expected_amount=None,
 # ════════════════════════════════════════════
 # 🧪 TEST CONNECTION
 # ════════════════════════════════════════════
-def test_connection():
+def screenshot_ai_test_connection():
     """Test if AI is ready"""
-    if not is_configured():
+    if not screenshot_ai_is_configured():
         return False, f"Not configured: {_init_error}"
     try:
         model = _get_model()
@@ -2116,3 +2140,35 @@ def test_connection():
     except Exception as e:
         return False, f"Error: {str(e)[:200]}"
 
+
+
+def imap_connect_with_credentials(email_address: str, email_password: str):
+    """Open a Gmail IMAP connection using explicit credentials.
+
+    This avoids the legacy merged-module globals where EMAIL_ADDRESS/PASSWORD
+    were read only at import time and different payment methods overwrote each
+    other. Used by admin payment-email tests.
+    """
+    if not email_address or not email_password:
+        return None
+    try:
+        import imaplib as _imaplib
+        mail = _imaplib.IMAP4_SSL("imap.gmail.com", 993)
+        mail.login(str(email_address).strip(), str(email_password).strip())
+        return mail
+    except Exception as e:
+        logger.error(f"Gmail IMAP explicit connect failed: {e}")
+        return None
+
+
+# ════════════════════════════════════════════
+# ✅ Explicit public API aliases (v136 collision fix)
+# ════════════════════════════════════════════
+# payments.py is a merged legacy bundle. Older code used generic names like
+# is_configured()/test_connection()/verify_by_tid_only(), which were overwritten
+# by later sections. New code must import the explicit names above. Generic
+# aliases below remain screenshot-AI compatible for any old caller.
+is_configured = screenshot_ai_is_configured
+test_connection = screenshot_ai_test_connection
+connect_imap = easypaisa_connect_imap
+verify_by_tid_only = jazzcash_verify_by_tid_only

@@ -981,7 +981,7 @@ async def fulfill_paid_product_order(bot, order, paid_amount=None, *, payment_me
     # buy supplier stock a second time.
     try:
         _st = str(order.get('status') or '')
-        if _st in ('delivered', 'supplier_processing', 'refunded', 'cancelled', 'rejected'):
+        if _st in ('delivered', 'supplier_processing', 'supplier_retry_pending', 'refunded', 'cancelled', 'rejected'):
             return True
     except Exception:
         pass
@@ -1906,11 +1906,11 @@ async def _process_points_tid_payment(target, context, oid, *, platform, callbac
         parse_mode="Markdown")
 
     if platform == 'easypaisa':
-        from payments import verify_by_tid_only
+        from payments import easypaisa_verify_by_tid_only as _verify_tid
     else:
-        from payments import verify_by_tid_only
+        from payments import jazzcash_verify_by_tid_only as _verify_tid
 
-    api_result = await asyncio.to_thread(verify_by_tid_only, tid)
+    api_result = await asyncio.to_thread(_verify_tid, tid)
     result = {'success': False, 'status': api_result.get('status', 'error'),
               'reason': api_result.get('reason', ''), 'amount': api_result.get('amount', 0),
               'name': api_result.get('name', '')}
@@ -2104,9 +2104,9 @@ async def ep_verify_callback(update, context):
             parse_mode="Markdown")
     except: pass
 
-    # 🔧 v33 FIX: Call the API to get the result (was missing!)
-    from payments import verify_by_tid_only
-    api_result = verify_by_tid_only(tid)
+    # 🔧 v33 FIX: Call the EasyPaisa parser to get the result.
+    from payments import easypaisa_verify_by_tid_only
+    api_result = easypaisa_verify_by_tid_only(tid)
     expected_rs = amount_rs
 
     # Build unified result for handler below
@@ -2567,12 +2567,15 @@ async def my_orders_callback(update, context):
     for o in orders[:12]:
         s_icon = {'pending':'🟡','screenshot_sent':'📸','binance_waiting':'🔶',
                   'paid_pending_delivery':'🕒','waiting_for_details':'📨',
-                  'delivered':'✅','cancelled':'❌','rejected':'❌'}.get(o['status'],'❓')
+                  'supplier_processing':'🔄','supplier_retry_pending':'🔁',
+                  'delivered':'✅','cancelled':'❌','rejected':'❌','refunded':'💎'}.get(o['status'],'❓')
         text += f"• #{o['id']} {escape_md(o['product_name'])} — {fmt_price(o['price'])} {s_icon}\n"
         if o['status'] == 'delivered':
             text += "   ↳ Tap View to see/resend delivery details.\n"
-        elif o['status'] in ('paid_pending_delivery','waiting_for_details'):
+        elif o['status'] in ('paid_pending_delivery','waiting_for_details','supplier_processing'):
             text += "   ↳ Your order is in progress.\n"
+        elif o['status'] == 'supplier_retry_pending':
+            text += "   ↳ Supplier retry window active; auto-refund if not delivered.\n"
         text += "\n"
         rows.append([InlineKeyboardButton(f"🔎 View #{o['id']}", callback_data=f"myord_{o['id']}")])
     rows.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
@@ -2611,6 +2614,11 @@ async def my_order_detail_callback(update, context):
         f"📊 Status: *{escape_md(status)}*\n\n"
     )
     rows = []
+    if status == 'supplier_retry_pending':
+        text += (
+            "🔁 Supplier retry window is active. If delivery is not completed soon, "
+            "your wallet will be automatically refunded.\n\n"
+        )
     if status == 'delivered':
         if has_file:
             text += "📎 Your delivery contains a file/media item. Tap the button below to resend it.\n"
@@ -2900,8 +2908,8 @@ async def jc_verify_callback(update, context):
     except: pass
 
     # 🆕 v40.2: Use JazzCash API (Gmail-based, but user never sees that)
-    from payments import verify_by_tid_only
-    api_result = verify_by_tid_only(tid)
+    from payments import jazzcash_verify_by_tid_only
+    api_result = jazzcash_verify_by_tid_only(tid)
 
     # Build unified result
     result = {'success': False,

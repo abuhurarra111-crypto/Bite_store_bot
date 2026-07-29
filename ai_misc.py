@@ -597,13 +597,22 @@ logger = logging.getLogger(__name__)
 
 # ── Known free-proxy listing sources (PK / general) ──
 _PROXY_SOURCES = [
+    # PK-focused pages/APIs
     "https://www.ditatompel.com/proxy/country/pk",
     "https://proxyhub.me/en/pk-socks5-proxy-list.html",
     "https://www.freeproxy.world/?country=PK",
+    "https://proxylist.geonode.com/api/proxy-list?country=PK&limit=50&page=1&sort_by=lastChecked&sort_type=desc",
+    "https://www.proxy-list.download/api/v1/get?type=socks5&country=PK",
+    "https://www.proxy-list.download/api/v1/get?type=http&country=PK",
+    # General fresh proxy feeds — regex fallback extracts candidates when country
+    # metadata is unavailable. Testing against Binance filters dead/blocked ones.
+    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt",
+    "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
+    "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt",
 ]
 
 # Hard limits to keep things safe
-_MAX_CANDIDATES_TO_TEST = 20
+_MAX_CANDIDATES_TO_TEST = 40
 _CANDIDATE_TEST_TIMEOUT = 8     # seconds per candidate
 _MAX_WORKING_TO_ADD     = 5     # don't flood the pool
 
@@ -789,18 +798,37 @@ def _test_proxy(proxy_url: str, timeout: int = _CANDIDATE_TEST_TIMEOUT) -> tuple
 
 
 def _test_candidates(candidates: list) -> list:
-    """Test all candidates sequentially, return working ones (capped)."""
+    """Test candidates in parallel and return working ones (capped).
+
+    Free proxy lists are mostly stale. Sequential testing of 40 candidates at
+    8s each can take minutes; parallel testing gives the bot a better chance to
+    recover before customers retry payment verification.
+    """
+    import concurrent.futures as _fut
     working = []
-    for url in candidates:
-        ok, elapsed, reason = _test_proxy(url)
-        if ok:
-            working.append((url, elapsed))
-            logger.info(f"[ProxyScout] ✅ {url} works ({elapsed:.1f}s)")
-            if len(working) >= _MAX_WORKING_TO_ADD:
-                break
-        else:
-            logger.debug(f"[ProxyScout] ❌ {url} ({elapsed:.1f}s) {reason}")
-    return working
+    candidates = list(dict.fromkeys(candidates or []))[:_MAX_CANDIDATES_TO_TEST]
+    if not candidates:
+        return working
+    max_workers = min(12, max(1, len(candidates)))
+    with _fut.ThreadPoolExecutor(max_workers=max_workers) as ex:
+        fut_map = {ex.submit(_test_proxy, url): url for url in candidates}
+        for fut in _fut.as_completed(fut_map):
+            url = fut_map[fut]
+            try:
+                ok, elapsed, reason = fut.result()
+            except Exception as e:
+                ok, elapsed, reason = False, 0, type(e).__name__
+            if ok:
+                working.append((url, elapsed))
+                logger.info(f"[ProxyScout] ✅ {url} works ({elapsed:.1f}s)")
+                if len(working) >= _MAX_WORKING_TO_ADD:
+                    # Do not wait for every slow dead proxy once enough are found.
+                    break
+            else:
+                logger.debug(f"[ProxyScout] ❌ {url} ({elapsed:.1f}s) {reason}")
+    # Fastest working first
+    working.sort(key=lambda x: x[1])
+    return working[:_MAX_WORKING_TO_ADD]
 
 
 # ════════════════════════════════════════════
@@ -833,6 +861,7 @@ def run_scout_sync() -> dict:
     """One full cycle: fetch → AI parse → test → save → return summary.
        Runs in a thread (called via asyncio.to_thread)."""
     summary = {
+        "total_sources": len(_PROXY_SOURCES),
         "fetched_sources": 0,
         "candidates": 0,
         "working": 0,
@@ -897,10 +926,10 @@ async def proxy_monitor_job(context):
        - Otherwise, do nothing"""
     try:
         from payments import (
-            get_proxy_health_snapshot, _load_proxy_pool, is_configured,
+            get_proxy_health_snapshot, _load_proxy_pool, binance_api_is_configured,
         )
         # Only run if Binance API is actually configured (no keys = no point)
-        if not is_configured():
+        if not binance_api_is_configured():
             return
 
         snap = get_proxy_health_snapshot()
@@ -951,8 +980,13 @@ async def proxy_monitor_job(context):
                     f"🔍 Candidates found (via {method}): {cands}\n"
                     f"✅ Working proxies tested: *{working}*\n"
                     f"💾 Added to pool: *{added}*\n\n"
-                    f"_Bot should resume normal operation now._"
                 )
+                wlist = summary.get("working_list", []) or []
+                if wlist:
+                    msg += "*Working proxies:*\n" + "\n".join(
+                        f"• `{u}` ({sec}s)" for u, sec in wlist[:5]
+                    ) + "\n\n"
+                msg += f"_Bot should resume normal operation now._"
             else:
                 msg = (
                     f"🤖 *AI Proxy Scout — No Luck*\n"

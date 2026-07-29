@@ -187,6 +187,13 @@ def _migrate_orders_table(c):
             print(f"⚠️ Could not add binance_txid: {e}")
 
 
+def ensure_supplier_retry_columns(c):
+    """Add supplier delayed-refund/retry columns to orders (additive)."""
+    ensure_column(c, "orders", "supplier_failure_reason", "TEXT DEFAULT ''")
+    ensure_column(c, "orders", "supplier_refund_due_at", "REAL DEFAULT 0")
+    ensure_column(c, "orders", "supplier_retry_count", "INTEGER DEFAULT 0")
+
+
 def setup_database():
     conn = get_connection(); c = conn.cursor()
 
@@ -218,6 +225,9 @@ def setup_database():
         binance_amount REAL DEFAULT 0, binance_currency TEXT DEFAULT '',
         order_type TEXT DEFAULT 'product', payment_note_id TEXT DEFAULT '',
         order_qty INTEGER DEFAULT 1,
+        supplier_failure_reason TEXT DEFAULT '',
+        supplier_refund_due_at REAL DEFAULT 0,
+        supplier_retry_count INTEGER DEFAULT 0,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (product_id) REFERENCES products(id))""")
 
@@ -395,6 +405,7 @@ def migrate_all():
         ensure_product_accounts_table(c)
         ensure_column(c, "orders", "payment_note_id", "TEXT DEFAULT ''")
         ensure_column(c, "orders", "order_qty", "INTEGER DEFAULT 1")
+        ensure_supplier_retry_columns(c)
         conn.commit(); conn.close()
     except Exception as e:
         stats["errors"].append(f"final ensure_columns: {e}")
@@ -575,8 +586,22 @@ def get_all_payment_methods():
 
 # ── Users ──
 def save_user(user_id, username="", first_name=""):
+    """Create/update user profile basics.
+
+    Old code used INSERT OR IGNORE only, so usernames stayed empty forever if
+    the user first joined without one. Now we keep username/first_name fresh.
+    """
     conn = get_connection(); c = conn.cursor()
-    c.execute("INSERT OR IGNORE INTO users (user_id,username,first_name) VALUES (?,?,?)", (user_id,username,first_name))
+    c.execute("INSERT OR IGNORE INTO users (user_id,username,first_name) VALUES (?,?,?)",
+              (user_id, username or '', first_name or ''))
+    try:
+        c.execute("""UPDATE users
+                     SET username=CASE WHEN ?!='' THEN ? ELSE username END,
+                         first_name=CASE WHEN ?!='' THEN ? ELSE first_name END
+                     WHERE user_id=?""",
+                  (username or '', username or '', first_name or '', first_name or '', user_id))
+    except Exception:
+        pass
     conn.commit(); conn.close()
 
 def get_user(user_id):
@@ -728,8 +753,9 @@ def mark_pending_referral_done(referred_id, status='approved', reason=''):
 def add_points(uid, pts, tx_type='credit', description='', event_id='', order_id=0):
     """Add points with optional ledger/idempotency support.
 
-    Existing calls still work. If event_id is provided and already exists in
-    points_ledger, the credit is skipped to prevent double rewards.
+    v136: the idempotency check + balance update now happen inside a single
+    BEGIN IMMEDIATE transaction. This prevents duplicate credits when a retry
+    button/job and another handler hit the same event_id at the same time.
     """
     conn = get_connection(); c = conn.cursor()
     try:
@@ -737,34 +763,36 @@ def add_points(uid, pts, tx_type='credit', description='', event_id='', order_id
         pts = _points_float(pts)
     except Exception:
         conn.close(); return False
-    ensure_points_ledger_table(c)
-    if event_id:
-        try:
+    try:
+        ensure_points_ledger_table(c)
+        c.execute("BEGIN IMMEDIATE")
+        if event_id:
             c.execute("SELECT 1 FROM points_ledger WHERE event_id=? LIMIT 1", (str(event_id),))
             if c.fetchone():
-                conn.close(); return False
-        except Exception:
-            pass
-    c.execute("SELECT COALESCE(points,0) FROM users WHERE user_id=?", (uid,))
-    row = c.fetchone()
-    before = _points_float(row[0]) if row else 0.0
-    if row:
-        c.execute("UPDATE users SET points=COALESCE(points,0)+? WHERE user_id=?", (pts, uid))
-    else:
-        c.execute("""INSERT INTO users
-                     (user_id, username, first_name, wallet_balance, points)
-                     VALUES (?, '', '', 0.0, ?)""", (uid, pts))
-    after = before + pts
-    try:
+                conn.rollback(); conn.close(); return False
+        c.execute("SELECT COALESCE(points,0) FROM users WHERE user_id=?", (uid,))
+        row = c.fetchone()
+        before = _points_float(row[0]) if row else 0.0
+        after = before + pts
+        if row:
+            c.execute("UPDATE users SET points=? WHERE user_id=?", (after, uid))
+        else:
+            c.execute("""INSERT INTO users
+                         (user_id, username, first_name, wallet_balance, points)
+                         VALUES (?, '', '', 0.0, ?)""", (uid, after))
         c.execute("""INSERT OR IGNORE INTO points_ledger
                      (user_id, amount, balance_before, balance_after,
                       tx_type, description, event_id, order_id)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                   (uid, pts, before, after, str(tx_type or 'credit'),
                    str(description or ''), str(event_id or ''), int(order_id or 0)))
+        conn.commit(); conn.close(); return True
     except Exception:
-        pass
-    conn.commit(); conn.close(); return True
+        try: conn.rollback()
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
+        return False
 
 
 def set_referred_by(uid, ref_id):
@@ -1500,6 +1528,7 @@ def create_order(uid, uname, pid, pname, price, method="manual", bname="", bamt=
         c.execute("ALTER TABLE orders ADD COLUMN payment_note_id TEXT DEFAULT ''")
     if 'order_qty' not in cols:
         c.execute("ALTER TABLE orders ADD COLUMN order_qty INTEGER DEFAULT 1")
+    ensure_supplier_retry_columns(c)
     try:
         order_qty = int(qty) if qty is not None else _infer_order_qty_from_name(pname)
     except Exception:
@@ -3835,31 +3864,37 @@ def get_restock_requests():
 
 
 def deduct_points(user_id, amount, tx_type='debit', description='', event_id='', order_id=0):
+    """Deduct points with optional idempotency event_id, transaction-safe."""
     amount = _points_float(amount)
     conn = get_connection(); c = conn.cursor()
-    ensure_points_ledger_table(c)
     try:
         user_id = int(user_id)
     except Exception:
         conn.close(); return False
-    if event_id:
-        c.execute("SELECT 1 FROM points_ledger WHERE event_id=? LIMIT 1", (str(event_id),))
-        if c.fetchone():
-            conn.close(); return False
-    c.execute("SELECT COALESCE(points,0) FROM users WHERE user_id=?", (user_id,))
-    row = c.fetchone(); before = _points_float(row[0]) if row else 0.0
-    after = max(0.0, before - amount)
-    c.execute("UPDATE users SET points=? WHERE user_id=?", (after, user_id))
     try:
+        ensure_points_ledger_table(c)
+        c.execute("BEGIN IMMEDIATE")
+        if event_id:
+            c.execute("SELECT 1 FROM points_ledger WHERE event_id=? LIMIT 1", (str(event_id),))
+            if c.fetchone():
+                conn.rollback(); conn.close(); return False
+        c.execute("SELECT COALESCE(points,0) FROM users WHERE user_id=?", (user_id,))
+        row = c.fetchone(); before = _points_float(row[0]) if row else 0.0
+        after = max(0.0, before - amount)
+        c.execute("UPDATE users SET points=? WHERE user_id=?", (after, user_id))
         c.execute("""INSERT OR IGNORE INTO points_ledger
                      (user_id, amount, balance_before, balance_after,
                       tx_type, description, event_id, order_id)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                   (user_id, -abs(amount), before, after, str(tx_type or 'debit'),
                    str(description or ''), str(event_id or ''), int(order_id or 0)))
+        conn.commit(); conn.close(); return True
     except Exception:
-        pass
-    conn.commit(); conn.close(); return True
+        try: conn.rollback()
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
+        return False
 
 
 def add_stock_alert(pid, uid):

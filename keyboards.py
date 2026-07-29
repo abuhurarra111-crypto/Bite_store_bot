@@ -774,28 +774,24 @@ def admin_products_keyboard(prods):
             ne_id, plain = extract_emoji_from_html(raw)
         else:
             ne_id, plain = "", raw
+        # Admin "Edit Items" list should show clean product names only.
+        # Status/format/stock are visible after tapping product details; keeping
+        # them here made rows unreadable (ACTIVE | FORMAT | EMAIL PASS...).
+        lbl = plain or raw
         try:
-            active = int((p.get('is_active', 1) if hasattr(p, 'get') else p['is_active']) or 0) == 1
+            # If this is a supplier product with a manually fixed plain emoji
+            # (no premium custom_emoji_id), prepend it to the clean name.
+            ext_id = int((p.get('ext_product_id', 0) if hasattr(p, 'get') else p['ext_product_id']) or 0)
+            if ext_id and not ne_id:
+                from ext_suppliers import get_ext_product as _get_ext_product
+                ep = _get_ext_product(ext_id) or {}
+                echar = str(ep.get('emoji_char') or '').strip()
+                if echar and not str(lbl).lstrip().startswith(echar):
+                    lbl = f"{echar} {lbl}"
         except Exception:
-            active = True
-        try:
-            hidden = int((p.get('is_hidden', 0) if hasattr(p, 'get') else p['is_hidden']) or 0) == 1
-        except Exception:
-            hidden = False
-        try:
-            dmode = (p.get('delivery_mode', 'auto') if hasattr(p, 'get') else p['delivery_mode'])
-        except Exception:
-            dmode = 'auto'
-        try:
-            from templates_bundle import format_short_badge as _fmt_badge
-            fmt_badge = _fmt_badge(p.get('product_format', 'email_pass') if hasattr(p, 'get') else p['product_format'])
-        except Exception:
-            fmt_badge = '📧 Email+Pass'
-        status_tag = '🚫 DEACTIVATED' if not active else ('🙈 HIDDEN' if hidden else '✅ ACTIVE')
-        mode_tag = '✋ Manual' if str(dmode or 'auto').lower() == 'manual' else '🤖 Auto'
-        lbl = f"{status_tag} {mode_tag} | {fmt_badge} | {plain} [Stock: {p['stock']}]"
-        if len(lbl) > 120:
-            lbl = lbl[:117] + '...'
+            pass
+        if len(lbl) > 96:
+            lbl = lbl[:93] + '...'
         if is_styled(f"prod_{p['id']}"):
             lbl = _apply_styler(f"prod_{p['id']}", lbl)
         else:

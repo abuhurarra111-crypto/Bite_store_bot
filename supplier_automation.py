@@ -138,7 +138,44 @@ async def autosync_price_stock_job(context):
                         continue
                     remote_id = str(ep.get("remote_id"))
                     if remote_id not in fresh_by_remote:
+                        # Supplier API no longer returns this product. Akunding
+                        # hides out-of-stock/unavailable products unless asked,
+                        # and other suppliers may remove products entirely. Do
+                        # NOT keep stale shop stock active; set remote stock to
+                        # 0 so customers cannot buy a product that will 404.
+                        try:
+                            old_stock_missing = int(ep.get("stock") or 0)
+                        except Exception:
+                            old_stock_missing = 0
+                        if old_stock_missing > 0:
+                            update_ext_product(int(ep["id"]), stock=0)
+                            total_updated += 1
+                            total_stock_changes += 1
+                            try:
+                                alert_key = f"supplier_missing_alert_{int(ep['id'])}"
+                                if (get_setting(alert_key, "") or "") != remote_id:
+                                    set_setting(alert_key, remote_id)
+                                    await context.bot.send_message(
+                                        ADMIN_ID,
+                                        f"⚠️ *Supplier product unavailable*\n"
+                                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                                        f"🏬 Supplier: {escape_md(sup.get('name','?'))}\n"
+                                        f"📦 Product: {escape_md(str(ep.get('name') or '?')[:80])}\n"
+                                        f"🔢 Remote ID: `{escape_md(remote_id)}`\n"
+                                        f"📉 Stock set: `{old_stock_missing}` → `0`\n\n"
+                                        f"This prevents stale orders / HTTP 404 failures.",
+                                        parse_mode="Markdown"
+                                    )
+                            except Exception as _al:
+                                logger.debug(f"[AutoSync] missing-product alert failed ext#{ep.get('id')}: {_al}")
                         continue
+
+                    # Product is present again; clear one-shot missing alert.
+                    try:
+                        set_setting(f"supplier_missing_alert_{int(ep['id'])}", "")
+                    except Exception:
+                        pass
+
                     fresh_p = fresh_by_remote[remote_id]
 
                     new_cost = float(fresh_p.get("cost_usd") or 0)
@@ -208,21 +245,118 @@ async def autosync_price_stock_job(context):
                 f"stock changes: {total_stock_changes} | "
                 f"elapsed: {elapsed:.1f}s"
             )
+            # Admin summary notification with cooldown to avoid 30s spam.
+            try:
+                now = time.time()
+                last = float(get_setting("autosync_stock_notify_last", "0") or 0)
+                if (now - last) >= 600:  # at most once every 10 minutes
+                    set_setting("autosync_stock_notify_last", str(now))
+                    await context.bot.send_message(
+                        ADMIN_ID,
+                        f"🔄 *Auto Stock/Price Sync*\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📦 Products refreshed: *{total_updated}*\n"
+                        f"💰 Price changes: *{total_price_changes}*\n"
+                        f"📊 Stock changes: *{total_stock_changes}*\n"
+                        f"⏱ Took: `{elapsed:.1f}s`",
+                        parse_mode="Markdown")
+            except Exception as _notify_err:
+                logger.debug(f"[AutoSync] admin summary notify failed: {_notify_err}")
     finally:
         _AUTOSYNC_PS_RUNNING = False
 
 
 async def autosync_balance_job(context):
-    """v117: automatic balance polling disabled by owner request.
+    """Auto-refresh supplier balances and notify admin on changes/low balance."""
+    global _AUTOSYNC_BAL_RUNNING
+    if _AUTOSYNC_BAL_RUNNING:
+        logger.warning("[AutoBalance] previous balance tick still running — skipping")
+        return
+    if not is_autosync_enabled():
+        return
+    _AUTOSYNC_BAL_RUNNING = True
+    try:
+        try:
+            from ext_suppliers import list_suppliers, get_adapter_for_supplier, update_supplier
+            from async_adapter_helpers import async_fetch_balance
+        except Exception as e:
+            logger.debug(f"[AutoBalance] import fail: {e}")
+            return
 
-    Balance is refreshed only when:
-      1) admin taps Supplier → Test & Refresh, or
-      2) a successful customer order spends that supplier's wallet.
+        for sup in list_suppliers(include_disabled=False):
+            sid = int(sup.get("id") or 0)
+            if not sid:
+                continue
+            ad = get_adapter_for_supplier(sup)
+            if not ad:
+                continue
+            try:
+                bal = await async_fetch_balance(ad)
+            except Exception as e:
+                logger.debug(f"[AutoBalance] supplier#{sid} fetch error: {e}")
+                bal = None
+            if bal is None:
+                try:
+                    fkey = f"supplier_balance_fail_count_{sid}"
+                    fail_count = int(get_setting(fkey, "0") or 0) + 1
+                    set_setting(fkey, str(fail_count))
+                    last_key = f"supplier_balance_fail_alert_last_{sid}"
+                    last = float(get_setting(last_key, "0") or 0)
+                    now = time.time()
+                    if fail_count >= 3 and (now - last) >= 1800:
+                        set_setting(last_key, str(now))
+                        await context.bot.send_message(
+                            ADMIN_ID,
+                            f"⚠️ *Supplier Balance Check Failed*\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"🏬 Supplier: *{escape_md(sup.get('name','?'))}*\n"
+                            f"❌ Failed checks: `{fail_count}`\n\n"
+                            f"Bot will keep retrying automatically.",
+                            parse_mode="Markdown",
+                            reply_markup=InlineKeyboardMarkup([[
+                                InlineKeyboardButton("🔧 Open Supplier", callback_data=f"ext_sup_view_{sid}")
+                            ]]))
+                except Exception:
+                    pass
+                continue
 
-    This prevents temporary API failures/rate limits from causing confusing
-    balance changes and avoids unnecessary supplier API requests.
-    """
-    return
+            try:
+                set_setting(f"supplier_balance_fail_count_{sid}", "0")
+            except Exception:
+                pass
+            bal = float(bal)
+            old = float(sup.get("balance_usd") or 0)
+            changed = abs(bal - old) >= 0.01
+            update_supplier(sid, balance_usd=bal,
+                            balance_updated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+            threshold = float(sup.get("low_bal_threshold") or DEFAULT_LOW_BAL_THRESHOLD)
+            if threshold > 0 and bal < threshold:
+                await _maybe_send_low_balance_alert(context, {**sup, "balance_usd": bal}, bal, threshold)
+
+            if changed:
+                try:
+                    now = time.time()
+                    last_key = f"supplier_balance_change_alert_last_{sid}"
+                    last = float(get_setting(last_key, "0") or 0)
+                    if (now - last) >= 300:
+                        set_setting(last_key, str(now))
+                        direction = "📈 Increased" if bal > old else "📉 Decreased"
+                        await context.bot.send_message(
+                            ADMIN_ID,
+                            f"💰 *Supplier Balance Updated*\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"🏬 Supplier: *{escape_md(sup.get('name','?'))}*\n"
+                            f"{direction}\n"
+                            f"Balance: `{old:.2f}` → `{bal:.2f}` USD",
+                            parse_mode="Markdown",
+                            reply_markup=InlineKeyboardMarkup([[
+                                InlineKeyboardButton("🔧 Open Supplier", callback_data=f"ext_sup_view_{sid}")
+                            ]]))
+                except Exception as e:
+                    logger.debug(f"[AutoBalance] balance change notify fail: {e}")
+    finally:
+        _AUTOSYNC_BAL_RUNNING = False
 
 
 # ============================================================
@@ -847,10 +981,10 @@ async def admin_autosync_callback(update, context):
         f"Status: {'🟢 ON' if on else '🔴 OFF'}\n"
         f"Live products being synced: *{live}*\n\n"
         f"🔄 Price + Stock refresh: every *{AUTOSYNC_PRICE_STOCK_INTERVAL}s*\n"
-        f"💰 Balance refresh: *Manual Test & Refresh + after successful orders only*\n"
+        f"💰 Balance refresh: every *{AUTOSYNC_BALANCE_INTERVAL}s* + after orders\n"
         f"⚠️ Low-bal alerts: *checked only after balance refresh events*\n\n"
         "_Only products you've explicitly tapped 🔄 Sync-to-Shop are auto-synced. "
-        "Balance is not polled in background anymore, so supplier APIs stay lean._"
+        "Balance is checked periodically with cooldown notifications._"
     )
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(
