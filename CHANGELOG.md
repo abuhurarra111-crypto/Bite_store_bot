@@ -8,6 +8,104 @@
 
 ---
 
+# 🚀 v116 (2026-08-01) — Bybit Pay "Order ID" Deep-Match (the REAL fix for received-but-not-verified)
+
+**User follow-up (live):** Confirmed UID matches, payment IS received on the same account,
+yet `hash_not_found:1`. User's insight: "bot scans transaction hash, not the Order ID —
+Bybit Pay history shows the Order ID."
+
+## 🕵️ Root cause (confirmed)
+Bybit Pay shows a **25–32 digit Order ID** on the receipt (e.g. `2607310002208331967166220288`),
+while the internal-deposit API record's `txID` is a **different identifier (often a UUID)**.
+The two NEVER match by string, so an exact-ID lookup always fails — the bot was comparing
+the receipt Order ID against the API txID ("scanning transaction hash, not order id").
+
+The API record for the payment exists (1 record was returned), but the Order ID lives in a
+field we weren't checking — possibly `id`, or another unadvertised field in the raw row.
+
+## ✅ Fix — deep-search the entire API record
+- New `_norm_digits()` — strips everything except digits (handles spaces/dashes/copy glitches).
+- New `_deep_find_id(record, key_norm)` — recursively walks the WHOLE deposit record
+  (including `raw` nested dicts/lists) and matches the normalized pasted Order ID anywhere.
+  A pasted Bybit Pay Order ID is long and specific, so finding it in the record is a safe,
+  unambiguous match.
+- `_find_matching_bybit_payment()` (bybit_pay): a record matches if the txID/hash matches
+  OR the pasted Order ID is found anywhere inside it (amount must still match — wrong amount
+  → `amount_mismatch`, never a blind credit).
+- Admin failure alert's deposit dump now shows per record: `id`, `txid`, amount, network,
+  age, and **"🎯 PASTED-ID FOUND IN RECORD"** when the deep search hits — so if it still
+  fails you can SEE in the alert exactly what the API returned and whether your Order ID
+  is there.
+
+## Tests (v116)
+`_test_v116_bybitpay.py` — **6/6 PASS**: Order ID in unlisted field matches ✅ · nested in
+raw matches ✅ · spaces/dashes normalized ✅ · wrong ID (old deposit, no fallback) not
+matched ✅ · ID found but wrong amount → `amount_mismatch` ✅ · dump flags PASTED-ID ✅.
+
+Regression: v115(9)+v112(15)+v111(17) = **47/47 PASS** total.
+
+## 🔧 Files changed
+- `handlers_order.py` — `_norm_digits`, `_deep_find_id`, deep-match in
+  `_find_matching_bybit_payment`, dump shows id + PASTED-ID-FOUND flag.
+- `CHANGELOG.md` — this section.
+
+---
+
+# 🚀 v115 (2026-08-01) — Bybit "Payment Received But Not Verified" — UID Mismatch Diagnostics
+
+**User bug report (live, with screenshots):** API Test passed ✅, wife sent $1 via Bybit Pay to
+the store UID and pasted the Order ID, but verification failed with `hash_not_found:1`. The
+admin alert seemed to show a different ID than pasted. Payment IS received (visible in the
+Bybit app).
+
+## 🕵️ Investigation (screenshots OCR + simulated scenarios)
+
+- Bybit Pay receipt Order ID is a **32-digit reference** — the internal deposit API returns a
+  **UUID txID**, so the exact-ID match can never succeed for Bybit Pay Order IDs (that's what
+  the v113 amount+recency fallback is for).
+- Simulated the exact flow 3 ways against the real matching code:
+  1. Deposit **visible** to the API (fresh, unique, same amount, internal) → **matches** ✅
+  2. Deposit **NOT visible** (empty) → `no_records` ✅
+  3. Only an **old/unrelated** deposit visible → `hash_not_found:N` ✅
+- The live result was `hash_not_found:1` with **no fresh same-amount internal deposit found**
+  ⇒ the customer's Bybit Pay transfer is **not visible to the configured API key's account**.
+  The code CAN match it when the API returns it — so the failure is on the account side:
+  **the API key belongs to a different Bybit UID than the Pay ID customers pay to** (or the
+  customer paid a different UID than the key's account).
+
+## ✅ Fix — surface the mismatch instantly
+
+### payments.py
+- New `get_bybit_api_key_info()` — calls `GET /v5/user/query-api` and returns the **UID**
+  (userID) the API key belongs to, plus the key note.
+
+### handlers_admin.py — Bybit Test & Refresh now shows
+- 🔑 **API key UID** (from the key itself)
+- 🎯 **Customers pay to (bybit_pay_id)**
+- 🚨 **UID MISMATCH warning** when they differ — with exact fix instructions
+  (use a key from the SAME account as the Pay ID).
+
+### handlers_order.py — failure alert now shows
+- 🧾 Order **created_at** (so the admin can tell whether the alert is about the new payment
+  or an old stuck order — explains "ye ID to maine dali hi nahi" when the background job
+  alerts about old bybit_waiting orders).
+- 🔑 API key UID vs 🎯 Pay ID comparison (same mismatch warning).
+- 📡 **Deposit dump** — lists what the API actually returned (txid, amount, network, age),
+  so it's instantly clear whether the customer's deposit is visible to the key.
+- Manual **"✅ Mark Received & Credit"** button stays as the immediate workaround.
+
+## Tests
+3-scenario simulation verified (visible→match / invisible→no_records / old-only→hash_not_found).
+Full regression: v114 9 + v112 15 + v111 17 = **41/41 PASS** (isolated runs).
+
+## 🔧 Files changed
+- `payments.py` — `get_bybit_api_key_info()`.
+- `handlers_admin.py` — Test & Refresh shows UID + Pay ID + mismatch warning.
+- `handlers_order.py` — alert shows created_at, UID comparison, deposit dump.
+- `CHANGELOG.md` — this section.
+
+---
+
 # 🚀 v114.1 (2026-07-31) — Live-Verified Bybit Proxies Baked Into Default Pool
 
 **User request:** "Mujhe khud find karke do ek proxy bybit ke liye jo bybit block na kare."

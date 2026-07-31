@@ -2758,6 +2758,37 @@ def _bybit_recent_amount_fallback(rows, expected, window_min=30):
     return hits[0] if len(hits) == 1 else None
 
 
+def _norm_digits(value):
+    """Keep only digits — Bybit Pay Order IDs are long digit strings that may
+    be copied with spaces/dashes or split across receipt lines."""
+    return re.sub(r"\D", "", str(value or ""))
+
+
+def _deep_find_id(record, key_norm):
+    """Recursively search every string value inside the deposit record (incl.
+    raw nested dicts/lists) for the normalized pasted Order ID.
+
+    🔧 v116 (2026-08-01): Bybit Pay shows a 25-32 digit *Order ID* on the
+    receipt, while the internal-deposit API returns a *txID* (often a UUID) in
+    `txID`. The Order ID may live in another field of the raw record that the
+    docs don't advertise (e.g. id/reference/orderId/transferId). A pasted ID is
+    long and specific, so finding it anywhere in the record is a safe match.
+    """
+    if not key_norm:
+        return False
+    stack = [record]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            stack.extend(item.values())
+        elif isinstance(item, (list, tuple, set)):
+            stack.extend(item)
+        elif isinstance(item, str):
+            if key_norm in _norm_digits(item):
+                return True
+    return False
+
+
 def _find_matching_bybit_payment(order, lookback_hours=96):
     """Find a Bybit deposit matching the order.
 
@@ -2825,13 +2856,16 @@ def _find_matching_bybit_payment(order, lookback_hours=96):
             return None, f"api_error:{str(err)[:140]}"
 
         seen = set()
+        note_norm = _norm_digits(note)
         for d in rows:
             txid=d.get('txid') or ''
             sig = (txid, d.get('amount'), d.get('network'))
             if sig in seen: continue
             seen.add(sig)
             if not txid or is_txid_used(txid): continue
-            hash_ok = _bybit_hash_matches(d, note)
+            # 🔧 v116: match by hash OR by deep-searching the whole raw record
+            # for the pasted Bybit Pay Order ID (digits-normalized).
+            hash_ok = _bybit_hash_matches(d, note) or (note_norm and _deep_find_id(d, note_norm))
             if hash_ok and not _usdt_amount_match(d.get('amount'), expected):
                 return None, 'amount_mismatch'
             if hash_ok and _usdt_amount_match(d.get('amount'), expected):
@@ -2893,6 +2927,39 @@ def _bybit_failure_hint(reason):
     return "Payment could not be auto-verified. Confirm the deposit in your Bybit app before crediting."
 
 
+def _bybit_deposit_dump(rows, limit=6, pasted_id="") -> str:
+    """Short human-readable dump of what the Bybit API actually returned, so
+    the admin can see whether the customer's deposit is visible to the API key
+    and why it didn't match. 🔧 v115. v116 adds `id` + whether the pasted Order
+    ID was found anywhere inside the record (deep search)."""
+    if not rows:
+        return "API returned 0 deposit records."
+    lines = []
+    now_ms = int(_time.time() * 1000)
+    note_norm = _norm_digits(pasted_id)
+    for i, d in enumerate(rows[:limit], 1):
+        txid = str(d.get('txid') or '')[:26] or '?'
+        rid = str(d.get('id') or '')[:20] or '?'
+        amt = d.get('amount')
+        net = d.get('network') or '?'
+        try:
+            t = int(d.get('time_ms') or 0)
+            age_min = round((now_ms - t) / 60000, 1) if t else None
+            age = f"{age_min}min old" if age_min is not None else "time?"
+        except Exception:
+            age = "time?"
+        found = ""
+        if note_norm:
+            try:
+                found = "  🎯 PASTED-ID FOUND IN RECORD" if _deep_find_id(d, note_norm) else ""
+            except Exception:
+                found = ""
+        lines.append(f"  {i}. id={rid}  txid={txid}…  {amt} USDT  net={net}  {age}{found}")
+    if len(rows) > limit:
+        lines.append(f"  …and {len(rows) - limit} more")
+    return "\n".join(lines)
+
+
 async def _notify_admin_bybit_failure(bot, order, reason):
     """Send the admin an ACTIONABLE alert when Bybit auto-verification fails.
 
@@ -2906,15 +2973,57 @@ async def _notify_admin_bybit_failure(bot, order, reason):
         oid = int(order.get('id') or 0)
         note_dbg = str(order.get('payment_note_id') or '').strip()
         exp = float(order.get('binance_amount') or order.get('price') or 0)
+        # 🔧 v115 diagnostics: API key UID vs Pay ID + what deposits the API saw
+        diag_lines = []
+        try:
+            from payments import get_bybit_api_key_info
+            kinfo = get_bybit_api_key_info()
+            try:
+                from database import get_setting as _gs
+                pay_uid = str(_gs('bybit_pay_id', os.getenv('BYBIT_PAY_ID', '')) or '')
+            except Exception:
+                pay_uid = str(os.getenv('BYBIT_PAY_ID', '') or '')
+            if kinfo.get('ok'):
+                key_uid = str(kinfo.get('uid') or '')
+                diag_lines.append(f"🔑 *API key UID:* `{key_uid or '?'}`")
+                if pay_uid and key_uid and pay_uid.strip() != key_uid.strip():
+                    diag_lines.append("🚨 *UID MISMATCH!* API key UID ≠ Pay ID customers pay to. The bot can NEVER see these deposits. Use a key from the SAME account as the Pay ID.")
+            else:
+                diag_lines.append(f"🔑 API key UID: unreadable ({escape_md(str(kinfo.get('error'))[:80])})")
+            diag_lines.append(f"🎯 *Customers pay to:* `{escape_md(pay_uid or 'not set')}`")
+        except Exception as _du:
+            diag_lines.append(f"(uid diag failed: {_du})")
+        try:
+            dep_rows = []
+            try:
+                from payments import get_bybit_internal_deposits, get_bybit_deposit_records
+                dep_rows.extend(get_bybit_internal_deposits('USDT', lookback_hours=96))
+                dep_rows.extend(get_bybit_deposit_records('USDT', lookback_hours=96))
+            except Exception:
+                pass
+            seen = set()
+            uniq = []
+            for d in dep_rows:
+                sig = (d.get('txid'), d.get('amount'), d.get('network'))
+                if sig in seen:
+                    continue
+                seen.add(sig)
+                uniq.append(d)
+            diag_lines.append("📡 *API deposits found:*")
+            diag_lines.append(_bybit_deposit_dump(uniq, pasted_id=note_dbg))
+        except Exception as _dd:
+            diag_lines.append(f"(deposit dump failed: {_dd})")
+        diag_text = "\n".join(diag_lines)
         txt = (
             "⚠️ *Bybit Payment — needs your check*\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            f"🧾 Order: `#{oid}`\n"
+            f"🧾 Order: `#{oid}` (created {escape_md(str(order.get('created_at') or '?'))})\n"
             f"👤 Customer: `{order.get('user_id') or '?'}`\n"
             f"💵 Amount: *{fmt_price(exp)} USDT*\n"
             f"🔗 ID pasted: `{escape_md(note_dbg[:60]) or '—'}`\n"
             f"📋 Reason: `{escape_md(str(reason)[:120])}`\n"
             f"💡 {_bybit_failure_hint(reason)}\n\n"
+            f"{diag_text}\n\n"
             f"_Check your Bybit app (Funding → History → Bybit Pay / Deposit). "
             f"If the payment is there, tap below — points/order will be credited "
             f"and this hash marked used so it can't be reused._"

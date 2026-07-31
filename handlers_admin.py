@@ -8312,9 +8312,29 @@ async def bybit_test_callback(u, c):
             return
         ok, msg = await asyncio.to_thread(bybit_test_connection)
         status = "✅ *PASS*" if ok else "❌ *FAIL*"
+        # 🔧 v115: also show WHICH Bybit UID owns the API key + the Pay ID the
+        # bot shows customers — a mismatch here is the #1 silent cause of
+        # "payment received but not verified".
+        uid_line = ""
+        try:
+            from payments import get_bybit_api_key_info
+            kinfo = await asyncio.to_thread(get_bybit_api_key_info)
+            if kinfo.get("ok"):
+                uid_line = f"\n\n🔑 *API key UID:* `{escape_md(kinfo.get('uid') or '?')}`"
+            else:
+                uid_line = f"\n\n🔑 *API key UID:* could not read ({escape_md(str(kinfo.get('error'))[:80])})"
+        except Exception:
+            pass
+        try:
+            pay_uid = get_setting('bybit_pay_id', os.getenv('BYBIT_PAY_ID', ''))
+        except Exception:
+            pay_uid = os.getenv('BYBIT_PAY_ID', '')
+        pay_line = f"\n🎯 *Customers pay to (bybit_pay_id):* `{escape_md(str(pay_uid))}`"
+        if uid_line and pay_uid and str(kinfo.get('uid') or '') and str(pay_uid).strip() != str(kinfo.get('uid') or '').strip():
+            pay_line += "\n\n⚠️ *UID MISMATCH!* The API key belongs to a different Bybit account than the Pay ID customers pay to. The bot can never see those deposits. Fix: use a key from the SAME account as the Pay ID."
         await q.edit_message_text(
             f"{status} — Bybit API Test\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n{escape_md(msg)}",
+            f"━━━━━━━━━━━━━━━━━━━━\n\n{escape_md(msg)}{uid_line}{pay_line}",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Crypto Settings", callback_data="pm_crypto")]]))
     except Exception as e:

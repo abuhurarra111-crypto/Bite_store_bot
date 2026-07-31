@@ -961,6 +961,31 @@ def bybit_test_connection():
     return False, "❌ Bybit API partially failed:\n" + joined
 
 
+def get_bybit_api_key_info() -> dict:
+    """Get the Bybit account (UID) that owns the configured API key.
+
+    🔧 v115 (2026-08-01): the #1 cause of "payment received but bot can't see it"
+    is that the API key belongs to a DIFFERENT Bybit UID than the Pay ID/UID
+    customers pay to. This surfaces the key's UID so the admin can compare it
+    with bybit_pay_id in one glance.
+    GET /v5/user/query-api (Get API Key Information)
+    """
+    out = {"ok": False, "uid": "", "note": "", "error": ""}
+    if not bybit_api_is_configured():
+        out["error"] = "BYBIT_API_KEY / BYBIT_API_SECRET not set"
+        return out
+    code, data = _bybit_get("/v5/user/query-api", {}, timeout=15)
+    if code == 200 and isinstance(data, dict) and int(data.get("retCode", -1)) == 0:
+        res = data.get("result") or {}
+        out["ok"] = True
+        out["uid"] = str(res.get("userID") or res.get("userIDInt64") or "")
+        out["note"] = str(res.get("note") or "")
+    else:
+        err = data.get("retMsg") if isinstance(data, dict) else str(data)[:120]
+        out["error"] = f"HTTP {code} {err}"
+    return out
+
+
 def get_bybit_deposit_records(coin: str = "USDT", lookback_hours: int = 96, limit: int = 50, txid: str = ""):
     end_ms = int(time.time() * 1000)
     start_ms = int((time.time() - lookback_hours * 3600) * 1000)
