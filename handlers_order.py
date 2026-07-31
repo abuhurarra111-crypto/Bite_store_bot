@@ -17,7 +17,7 @@ def _get_min_qty(p):
 # ============================================
 # 🛒 ORDERS (v25 — Auto-Verify for Binance + EasyPaisa)
 # ============================================
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton
 from config import *
 from database import *
 from keyboards import *
@@ -482,30 +482,28 @@ async def _start_binance_note_order(update, context, *, is_points=False, product
 # 🆕 v62 — BINANCE ORDER-ID FLOW (clean professional, no API mention)
 # ════════════════════════════════════════════════════════════════
 def _binance_orderid_instructions(*, title, amount, order_id_for_display=None):
-    """Build user-facing Binance instructions. NO mention of 'API' or 'Gmail'."""
+    """Recommended Clean Pro Binance Pay screen."""
     bid = get_setting("binance_id", BINANCE_PAY_ID)
     holder = get_setting("binance_name", get_setting("account_name", ACCOUNT_NAME))
     parts = [
-        "🟡 *Binance Pay Checkout*",
+        "🔶 *Binance Pay — Checkout*",
         "━━━━━━━━━━━━━━━━━━━━",
-        "",
         title,
-        f"💵 Amount: *{fmt_price(amount)}*",
+        f"💰 Amount: *{amount:.4f} USDT*",
+        f"📋 Binance Pay ID: `{escape_md(bid)}`",
+        f"👤 Holder: *{escape_md(holder)}*",
         "",
-        "📋 *Step 1 — Send the payment*",
-        f"  • Pay ID:  `{bid}`",
-        f"  • Name:    *{escape_md(holder)}*",
-        f"  • Amount:  *{fmt_price(amount)}*",
+        "*How to pay:*",
+        "1. Open Binance app.",
+        "2. Go to Binance Pay.",
+        "3. Send the exact amount shown above.",
+        "4. After payment, copy the *Order ID* from Binance receipt.",
+        "5. Paste the Order ID here in chat.",
         "",
-        "📨 *Step 2 — Send your Order ID*",
-        "After completing the payment, open the transaction "
-        "in your Binance app, copy the *Order ID*, and "
-        "paste it below.",
-        "",
-        "_Your order will be confirmed automatically within a few seconds._",
+        "⚠️ Send exact amount only. Wrong amount may not verify automatically.",
     ]
     if order_id_for_display:
-        parts += ["", f"_Your last submitted Order ID:_ `{order_id_for_display}`"]
+        parts += ["", f"_Your last submitted Order ID:_ `{escape_md(order_id_for_display)}`"]
     return "\n".join(parts)
 
 
@@ -551,7 +549,9 @@ async def _start_binance_order_id_flow(update, context, *, is_points, product, q
     context.user_data["binance_step"]     = "waiting_order_id"
     context.user_data["binance_amount"]   = amount
 
+    bid_for_copy = get_setting("binance_id", BINANCE_PAY_ID)
     kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 Copy Binance Pay ID", copy_text=CopyTextButton(bid_for_copy))],
         [InlineKeyboardButton("❌ Cancel Payment", callback_data="cancel_order")],
     ])
     await _safe_send(
@@ -2180,7 +2180,7 @@ async def ep_verify_callback(update, context):
                         msg += f"\n\n📝 *Instructions:*\n{p['delivery_text']}"
                     admin_msg = f"🔔 *New Order! (Readymade)*\nOrder #{oid}\nProduct: {p['name']}\n\nPlease deliver the account."
                     from config import ADMIN_ID
-                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton
                     try: await context.bot.send_message(ADMIN_ID, admin_msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Upload Account", callback_data=f"adm_upacct_{oid}")]]))
                     except: pass
                 else:
@@ -2511,20 +2511,22 @@ async def _start_usdt_payment(update, context, method, *, is_points=False, amoun
     context.user_data['usdt_step'] = 'waiting_txid'
     address = cfg['address']
     await _safe_send(q, context,
-        f"🪙 *Order #{oid} — {cfg['label']} Payment*\n"
+        f"🪙 *Binance {cfg['label']} — Order #{oid}*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💰 Send exactly: *{total_usd:.4f} USDT*\n"
-        f"🌐 Network: *{cfg['network_label']}*\n"
-        f"📥 Deposit address:\n`{address}`\n\n"
-        f"*Important instructions:*\n"
-        f"1. Send *only USDT* on *{cfg['network_label']}*.\n"
-        f"2. Send the *exact amount* shown above.\n"
-        f"3. Do NOT use another network, exchange, coin, or address. Wrong network payments may not verify.\n"
-        f"4. After sending, copy the TXID / transaction hash and paste it here.\n\n"
-        f"Bot will verify it from Binance deposit history.",
+        f"💰 Amount: *{total_usd:.4f} USDT*\n"
+        f"🌐 Network: *{cfg['network_label']}*\n\n"
+        f"📥 *Send to address*\n`{address}`\n\n"
+        f"*Important:*\n"
+        f"✅ Coin must be USDT\n"
+        f"✅ Network must be {cfg['network_label']}\n"
+        f"✅ Send exact amount\n"
+        f"❌ Do not use another network or coin\n\n"
+        f"After payment, paste the *TXID / transaction hash* here.",
         parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton('📋 Copy Address', copy_text=CopyTextButton(address))],
             [InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')],
         ]))
+
 
 
 async def points_usdt_callback(update, context):
@@ -2714,11 +2716,35 @@ async def _start_bybit_payment(update, context, method, *, is_points=False, amou
     if method=='bybit_pay':
         pay_id=get_setting('bybit_pay_id', os.getenv('BYBIT_PAY_ID','')).strip()
         if not pay_id:
-            await _safe_send(q, context, '❌ Bybit Pay ID is not configured. Admin must set BYBIT_PAY_ID in Render env.', reply_markup=back_btn()); return
-        instr=(f"🟡 *Order #{oid} — Bybit Pay*\n━━━━━━━━━━━━━━━━━━━━\n💰 Send exactly: *{total_usd:.4f} USDT*\n📥 Bybit Pay ID / UID: `{escape_md(pay_id)}`\n\n*Instructions:*\n1. Open Bybit → Pay/Transfer inside Bybit.\n2. Send *USDT* exactly as shown.\n3. After payment, paste the Bybit Pay Order ID / internal TXID below.\n4. Bot will verify from Bybit internal deposit records.")
+            await _safe_send(q, context, '❌ Bybit Pay ID is not configured. Admin must set BYBIT_PAY_ID in Render env or Payment Settings.', reply_markup=back_btn()); return
+        instr=(f"🟡 *Bybit Pay — Order #{oid}*\n"
+               f"━━━━━━━━━━━━━━━━━━━━\n"
+               f"💰 Amount: *{total_usd:.4f} USDT*\n"
+               f"📥 Bybit Pay ID / UID: `{escape_md(pay_id)}`\n\n"
+               f"*How to pay:*\n"
+               f"1. Open Bybit app.\n"
+               f"2. Use Pay / Internal Transfer.\n"
+               f"3. Send exact USDT amount shown above.\n"
+               f"4. Copy Bybit Pay Order ID / internal TXID.\n"
+               f"5. Paste it here in chat.\n\n"
+               f"Bot will verify from Bybit internal deposit records.")
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton('📋 Copy Bybit Pay ID', copy_text=CopyTextButton(pay_id))],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]])
     else:
-        cfg=_usdt_cfg(method); instr=(f"🟡 *Order #{oid} — {cfg['label']}*\n━━━━━━━━━━━━━━━━━━━━\n💰 Send exactly: *{total_usd:.4f} USDT*\n🌐 Network: *{cfg['network_label']}*\n📥 Address:\n`{cfg['address']}`\n\n*Instructions:*\n1. Send only USDT on this exact network.\n2. Wrong network/address will not verify.\n3. After sending, paste TXID below.\n4. Bot will verify from Bybit deposit records.")
-    await _safe_send(q, context, instr, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]]))
+        cfg=_usdt_cfg(method)
+        instr=(f"🟡 *{cfg['label']} — Order #{oid}*\n"
+               f"━━━━━━━━━━━━━━━━━━━━\n"
+               f"💰 Amount: *{total_usd:.4f} USDT*\n"
+               f"🌐 Network: *{cfg['network_label']}*\n\n"
+               f"📥 *Send to address*\n`{cfg['address']}`\n\n"
+               f"*Important:*\n"
+               f"✅ Coin must be USDT\n"
+               f"✅ Network must be {cfg['network_label']}\n"
+               f"✅ Send exact amount\n"
+               f"❌ Wrong network/address will not verify\n\n"
+               f"After payment, paste the *TXID / transaction hash* here.")
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton('📋 Copy Address', copy_text=CopyTextButton(cfg['address']))],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]])
+    await _safe_send(q, context, instr, parse_mode='Markdown', reply_markup=kb)
+
 
 async def points_bybit_callback(update, context):
     q=update.callback_query; raw=q.data.replace('ptspay_',''); method,amt_s=raw.rsplit('_',1)
@@ -3435,7 +3461,7 @@ async def jc_verify_callback(update, context):
                         msg += f"\n\n📝 *Instructions:*\n{p['delivery_text']}"
                     admin_msg = f"🔔 *New Order! (Readymade)*\nOrder #{oid}\nProduct: {p['name']}\n\nPlease deliver the account."
                     from config import ADMIN_ID
-                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton
                     try: await context.bot.send_message(ADMIN_ID, admin_msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Upload Account", callback_data=f"adm_upacct_{oid}")]]))
                     except: pass
                 else:
