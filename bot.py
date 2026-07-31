@@ -416,6 +416,8 @@ async def handle_text(update, context):
         if await jc_tid_received(update, context): return
     if context.user_data.get('points_step') == 'waiting_custom_amount':
         if await points_custom_amount_received(update, context): return
+    if context.user_data.get('usdt_step') == 'waiting_txid':
+        if await usdt_txid_received(update, context): return
     if context.user_data.get('bybit_step') == 'waiting_txid':
         if await bybit_txid_received(update, context): return
     if context.user_data.get('ownmail_step') == 'email':
@@ -1536,6 +1538,13 @@ def main():
         ("^admin_integrity_bad$",       admin_integrity_bad_callback),
         # 🆕 v59: Stock-based shop filter (All / Available / Unavailable)
         ("^shopfilter_", shop_filter_callback),
+        # Specific payment submenus MUST come before generic ^pay_binance_/^pay_bybit_
+        ("^pay_binance_menu_", payment_binance_menu_callback),
+        ("^pay_bybit_menu_", payment_bybit_menu_callback),
+        ("^pay_usdt_", payment_usdt_callback),
+        ("^pay_bybit_", payment_bybit_callback),
+        ("^usdtv_", usdt_verify_callback),
+        ("^bybitv_", bybit_verify_callback),
         ("^buy_", buy_callback), ("^pay_binance_", payment_binance_callback),
         ("^pay_easy_", payment_easypaisa_callback), ("^pay_jazz_", payment_jazzcash_callback),
         # 🆕 Buy Multiple (bulk)
@@ -1636,6 +1645,10 @@ def main():
         ("^myord_resend_", my_order_resend_callback),
         ("^myord_", my_order_detail_callback),
         ("^pts_custom$", points_custom_callback),
+        ("^ptspay_binance_menu_", points_binance_menu_callback),
+        ("^ptspay_bybit_menu_", points_bybit_menu_callback),
+        ("^ptspay_usdt_", points_usdt_callback),
+        ("^ptspay_bybit_", points_bybit_callback),
         ("^ptspay_binance_", points_binance_callback),
         ("^ptspay_easy_", points_easypaisa_callback),
         ("^ptspay_jazz_", points_jazzcash_callback),

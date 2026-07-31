@@ -2369,6 +2369,7 @@ def _find_matching_usdt_deposit(order, lookback_hours=96):
     if not cfg:
         return None, 'unknown_method'
     expected = float(order.get('binance_amount') or order.get('price') or 0)
+    note = str(order.get('payment_note_id') or '').strip()
     if expected <= 0:
         return None, 'bad_amount'
     try:
@@ -2385,6 +2386,8 @@ def _find_matching_usdt_deposit(order, lookback_hours=96):
     for d in deps:
         txid = d.get('txid') or ''
         if not txid or is_txid_used(txid):
+            continue
+        if note and note.lower() not in txid.lower():
             continue
         if not _usdt_network_ok(d.get('network'), cfg):
             continue
@@ -2442,6 +2445,21 @@ async def _verify_usdt_order_and_respond(target, context, oid):
         ]))
 
 
+async def usdt_txid_received(update, context):
+    if context.user_data.get('usdt_step') != 'waiting_txid':
+        return False
+    oid = context.user_data.get('pending_order_id')
+    note = (update.message.text or '').strip()
+    if not oid:
+        await update.message.reply_text('❌ No pending order.')
+        return True
+    from database import set_order_payment_note
+    set_order_payment_note(int(oid), note)
+    context.user_data.pop('usdt_step', None)
+    await _verify_usdt_order_and_respond(update, context, int(oid))
+    return True
+
+
 async def usdt_verify_callback(update, context):
     q = update.callback_query; await q.answer('Checking USDT deposit...')
     try:
@@ -2490,6 +2508,7 @@ async def _start_usdt_payment(update, context, method, *, is_points=False, amoun
         oid = create_order(u.id, u.first_name or str(u.id), p['id'], pname, total_usd, method, '', total_usd, 'USDT', 'product', creds, qty=qty)
     update_order_status(oid, 'usdt_waiting')
     context.user_data['pending_order_id'] = oid
+    context.user_data['usdt_step'] = 'waiting_txid'
     address = cfg['address']
     await _safe_send(q, context,
         f"🪙 *Order #{oid} — {cfg['label']} Payment*\n"
@@ -2501,10 +2520,9 @@ async def _start_usdt_payment(update, context, method, *, is_points=False, amoun
         f"1. Send *only USDT* on *{cfg['network_label']}*.\n"
         f"2. Send the *exact amount* shown above.\n"
         f"3. Do NOT use another network, exchange, coin, or address. Wrong network payments may not verify.\n"
-        f"4. After sending, wait for blockchain confirmation and tap Verify Payment.\n\n"
-        f"Bot will auto-check Binance deposit history.",
+        f"4. After sending, copy the TXID / transaction hash and paste it here.\n\n"
+        f"Bot will verify it from Binance deposit history.",
         parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton('🔄 Verify Payment', callback_data=f'usdtv_{oid}')],
             [InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')],
         ]))
 
@@ -2537,12 +2555,13 @@ async def payment_binance_menu_callback(update, context):
     parts=q.data.split('_'); pid=int(parts[3]); qty=int(parts[4]) if len(parts)>4 else 1
     from database import is_payment_enabled
     kb=[]
+    from keyboards import _rb
     if is_payment_enabled('binance'):
-        kb.append([InlineKeyboardButton('Binance Pay', callback_data=f'pay_binance_{pid}_{qty}')])
+        b=_rb('pay_binance', callback_data=f'pay_binance_{pid}_{qty}'); kb.append([b] if b else [InlineKeyboardButton('Binance Pay', callback_data=f'pay_binance_{pid}_{qty}')])
     if is_payment_enabled('usdt_bep20'):
-        kb.append([InlineKeyboardButton('USDT BEP20', callback_data=f'pay_usdt_bep20_{pid}_{qty}')])
+        b=_rb('pay_usdt_bep20', callback_data=f'pay_usdt_bep20_{pid}_{qty}'); kb.append([b] if b else [InlineKeyboardButton('USDT BEP20', callback_data=f'pay_usdt_bep20_{pid}_{qty}')])
     if is_payment_enabled('usdt_trc20'):
-        kb.append([InlineKeyboardButton('USDT TRC20', callback_data=f'pay_usdt_trc20_{pid}_{qty}')])
+        b=_rb('pay_usdt_trc20', callback_data=f'pay_usdt_trc20_{pid}_{qty}'); kb.append([b] if b else [InlineKeyboardButton('USDT TRC20', callback_data=f'pay_usdt_trc20_{pid}_{qty}')])
     kb.append([InlineKeyboardButton('🔙 Back', callback_data=f'buy_{pid}' if qty==1 else f'buyx_{pid}')])
     await _safe_send(q, context, 'Binance payment methods:', reply_markup=InlineKeyboardMarkup(kb))
 
@@ -2551,12 +2570,13 @@ async def points_binance_menu_callback(update, context):
     amt=q.data.replace('ptspay_binance_menu_','')
     from database import is_payment_enabled
     kb=[]
+    from keyboards import _rb
     if is_payment_enabled('binance'):
-        kb.append([InlineKeyboardButton('Binance Pay', callback_data=f'ptspay_binance_{amt}')])
+        b=_rb('pay_binance', callback_data=f'ptspay_binance_{amt}'); kb.append([b] if b else [InlineKeyboardButton('Binance Pay', callback_data=f'ptspay_binance_{amt}')])
     if is_payment_enabled('usdt_bep20'):
-        kb.append([InlineKeyboardButton('USDT BEP20', callback_data=f'ptspay_usdt_bep20_{amt}')])
+        b=_rb('pay_usdt_bep20', callback_data=f'ptspay_usdt_bep20_{amt}'); kb.append([b] if b else [InlineKeyboardButton('USDT BEP20', callback_data=f'ptspay_usdt_bep20_{amt}')])
     if is_payment_enabled('usdt_trc20'):
-        kb.append([InlineKeyboardButton('USDT TRC20', callback_data=f'ptspay_usdt_trc20_{amt}')])
+        b=_rb('pay_usdt_trc20', callback_data=f'ptspay_usdt_trc20_{amt}'); kb.append([b] if b else [InlineKeyboardButton('USDT TRC20', callback_data=f'ptspay_usdt_trc20_{amt}')])
     kb.append([InlineKeyboardButton('🔙 Back', callback_data='buy_points')])
     await _safe_send(q, context, 'Binance payment methods:', reply_markup=InlineKeyboardMarkup(kb))
 
@@ -2565,12 +2585,13 @@ async def payment_bybit_menu_callback(update, context):
     parts=q.data.split('_'); pid=int(parts[3]); qty=int(parts[4]) if len(parts)>4 else 1
     from database import is_payment_enabled
     kb=[]
+    from keyboards import _rb
     if is_payment_enabled('bybit_pay'):
-        kb.append([InlineKeyboardButton('Bybit Pay', callback_data=f'pay_bybit_pay_{pid}_{qty}')])
+        b=_rb('pay_bybit_pay', callback_data=f'pay_bybit_pay_{pid}_{qty}'); kb.append([b] if b else [InlineKeyboardButton('Bybit Pay', callback_data=f'pay_bybit_pay_{pid}_{qty}')])
     if is_payment_enabled('bybit_usdt_bep20'):
-        kb.append([InlineKeyboardButton('USDT BEP20', callback_data=f'pay_bybit_usdt_bep20_{pid}_{qty}')])
+        b=_rb('pay_bybit_usdt_bep20', callback_data=f'pay_bybit_usdt_bep20_{pid}_{qty}'); kb.append([b] if b else [InlineKeyboardButton('USDT BEP20', callback_data=f'pay_bybit_usdt_bep20_{pid}_{qty}')])
     if is_payment_enabled('bybit_usdt_trc20'):
-        kb.append([InlineKeyboardButton('USDT TRC20', callback_data=f'pay_bybit_usdt_trc20_{pid}_{qty}')])
+        b=_rb('pay_bybit_usdt_trc20', callback_data=f'pay_bybit_usdt_trc20_{pid}_{qty}'); kb.append([b] if b else [InlineKeyboardButton('USDT TRC20', callback_data=f'pay_bybit_usdt_trc20_{pid}_{qty}')])
     kb.append([InlineKeyboardButton('🔙 Back', callback_data=f'buy_{pid}' if qty==1 else f'buyx_{pid}')])
     await _safe_send(q, context, 'Bybit payment methods:', reply_markup=InlineKeyboardMarkup(kb))
 
@@ -2579,12 +2600,13 @@ async def points_bybit_menu_callback(update, context):
     amt=q.data.replace('ptspay_bybit_menu_','')
     from database import is_payment_enabled
     kb=[]
+    from keyboards import _rb
     if is_payment_enabled('bybit_pay'):
-        kb.append([InlineKeyboardButton('Bybit Pay', callback_data=f'ptspay_bybit_pay_{amt}')])
+        b=_rb('pay_bybit_pay', callback_data=f'ptspay_bybit_pay_{amt}'); kb.append([b] if b else [InlineKeyboardButton('Bybit Pay', callback_data=f'ptspay_bybit_pay_{amt}')])
     if is_payment_enabled('bybit_usdt_bep20'):
-        kb.append([InlineKeyboardButton('USDT BEP20', callback_data=f'ptspay_bybit_usdt_bep20_{amt}')])
+        b=_rb('pay_bybit_usdt_bep20', callback_data=f'ptspay_bybit_usdt_bep20_{amt}'); kb.append([b] if b else [InlineKeyboardButton('USDT BEP20', callback_data=f'ptspay_bybit_usdt_bep20_{amt}')])
     if is_payment_enabled('bybit_usdt_trc20'):
-        kb.append([InlineKeyboardButton('USDT TRC20', callback_data=f'ptspay_bybit_usdt_trc20_{amt}')])
+        b=_rb('pay_bybit_usdt_trc20', callback_data=f'ptspay_bybit_usdt_trc20_{amt}'); kb.append([b] if b else [InlineKeyboardButton('USDT TRC20', callback_data=f'ptspay_bybit_usdt_trc20_{amt}')])
     kb.append([InlineKeyboardButton('🔙 Back', callback_data='buy_points')])
     await _safe_send(q, context, 'Bybit payment methods:', reply_markup=InlineKeyboardMarkup(kb))
 
@@ -2696,7 +2718,7 @@ async def _start_bybit_payment(update, context, method, *, is_points=False, amou
         instr=(f"🟡 *Order #{oid} — Bybit Pay*\n━━━━━━━━━━━━━━━━━━━━\n💰 Send exactly: *{total_usd:.4f} USDT*\n📥 Bybit Pay ID / UID: `{escape_md(pay_id)}`\n\n*Instructions:*\n1. Open Bybit → Pay/Transfer inside Bybit.\n2. Send *USDT* exactly as shown.\n3. After payment, paste the Bybit Pay Order ID / internal TXID below.\n4. Bot will verify from Bybit internal deposit records.")
     else:
         cfg=_usdt_cfg(method); instr=(f"🟡 *Order #{oid} — {cfg['label']}*\n━━━━━━━━━━━━━━━━━━━━\n💰 Send exactly: *{total_usd:.4f} USDT*\n🌐 Network: *{cfg['network_label']}*\n📥 Address:\n`{cfg['address']}`\n\n*Instructions:*\n1. Send only USDT on this exact network.\n2. Wrong network/address will not verify.\n3. After sending, paste TXID below.\n4. Bot will verify from Bybit deposit records.")
-    await _safe_send(q, context, instr, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🔄 Verify Payment', callback_data=f'bybitv_{oid}')],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]]))
+    await _safe_send(q, context, instr, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]]))
 
 async def points_bybit_callback(update, context):
     q=update.callback_query; raw=q.data.replace('ptspay_',''); method,amt_s=raw.rsplit('_',1)
