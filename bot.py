@@ -416,6 +416,8 @@ async def handle_text(update, context):
         if await jc_tid_received(update, context): return
     if context.user_data.get('points_step') == 'waiting_custom_amount':
         if await points_custom_amount_received(update, context): return
+    if context.user_data.get('bybit_step') == 'waiting_txid':
+        if await bybit_txid_received(update, context): return
     if context.user_data.get('ownmail_step') == 'email':
         from handlers_order import ownmail_email_received
         if await ownmail_email_received(update, context): return
@@ -735,6 +737,10 @@ async def post_init(app):
             app.job_queue.run_repeating(_purchase_broadcast_job, interval=15, first=15)
             # 🔶 Binance Transfer Note auto-checker (silent background payment detection)
             app.job_queue.run_repeating(binance_note_background_job, interval=20, first=5, name="binance_note_checker")
+            # 🪙 USDT TRC20/BEP20 on-chain deposit checker
+            app.job_queue.run_repeating(usdt_deposit_background_job, interval=45, first=15, name="usdt_deposit_checker")
+            # 🟡 Bybit Pay + Bybit USDT deposit checker
+            app.job_queue.run_repeating(bybit_deposit_background_job, interval=45, first=20, name="bybit_deposit_checker")
     except Exception:
         pass
     # Fake Broadcast + Fake Reviews schedulers removed (use 🎭 Fake Activity instead)
@@ -1632,6 +1638,16 @@ def main():
         ("^ptspay_binance_", points_binance_callback),
         ("^ptspay_easy_", points_easypaisa_callback),
         ("^ptspay_jazz_", points_jazzcash_callback),
+        ("^ptspay_usdt_", points_usdt_callback),
+        ("^pay_usdt_", payment_usdt_callback),
+        ("^usdtv_", usdt_verify_callback),
+        ("^ptspay_binance_menu_", points_binance_menu_callback),
+        ("^pay_binance_menu_", payment_binance_menu_callback),
+        ("^ptspay_bybit_menu_", points_bybit_menu_callback),
+        ("^pay_bybit_menu_", payment_bybit_menu_callback),
+        ("^ptspay_bybit_", points_bybit_callback),
+        ("^pay_bybit_", payment_bybit_callback),
+        ("^bybitv_", bybit_verify_callback),
         ("^pay_pts_", pay_pts_callback),
         ("^admin_panel$", admin_panel_callback),
         ("^admin_categories$", admin_categories_callback), ("^delcat_", delete_category_callback),

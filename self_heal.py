@@ -125,6 +125,70 @@ def _heal_missing_tables():
         _log(f"Verified/created tables: {', '.join(healed)}")
 
 
+def _heal_sqlite_integrity_indexes():
+    """Repair recoverable SQLite index/table-index issues after DB restore.
+
+    Some Telegram/Render backup restores can leave broken indexes while table
+    data is still readable. This safely rebuilds bot_settings + user_clicks
+    indexes, then REINDEX/VACUUM. It does NOT touch orders/products data.
+    """
+    try:
+        from database import get_connection
+        conn = get_connection(); conn.row_factory = None; c = conn.cursor()
+        try:
+            rows = c.execute('PRAGMA integrity_check').fetchall()
+            issues = [str(r[0]) for r in rows if str(r[0]).lower() != 'ok']
+        except Exception as e:
+            issues = [str(e)]
+        if not issues:
+            conn.close(); return
+        joined = '\n'.join(issues[:20]).lower()
+        repaired = []
+        # Rebuild bot_settings when its UNIQUE index is inconsistent.
+        if 'bot_settings' in joined or 'sqlite_autoindex_bot_settings' in joined:
+            try:
+                c.execute('CREATE TABLE IF NOT EXISTS bot_settings_repair (key TEXT PRIMARY KEY, value TEXT DEFAULT "")')
+                c.execute('DELETE FROM bot_settings_repair')
+                data = []
+                for row in c.execute('SELECT rowid, key, value FROM bot_settings ORDER BY rowid'):
+                    key = row[1]
+                    if key is not None:
+                        data.append((str(key), '' if row[2] is None else str(row[2])))
+                for key, val in data:
+                    c.execute('INSERT OR REPLACE INTO bot_settings_repair (key,value) VALUES (?,?)', (key, val))
+                c.execute('DROP TABLE bot_settings')
+                c.execute('ALTER TABLE bot_settings_repair RENAME TO bot_settings')
+                repaired.append(f'bot_settings rebuilt ({len(data)} rows)')
+            except Exception as e:
+                _log(f'bot_settings repair failed: {e}', 'WARN')
+        # Rebuild known user_click indexes when damaged.
+        if 'idx_uc_' in joined or 'user_click' in joined:
+            try:
+                c.execute('DROP INDEX IF EXISTS idx_uc_time')
+                c.execute('DROP INDEX IF EXISTS idx_uc_user_time')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_uc_time ON user_clicks(created_at)')
+                c.execute('CREATE INDEX IF NOT EXISTS idx_uc_user_time ON user_clicks(user_id, created_at)')
+                repaired.append('user_clicks indexes rebuilt')
+            except Exception as e:
+                _log(f'user_click index repair failed: {e}', 'WARN')
+        try:
+            c.execute('REINDEX')
+            repaired.append('REINDEX ok')
+        except Exception as e:
+            _log(f'REINDEX failed after repair: {e}', 'WARN')
+        conn.commit()
+        try:
+            c.execute('VACUUM')
+            repaired.append('VACUUM ok')
+        except Exception as e:
+            _log(f'VACUUM skipped/failed after repair: {e}', 'WARN')
+        conn.close()
+        if repaired:
+            _log('SQLite integrity repair: ' + '; '.join(repaired))
+    except Exception as e:
+        _log(f'SQLite integrity repair outer failed: {e}', 'WARN')
+
+
 def _heal_stale_wal():
     """If a stray WAL/SHM file exists (crashed process), safely checkpoint it."""
     try:
@@ -238,6 +302,10 @@ def run_all_heals() -> list:
         _heal_missing_tables()
     except Exception as e:
         _log(f"heal_tables outer: {e}", "ERROR")
+    try:
+        _heal_sqlite_integrity_indexes()
+    except Exception as e:
+        _log(f"heal_integrity outer: {e}", "ERROR")
     try:
         _heal_stale_wal()
     except Exception as e:

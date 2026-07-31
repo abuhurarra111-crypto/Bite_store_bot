@@ -1651,6 +1651,24 @@ def get_pending_binance_note_orders(limit=30):
     r = c.fetchall(); conn.close(); return r
 
 
+def get_pending_usdt_orders(limit=50):
+    conn = get_connection(); c = conn.cursor()
+    c.execute("""SELECT * FROM orders
+                 WHERE status='usdt_waiting'
+                   AND payment_method IN ('usdt_trc20','usdt_bep20')
+                 ORDER BY created_at ASC LIMIT ?""", (int(limit),))
+    rows=c.fetchall(); conn.close(); return rows
+
+
+def get_pending_bybit_orders(limit=50):
+    conn = get_connection(); c = conn.cursor()
+    c.execute("""SELECT * FROM orders
+                 WHERE status='bybit_waiting'
+                   AND payment_method IN ('bybit_pay','bybit_usdt_trc20','bybit_usdt_bep20')
+                 ORDER BY created_at ASC LIMIT ?""", (int(limit),))
+    rows=c.fetchall(); conn.close(); return rows
+
+
 def set_order_payment_note(oid, note_id):
     conn = get_connection(); c = conn.cursor()
     ensure_column(c, "orders", "payment_note_id", "TEXT DEFAULT ''")
@@ -1855,6 +1873,12 @@ PAYMENT_METHODS = {
     "binance":    {"label": "🪙 Binance Pay",         "default_on": "1"},
     "easypaisa":  {"label": "📱 EasyPaisa",           "default_on": "1"},
     "jazzcash":   {"label": "📞 JazzCash",            "default_on": "1"},
+    "usdt_trc20": {"label": "Binance USDT TRC20",     "default_on": "1"},
+    "usdt_bep20": {"label": "Binance USDT BEP20",     "default_on": "1"},
+    "bybit":      {"label": "Bybit",                  "default_on": "1"},
+    "bybit_pay":  {"label": "Bybit Pay",              "default_on": "1"},
+    "bybit_usdt_trc20": {"label": "Bybit USDT TRC20", "default_on": "1"},
+    "bybit_usdt_bep20": {"label": "Bybit USDT BEP20", "default_on": "1"},
     "points":     {"label": "💎 Pay with Points",     "default_on": "1"},
 }
 
@@ -1862,7 +1886,9 @@ _DEFAULT_UNAVAILABLE_MSGS = {
     "binance":   "🪙 Binance Pay is temporarily unavailable.\n\nPlease choose another payment method or check back soon.",
     "easypaisa": "📱 EasyPaisa is temporarily unavailable.\n\nPlease use another payment method for now. Sorry for the inconvenience!",
     "jazzcash":  "📞 JazzCash is temporarily unavailable.\n\nPlease use another payment method. We'll re-enable it as soon as possible.",
-    "points":    "💎 Points payment is currently disabled.\n\nPlease use an external payment method (Binance / EasyPaisa / JazzCash).",
+    "usdt_trc20": "USDT TRC20 payments are temporarily unavailable. Please choose another method.",
+    "usdt_bep20": "USDT BEP20 payments are temporarily unavailable. Please choose another method.",
+    "points":    "💎 Points payment is currently disabled.\n\nPlease use an external payment method (Binance / EasyPaisa / JazzCash / USDT).",
 }
 
 
@@ -4052,7 +4078,7 @@ def log_payment_risk(user_id, order_id=0, amount=0, txid='', source=''):
         if (c.fetchone()[0] or 0) > 0:
             score += 80; reasons.append('txid already used')
     c.execute("""SELECT COUNT(*) FROM orders
-                 WHERE user_id=? AND status IN ('binance_waiting','pending','screenshot_sent')
+                 WHERE user_id=? AND status IN ('binance_waiting','usdt_waiting','bybit_waiting','pending','screenshot_sent')
                    AND datetime(created_at) >= datetime('now','-1 hour')""", (int(user_id),))
     n=c.fetchone()[0] or 0
     if n >= 3:
@@ -4085,7 +4111,7 @@ def get_pending_payment_reminders(limit=50):
     ensure_column(c, "orders", "payment_reminder_count", "INTEGER DEFAULT 0")
     ensure_column(c, "orders", "last_payment_reminder_at", "TEXT DEFAULT ''")
     c.execute("""SELECT * FROM orders
-                 WHERE status IN ('binance_waiting','pending','screenshot_sent')
+                 WHERE status IN ('binance_waiting','usdt_waiting','bybit_waiting','pending','screenshot_sent')
                    AND COALESCE(order_type,'product')='product'
                    AND COALESCE(payment_reminder_count,0) < 2
                    AND datetime(created_at, CASE WHEN COALESCE(payment_reminder_count,0)=0 THEN '+10 minutes' ELSE '+30 minutes' END) <= CURRENT_TIMESTAMP

@@ -23,6 +23,7 @@ from database import *
 from keyboards import *
 from utils import escape_md, format_pkr, nav_push, build_manual_order_whatsapp_url, get_product_mode_tag, smart_text_and_mode, contains_premium_markup, fmt_price, points_from_usd, fmt_points
 import re
+import os
 import logging
 import secrets
 import asyncio
@@ -2297,6 +2298,407 @@ async def ep_verify_callback(update, context):
                 f"If the issue persists, contact support.")
         await _safe_send(q, context, text, parse_mode="Markdown", reply_markup=kb)
 
+# ════════════════════════════════════════════
+# 🪙 USDT TRC20 / BEP20 ON-CHAIN AUTO VERIFY
+# ════════════════════════════════════════════
+USDT_PAYMENT_METHODS = {
+    'usdt_trc20': {
+        'label': 'USDT TRC20',
+        'network_label': 'TRC20 (Tron)',
+        'accepted_networks': {'TRX', 'TRC20', 'TRON'},
+        'address': 'TAYv4LPE92rixGsr2sKe3Pz8mGfFU5cDW7',
+    },
+    'usdt_bep20': {
+        'label': 'USDT BEP20',
+        'network_label': 'BEP20 (BNB Smart Chain)',
+        'accepted_networks': {'BSC', 'BEP20', 'BNB', 'BNB Smart Chain'.upper()},
+        'address': '0xe171a20f64b002b839344f67b04620c8a90d1f78',
+    },
+    'bybit_usdt_trc20': {
+        'label': 'Bybit USDT TRC20',
+        'network_label': 'TRC20 (Tron)',
+        'accepted_networks': {'TRX', 'TRC20', 'TRON'},
+        'address': os.getenv('BYBIT_USDT_TRC20_ADDRESS', 'TF4dCTJw42VT99NfUg95YNi5yF6uK7P2FG'),
+    },
+    'bybit_usdt_bep20': {
+        'label': 'Bybit USDT BEP20',
+        'network_label': 'BEP20 (BSC)',
+        'accepted_networks': {'BSC', 'BEP20', 'BNB'},
+        'address': os.getenv('BYBIT_USDT_BEP20_ADDRESS', '0xfb57f22306f460221c01ad28378fd2ce07a57bd6'),
+    },
+}
+
+
+def _usdt_cfg(method):
+    return USDT_PAYMENT_METHODS.get(str(method or '').lower()) or {}
+
+
+def _usdt_amount_match(actual, expected, tolerance=0.0001):
+    try:
+        return abs(float(actual) - float(expected)) <= float(tolerance)
+    except Exception:
+        return False
+
+
+def _usdt_network_ok(network, cfg):
+    n = str(network or '').strip().upper()
+    return n in {str(x).upper() for x in (cfg.get('accepted_networks') or set())}
+
+
+def _usdt_address_ok(address, cfg):
+    return str(address or '').strip().lower() == str(cfg.get('address') or '').strip().lower()
+
+
+def _find_matching_usdt_deposit(order, lookback_hours=96):
+    """Find a successful Binance deposit matching method/network/address/amount."""
+    method = str(order.get('payment_method') or '').lower()
+    cfg = _usdt_cfg(method)
+    if not cfg:
+        return None, 'unknown_method'
+    expected = float(order.get('binance_amount') or order.get('price') or 0)
+    if expected <= 0:
+        return None, 'bad_amount'
+    try:
+        from payments import get_recent_deposits, binance_api_is_configured
+        if not binance_api_is_configured():
+            return None, 'binance_api_not_configured'
+        deps = get_recent_deposits('USDT', lookback_hours=lookback_hours, limit=100)
+    except Exception as e:
+        return None, f'api_error:{e}'
+    try:
+        from database import is_txid_used
+    except Exception:
+        is_txid_used = lambda tx: False
+    for d in deps:
+        txid = d.get('txid') or ''
+        if not txid or is_txid_used(txid):
+            continue
+        if not _usdt_network_ok(d.get('network'), cfg):
+            continue
+        if not _usdt_address_ok(d.get('address'), cfg):
+            continue
+        if not _usdt_amount_match(d.get('amount'), expected):
+            continue
+        return d, 'matched'
+    return None, 'not_found'
+
+
+async def _complete_usdt_order(bot, order, deposit):
+    from database import mark_txid_used, update_order_txid, update_order_status
+    txid = deposit.get('txid') or ''
+    amount = float(deposit.get('amount') or order.get('binance_amount') or order.get('price') or 0)
+    if txid:
+        ok = mark_txid_used(txid, order['user_id'], order['id'], amount, 'USDT')
+        if not ok:
+            return False, 'duplicate_txid'
+        update_order_txid(order['id'], txid)
+    if _is_points_order(order):
+        await _send_deposit_success(bot, order, amount)
+    else:
+        await fulfill_paid_product_order(bot, order, amount, payment_method_label=str(order.get('payment_method') or 'USDT').upper())
+    return True, 'delivered'
+
+
+async def _verify_usdt_order_and_respond(target, context, oid):
+    o = get_order(int(oid))
+    if not o:
+        await _send_or_edit(target, '❌ Order not found.', reply_markup=back_btn()); return
+    if o['status'] == 'delivered':
+        await _send_or_edit(target, '✅ Already verified and delivered.', reply_markup=back_btn()); return
+    dep, reason = _find_matching_usdt_deposit(o)
+    if dep:
+        ok, msg = await _complete_usdt_order(context.bot, o, dep)
+        if ok:
+            await _send_or_edit(target,
+                f"✅ *USDT Payment Verified!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"Order: `#{oid}`\n"
+                f"Network: `{escape_md(dep.get('network',''))}`\n"
+                f"Amount: *{float(dep.get('amount') or 0):.4f} USDT*\n"
+                f"TXID: `{escape_md((dep.get('txid') or '')[:80])}`",
+                parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('📜 Order History', callback_data='my_orders')]]))
+            return
+        reason = msg
+    await _send_or_edit(target,
+        f"⏳ *Payment Not Found Yet*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"If you already sent USDT, please wait for blockchain confirmations and tap *Verify Again*.\n\n"
+        f"Internal status: `{escape_md(str(reason)[:80])}`",
+        parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton('🔄 Verify Again', callback_data=f'usdtv_{oid}')],
+            [InlineKeyboardButton('🎫 Support', callback_data='support_menu')],
+            [InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')],
+        ]))
+
+
+async def usdt_verify_callback(update, context):
+    q = update.callback_query; await q.answer('Checking USDT deposit...')
+    try:
+        oid = int(q.data.replace('usdtv_', ''))
+    except Exception:
+        await q.answer('Bad order', show_alert=True); return
+    await _verify_usdt_order_and_respond(q, context, oid)
+
+
+async def usdt_deposit_background_job(context):
+    try:
+        from database import get_pending_usdt_orders
+        orders = get_pending_usdt_orders(limit=25)
+    except Exception:
+        return
+    for o in orders:
+        try:
+            dep, reason = _find_matching_usdt_deposit(o, lookback_hours=96)
+            if dep:
+                await _complete_usdt_order(context.bot, o, dep)
+        except Exception:
+            pass
+
+
+async def _start_usdt_payment(update, context, method, *, is_points=False, amount=None, product=None, qty=1):
+    from database import is_payment_enabled, get_payment_disable_msg
+    cfg = _usdt_cfg(method)
+    if not cfg:
+        return
+    q = update.callback_query; await q.answer()
+    if not is_payment_enabled(method):
+        await _safe_send(q, context, get_payment_disable_msg(method), reply_markup=back_btn()); return
+    u = q.from_user
+    save_user(u.id, u.username or '', u.first_name or '')
+    if is_points:
+        total_usd = float(amount or 0)
+        pts = points_from_usd(total_usd)
+        oid = create_order(u.id, u.first_name or str(u.id), 0, f"💎 {fmt_points(pts)} Points", total_usd, method, '', total_usd, 'USDT', 'points')
+    else:
+        p = product
+        if not p:
+            await _safe_send(q, context, '❌ Product not found.', reply_markup=back_btn()); return
+        total_usd = _get_eff_price(p) * int(qty or 1)
+        pname = p['name'] if int(qty or 1) == 1 else f"{p['name']} × {int(qty or 1)}"
+        creds = context.user_data.pop('order_creds', '')
+        oid = create_order(u.id, u.first_name or str(u.id), p['id'], pname, total_usd, method, '', total_usd, 'USDT', 'product', creds, qty=qty)
+    update_order_status(oid, 'usdt_waiting')
+    context.user_data['pending_order_id'] = oid
+    address = cfg['address']
+    await _safe_send(q, context,
+        f"🪙 *Order #{oid} — {cfg['label']} Payment*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Send exactly: *{total_usd:.4f} USDT*\n"
+        f"🌐 Network: *{cfg['network_label']}*\n"
+        f"📥 Deposit address:\n`{address}`\n\n"
+        f"*Important instructions:*\n"
+        f"1. Send *only USDT* on *{cfg['network_label']}*.\n"
+        f"2. Send the *exact amount* shown above.\n"
+        f"3. Do NOT use another network, exchange, coin, or address. Wrong network payments may not verify.\n"
+        f"4. After sending, wait for blockchain confirmation and tap Verify Payment.\n\n"
+        f"Bot will auto-check Binance deposit history.",
+        parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton('🔄 Verify Payment', callback_data=f'usdtv_{oid}')],
+            [InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')],
+        ]))
+
+
+async def points_usdt_callback(update, context):
+    q = update.callback_query
+    # ptspay_usdt_trc20_5 OR ptspay_usdt_bep20_5
+    raw = q.data.replace('ptspay_', '')
+    method, amt_s = raw.rsplit('_', 1)
+    await _start_usdt_payment(update, context, method, is_points=True, amount=float(amt_s))
+
+
+async def payment_usdt_callback(update, context):
+    q = update.callback_query
+    # pay_usdt_trc20_<pid>_<qty>
+    parts = q.data.split('_')
+    method = '_'.join(parts[1:3])
+    pid = int(parts[3]); qty = int(parts[4]) if len(parts) > 4 else 1
+    p = get_product(pid)
+    if not p:
+        await _safe_send(q, context, '❌ Product not found.', reply_markup=back_btn()); return
+    if p['stock'] < qty:
+        await _safe_send(q, context, f"❌ Only {p['stock']} in stock!", reply_markup=back_btn()); return
+    await _start_usdt_payment(update, context, method, is_points=False, product=p, qty=qty)
+
+
+# ── Grouped payment menus ──
+async def payment_binance_menu_callback(update, context):
+    q=update.callback_query; await q.answer()
+    parts=q.data.split('_'); pid=int(parts[3]); qty=int(parts[4]) if len(parts)>4 else 1
+    from database import is_payment_enabled
+    kb=[]
+    if is_payment_enabled('binance'):
+        kb.append([InlineKeyboardButton('Binance Pay', callback_data=f'pay_binance_{pid}_{qty}')])
+    if is_payment_enabled('usdt_bep20'):
+        kb.append([InlineKeyboardButton('USDT BEP20', callback_data=f'pay_usdt_bep20_{pid}_{qty}')])
+    if is_payment_enabled('usdt_trc20'):
+        kb.append([InlineKeyboardButton('USDT TRC20', callback_data=f'pay_usdt_trc20_{pid}_{qty}')])
+    kb.append([InlineKeyboardButton('🔙 Back', callback_data=f'buy_{pid}' if qty==1 else f'buyx_{pid}')])
+    await _safe_send(q, context, 'Binance payment methods:', reply_markup=InlineKeyboardMarkup(kb))
+
+async def points_binance_menu_callback(update, context):
+    q=update.callback_query; await q.answer()
+    amt=q.data.replace('ptspay_binance_menu_','')
+    from database import is_payment_enabled
+    kb=[]
+    if is_payment_enabled('binance'):
+        kb.append([InlineKeyboardButton('Binance Pay', callback_data=f'ptspay_binance_{amt}')])
+    if is_payment_enabled('usdt_bep20'):
+        kb.append([InlineKeyboardButton('USDT BEP20', callback_data=f'ptspay_usdt_bep20_{amt}')])
+    if is_payment_enabled('usdt_trc20'):
+        kb.append([InlineKeyboardButton('USDT TRC20', callback_data=f'ptspay_usdt_trc20_{amt}')])
+    kb.append([InlineKeyboardButton('🔙 Back', callback_data='buy_points')])
+    await _safe_send(q, context, 'Binance payment methods:', reply_markup=InlineKeyboardMarkup(kb))
+
+async def payment_bybit_menu_callback(update, context):
+    q=update.callback_query; await q.answer()
+    parts=q.data.split('_'); pid=int(parts[3]); qty=int(parts[4]) if len(parts)>4 else 1
+    from database import is_payment_enabled
+    kb=[]
+    if is_payment_enabled('bybit_pay'):
+        kb.append([InlineKeyboardButton('Bybit Pay', callback_data=f'pay_bybit_pay_{pid}_{qty}')])
+    if is_payment_enabled('bybit_usdt_bep20'):
+        kb.append([InlineKeyboardButton('USDT BEP20', callback_data=f'pay_bybit_usdt_bep20_{pid}_{qty}')])
+    if is_payment_enabled('bybit_usdt_trc20'):
+        kb.append([InlineKeyboardButton('USDT TRC20', callback_data=f'pay_bybit_usdt_trc20_{pid}_{qty}')])
+    kb.append([InlineKeyboardButton('🔙 Back', callback_data=f'buy_{pid}' if qty==1 else f'buyx_{pid}')])
+    await _safe_send(q, context, 'Bybit payment methods:', reply_markup=InlineKeyboardMarkup(kb))
+
+async def points_bybit_menu_callback(update, context):
+    q=update.callback_query; await q.answer()
+    amt=q.data.replace('ptspay_bybit_menu_','')
+    from database import is_payment_enabled
+    kb=[]
+    if is_payment_enabled('bybit_pay'):
+        kb.append([InlineKeyboardButton('Bybit Pay', callback_data=f'ptspay_bybit_pay_{amt}')])
+    if is_payment_enabled('bybit_usdt_bep20'):
+        kb.append([InlineKeyboardButton('USDT BEP20', callback_data=f'ptspay_bybit_usdt_bep20_{amt}')])
+    if is_payment_enabled('bybit_usdt_trc20'):
+        kb.append([InlineKeyboardButton('USDT TRC20', callback_data=f'ptspay_bybit_usdt_trc20_{amt}')])
+    kb.append([InlineKeyboardButton('🔙 Back', callback_data='buy_points')])
+    await _safe_send(q, context, 'Bybit payment methods:', reply_markup=InlineKeyboardMarkup(kb))
+
+
+def _find_matching_bybit_payment(order, lookback_hours=96):
+    method=str(order.get('payment_method') or '').lower()
+    expected=float(order.get('binance_amount') or order.get('price') or 0)
+    note=str(order.get('payment_note_id') or '').strip()
+    try:
+        from payments import bybit_api_is_configured, get_bybit_deposit_records, get_bybit_internal_deposits
+        if not bybit_api_is_configured(): return None, 'bybit_api_not_configured'
+    except Exception as e:
+        return None, f'import_error:{e}'
+    try:
+        from database import is_txid_used
+    except Exception:
+        is_txid_used=lambda tx: False
+    cfg=_usdt_cfg(method)
+    if method == 'bybit_pay':
+        rows=get_bybit_internal_deposits('USDT', lookback_hours=lookback_hours, txid=note) if note else get_bybit_internal_deposits('USDT', lookback_hours=lookback_hours)
+        for d in rows:
+            txid=d.get('txid') or ''
+            if not txid or is_txid_used(txid): continue
+            if note and note.lower() not in txid.lower(): continue
+            if _usdt_amount_match(d.get('amount'), expected): return d, 'matched'
+        return None, 'not_found'
+    if method in ('bybit_usdt_trc20','bybit_usdt_bep20'):
+        rows=get_bybit_deposit_records('USDT', lookback_hours=lookback_hours, txid=note) if note else get_bybit_deposit_records('USDT', lookback_hours=lookback_hours)
+        for d in rows:
+            txid=d.get('txid') or ''
+            if not txid or is_txid_used(txid): continue
+            if note and note.lower() not in txid.lower(): continue
+            if not _usdt_network_ok(d.get('network'), cfg): continue
+            if not _usdt_address_ok(d.get('address'), cfg): continue
+            if _usdt_amount_match(d.get('amount'), expected): return d, 'matched'
+        return None, 'not_found'
+    return None, 'unknown_method'
+
+async def _complete_bybit_order(bot, order, dep):
+    from database import mark_txid_used, update_order_txid
+    txid=dep.get('txid') or ''
+    amount=float(dep.get('amount') or order.get('binance_amount') or order.get('price') or 0)
+    if txid:
+        ok=mark_txid_used(txid, order['user_id'], order['id'], amount, 'USDT')
+        if not ok: return False, 'duplicate_txid'
+        update_order_txid(order['id'], txid)
+    if _is_points_order(order): await _send_deposit_success(bot, order, amount)
+    else: await fulfill_paid_product_order(bot, order, amount, payment_method_label=str(order.get('payment_method') or 'BYBIT').upper())
+    return True, 'delivered'
+
+async def _verify_bybit_order_and_respond(target, context, oid):
+    o=get_order(int(oid))
+    if not o: await _send_or_edit(target, '❌ Order not found.', reply_markup=back_btn()); return
+    if o['status']=='delivered': await _send_or_edit(target, '✅ Already verified.', reply_markup=back_btn()); return
+    dep,reason=_find_matching_bybit_payment(o)
+    if dep:
+        ok,msg=await _complete_bybit_order(context.bot,o,dep)
+        if ok:
+            await _send_or_edit(target, f"✅ *Bybit Payment Verified!*\n━━━━━━━━━━━━━━━━━━━━\nOrder: `#{oid}`\nAmount: *{float(dep.get('amount') or 0):.4f} USDT*\nTXID: `{escape_md((dep.get('txid') or '')[:80])}`", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('📜 Order History', callback_data='my_orders')]])); return
+        reason=msg
+    await _send_or_edit(target, f"⏳ *Bybit Payment Not Found Yet*\n\nPaste correct TXID/Order ID or wait for confirmations and tap Verify Again.\n\nStatus: `{escape_md(str(reason)[:80])}`", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🔄 Verify Again', callback_data=f'bybitv_{oid}')],[InlineKeyboardButton('🎫 Support', callback_data='support_menu')],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]]))
+
+async def bybit_verify_callback(update, context):
+    q=update.callback_query; await q.answer('Checking Bybit payment...')
+    oid=int(q.data.replace('bybitv_',''))
+    await _verify_bybit_order_and_respond(q, context, oid)
+
+async def bybit_txid_received(update, context):
+    if context.user_data.get('bybit_step')!='waiting_txid': return False
+    oid=context.user_data.get('pending_order_id')
+    note=(update.message.text or '').strip()
+    if not oid: await update.message.reply_text('❌ No pending order.'); return True
+    from database import set_order_payment_note
+    set_order_payment_note(int(oid), note)
+    context.user_data.pop('bybit_step',None)
+    await _verify_bybit_order_and_respond(update, context, int(oid))
+    return True
+
+async def bybit_deposit_background_job(context):
+    try:
+        from database import get_pending_bybit_orders
+        orders=get_pending_bybit_orders(limit=25)
+    except Exception:
+        return
+    for o in orders:
+        try:
+            dep,reason=_find_matching_bybit_payment(o)
+            if dep: await _complete_bybit_order(context.bot,o,dep)
+        except Exception: pass
+
+async def _start_bybit_payment(update, context, method, *, is_points=False, amount=None, product=None, qty=1):
+    from database import is_payment_enabled, get_payment_disable_msg
+    q=update.callback_query; await q.answer()
+    if not is_payment_enabled(method): await _safe_send(q, context, get_payment_disable_msg(method), reply_markup=back_btn()); return
+    u=q.from_user; save_user(u.id,u.username or '',u.first_name or '')
+    if is_points:
+        total_usd=float(amount or 0); pts=points_from_usd(total_usd)
+        oid=create_order(u.id,u.first_name or str(u.id),0,f"💎 {fmt_points(pts)} Points",total_usd,method,'',total_usd,'USDT','points')
+    else:
+        p=product
+        total_usd=_get_eff_price(p)*int(qty or 1); pname=p['name'] if int(qty or 1)==1 else f"{p['name']} × {int(qty or 1)}"
+        creds=context.user_data.pop('order_creds','')
+        oid=create_order(u.id,u.first_name or str(u.id),p['id'],pname,total_usd,method,'',total_usd,'USDT','product',creds,qty=qty)
+    update_order_status(oid,'bybit_waiting'); context.user_data['pending_order_id']=oid; context.user_data['bybit_step']='waiting_txid'
+    if method=='bybit_pay':
+        pay_id=get_setting('bybit_pay_id', os.getenv('BYBIT_PAY_ID','')).strip()
+        if not pay_id:
+            await _safe_send(q, context, '❌ Bybit Pay ID is not configured. Admin must set BYBIT_PAY_ID in Render env.', reply_markup=back_btn()); return
+        instr=(f"🟡 *Order #{oid} — Bybit Pay*\n━━━━━━━━━━━━━━━━━━━━\n💰 Send exactly: *{total_usd:.4f} USDT*\n📥 Bybit Pay ID / UID: `{escape_md(pay_id)}`\n\n*Instructions:*\n1. Open Bybit → Pay/Transfer inside Bybit.\n2. Send *USDT* exactly as shown.\n3. After payment, paste the Bybit Pay Order ID / internal TXID below.\n4. Bot will verify from Bybit internal deposit records.")
+    else:
+        cfg=_usdt_cfg(method); instr=(f"🟡 *Order #{oid} — {cfg['label']}*\n━━━━━━━━━━━━━━━━━━━━\n💰 Send exactly: *{total_usd:.4f} USDT*\n🌐 Network: *{cfg['network_label']}*\n📥 Address:\n`{cfg['address']}`\n\n*Instructions:*\n1. Send only USDT on this exact network.\n2. Wrong network/address will not verify.\n3. After sending, paste TXID below.\n4. Bot will verify from Bybit deposit records.")
+    await _safe_send(q, context, instr, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🔄 Verify Payment', callback_data=f'bybitv_{oid}')],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]]))
+
+async def points_bybit_callback(update, context):
+    q=update.callback_query; raw=q.data.replace('ptspay_',''); method,amt_s=raw.rsplit('_',1)
+    await _start_bybit_payment(update, context, method, is_points=True, amount=float(amt_s))
+
+async def payment_bybit_callback(update, context):
+    q=update.callback_query; parts=q.data.split('_')
+    # pay_bybit_usdt_trc20_pid_qty OR pay_bybit_pay_pid_qty
+    if parts[2]=='pay': method='bybit_pay'; pid=int(parts[3]); qty=int(parts[4]) if len(parts)>4 else 1
+    else: method='_'.join(parts[1:4]); pid=int(parts[4]); qty=int(parts[5]) if len(parts)>5 else 1
+    p=get_product(pid)
+    if not p: await _safe_send(q, context, '❌ Product not found.', reply_markup=back_btn()); return
+    if p['stock'] < qty: await _safe_send(q, context, f"❌ Only {p['stock']} in stock!", reply_markup=back_btn()); return
+    await _start_bybit_payment(update, context, method, is_points=False, product=p, qty=qty)
+
 
 # ════════════════════════════════════════════
 # 💎 BUY POINTS HANDLERS
@@ -2565,7 +2967,7 @@ async def my_orders_callback(update, context):
     text = "📜 *Order History:*\n━━━━━━━━━━━━━━━━━━━━\n\n"
     rows = []
     for o in orders[:12]:
-        s_icon = {'pending':'🟡','screenshot_sent':'📸','binance_waiting':'🔶',
+        s_icon = {'pending':'🟡','screenshot_sent':'📸','binance_waiting':'🔶','usdt_waiting':'🪙','bybit_waiting':'🟡',
                   'paid_pending_delivery':'🕒','waiting_for_details':'📨',
                   'supplier_processing':'🔄','supplier_retry_pending':'🔁',
                   'delivered':'✅','cancelled':'❌','rejected':'❌','refunded':'💎'}.get(o['status'],'❓')
@@ -2617,6 +3019,8 @@ async def my_order_detail_callback(update, context):
     tracking_map = {
         'pending': [('Order created','✅'), ('Payment','⏳'), ('Delivery','▫️')],
         'binance_waiting': [('Order created','✅'), ('Payment verification','⏳'), ('Delivery','▫️')],
+        'usdt_waiting': [('Order created','✅'), ('USDT blockchain confirmation','⏳'), ('Delivery','▫️')],
+        'bybit_waiting': [('Order created','✅'), ('Bybit payment verification','⏳'), ('Delivery','▫️')],
         'screenshot_sent': [('Order created','✅'), ('Screenshot received','📸'), ('Delivery','▫️')],
         'supplier_processing': [('Payment verified','✅'), ('Supplier processing','🔄'), ('Delivery','⏳')],
         'supplier_retry_pending': [('Payment verified','✅'), ('Retrying delivery','🔁'), ('Auto-refund safety','⏳')],

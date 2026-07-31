@@ -58,6 +58,18 @@ services:
         sync: false             # optional override (api.binance.com / api1 / api2 / api3)
       - key: SUPPLIER_SHOP_CRON_API_KEY
         sync: false             # optional: auto-register/update Shop Cron supplier
+      - key: BYBIT_API_KEY
+        sync: false
+      - key: BYBIT_API_SECRET
+        sync: false
+      - key: BYBIT_PROXY_URL
+        sync: false             # optional fixed proxy/VPS IP for Bybit API
+      - key: BYBIT_PAY_ID
+        sync: false
+      - key: BYBIT_USDT_TRC20_ADDRESS
+        value: TF4dCTJw42VT99NfUg95YNi5yF6uK7P2FG
+      - key: BYBIT_USDT_BEP20_ADDRESS
+        value: 0xfb57f22306f460221c01ad28378fd2ce07a57bd6
       - key: PYTHON_VERSION
         value: "3.12.5"
 

@@ -531,35 +531,28 @@ def product_detail_keyboard(product, user=None):
 # ════════════════════════════════════════════
 def payment_method_keyboard(pid, qty=1):
     kb = []
-    # 🆕 v80: Check payment method enable/disable toggle. Disabled methods are
-    # hidden from checkout entirely (customer only sees enabled ones).
     from database import is_payment_enabled
-    # 🆕 v57: 'Pay with Points' is now a real registry button (pay_pts) so admin
-    # can rename it / change color / add premium emoji from Customization →
-    # 🎨 Buttons → 💳 Payment Methods.
     if is_payment_enabled("points"):
         b = _rb("pay_pts", callback_data=f"pay_pts_{pid}_{qty}")
         if b:
             kb.append([b])
         else:
-            # Fallback (button hidden via admin) — keep original hardcoded version
-            kb.append([InlineKeyboardButton("💎 Pay with Points (Wallet)",
-                                            callback_data=f"pay_pts_{pid}_{qty}")])
-    if is_payment_enabled("binance"):
-        b = _rb("pay_binance", callback_data=f"pay_binance_{pid}_{qty}")
-        if b: kb.append([b])
+            kb.append([InlineKeyboardButton("💎 Pay with Points (Wallet)", callback_data=f"pay_pts_{pid}_{qty}")])
+    # Grouped external methods
+    if any(is_payment_enabled(m) for m in ("binance", "usdt_trc20", "usdt_bep20")):
+        kb.append([InlineKeyboardButton("Binance", callback_data=f"pay_binance_menu_{pid}_{qty}")])
+    if any(is_payment_enabled(m) for m in ("bybit", "bybit_pay", "bybit_usdt_trc20", "bybit_usdt_bep20")):
+        kb.append([InlineKeyboardButton("Bybit", callback_data=f"pay_bybit_menu_{pid}_{qty}")])
     if is_payment_enabled("easypaisa"):
         b = _rb("pay_easypaisa", callback_data=f"pay_easy_{pid}_{qty}")
-        if b: kb.append([b])
+        kb.append([b] if b else [InlineKeyboardButton("EasyPaisa", callback_data=f"pay_easy_{pid}_{qty}")])
     if is_payment_enabled("jazzcash"):
         b = _rb("pay_jazzcash", callback_data=f"pay_jazz_{pid}_{qty}")
-        if b: kb.append([b])
-    # 🆕 v38: Inject custom buttons for payment screen
+        kb.append([b] if b else [InlineKeyboardButton("JazzCash", callback_data=f"pay_jazz_{pid}_{qty}")])
     try:
         kb.extend(_custom_buttons_for("payment"))
     except Exception:
         pass
-    # 🆕 v52: nav button editable via Customization → 🎨 Buttons → Navigation
     _b = _rb("nav_pay_cancel", callback_data="shop")
     if _b: kb.append([_b])
     return InlineKeyboardMarkup(kb)
@@ -631,25 +624,21 @@ def buy_points_keyboard():
 
 
 def points_payment_keyboard(amt):
-    """🆕 v102 FIX: only show payment methods admin has enabled.
-    Bug: EasyPaisa/JazzCash still shown here even when admin turned them
-    OFF from Payment Methods panel → users clicked → got 'unavailable'.
-    """
     try:
         from database import is_payment_enabled as _ipe
     except Exception:
-        _ipe = lambda m: True   # fail-open
+        _ipe = lambda m: True
     kb = []
-    if _ipe("binance"):
-        b = _rb("pay_binance", callback_data=f"ptspay_binance_{amt}")
-        if b: kb.append([b])
+    if any(_ipe(m) for m in ("binance", "usdt_trc20", "usdt_bep20")):
+        kb.append([InlineKeyboardButton("Binance", callback_data=f"ptspay_binance_menu_{amt}")])
+    if any(_ipe(m) for m in ("bybit", "bybit_pay", "bybit_usdt_trc20", "bybit_usdt_bep20")):
+        kb.append([InlineKeyboardButton("Bybit", callback_data=f"ptspay_bybit_menu_{amt}")])
     if _ipe("easypaisa"):
         b = _rb("pay_easypaisa", callback_data=f"ptspay_easy_{amt}")
-        if b: kb.append([b])
+        kb.append([b] if b else [InlineKeyboardButton("EasyPaisa", callback_data=f"ptspay_easy_{amt}")])
     if _ipe("jazzcash"):
         b = _rb("pay_jazzcash", callback_data=f"ptspay_jazz_{amt}")
-        if b: kb.append([b])
-    # 🆕 v52: editable nav button
+        kb.append([b] if b else [InlineKeyboardButton("JazzCash", callback_data=f"ptspay_jazz_{amt}")])
     _b = _rb("nav_points_cancel", callback_data="buy_points")
     if _b: kb.append([_b])
     return InlineKeyboardMarkup(kb)

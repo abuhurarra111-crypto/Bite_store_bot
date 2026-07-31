@@ -771,6 +771,127 @@ def verify_payment_unified(
         return result
 
 
+# ════════════════════════════════════════════
+# 🟡 BYBIT API — deposits + internal Bybit Pay style transfers (v145)
+# ════════════════════════════════════════════
+BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "").strip()
+BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET", "").strip()
+BYBIT_API_BASE = os.getenv("BYBIT_API_BASE", "https://api.bybit.com").rstrip("/")
+BYBIT_RECV_WINDOW = "5000"
+BYBIT_PROXY_URL = os.getenv("BYBIT_PROXY_URL", "").strip()
+
+
+def bybit_api_is_configured():
+    return bool(BYBIT_API_KEY and BYBIT_API_SECRET)
+
+
+def _bybit_proxies():
+    if not BYBIT_PROXY_URL:
+        return None
+    return {"http": BYBIT_PROXY_URL, "https": BYBIT_PROXY_URL}
+
+
+def _bybit_sign(ts: str, query: str = "") -> str:
+    payload = f"{ts}{BYBIT_API_KEY}{BYBIT_RECV_WINDOW}{query}"
+    return hmac.new(BYBIT_API_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+
+
+def _bybit_get(path: str, params: dict | None = None, timeout: int = 15):
+    if not bybit_api_is_configured():
+        return -1, {"error": "BYBIT_API_KEY / BYBIT_API_SECRET not set"}
+    params = {k: v for k, v in (params or {}).items() if v not in (None, "")}
+    query = urlencode(params)
+    ts = str(int(time.time() * 1000))
+    headers = {
+        "X-BAPI-API-KEY": BYBIT_API_KEY,
+        "X-BAPI-TIMESTAMP": ts,
+        "X-BAPI-RECV-WINDOW": BYBIT_RECV_WINDOW,
+        "X-BAPI-SIGN": _bybit_sign(ts, query),
+        "Content-Type": "application/json",
+    }
+    url = f"{BYBIT_API_BASE}{path}" + (f"?{query}" if query else "")
+    try:
+        r = requests.get(url, headers=headers, timeout=timeout, proxies=_bybit_proxies())
+        try:
+            return r.status_code, r.json()
+        except Exception:
+            return r.status_code, r.text[:500]
+    except Exception as e:
+        return -1, {"error": str(e)}
+
+
+def bybit_test_connection():
+    code, data = _bybit_get("/v5/asset/deposit/query-record", {"coin": "USDT", "limit": 1}, timeout=15)
+    if code == 200 and isinstance(data, dict) and int(data.get("retCode", -1)) == 0:
+        return True, "✅ Bybit API connected (deposit history readable)."
+    return False, f"❌ Bybit API failed: HTTP {code} — {str(data)[:200]}"
+
+
+def get_bybit_deposit_records(coin: str = "USDT", lookback_hours: int = 96, limit: int = 50, txid: str = ""):
+    end_ms = int(time.time() * 1000)
+    start_ms = int((time.time() - lookback_hours * 3600) * 1000)
+    params = {"coin": coin.upper(), "startTime": start_ms, "endTime": end_ms, "limit": min(max(int(limit or 10), 1), 50)}
+    if txid:
+        params["txID"] = txid
+    code, data = _bybit_get("/v5/asset/deposit/query-record", params)
+    if code != 200 or not isinstance(data, dict) or int(data.get("retCode", -1)) != 0:
+        logger.warning(f"[BybitAPI] deposit query failed: {code} {str(data)[:200]}")
+        return []
+    rows = (((data.get("result") or {}).get("rows")) or [])
+    out = []
+    for row in rows:
+        try:
+            status = int(row.get("status") or 0)
+            # Bybit on-chain deposit success is commonly 3 in V5 examples.
+            if status not in (2, 3):
+                continue
+            out.append({
+                "amount": float(row.get("amount") or 0),
+                "currency": row.get("coin") or coin,
+                "txid": str(row.get("txID") or row.get("id") or ""),
+                "address": str(row.get("toAddress") or ""),
+                "network": str(row.get("chain") or ""),
+                "time_ms": int(row.get("successAt") or row.get("createdTime") or 0),
+                "status": status,
+                "raw": row,
+            })
+        except Exception as e:
+            logger.debug(f"[BybitAPI] parse deposit row failed: {e}")
+    return out
+
+
+def get_bybit_internal_deposits(coin: str = "USDT", lookback_hours: int = 96, limit: int = 50, txid: str = ""):
+    end_ms = int(time.time() * 1000)
+    start_ms = int((time.time() - lookback_hours * 3600) * 1000)
+    params = {"coin": coin.upper(), "startTime": start_ms, "endTime": end_ms, "limit": min(max(int(limit or 10), 1), 50)}
+    if txid:
+        params["txID"] = txid
+    code, data = _bybit_get("/v5/asset/deposit/query-internal-record", params)
+    if code != 200 or not isinstance(data, dict) or int(data.get("retCode", -1)) != 0:
+        logger.warning(f"[BybitAPI] internal deposit query failed: {code} {str(data)[:200]}")
+        return []
+    rows = (((data.get("result") or {}).get("rows")) or [])
+    out = []
+    for row in rows:
+        try:
+            status = int(row.get("status") or 0)
+            if status != 2:  # internal deposit success
+                continue
+            out.append({
+                "amount": float(row.get("amount") or 0),
+                "currency": row.get("coin") or coin,
+                "txid": str(row.get("txID") or row.get("id") or ""),
+                "address": str(row.get("address") or ""),
+                "network": "BYBIT_INTERNAL",
+                "time_ms": int(row.get("createdTime") or 0),
+                "status": status,
+                "raw": row,
+            })
+        except Exception as e:
+            logger.debug(f"[BybitAPI] parse internal row failed: {e}")
+    return out
+
+
 # ============================================================
 # 📄 ORIGINAL FILE: binance_email_api.py
 # ============================================================
