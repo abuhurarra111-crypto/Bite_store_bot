@@ -845,14 +845,19 @@ def get_bybit_deposit_records(coin: str = "USDT", lookback_hours: int = 96, limi
             # Bybit on-chain deposit success is commonly 3 in V5 examples.
             if status not in (2, 3):
                 continue
+            identifiers = [
+                row.get("txID"), row.get("id"), row.get("transactionHash"),
+                row.get("hash"), row.get("txHash"), row.get("transactionId"),
+            ]
             out.append({
                 "amount": float(row.get("amount") or 0),
                 "currency": row.get("coin") or coin,
-                "txid": str(row.get("txID") or row.get("id") or ""),
+                "txid": str(row.get("txID") or row.get("transactionHash") or row.get("hash") or row.get("id") or ""),
                 "address": str(row.get("toAddress") or ""),
                 "network": str(row.get("chain") or ""),
                 "time_ms": int(row.get("successAt") or row.get("createdTime") or 0),
                 "status": status,
+                "identifiers": [str(x) for x in identifiers if x],
                 "raw": row,
             })
         except Exception as e:
@@ -877,14 +882,19 @@ def get_bybit_internal_deposits(coin: str = "USDT", lookback_hours: int = 96, li
             status = int(row.get("status") or 0)
             if status != 2:  # internal deposit success
                 continue
+            identifiers = [
+                row.get("txID"), row.get("id"), row.get("transactionHash"),
+                row.get("hash"), row.get("txHash"), row.get("transactionId"),
+            ]
             out.append({
                 "amount": float(row.get("amount") or 0),
                 "currency": row.get("coin") or coin,
-                "txid": str(row.get("txID") or row.get("id") or ""),
+                "txid": str(row.get("txID") or row.get("transactionHash") or row.get("hash") or row.get("id") or ""),
                 "address": str(row.get("address") or ""),
                 "network": "BYBIT_INTERNAL",
                 "time_ms": int(row.get("createdTime") or 0),
                 "status": status,
+                "identifiers": [str(x) for x in identifiers if x],
                 "raw": row,
             })
         except Exception as e:

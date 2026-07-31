@@ -2608,6 +2608,38 @@ async def points_bybit_menu_callback(update, context):
     await _safe_send(q, context, _pay_resp('payment_bybit_menu_text'), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
 
 
+def _norm_hash(value):
+    return re.sub(r"[^a-zA-Z0-9]", "", str(value or "")).lower()
+
+
+def _bybit_hash_matches(record, note):
+    if not note:
+        return True
+    key = _norm_hash(note)
+    if not key:
+        return False
+    candidates = []
+    for k in ("txid", "id", "transactionHash", "hash", "txHash", "transactionId"):
+        v = record.get(k) if isinstance(record, dict) else None
+        if v: candidates.append(v)
+    try:
+        candidates.extend(record.get("identifiers") or [])
+    except Exception:
+        pass
+    try:
+        raw = record.get("raw") or {}
+        if isinstance(raw, dict):
+            for k in ("txID", "id", "transactionHash", "hash", "txHash", "transactionId"):
+                if raw.get(k): candidates.append(raw.get(k))
+    except Exception:
+        pass
+    for cand in candidates:
+        c = _norm_hash(cand)
+        if c and (key == c or key in c or c in key):
+            return True
+    return False
+
+
 def _find_matching_bybit_payment(order, lookback_hours=96):
     method=str(order.get('payment_method') or '').lower()
     expected=float(order.get('binance_amount') or order.get('price') or 0)
@@ -2623,19 +2655,29 @@ def _find_matching_bybit_payment(order, lookback_hours=96):
         is_txid_used=lambda tx: False
     cfg=_usdt_cfg(method)
     if method == 'bybit_pay':
-        rows=get_bybit_internal_deposits('USDT', lookback_hours=lookback_hours, txid=note) if note else get_bybit_internal_deposits('USDT', lookback_hours=lookback_hours)
+        rows = []
+        try:
+            rows.extend(get_bybit_internal_deposits('USDT', lookback_hours=lookback_hours, txid=note) if note else get_bybit_internal_deposits('USDT', lookback_hours=lookback_hours))
+        except Exception:
+            pass
+        # Some Bybit-to-Bybit receipts show "Transaction Hash" and may still be
+        # returned through the normal deposit endpoint depending on account/site.
+        try:
+            rows.extend(get_bybit_deposit_records('USDT', lookback_hours=lookback_hours, txid=note) if note else get_bybit_deposit_records('USDT', lookback_hours=lookback_hours))
+        except Exception:
+            pass
         for d in rows:
             txid=d.get('txid') or ''
             if not txid or is_txid_used(txid): continue
-            if note and note.lower() not in txid.lower(): continue
+            if not _bybit_hash_matches(d, note): continue
             if _usdt_amount_match(d.get('amount'), expected): return d, 'matched'
-        return None, 'not_found'
+        return None, 'transaction_hash_not_found'
     if method in ('bybit_usdt_trc20','bybit_usdt_bep20'):
         rows=get_bybit_deposit_records('USDT', lookback_hours=lookback_hours, txid=note) if note else get_bybit_deposit_records('USDT', lookback_hours=lookback_hours)
         for d in rows:
             txid=d.get('txid') or ''
             if not txid or is_txid_used(txid): continue
-            if note and note.lower() not in txid.lower(): continue
+            if not _bybit_hash_matches(d, note): continue
             if not _usdt_network_ok(d.get('network'), cfg): continue
             if not _usdt_address_ok(d.get('address'), cfg): continue
             if _usdt_amount_match(d.get('amount'), expected): return d, 'matched'
@@ -2664,7 +2706,7 @@ async def _verify_bybit_order_and_respond(target, context, oid):
         if ok:
             await _send_or_edit(target, f"✅ *Bybit Payment Verified!*\n━━━━━━━━━━━━━━━━━━━━\nOrder: `#{oid}`\nAmount: *{float(dep.get('amount') or 0):.4f} USDT*\nTXID: `{escape_md((dep.get('txid') or '')[:80])}`", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('📜 Order History', callback_data='my_orders')]])); return
         reason=msg
-    await _send_or_edit(target, _pay_resp('payment_not_found_txid').format(reason=escape_md(str(reason)[:80])), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🔄 Verify Again', callback_data=f'bybitv_{oid}')],[InlineKeyboardButton('🎫 Support', callback_data='support_menu')],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]]))
+    await _send_or_edit(target, _pay_resp('payment_not_found_txid').format(reason=escape_md(str(reason)[:80])), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🔄 Check Again', callback_data=f'bybitv_{oid}')],[InlineKeyboardButton('🎫 Support', callback_data='support_menu')],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]]))
 
 async def bybit_verify_callback(update, context):
     q=update.callback_query; await q.answer('Checking Bybit payment...')
