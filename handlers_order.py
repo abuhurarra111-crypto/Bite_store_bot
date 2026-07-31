@@ -147,6 +147,13 @@ async def _bot_send_smart(bot, chat_id, text, **kwargs):
         raise
 
 
+def _pay_resp(key):
+    try:
+        return get_response_with_auto_register(key, DEFAULT_RESPONSES.get(key, ""))
+    except Exception:
+        return DEFAULT_RESPONSES.get(key, "")
+
+
 async def _safe_send(q, context, text, **kwargs):
     send_text, send_mode = smart_text_and_mode(text, kwargs.get("parse_mode", "Markdown"))
     send_kwargs = dict(kwargs)
@@ -482,29 +489,16 @@ async def _start_binance_note_order(update, context, *, is_points=False, product
 # 🆕 v62 — BINANCE ORDER-ID FLOW (clean professional, no API mention)
 # ════════════════════════════════════════════════════════════════
 def _binance_orderid_instructions(*, title, amount, order_id_for_display=None):
-    """Recommended Clean Pro Binance Pay screen."""
     bid = get_setting("binance_id", BINANCE_PAY_ID)
     holder = get_setting("binance_name", get_setting("account_name", ACCOUNT_NAME))
-    parts = [
-        "🔶 *Binance Pay — Checkout*",
-        "━━━━━━━━━━━━━━━━━━━━",
-        title,
-        f"💰 Amount: *{amount:.4f} USDT*",
-        f"📋 Binance Pay ID: `{escape_md(bid)}`",
-        f"👤 Holder: *{escape_md(holder)}*",
-        "",
-        "*How to pay:*",
-        "1. Open Binance app.",
-        "2. Go to Binance Pay.",
-        "3. Send the exact amount shown above.",
-        "4. After payment, copy the *Order ID* from Binance receipt.",
-        "5. Paste the Order ID here in chat.",
-        "",
-        "⚠️ Send exact amount only. Wrong amount may not verify automatically.",
-    ]
+    tpl = _pay_resp("payment_binance_pay_orderid")
+    txt = tpl.format(
+        title=title, amount=f"{float(amount):.4f}",
+        pay_id=escape_md(bid), holder=escape_md(holder)
+    )
     if order_id_for_display:
-        parts += ["", f"_Your last submitted Order ID:_ `{escape_md(order_id_for_display)}`"]
-    return "\n".join(parts)
+        txt += f"\n\n_Your last submitted Order ID:_ `{escape_md(order_id_for_display)}`"
+    return txt
 
 
 async def _start_binance_order_id_flow(update, context, *, is_points, product, qty, amount, points_amount=None):
@@ -2435,9 +2429,7 @@ async def _verify_usdt_order_and_respond(target, context, oid):
             return
         reason = msg
     await _send_or_edit(target,
-        f"⏳ *Payment Not Found Yet*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"If you already sent USDT, please wait for blockchain confirmations and tap *Verify Again*.\n\n"
-        f"Internal status: `{escape_md(str(reason)[:80])}`",
+        _pay_resp('payment_not_found_txid').format(reason=escape_md(str(reason)[:80])),
         parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton('🔄 Verify Again', callback_data=f'usdtv_{oid}')],
             [InlineKeyboardButton('🎫 Support', callback_data='support_menu')],
@@ -2510,18 +2502,11 @@ async def _start_usdt_payment(update, context, method, *, is_points=False, amoun
     context.user_data['pending_order_id'] = oid
     context.user_data['usdt_step'] = 'waiting_txid'
     address = cfg['address']
-    await _safe_send(q, context,
-        f"🪙 *Binance {cfg['label']} — Order #{oid}*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💰 Amount: *{total_usd:.4f} USDT*\n"
-        f"🌐 Network: *{cfg['network_label']}*\n\n"
-        f"📥 *Send to address*\n`{address}`\n\n"
-        f"*Important:*\n"
-        f"✅ Coin must be USDT\n"
-        f"✅ Network must be {cfg['network_label']}\n"
-        f"✅ Send exact amount\n"
-        f"❌ Do not use another network or coin\n\n"
-        f"After payment, paste the *TXID / transaction hash* here.",
+    instr = _pay_resp('payment_binance_usdt').format(
+        method_label=cfg['label'], order_id=oid, amount=f"{total_usd:.4f}",
+        network_label=cfg['network_label'], address=address
+    )
+    await _safe_send(q, context, instr,
         parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton('📋 Copy Address', copy_text=CopyTextButton(address))],
             [InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')],
@@ -2565,7 +2550,7 @@ async def payment_binance_menu_callback(update, context):
     if is_payment_enabled('usdt_trc20'):
         b=_rb('pay_usdt_trc20', callback_data=f'pay_usdt_trc20_{pid}_{qty}'); kb.append([b] if b else [InlineKeyboardButton('USDT TRC20', callback_data=f'pay_usdt_trc20_{pid}_{qty}')])
     kb.append([InlineKeyboardButton('🔙 Back', callback_data=f'buy_{pid}' if qty==1 else f'buyx_{pid}')])
-    await _safe_send(q, context, 'Binance payment methods:', reply_markup=InlineKeyboardMarkup(kb))
+    await _safe_send(q, context, _pay_resp('payment_binance_menu_text'), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
 
 async def points_binance_menu_callback(update, context):
     q=update.callback_query; await q.answer()
@@ -2580,7 +2565,7 @@ async def points_binance_menu_callback(update, context):
     if is_payment_enabled('usdt_trc20'):
         b=_rb('pay_usdt_trc20', callback_data=f'ptspay_usdt_trc20_{amt}'); kb.append([b] if b else [InlineKeyboardButton('USDT TRC20', callback_data=f'ptspay_usdt_trc20_{amt}')])
     kb.append([InlineKeyboardButton('🔙 Back', callback_data='buy_points')])
-    await _safe_send(q, context, 'Binance payment methods:', reply_markup=InlineKeyboardMarkup(kb))
+    await _safe_send(q, context, _pay_resp('payment_binance_menu_text'), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
 
 async def payment_bybit_menu_callback(update, context):
     q=update.callback_query; await q.answer()
@@ -2595,7 +2580,7 @@ async def payment_bybit_menu_callback(update, context):
     if is_payment_enabled('bybit_usdt_trc20'):
         b=_rb('pay_bybit_usdt_trc20', callback_data=f'pay_bybit_usdt_trc20_{pid}_{qty}'); kb.append([b] if b else [InlineKeyboardButton('USDT TRC20', callback_data=f'pay_bybit_usdt_trc20_{pid}_{qty}')])
     kb.append([InlineKeyboardButton('🔙 Back', callback_data=f'buy_{pid}' if qty==1 else f'buyx_{pid}')])
-    await _safe_send(q, context, 'Bybit payment methods:', reply_markup=InlineKeyboardMarkup(kb))
+    await _safe_send(q, context, _pay_resp('payment_bybit_menu_text'), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
 
 async def points_bybit_menu_callback(update, context):
     q=update.callback_query; await q.answer()
@@ -2610,7 +2595,7 @@ async def points_bybit_menu_callback(update, context):
     if is_payment_enabled('bybit_usdt_trc20'):
         b=_rb('pay_bybit_usdt_trc20', callback_data=f'ptspay_bybit_usdt_trc20_{amt}'); kb.append([b] if b else [InlineKeyboardButton('USDT TRC20', callback_data=f'ptspay_bybit_usdt_trc20_{amt}')])
     kb.append([InlineKeyboardButton('🔙 Back', callback_data='buy_points')])
-    await _safe_send(q, context, 'Bybit payment methods:', reply_markup=InlineKeyboardMarkup(kb))
+    await _safe_send(q, context, _pay_resp('payment_bybit_menu_text'), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
 
 
 def _find_matching_bybit_payment(order, lookback_hours=96):
@@ -2669,7 +2654,7 @@ async def _verify_bybit_order_and_respond(target, context, oid):
         if ok:
             await _send_or_edit(target, f"✅ *Bybit Payment Verified!*\n━━━━━━━━━━━━━━━━━━━━\nOrder: `#{oid}`\nAmount: *{float(dep.get('amount') or 0):.4f} USDT*\nTXID: `{escape_md((dep.get('txid') or '')[:80])}`", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('📜 Order History', callback_data='my_orders')]])); return
         reason=msg
-    await _send_or_edit(target, f"⏳ *Bybit Payment Not Found Yet*\n\nPaste correct TXID/Order ID or wait for confirmations and tap Verify Again.\n\nStatus: `{escape_md(str(reason)[:80])}`", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🔄 Verify Again', callback_data=f'bybitv_{oid}')],[InlineKeyboardButton('🎫 Support', callback_data='support_menu')],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]]))
+    await _send_or_edit(target, _pay_resp('payment_not_found_txid').format(reason=escape_md(str(reason)[:80])), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🔄 Verify Again', callback_data=f'bybitv_{oid}')],[InlineKeyboardButton('🎫 Support', callback_data='support_menu')],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]]))
 
 async def bybit_verify_callback(update, context):
     q=update.callback_query; await q.answer('Checking Bybit payment...')
@@ -2717,31 +2702,14 @@ async def _start_bybit_payment(update, context, method, *, is_points=False, amou
         pay_id=get_setting('bybit_pay_id', os.getenv('BYBIT_PAY_ID','')).strip()
         if not pay_id:
             await _safe_send(q, context, '❌ Bybit Pay ID is not configured. Admin must set BYBIT_PAY_ID in Render env or Payment Settings.', reply_markup=back_btn()); return
-        instr=(f"🟡 *Bybit Pay — Order #{oid}*\n"
-               f"━━━━━━━━━━━━━━━━━━━━\n"
-               f"💰 Amount: *{total_usd:.4f} USDT*\n"
-               f"📥 Bybit Pay ID / UID: `{escape_md(pay_id)}`\n\n"
-               f"*How to pay:*\n"
-               f"1. Open Bybit app.\n"
-               f"2. Use Pay / Internal Transfer.\n"
-               f"3. Send exact USDT amount shown above.\n"
-               f"4. Copy Bybit Pay Order ID / internal TXID.\n"
-               f"5. Paste it here in chat.\n\n"
-               f"Bot will verify from Bybit internal deposit records.")
+        instr = _pay_resp('payment_bybit_pay').format(order_id=oid, amount=f"{total_usd:.4f}", pay_id=escape_md(pay_id))
         kb = InlineKeyboardMarkup([[InlineKeyboardButton('📋 Copy Bybit Pay ID', copy_text=CopyTextButton(pay_id))],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]])
     else:
         cfg=_usdt_cfg(method)
-        instr=(f"🟡 *{cfg['label']} — Order #{oid}*\n"
-               f"━━━━━━━━━━━━━━━━━━━━\n"
-               f"💰 Amount: *{total_usd:.4f} USDT*\n"
-               f"🌐 Network: *{cfg['network_label']}*\n\n"
-               f"📥 *Send to address*\n`{cfg['address']}`\n\n"
-               f"*Important:*\n"
-               f"✅ Coin must be USDT\n"
-               f"✅ Network must be {cfg['network_label']}\n"
-               f"✅ Send exact amount\n"
-               f"❌ Wrong network/address will not verify\n\n"
-               f"After payment, paste the *TXID / transaction hash* here.")
+        instr = _pay_resp('payment_bybit_usdt').format(
+            method_label=cfg['label'], order_id=oid, amount=f"{total_usd:.4f}",
+            network_label=cfg['network_label'], address=cfg['address']
+        )
         kb = InlineKeyboardMarkup([[InlineKeyboardButton('📋 Copy Address', copy_text=CopyTextButton(cfg['address']))],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]])
     await _safe_send(q, context, instr, parse_mode='Markdown', reply_markup=kb)
 

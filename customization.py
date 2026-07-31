@@ -2594,6 +2594,8 @@ SCREEN_TREE = {
         "buttons": [
             # 🆕 v57: 'Pay with Points' is now editable (was hardcoded before)
             {"id": "pay_pts",         "kind": "registry"},
+            {"id": "pay_group_binance", "kind": "registry"},
+            {"id": "pay_group_bybit",   "kind": "registry"},
             {"id": "pay_binance",     "kind": "registry"},
             {"id": "pay_easypaisa",   "kind": "registry"},
             {"id": "pay_jazzcash",    "kind": "registry"},
@@ -2603,6 +2605,8 @@ SCREEN_TREE = {
         ],
         "children": [
             "binance_flow_screen",
+            "bybit_flow_screen",
+            "crypto_usdt_flow_screen",
             "easypaisa_flow_screen",
             "jazzcash_flow_screen",
             "order_created_screen",
@@ -2629,6 +2633,9 @@ SCREEN_TREE = {
         "title": "Binance Payment Flow",
         "description": "All text shown during Binance Pay verification",
         "texts": [
+            ("payment_binance_menu_text", "📝 Binance Method Menu"),
+            ("payment_binance_pay_orderid", "📝 Binance Pay Checkout"),
+            ("payment_binance_usdt", "📝 Binance USDT Checkout"),
             ("binance_pay_instructions", "📝 Binance Instructions"),
             ("binance_order_created",    "📝 Order Created (Binance)"),
             ("binance_instructions",     "📝 Important Note"),
@@ -2638,7 +2645,45 @@ SCREEN_TREE = {
             ("payment_verified_product", "📝 Verified — Product Delivered"),
             ("reupload_screenshot",      "📝 Re-upload Screenshot Prompt"),
         ],
-        "buttons": [],
+        "buttons": [
+            {"id": "pay_binance", "kind": "registry"},
+            {"id": "pay_usdt_bep20", "kind": "registry"},
+            {"id": "pay_usdt_trc20", "kind": "registry"},
+        ],
+        "children": ["error_messages_screen"],
+    },
+
+    "bybit_flow_screen": {
+        "icon": "🟡",
+        "title": "Bybit Payment Flow",
+        "description": "Bybit Pay and Bybit USDT payment screens",
+        "texts": [
+            ("payment_bybit_menu_text", "📝 Bybit Method Menu"),
+            ("payment_bybit_pay", "📝 Bybit Pay Checkout"),
+            ("payment_bybit_usdt", "📝 Bybit USDT Checkout"),
+            ("payment_not_found_txid", "📝 Payment Not Found / Retry Text"),
+        ],
+        "buttons": [
+            {"id": "pay_bybit_pay", "kind": "registry"},
+            {"id": "pay_bybit_usdt_bep20", "kind": "registry"},
+            {"id": "pay_bybit_usdt_trc20", "kind": "registry"},
+        ],
+        "children": ["error_messages_screen"],
+    },
+
+    "crypto_usdt_flow_screen": {
+        "icon": "🪙",
+        "title": "Crypto USDT Shared Screens",
+        "description": "Shared on-chain TXID verification response text",
+        "texts": [
+            ("payment_not_found_txid", "📝 Payment Not Found / Retry Text"),
+        ],
+        "buttons": [
+            {"id": "pay_usdt_bep20", "kind": "registry"},
+            {"id": "pay_usdt_trc20", "kind": "registry"},
+            {"id": "pay_bybit_usdt_bep20", "kind": "registry"},
+            {"id": "pay_bybit_usdt_trc20", "kind": "registry"},
+        ],
         "children": ["error_messages_screen"],
     },
 
