@@ -154,6 +154,14 @@ def _pay_resp(key):
         return DEFAULT_RESPONSES.get(key, "")
 
 
+def _fmt_usdt_amount(value):
+    """Display USDT amount like product price (no unnecessary trailing zeros)."""
+    try:
+        return fmt_price(float(value)).lstrip('$')
+    except Exception:
+        return str(value)
+
+
 async def _safe_send(q, context, text, **kwargs):
     send_text, send_mode = smart_text_and_mode(text, kwargs.get("parse_mode", "Markdown"))
     send_kwargs = dict(kwargs)
@@ -493,7 +501,7 @@ def _binance_orderid_instructions(*, title, amount, order_id_for_display=None):
     holder = get_setting("binance_name", get_setting("account_name", ACCOUNT_NAME))
     tpl = _pay_resp("payment_binance_pay_orderid")
     txt = tpl.format(
-        title=title, amount=f"{float(amount):.4f}",
+        title=title, amount=_fmt_usdt_amount(amount),
         pay_id=escape_md(bid), holder=escape_md(holder)
     )
     if order_id_for_display:
@@ -2489,6 +2497,7 @@ async def _start_usdt_payment(update, context, method, *, is_points=False, amoun
     if is_points:
         total_usd = float(amount or 0)
         pts = points_from_usd(total_usd)
+        title_line = f"💎 You will receive *{fmt_points(pts)} Points*"
         oid = create_order(u.id, u.first_name or str(u.id), 0, f"💎 {fmt_points(pts)} Points", total_usd, method, '', total_usd, 'USDT', 'points')
     else:
         p = product
@@ -2496,14 +2505,15 @@ async def _start_usdt_payment(update, context, method, *, is_points=False, amoun
             await _safe_send(q, context, '❌ Product not found.', reply_markup=back_btn()); return
         total_usd = _get_eff_price(p) * int(qty or 1)
         pname = p['name'] if int(qty or 1) == 1 else f"{p['name']} × {int(qty or 1)}"
+        title_line = f"📦 Product: *{_fmt_msg_name(pname)}*"
         creds = context.user_data.pop('order_creds', '')
         oid = create_order(u.id, u.first_name or str(u.id), p['id'], pname, total_usd, method, '', total_usd, 'USDT', 'product', creds, qty=qty)
     update_order_status(oid, 'usdt_waiting')
     context.user_data['pending_order_id'] = oid
     context.user_data['usdt_step'] = 'waiting_txid'
     address = cfg['address']
-    instr = _pay_resp('payment_binance_usdt').format(
-        method_label=cfg['label'], order_id=oid, amount=f"{total_usd:.4f}",
+    instr = title_line + "\n" + _pay_resp('payment_binance_usdt').format(
+        method_label=cfg['label'], order_id=oid, amount=_fmt_usdt_amount(total_usd),
         network_label=cfg['network_label'], address=address
     )
     await _safe_send(q, context, instr,
@@ -2691,10 +2701,12 @@ async def _start_bybit_payment(update, context, method, *, is_points=False, amou
     u=q.from_user; save_user(u.id,u.username or '',u.first_name or '')
     if is_points:
         total_usd=float(amount or 0); pts=points_from_usd(total_usd)
+        title_line = f"💎 You will receive *{fmt_points(pts)} Points*"
         oid=create_order(u.id,u.first_name or str(u.id),0,f"💎 {fmt_points(pts)} Points",total_usd,method,'',total_usd,'USDT','points')
     else:
         p=product
         total_usd=_get_eff_price(p)*int(qty or 1); pname=p['name'] if int(qty or 1)==1 else f"{p['name']} × {int(qty or 1)}"
+        title_line = f"📦 Product: *{_fmt_msg_name(pname)}*"
         creds=context.user_data.pop('order_creds','')
         oid=create_order(u.id,u.first_name or str(u.id),p['id'],pname,total_usd,method,'',total_usd,'USDT','product',creds,qty=qty)
     update_order_status(oid,'bybit_waiting'); context.user_data['pending_order_id']=oid; context.user_data['bybit_step']='waiting_txid'
@@ -2702,12 +2714,12 @@ async def _start_bybit_payment(update, context, method, *, is_points=False, amou
         pay_id=get_setting('bybit_pay_id', os.getenv('BYBIT_PAY_ID','')).strip()
         if not pay_id:
             await _safe_send(q, context, '❌ Bybit Pay ID is not configured. Admin must set BYBIT_PAY_ID in Render env or Payment Settings.', reply_markup=back_btn()); return
-        instr = _pay_resp('payment_bybit_pay').format(order_id=oid, amount=f"{total_usd:.4f}", pay_id=escape_md(pay_id))
+        instr = title_line + "\n" + _pay_resp('payment_bybit_pay').format(order_id=oid, amount=_fmt_usdt_amount(total_usd), pay_id=escape_md(pay_id))
         kb = InlineKeyboardMarkup([[InlineKeyboardButton('📋 Copy Bybit Pay ID', copy_text=CopyTextButton(pay_id))],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]])
     else:
         cfg=_usdt_cfg(method)
-        instr = _pay_resp('payment_bybit_usdt').format(
-            method_label=cfg['label'], order_id=oid, amount=f"{total_usd:.4f}",
+        instr = title_line + "\n" + _pay_resp('payment_bybit_usdt').format(
+            method_label=cfg['label'], order_id=oid, amount=_fmt_usdt_amount(total_usd),
             network_label=cfg['network_label'], address=cfg['address']
         )
         kb = InlineKeyboardMarkup([[InlineKeyboardButton('📋 Copy Address', copy_text=CopyTextButton(cfg['address']))],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]])
