@@ -119,11 +119,13 @@ def _load_proxy_pool() -> list[str]:
             if p and p not in out:
                 out.append(p)
 
-    # 3) single env
-    if BINANCE_PROXY_URL:
-        p = BINANCE_PROXY_URL.strip()
-        if p and p not in out:
-            out.append(p)
+    # 3) single env — Binance + Bybit (🔧 v114: shared pool — a proxy that
+    #    works for Binance also works for Bybit, so both feed one pool).
+    for _env in (BINANCE_PROXY_URL, os.getenv("BYBIT_PROXY_URL", "").strip()):
+        if _env:
+            p = _env.strip()
+            if p and p not in out:
+                out.append(p)
 
     # 4) built-in defaults as LAST-RESORT fallback.
     # Old behavior only used these when env/DB was empty. In production that
@@ -134,10 +136,12 @@ def _load_proxy_pool() -> list[str]:
             out.append(p)
 
     # Prefer last known good proxy from memory/DB so successful recovery sticks.
+    # 🔧 v114: consider both Binance and Bybit last-good entries (shared pool).
     last_good = _LAST_GOOD_PROXY
     try:
         from database import get_setting
         last_good = last_good or (get_setting("binance_proxy_last_good", "") or "").strip()
+        last_good = last_good or (get_setting("bybit_proxy_last_good", "") or "").strip()
     except Exception:
         pass
     if last_good and last_good in out:
@@ -159,7 +163,7 @@ def _is_in_cooldown(proxy_url: str) -> bool:
     return time.time() < float(h.get("cooldown_until") or 0)
 
 
-def _mark_proxy_ok(proxy_url: str):
+def _mark_proxy_ok(proxy_url: str, last_good_key: str = "binance_proxy_last_good"):
     global _LAST_GOOD_PROXY
     _LAST_GOOD_PROXY = proxy_url
     _PROXY_HEALTH[proxy_url] = {
@@ -170,9 +174,10 @@ def _mark_proxy_ok(proxy_url: str):
         "last_error": "",
     }
     # Persist last good proxy lightly so Render restarts keep the best candidate.
+    # 🔧 v114: key is parameterized so Bybit keeps its own last-good too.
     try:
         from database import set_setting
-        set_setting("binance_proxy_last_good", proxy_url)
+        set_setting(last_good_key, proxy_url)
     except Exception:
         pass
 
@@ -244,13 +249,24 @@ def _sign(query_string: str) -> str:
     ).hexdigest()
 
 
-def _do_request(method_url: str, headers: dict, timeout: int):
+def _request_with_rotation(method_url: str, headers: dict, timeout: int,
+                           last_good_key: str = "binance_proxy_last_good",
+                           pool: list | None = None,
+                           geo_block_check=None):
     """
-    Try the configured proxy pool in order until one succeeds.
+    Try the configured (shared) proxy pool in order until one succeeds.
     Returns (status_code, response_obj_or_text, used_proxy_or_None).
     If proxy pool empty → direct (no proxy).
+
+    🔧 v114: shared by Binance and Bybit. `geo_block_check` is an optional
+    callable (status_code, body_text) -> bool that decides whether an HTTP
+    response means "this proxy is geo-blocked, rotate" vs a real API error
+    that should be returned to the caller.
     """
-    pool = _load_proxy_pool()
+    pool = _load_proxy_pool() if pool is None else pool
+    if geo_block_check is None:
+        geo_block_check = lambda code, body: code == 451
+
     if not pool:
         # No proxies — direct
         try:
@@ -268,12 +284,16 @@ def _do_request(method_url: str, headers: dict, timeout: int):
                 method_url, headers=headers,
                 proxies=_proxies_for(proxy_url), timeout=timeout,
             )
-            # Treat HTTP 451 (geo-block) as a proxy failure so we rotate
-            if r.status_code == 451:
-                _mark_proxy_fail(proxy_url, "HTTP 451 (geo-blocked)")
-                last_err = f"{proxy_url}: HTTP 451"
+            try:
+                body_txt = r.text or ""
+            except Exception:
+                body_txt = ""
+            # Geo-block / proxy-block → rotate to next candidate
+            if geo_block_check(r.status_code, body_txt.lower()):
+                _mark_proxy_fail(proxy_url, f"HTTP {r.status_code} (geo-blocked)")
+                last_err = f"{proxy_url}: HTTP {r.status_code} blocked"
                 continue
-            _mark_proxy_ok(proxy_url)
+            _mark_proxy_ok(proxy_url, last_good_key=last_good_key)
             return r.status_code, r, proxy_url
         except requests.exceptions.ProxyError as e:
             _mark_proxy_fail(proxy_url, f"ProxyError: {e}")
@@ -290,6 +310,12 @@ def _do_request(method_url: str, headers: dict, timeout: int):
 
     # All proxies failed or all in cooldown
     return -1, f"All proxies failed (last={last_err})", None
+
+
+def _do_request(method_url: str, headers: dict, timeout: int):
+    """Binance: rotate through the shared pool (back-compat wrapper)."""
+    return _request_with_rotation(method_url, headers, timeout,
+                                  last_good_key="binance_proxy_last_good")
 
 
 def _signed_get(path: str, params: dict | None = None, timeout: int = 15) -> tuple[int, dict | str]:
@@ -813,6 +839,14 @@ def _bybit_sign(ts: str, query: str = "") -> str:
 
 
 def _bybit_get(path: str, params: dict | None = None, timeout: int = 15):
+    """Signed Bybit GET that rotates through the SHARED proxy pool.
+
+    🔧 v114: previously Bybit used only the single BYBIT_PROXY_URL with zero
+    rotation or recovery — a dead/geo-blocked proxy made every verification
+    fail silently. Now it uses the same pool + health tracking as Binance, so
+    proxies the Gemini scout finds for Binance automatically work for Bybit
+    too, and dead proxies rotate out automatically.
+    """
     if not bybit_api_is_configured():
         return -1, {"error": "BYBIT_API_KEY / BYBIT_API_SECRET not set"}
     params = {k: v for k, v in (params or {}).items() if v not in (None, "")}
@@ -826,28 +860,37 @@ def _bybit_get(path: str, params: dict | None = None, timeout: int = 15):
         "Content-Type": "application/json",
     }
     url = f"{BYBIT_API_BASE}{path}" + (f"?{query}" if query else "")
-    try:
-        r = requests.get(url, headers=headers, timeout=timeout, proxies=_bybit_proxies())
-        try:
-            data = r.json()
-        except Exception:
-            data = r.text[:500]
-        # 🔧 v112: always record what the API actually said
-        try:
-            _bybit_last_meta.update({
-                "path": path, "http": int(r.status_code),
-                "retCode": data.get("retCode") if isinstance(data, dict) else None,
-                "retMsg": data.get("retMsg") if isinstance(data, dict) else str(data)[:120],
-                "ok": r.status_code == 200 and (not isinstance(data, dict) or int(data.get("retCode", -1)) == 0),
-                "error": "",
-            })
-        except Exception:
-            pass
-        return r.status_code, data
-    except Exception as e:
+
+    # Bybit's geo-block shows as HTTP 403 CloudFront "block access from your
+    # country" — treat that (and 451) as a proxy failure and rotate.
+    def _bybit_blocked(code, body):
+        return code == 451 or (code == 403 and ("cloudfront" in body or "block" in body or "country" in body))
+
+    code, resp, _used = _request_with_rotation(
+        url, headers, timeout,
+        last_good_key="bybit_proxy_last_good",
+        geo_block_check=_bybit_blocked,
+    )
+    if code == -1:
         _bybit_last_meta.update({"path": path, "http": -1, "retCode": None,
-                                 "retMsg": str(e)[:160], "ok": False, "error": str(e)[:160]})
-        return -1, {"error": str(e)}
+                                 "retMsg": str(resp)[:160], "ok": False, "error": str(resp)[:160]})
+        return -1, {"error": str(resp)}
+    try:
+        data = resp.json()
+    except Exception:
+        data = getattr(resp, "text", str(resp))[:500]
+    # 🔧 v112: always record what the API actually said
+    try:
+        _bybit_last_meta.update({
+            "path": path, "http": int(code),
+            "retCode": data.get("retCode") if isinstance(data, dict) else None,
+            "retMsg": data.get("retMsg") if isinstance(data, dict) else str(data)[:120],
+            "ok": code == 200 and (not isinstance(data, dict) or int(data.get("retCode", -1)) == 0),
+            "error": "",
+        })
+    except Exception:
+        pass
+    return code, data
 
 
 def bybit_test_connection():

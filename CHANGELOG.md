@@ -8,6 +8,67 @@
 
 ---
 
+# 🚀 v114 (2026-07-31) — Shared Proxy Pool: Binance + Bybit Auto-Recovery (Gemini Scout)
+
+**User request:** Binance ke liye Gemini khud proxies find karta hai, test karta hai, pool mein
+set karta hai — wahi Bybit ke liye bhi kaam kare, ya jo Binance ke liye mile wo Bybit mein
+automatically set ho jaye.
+
+## ✅ Fix — one shared proxy pool for both exchanges
+
+Previously Bybit used ONLY the single `BYBIT_PROXY_URL` with zero rotation, zero health
+tracking, zero auto-recovery — a dead/geo-blocked proxy made every Bybit verification fail
+silently. Binance had the full pool + Gemini scout system.
+
+### payments.py
+- New `_request_with_rotation()` — generalized proxy rotation (pool order → cooldown skip →
+  geo-block rotate → last-good persist) parameterized by `last_good_key` and an optional
+  `geo_block_check` callable. `_do_request()` (Binance) is now a thin wrapper.
+- **Bybit now rotates through the same shared pool.** `_bybit_get()` uses
+  `_request_with_rotation(..., last_good_key="bybit_proxy_last_good")` and treats Bybit's
+  403 CloudFront "block access from your country" (and 451) as a proxy failure → rotates.
+  Real API errors (e.g. 10002 sign error) are still surfaced to the caller.
+- `_load_proxy_pool()` now also includes `BYBIT_PROXY_URL` env and prioritizes
+  `bybit_proxy_last_good` (shared pool, both exchanges' last-good considered).
+- `_mark_proxy_ok()` gained a `last_good_key` param (default unchanged).
+
+### ai_misc.py (Gemini scout)
+- `_test_proxy()` now tests every candidate against **Binance AND Bybit** public endpoints.
+  A candidate only counts as "working" when it passes BOTH — so nothing that fails Bybit
+  ever enters the shared pool. (Binance `api/v3/time` + Bybit `v5/market/time`, both free.)
+- `run_scout_sync()` stores the fastest working proxy as `bybit_proxy_last_good` too.
+- `proxy_monitor_job()` auto-recovery now triggers when **either** Binance or Bybit API is
+  configured (previously required Binance keys) — one scout cycle recovers both exchanges.
+
+### Admin panel
+- Scout "Running…" and "Complete" messages updated: candidates tested against
+  *Binance + Bybit*, "shared pool" wording.
+
+## Result
+- Gemini finds PK proxies → tests against both Binance & Bybit → adds to one shared pool →
+  Binance **and** Bybit both auto-rotate through it and recover when proxies die.
+- No extra env var needed: `BYBIT_PROXY_URL` (if set) just joins the same pool.
+- Bybit keeps its own last-good so a proxy proven against Bybit is preferred for Bybit.
+
+## Tests (v114)
+`_test_v114_proxy.py` — **9/9 PASS**: BYBIT_PROXY_URL joins pool ✅ · bybit last-good
+prioritized ✅ · _bybit_get uses shared rotation ✅ · 403-CloudFront rotated vs auth error
+not rotated ✅ · rotation marks bybit last-good ✅ · proxy must pass BOTH exchanges ✅ ·
+dual-pass OK ✅ · scout sets bybit last-good ✅ · monitor auto-recovers when only Bybit
+configured ✅.
+
+Regression: v111+v112 **32/32 PASS**. Full 46-file compile + boot smoke clean.
+
+## 🔧 Files changed
+- `payments.py` — `_request_with_rotation()`, `_bybit_get()` pool rotation,
+  `_load_proxy_pool()` +BYBIT_PROXY_URL/bybit last-good, `_mark_proxy_ok()` param.
+- `ai_misc.py` — dual-endpoint `_test_proxy()`, bybit last-good in `run_scout_sync()`,
+  monitor gate Binance-OR-Bybit.
+- `handlers_admin.py` — scout messages mention Binance + Bybit / shared pool.
+- `CHANGELOG.md` — this section.
+
+---
+
 # 🚀 v113.1 (2026-07-31) — Bybit "Test & Refresh" Button in Admin Panel + Geo-Block Hint
 
 **User need:** couldn't find any Bybit connection test — because none existed in the UI.

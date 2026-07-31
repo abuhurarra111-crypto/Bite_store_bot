@@ -5350,9 +5350,9 @@ async def admin_proxy_ai_scout_callback(u, c):
         await _safe_edit(q,
             "🤖 *AI Proxy Scout — Running…*\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "📡 Fetching proxy listings (3 sites)…\n"
+            "📡 Fetching proxy listings…\n"
             "🧠 Asking Gemini to extract PK proxies…\n"
-            "🧪 Testing each candidate against Binance API…\n\n"
+            "🧪 Testing each candidate against *Binance + Bybit* API…\n\n"
             "_This may take 30–90 seconds. Please wait._",
             parse_mode="Markdown")
     except Exception:
@@ -5394,7 +5394,7 @@ async def admin_proxy_ai_scout_callback(u, c):
             for url, sec in working_list[:5]:
                 lines.append(f"  • `{url}`  ({sec}s)")
         lines.append("")
-        lines.append("_Cooldowns reset. Bot will use these on the next API call._")
+        lines.append("_Cooldowns reset. Binance + Bybit will use these on the next API call (shared pool)._")
         text = "\n".join(lines)
     else:
         text = (

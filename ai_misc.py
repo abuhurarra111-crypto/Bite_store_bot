@@ -773,28 +773,37 @@ def _regex_fallback_extract(blobs: dict) -> list:
 # 🧪 STEP 3: Test each candidate against Binance
 # ════════════════════════════════════════════
 def _test_proxy(proxy_url: str, timeout: int = _CANDIDATE_TEST_TIMEOUT) -> tuple:
-    """Hit api.binance.com/api/v3/time. Returns (ok, elapsed_seconds, reason)."""
+    """Test a proxy against BOTH Binance and Bybit public endpoints.
+
+    🔧 v114: proxies live in a SHARED pool used by Binance AND Bybit, so a
+    candidate only counts as working when it passes both. Binance first (451
+    geo-block), then Bybit (403 CloudFront geo-block is common on US cloud IPs).
+    Returns (ok, elapsed_seconds, reason).
+    """
     proxies = {"http": proxy_url, "https": proxy_url}
+    targets = [
+        ("Binance", "https://api.binance.com/api/v3/time", lambda c: c == 200),
+        ("Bybit",   "https://api.bybit.com/v5/market/time", lambda c: c == 200),
+    ]
     t0 = time.time()
-    try:
-        r = requests.get(
-            "https://api.binance.com/api/v3/time",
-            proxies=proxies, timeout=timeout,
-        )
-        elapsed = time.time() - t0
-        if r.status_code == 200:
-            return True, elapsed, "OK"
-        if r.status_code == 451:
-            return False, elapsed, "HTTP 451 (geo-blocked)"
-        return False, elapsed, f"HTTP {r.status_code}"
-    except requests.exceptions.ConnectTimeout:
-        return False, time.time() - t0, "ConnectTimeout"
-    except requests.exceptions.ReadTimeout:
-        return False, time.time() - t0, "ReadTimeout"
-    except requests.exceptions.ProxyError:
-        return False, time.time() - t0, "ProxyError"
-    except Exception as e:
-        return False, time.time() - t0, type(e).__name__
+    for name, url, ok_fn in targets:
+        try:
+            r = requests.get(url, proxies=proxies, timeout=timeout)
+            elapsed = time.time() - t0
+            if ok_fn(r.status_code):
+                continue
+            if r.status_code in (451, 403):
+                return False, elapsed, f"{name}: HTTP {r.status_code} (geo-blocked)"
+            return False, elapsed, f"{name}: HTTP {r.status_code}"
+        except requests.exceptions.ConnectTimeout:
+            return False, time.time() - t0, f"{name}: ConnectTimeout"
+        except requests.exceptions.ReadTimeout:
+            return False, time.time() - t0, f"{name}: ReadTimeout"
+        except requests.exceptions.ProxyError:
+            return False, time.time() - t0, f"{name}: ProxyError"
+        except Exception as e:
+            return False, time.time() - t0, f"{name}: {type(e).__name__}"
+    return True, time.time() - t0, "OK (Binance + Bybit)"
 
 
 def _test_candidates(candidates: list) -> list:
@@ -897,6 +906,15 @@ def run_scout_sync() -> dict:
         added = _add_to_pool(working)
         summary["added"] = added
 
+        # 🔧 v114: also mark the fastest working proxy as Bybit's last-good so
+        # Bybit immediately prefers a verified proxy (shared pool).
+        if working:
+            try:
+                from database import set_setting
+                set_setting("bybit_proxy_last_good", working[0][0])
+            except Exception:
+                pass
+
         # Reset cooldowns so new proxies are immediately tried
         try:
             from payments import reset_proxy_cooldowns
@@ -926,10 +944,12 @@ async def proxy_monitor_job(context):
        - Otherwise, do nothing"""
     try:
         from payments import (
-            get_proxy_health_snapshot, _load_proxy_pool, binance_api_is_configured,
+            get_proxy_health_snapshot, _load_proxy_pool,
+            binance_api_is_configured, bybit_api_is_configured,
         )
-        # Only run if Binance API is actually configured (no keys = no point)
-        if not binance_api_is_configured():
+        # 🔧 v114: run if EITHER Binance or Bybit API is configured — both use
+        # the same shared proxy pool, so one scout cycle recovers both.
+        if not (binance_api_is_configured() or bybit_api_is_configured()):
             return
 
         snap = get_proxy_health_snapshot()
@@ -975,7 +995,8 @@ async def proxy_monitor_job(context):
                 msg = (
                     f"🤖 *AI Proxy Scout — Auto-Recovery*\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"All proxies were dead. Scout ran automatically.\n\n"
+                    f"All proxies were dead (Binance + Bybit share one pool). "
+                    f"Scout ran automatically.\n\n"
                     f"📡 Sources fetched: {srcs}/3\n"
                     f"🔍 Candidates found (via {method}): {cands}\n"
                     f"✅ Working proxies tested: *{working}*\n"
