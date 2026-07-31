@@ -76,6 +76,35 @@ def _get_shop_product_name(shop_pid: int) -> str:
         return ""
 
 
+async def notify_restock_request_users(bot, shop_pid: int, product_name: str):
+    """DM users who tapped Notify Me for this product, then clear requests."""
+    try:
+        from database import get_connection
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        conn = get_connection(); c = conn.cursor()
+        c.execute("CREATE TABLE IF NOT EXISTS restock_requests (id INTEGER PRIMARY KEY AUTOINCREMENT, product_id INTEGER, user_id INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(product_id, user_id))")
+        c.execute("SELECT user_id FROM restock_requests WHERE product_id=?", (int(shop_pid),))
+        users = [int(r[0]) for r in c.fetchall()]
+        c.execute("DELETE FROM restock_requests WHERE product_id=?", (int(shop_pid),))
+        conn.commit(); conn.close()
+        sent = 0
+        for uid in users:
+            try:
+                await bot.send_message(
+                    uid,
+                    f"🔔 *Back in Stock!*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 {product_name}\n\nTap below to buy before it sells out.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛒 View Product", callback_data=f"prod_{shop_pid}")]])
+                )
+                sent += 1
+            except Exception:
+                pass
+        return sent
+    except Exception as e:
+        logger.debug(f"[restock_request_users] failed pid={shop_pid}: {e}")
+        return 0
+
+
 async def fire_restock_alert(bot, shop_pid: int, added: int, new_stock: int):
     """
     Send an auto-restock broadcast for shop product `shop_pid`.
@@ -108,6 +137,12 @@ async def fire_restock_alert(bot, shop_pid: int, added: int, new_stock: int):
     name = _get_shop_product_name(shop_pid)
     if not name:
         return 0
+
+    # Notify users who specifically requested restock alerts.
+    try:
+        await notify_restock_request_users(bot, shop_pid, name)
+    except Exception:
+        pass
 
     price = _get_shop_product_price(shop_pid)
 

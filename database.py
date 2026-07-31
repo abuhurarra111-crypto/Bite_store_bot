@@ -388,7 +388,8 @@ def migrate_all():
             stats["errors"].append(f"{name}: {e}")
             print(f"⚠️ migrate_all → {name}: {e}")
 
-    # Supplier system (separately, may not be present in very old DBs)
+    # Supplier systems (legacy + external suppliers). External supplier tables
+    # must be ensured here too so restored DBs get new columns immediately.
     try:
         setup_supplier_tables(); stats["tables_checked"] += 1
     except Exception as e:
@@ -397,6 +398,11 @@ def migrate_all():
         setup_supplier_advanced_tables(); stats["tables_checked"] += 1
     except Exception as e:
         stats["errors"].append(f"setup_supplier_advanced_tables: {e}")
+    try:
+        from ext_suppliers import ensure_ext_supplier_tables
+        ensure_ext_supplier_tables(); stats["tables_checked"] += 1
+    except Exception as e:
+        stats["errors"].append(f"ensure_ext_supplier_tables: {e}")
 
     # ── 3. Final pass: ensure every required products column exists ──
     try:
@@ -405,7 +411,10 @@ def migrate_all():
         ensure_product_accounts_table(c)
         ensure_column(c, "orders", "payment_note_id", "TEXT DEFAULT ''")
         ensure_column(c, "orders", "order_qty", "INTEGER DEFAULT 1")
+        ensure_column(c, "orders", "payment_reminder_count", "INTEGER DEFAULT 0")
+        ensure_column(c, "orders", "last_payment_reminder_at", "TEXT DEFAULT ''")
         ensure_supplier_retry_columns(c)
+        ensure_growth_tables(c)
         conn.commit(); conn.close()
     except Exception as e:
         stats["errors"].append(f"final ensure_columns: {e}")
@@ -936,14 +945,31 @@ def get_products_by_category(cid):
     except Exception:
         pass
     conn = get_connection(); c = conn.cursor()
-    c.execute("SELECT * FROM products WHERE category_id=? AND is_active=1 AND COALESCE(is_hidden, 0)=0", (cid,))
+    ensure_column(c, "products", "fake_sold", "INTEGER DEFAULT 0")
+    ensure_column(c, "products", "real_sold", "INTEGER DEFAULT 0")
+    c.execute("""SELECT * FROM products
+                 WHERE category_id=? AND is_active=1 AND COALESCE(is_hidden, 0)=0
+                 ORDER BY CASE WHEN COALESCE(stock,0)>0 THEN 1 ELSE 0 END DESC,
+                          COALESCE(real_sold,0) DESC,
+                          (COALESCE(price,0)-COALESCE(cost_price,0)) DESC,
+                          COALESCE(fake_sold,0) DESC,
+                          id DESC""", (cid,))
     r = c.fetchall(); conn.close(); return r
 
 def get_all_active_products():
     """🆕 v59: Now also excludes admin-hidden products (is_hidden=1)."""
     _ensure_is_hidden_column()
     conn = get_connection(); c = conn.cursor()
-    c.execute("SELECT p.*, c.name as category_name, c.emoji as category_emoji FROM products p LEFT JOIN categories c ON p.category_id=c.id WHERE p.is_active=1 AND COALESCE(p.is_hidden, 0)=0 ORDER BY p.id DESC")
+    ensure_column(c, "products", "fake_sold", "INTEGER DEFAULT 0")
+    ensure_column(c, "products", "real_sold", "INTEGER DEFAULT 0")
+    c.execute("""SELECT p.*, c.name as category_name, c.emoji as category_emoji
+                 FROM products p LEFT JOIN categories c ON p.category_id=c.id
+                 WHERE p.is_active=1 AND COALESCE(p.is_hidden, 0)=0
+                 ORDER BY CASE WHEN COALESCE(p.stock,0)>0 THEN 1 ELSE 0 END DESC,
+                          COALESCE(p.real_sold,0) DESC,
+                          (COALESCE(p.price,0)-COALESCE(p.cost_price,0)) DESC,
+                          COALESCE(p.fake_sold,0) DESC,
+                          p.id DESC""")
     r = c.fetchall(); conn.close(); return r
 
 def get_product(pid):
@@ -1569,6 +1595,8 @@ def create_order(uid, uname, pid, pname, price, method="manual", bname="", bamt=
         c.execute("ALTER TABLE orders ADD COLUMN payment_note_id TEXT DEFAULT ''")
     if 'order_qty' not in cols:
         c.execute("ALTER TABLE orders ADD COLUMN order_qty INTEGER DEFAULT 1")
+    ensure_column(c, "orders", "payment_reminder_count", "INTEGER DEFAULT 0")
+    ensure_column(c, "orders", "last_payment_reminder_at", "TEXT DEFAULT ''")
     ensure_supplier_retry_columns(c)
     try:
         order_qty = int(qty) if qty is not None else _infer_order_qty_from_name(pname)
@@ -2135,8 +2163,12 @@ def is_txid_used(txid):
 
 
 def mark_txid_used(txid, user_id, order_id, amount, coin="USDT"):
-    """Save a TXID as used after successful verification"""
+    """Save a TXID as used after successful verification + risk log."""
     if not txid: return False
+    try:
+        score, reasons = log_payment_risk(user_id, order_id, amount, txid, coin)
+    except Exception:
+        score, reasons = 0, []
     conn = get_connection(); c = conn.cursor()
     try:
         c.execute("""INSERT INTO used_txids (txid, user_id, order_id, amount, coin)
@@ -3880,6 +3912,217 @@ def get_commission_report(days=30):
     row = c.fetchone()
     conn.close()
     return row
+
+
+# ════════════════════════════════════════════════════════════════
+# 🆕 v142: Favorites / abandoned carts / risk / supplier archive / summaries
+# ════════════════════════════════════════════════════════════════
+def ensure_growth_tables(c=None):
+    own=False
+    if c is None:
+        conn=get_connection(); c=conn.cursor(); own=True
+    else:
+        conn=None
+    c.execute("""CREATE TABLE IF NOT EXISTS product_favorites (
+        user_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(user_id, product_id)
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS product_views (
+        user_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        viewed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        reminder_sent INTEGER DEFAULT 0,
+        PRIMARY KEY(user_id, product_id)
+    )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS payment_risk_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER DEFAULT 0,
+        order_id INTEGER DEFAULT 0,
+        score INTEGER DEFAULT 0,
+        reason TEXT DEFAULT '',
+        amount REAL DEFAULT 0,
+        txid TEXT DEFAULT '',
+        notified INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""")
+    ensure_column(c, "payment_risk_events", "notified", "INTEGER DEFAULT 0")
+    c.execute("""CREATE TABLE IF NOT EXISTS supplier_deleted_archive (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        supplier_id INTEGER DEFAULT 0,
+        ext_product_id INTEGER DEFAULT 0,
+        shop_product_id INTEGER DEFAULT 0,
+        remote_id TEXT DEFAULT '',
+        name TEXT DEFAULT '',
+        last_stock INTEGER DEFAULT 0,
+        last_cost REAL DEFAULT 0,
+        last_sell REAL DEFAULT 0,
+        reason TEXT DEFAULT '',
+        raw_json TEXT DEFAULT '',
+        archived_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )""")
+    if own:
+        conn.commit(); conn.close()
+
+
+def add_favorite(user_id, product_id):
+    conn=get_connection(); c=conn.cursor(); ensure_growth_tables(c)
+    c.execute("INSERT OR IGNORE INTO product_favorites (user_id, product_id) VALUES (?,?)", (int(user_id), int(product_id)))
+    conn.commit(); conn.close()
+
+
+def remove_favorite(user_id, product_id):
+    conn=get_connection(); c=conn.cursor(); ensure_growth_tables(c)
+    c.execute("DELETE FROM product_favorites WHERE user_id=? AND product_id=?", (int(user_id), int(product_id)))
+    conn.commit(); conn.close()
+
+
+def is_favorite(user_id, product_id):
+    conn=get_connection(); c=conn.cursor(); ensure_growth_tables(c)
+    c.execute("SELECT 1 FROM product_favorites WHERE user_id=? AND product_id=?", (int(user_id), int(product_id)))
+    ok=bool(c.fetchone()); conn.close(); return ok
+
+
+def get_user_favorites(user_id):
+    conn=get_connection(); c=conn.cursor(); ensure_growth_tables(c); _ensure_is_hidden_column()
+    c.execute("""SELECT p.* FROM product_favorites f
+                 JOIN products p ON p.id=f.product_id
+                 WHERE f.user_id=? AND p.is_active=1 AND COALESCE(p.is_hidden,0)=0
+                 ORDER BY f.created_at DESC""", (int(user_id),))
+    rows=c.fetchall(); conn.close(); return rows
+
+
+def record_product_view(user_id, product_id):
+    conn=get_connection(); c=conn.cursor(); ensure_growth_tables(c)
+    c.execute("""INSERT INTO product_views (user_id, product_id, viewed_at, reminder_sent)
+                 VALUES (?, ?, CURRENT_TIMESTAMP, 0)
+                 ON CONFLICT(user_id, product_id) DO UPDATE SET viewed_at=CURRENT_TIMESTAMP, reminder_sent=0""",
+              (int(user_id), int(product_id)))
+    conn.commit(); conn.close()
+
+
+def get_abandoned_cart_due(minutes=30, limit=50):
+    conn=get_connection(); c=conn.cursor(); ensure_growth_tables(c)
+    c.execute("""SELECT v.*, p.name, p.price, p.stock FROM product_views v
+                 JOIN products p ON p.id=v.product_id
+                 WHERE v.reminder_sent=0
+                   AND p.is_active=1 AND COALESCE(p.is_hidden,0)=0 AND COALESCE(p.stock,0)>0
+                   AND datetime(v.viewed_at, '+' || ? || ' minutes') <= CURRENT_TIMESTAMP
+                   AND NOT EXISTS (
+                       SELECT 1 FROM orders o
+                       WHERE o.user_id=v.user_id AND o.product_id=v.product_id
+                         AND datetime(o.created_at) >= datetime(v.viewed_at)
+                   )
+                 ORDER BY v.viewed_at ASC LIMIT ?""", (int(minutes), int(limit)))
+    rows=c.fetchall(); conn.close(); return rows
+
+
+def mark_abandoned_cart_sent(user_id, product_id):
+    conn=get_connection(); c=conn.cursor(); ensure_growth_tables(c)
+    c.execute("UPDATE product_views SET reminder_sent=1 WHERE user_id=? AND product_id=?", (int(user_id), int(product_id)))
+    conn.commit(); conn.close()
+
+
+def archive_supplier_product(ep, reason=''):
+    if not ep: return
+    conn=get_connection(); c=conn.cursor(); ensure_growth_tables(c)
+    d=dict(ep)
+    c.execute("""INSERT INTO supplier_deleted_archive
+                 (supplier_id, ext_product_id, shop_product_id, remote_id, name,
+                  last_stock, last_cost, last_sell, reason, raw_json)
+                 VALUES (?,?,?,?,?,?,?,?,?,?)""",
+              (int(d.get('supplier_id') or 0), int(d.get('id') or 0), int(d.get('shop_product_id') or 0),
+               str(d.get('remote_id') or ''), str(d.get('name') or '')[:250], int(d.get('stock') or 0),
+               float(d.get('cost_usd') or 0), float(d.get('sell_price') or 0), str(reason or '')[:300],
+               str(d.get('raw_json') or '')[:8000]))
+    conn.commit(); conn.close()
+
+
+def log_payment_risk(user_id, order_id=0, amount=0, txid='', source=''):
+    """Compute simple risk score and log if suspicious. Returns (score, reasons)."""
+    conn=get_connection(); c=conn.cursor(); ensure_growth_tables(c)
+    reasons=[]; score=0
+    if txid:
+        c.execute("SELECT COUNT(*) FROM used_txids WHERE txid=?", (str(txid),))
+        if (c.fetchone()[0] or 0) > 0:
+            score += 80; reasons.append('txid already used')
+    c.execute("""SELECT COUNT(*) FROM orders
+                 WHERE user_id=? AND status IN ('binance_waiting','pending','screenshot_sent')
+                   AND datetime(created_at) >= datetime('now','-1 hour')""", (int(user_id),))
+    n=c.fetchone()[0] or 0
+    if n >= 3:
+        score += 25; reasons.append(f'{n} pending attempts in 1h')
+    c.execute("""SELECT COUNT(*) FROM used_txids
+                 WHERE user_id=? AND amount=? AND datetime(verified_at) >= datetime('now','-6 hours')""",
+              (int(user_id), float(amount or 0)))
+    same=c.fetchone()[0] or 0
+    if same >= 2:
+        score += 20; reasons.append('same amount repeated')
+    if score > 0:
+        c.execute("""INSERT INTO payment_risk_events (user_id, order_id, score, reason, amount, txid)
+                     VALUES (?,?,?,?,?,?)""", (int(user_id), int(order_id or 0), int(score), ', '.join(reasons), float(amount or 0), str(txid or '')))
+    conn.commit(); conn.close(); return score, reasons
+
+
+
+def get_unnotified_payment_risks(limit=20):
+    conn=get_connection(); c=conn.cursor(); ensure_growth_tables(c)
+    c.execute("SELECT * FROM payment_risk_events WHERE notified=0 AND score>=40 ORDER BY id ASC LIMIT ?", (int(limit),))
+    rows=c.fetchall(); conn.close(); return rows
+
+def mark_payment_risk_notified(risk_id):
+    conn=get_connection(); c=conn.cursor(); ensure_growth_tables(c)
+    c.execute("UPDATE payment_risk_events SET notified=1 WHERE id=?", (int(risk_id),))
+    conn.commit(); conn.close()
+
+def get_pending_payment_reminders(limit=50):
+    conn=get_connection(); c=conn.cursor()
+    ensure_column(c, "orders", "payment_reminder_count", "INTEGER DEFAULT 0")
+    ensure_column(c, "orders", "last_payment_reminder_at", "TEXT DEFAULT ''")
+    c.execute("""SELECT * FROM orders
+                 WHERE status IN ('binance_waiting','pending','screenshot_sent')
+                   AND COALESCE(order_type,'product')='product'
+                   AND COALESCE(payment_reminder_count,0) < 2
+                   AND datetime(created_at, CASE WHEN COALESCE(payment_reminder_count,0)=0 THEN '+10 minutes' ELSE '+30 minutes' END) <= CURRENT_TIMESTAMP
+                 ORDER BY created_at ASC LIMIT ?""", (int(limit),))
+    rows=c.fetchall(); conn.close(); return rows
+
+
+def mark_payment_reminder(order_id):
+    conn=get_connection(); c=conn.cursor()
+    ensure_column(c, "orders", "payment_reminder_count", "INTEGER DEFAULT 0")
+    ensure_column(c, "orders", "last_payment_reminder_at", "TEXT DEFAULT ''")
+    c.execute("""UPDATE orders SET payment_reminder_count=COALESCE(payment_reminder_count,0)+1,
+                 last_payment_reminder_at=CURRENT_TIMESTAMP WHERE id=?""", (int(order_id),))
+    conn.commit(); conn.close()
+
+
+def get_daily_summary_stats():
+    """Daily stats for Pakistan day (00:00–23:59 PKT) using UTC DB timestamps."""
+    from datetime import datetime, timezone, timedelta
+    pk = timezone(timedelta(hours=5))
+    now_pk = datetime.now(pk)
+    start_pk = now_pk.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_pk = start_pk + timedelta(days=1)
+    start_utc = start_pk.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    end_utc = end_pk.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    conn=get_connection(); c=conn.cursor()
+    c.execute("""SELECT COUNT(*) orders, COALESCE(SUM(price),0) revenue FROM orders
+                 WHERE status='delivered' AND created_at>=? AND created_at<?""", (start_utc, end_utc))
+    o=c.fetchone(); orders=int(o['orders'] or 0); revenue=float(o['revenue'] or 0)
+    c.execute("""SELECT COUNT(*) refunds FROM orders
+                 WHERE status='refunded' AND created_at>=? AND created_at<?""", (start_utc, end_utc))
+    refunds=int(c.fetchone()['refunds'] or 0)
+    c.execute("""SELECT COUNT(*) users FROM users WHERE joined_at>=? AND joined_at<?""", (start_utc, end_utc))
+    new_users=int(c.fetchone()['users'] or 0)
+    c.execute("""SELECT product_name, COUNT(*) n, COALESCE(SUM(price),0) rev FROM orders
+                 WHERE status='delivered' AND created_at>=? AND created_at<?
+                 GROUP BY product_name ORDER BY n DESC, rev DESC LIMIT 1""", (start_utc, end_utc))
+    top=c.fetchone(); conn.close()
+    return {'orders':orders,'revenue':revenue,'refunds':refunds,'new_users':new_users,
+            'top_product': (top['product_name'] if top else ''), 'top_count': (int(top['n']) if top else 0)}
+
 
 def add_restock_request(pid, uid):
     conn = get_connection(); c = conn.cursor()

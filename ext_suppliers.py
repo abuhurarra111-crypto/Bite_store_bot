@@ -100,6 +100,8 @@ def ensure_ext_supplier_tables():
     ensure_column(c, "ext_products", "delivery_format",   "TEXT DEFAULT ''")
     ensure_column(c, "ext_products", "format_detected",   "INTEGER DEFAULT 0")  # 0=admin_override, 1=auto
     ensure_column(c, "ext_products", "synced_to_shop",    "INTEGER DEFAULT 0")  # v83: manual sync flag
+    ensure_column(c, "ext_products", "out_of_stock_since", "REAL DEFAULT 0")  # v141: auto-delete after 5 days OOS
+    ensure_column(c, "ext_products", "missing_since",      "REAL DEFAULT 0")  # v141: supplier deleted/missing tracker
 
     c.execute("""CREATE TABLE IF NOT EXISTS ext_orders (
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -291,24 +293,36 @@ def upsert_ext_product(supplier_id, remote_id, name, description, cost_usd,
         fp = existing["fixed_price"] or 0
         fpb = existing["fixed_price_base"] or 0
         sell = _compute_sell_price(cost_usd, markup, fp, fpb)
-        c.execute("""UPDATE ext_products
-                     SET name=?, description=?, cost_usd=?, stock=?,
-                         sell_price=?, last_synced_at=CURRENT_TIMESTAMP,
-                         raw_json=?
-                     WHERE id=?""",
-                  (name[:250], description[:3000], float(cost_usd),
-                   int(stock), sell, raw_json[:8000], existing["id"]))
+        clear_oos = 0 if int(stock or 0) > 0 else None
+        if clear_oos == 0:
+            c.execute("""UPDATE ext_products
+                         SET name=?, description=?, cost_usd=?, stock=?,
+                             sell_price=?, last_synced_at=CURRENT_TIMESTAMP,
+                             raw_json=?, missing_since=0, out_of_stock_since=0
+                         WHERE id=?""",
+                      (name[:250], description[:3000], float(cost_usd),
+                       int(stock), sell, raw_json[:8000], existing["id"]))
+        else:
+            c.execute("""UPDATE ext_products
+                         SET name=?, description=?, cost_usd=?, stock=?,
+                             sell_price=?, last_synced_at=CURRENT_TIMESTAMP,
+                             raw_json=?, missing_since=0
+                         WHERE id=?""",
+                      (name[:250], description[:3000], float(cost_usd),
+                       int(stock), sell, raw_json[:8000], existing["id"]))
         pid = existing["id"]
     else:
         markup = 40.0
         sell = _compute_sell_price(cost_usd, markup, 0, 0)
         c.execute("""INSERT INTO ext_products
                      (supplier_id, remote_id, name, description, cost_usd,
-                      stock, markup_pct, sell_price, category_id, raw_json)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                      stock, markup_pct, sell_price, category_id, raw_json,
+                      out_of_stock_since, missing_since)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
                   (int(supplier_id), str(remote_id), name[:250],
                    description[:3000], float(cost_usd), int(stock),
-                   markup, sell, int(category_id), raw_json[:8000]))
+                   markup, sell, int(category_id), raw_json[:8000],
+                   0 if int(stock or 0) > 0 else 0))
         pid = c.lastrowid
     conn.commit(); conn.close()
     return pid
@@ -352,8 +366,9 @@ def update_ext_product(eid, **fields):
                "fixed_price", "fixed_price_base",
                # 🆕 v82: link column
                "shop_product_id",
-               # 🆕 v83: format + sync
-               "delivery_format", "format_detected", "synced_to_shop"}
+               # 🆕 v83/v141: format + sync + stale tracking
+               "delivery_format", "format_detected", "synced_to_shop",
+               "out_of_stock_since", "missing_since"}
     fields = {k: v for k, v in fields.items() if k in allowed}
     if not fields: return
     # 🆕 v81.1: Recompute sell_price using SMART LOCK logic
@@ -559,6 +574,11 @@ def unmirror_ext_product(ext_product_id):
         return {"deleted": 0, "shop_product_id": 0}
     shop_pid = int(ep.get("shop_product_id") or 0)
     deleted = 0
+    try:
+        from database import archive_supplier_product
+        archive_supplier_product(ep, reason="supplier_deleted_or_auto_removed")
+    except Exception:
+        pass
     if shop_pid > 0:
         try:
             from database import delete_product_permanently
@@ -578,6 +598,28 @@ def unmirror_ext_product(ext_product_id):
     except Exception:
         pass
     return {"deleted": deleted, "shop_product_id": shop_pid}
+
+
+def delete_ext_product_completely(ext_product_id):
+    """Delete supplier product from bot after supplier removed it or 5-day OOS.
+
+    Deletes shop mirror via unmirror_ext_product first. Orders are untouched.
+    """
+    eid = int(ext_product_id)
+    stats = unmirror_ext_product(eid)
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("DELETE FROM ext_products WHERE id=?", (eid,))
+        deleted = c.rowcount if c.rowcount is not None else 0
+        conn.commit(); conn.close()
+        stats["ext_deleted"] = int(deleted or 0)
+        return stats
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
+        raise
 
 
 # ────────────────────────────────────────────────────────────

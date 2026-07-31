@@ -85,28 +85,17 @@ def _heal_missing_tables():
             healed.append("delivery_integrity_log")
         except Exception:
             pass  # optional
-        # 🆕 v81: External supplier tables
+        # 🆕 v81: External supplier tables — SAFE ONLY.
+        # Legacy backup/wipe migrations are intentionally DISABLED in production.
+        # They could wipe restored shop products on startup, causing the exact
+        # Render restore/reset issue the owner reported.
         try:
-            from ext_suppliers import ensure_ext_supplier_tables, backup_and_wipe_existing_products
+            from ext_suppliers import ensure_ext_supplier_tables
             ensure_ext_supplier_tables()
             healed.append("ext_supplier_tables")
-            # One-time migration: backup + wipe existing 29 products (idempotent)
-            snap_count, err = backup_and_wipe_existing_products()
-            if snap_count > 0:
-                _log(f"v81 migration: backed up {snap_count} products, wiped 7 tables")
-            elif err == "already_migrated":
-                pass  # silent — already done
+            _log("v81/v83 destructive product-wipe migrations skipped safely")
         except Exception as e:
             _log(f"v81 ext_suppliers table setup: {e}", "WARN")
-        # 🆕 v83: Wipe v82's auto-mirrored products (one-time cleanup for
-        # manual-sync workflow). Idempotent — sets marker flag.
-        try:
-            from ext_suppliers import wipe_v82_auto_mirrored_products
-            wiped, err = wipe_v82_auto_mirrored_products()
-            if wiped > 0:
-                _log(f"v83 cleanup: wiped {wiped} auto-mirrored products (admin must re-sync manually)")
-        except Exception as e:
-            _log(f"v83 wipe failed: {e}", "WARN")
         # 🆕 v90/v91: Heal ext_products.name rows that v86 InstaAPI adapter
         # saved as raw HTML strings (screenshot bug: names showing as
         # <tg-emoji emoji-id="6172... instead of ✨ ChatPRD 1 year).
@@ -122,8 +111,8 @@ def _heal_missing_tables():
             except Exception:
                 pass
             from ext_suppliers import heal_v86_broken_html_names
-            healed, herr = heal_v86_broken_html_names()
-            _log(f"v90/v91 heal: processed on startup — healed {healed} broken rows"
+            healed_count, herr = heal_v86_broken_html_names()
+            _log(f"v90/v91 heal: processed on startup — healed {healed_count} broken rows"
                  + (f" (err: {herr})" if herr and herr != 'already_healed' else ""))
         except Exception as e:
             _log(f"v90/v91 heal failed: {e}", "WARN")

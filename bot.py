@@ -68,7 +68,7 @@ from admin_panels import (
 from handlers_shop import (shop_flash_callback, req_restock_callback, shop_callback, page_callback, product_detail_callback,
                             carousel_nav_callback, shop_all_callback,
                             shop_category_callback, shop_category_page_callback,
-                            shop_filter_callback)  # 🆕 v59: stock-based filter
+                            shop_filter_callback, favorite_toggle_callback, favorites_callback)  # 🆕 v59/v142
 from handlers_order import *
 from handlers_order import pay_pts_callback, binance_note_background_job
 # 🆕 v65: Refund + Cancel handlers
@@ -465,6 +465,8 @@ async def handle_text(update, context):
     # 🆕 Bulk qty input
     if context.user_data.get('bulk_step') == 'waiting_qty':
         if await bulk_qty_received(update, context): return
+    if context.user_data.get('bulk_price_step') == 'custom_percent':
+        if await bulk_price_custom_received(update, context): return
     if context.user_data.get('broadcast_button_step') == 'name':
         if await broadcast_button_name_received(update, context): return
     if context.user_data.get('fake_custom_broadcast'):
@@ -536,6 +538,168 @@ async def _purchase_broadcast_job(context):
                 print(f"[PurchaseBroadcast] item failed: {e}")
     except Exception:
         pass
+
+
+async def _payment_pending_reminder_job(context):
+    if _jobs_paused_for_maintenance(): return
+    try:
+        from database import get_pending_payment_reminders, mark_payment_reminder
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        for o in get_pending_payment_reminders(limit=30):
+            try:
+                count = int(o.get('payment_reminder_count') or 0)
+                msg = (
+                    f"⏳ *Payment Reminder — Order #{o['id']}*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📦 {o['product_name']}\n"
+                    f"💰 Amount: ${float(o['price'] or 0):.2f}\n\n"
+                    f"Your order is still waiting for payment. Complete it soon, or create a new order if you changed your mind."
+                    if count == 0 else
+                    f"⚠️ *Final Payment Reminder — Order #{o['id']}*\n\nThis unpaid order may expire soon."
+                )
+                await context.bot.send_message(o['user_id'], msg, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton('📜 Order History', callback_data='my_orders')],
+                    [InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')],
+                ]))
+                mark_payment_reminder(o['id'])
+            except Exception:
+                pass
+    except Exception as e:
+        print(f'[PaymentReminder] job failed: {e}')
+
+
+async def _abandoned_cart_job(context):
+    if _jobs_paused_for_maintenance(): return
+    try:
+        from database import get_abandoned_cart_due, mark_abandoned_cart_sent
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        for r in get_abandoned_cart_due(minutes=30, limit=30):
+            try:
+                await context.bot.send_message(
+                    r['user_id'],
+                    f"👀 *Still interested?*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"📦 {r['name']}\n"
+                    f"💰 Price: ${float(r['price'] or 0):.2f}\n"
+                    f"📊 Stock: {int(r['stock'] or 0)}\n\n"
+                    f"Tap below to continue your order.",
+                    parse_mode='Markdown',
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🛒 View Product', callback_data=f"prod_{r['product_id']}")]])
+                )
+                mark_abandoned_cart_sent(r['user_id'], r['product_id'])
+            except Exception:
+                pass
+    except Exception as e:
+        print(f'[AbandonedCart] job failed: {e}')
+
+
+async def _daily_admin_summary_job(context):
+    try:
+        from datetime import datetime, timezone, timedelta
+        from database import get_setting, set_setting, get_daily_summary_stats
+        pk = datetime.now(timezone(timedelta(hours=5)))
+        if not (pk.hour == 23 and pk.minute == 59):
+            return
+        key = f"daily_summary_sent_{pk.date().isoformat()}"
+        if get_setting(key, '0') == '1':
+            return
+        st = get_daily_summary_stats()
+        await context.bot.send_message(
+            ADMIN_ID,
+            f"📊 *Daily Summary — {pk.strftime('%Y-%m-%d')}*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🛒 Delivered orders: *{st['orders']}*\n"
+            f"💰 Revenue: *${st['revenue']:.2f}*\n"
+            f"💸 Refunds: *{st['refunds']}*\n"
+            f"👥 New users: *{st['new_users']}*\n"
+            f"🏆 Top product: *{st['top_product'] or 'N/A'}* ({st['top_count']})",
+            parse_mode='Markdown'
+        )
+        set_setting(key, '1')
+    except Exception as e:
+        print(f'[DailySummary] failed: {e}')
+
+
+async def _supplier_new_products_job(context):
+    if _jobs_paused_for_maintenance(): return
+    try:
+        from ext_suppliers import list_suppliers, get_adapter_for_supplier, get_ext_products, upsert_ext_product, detect_product_format, update_ext_product
+        from async_adapter_helpers import async_fetch_products
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        for sup in list_suppliers(include_disabled=False):
+            sid = int(sup.get('id') or 0)
+            ad = get_adapter_for_supplier(sup)
+            if not ad: continue
+            fresh = await async_fetch_products(ad)
+            if not fresh: continue
+            existing = {str(ep.get('remote_id')) for ep in get_ext_products(supplier_id=sid)}
+            new_items = [p for p in fresh if str(p.get('remote_id')) not in existing]
+            if not new_items: continue
+            shown=[]
+            for p in new_items[:10]:
+                try:
+                    eid = upsert_ext_product(sid, p.get('remote_id'), p.get('name') or '', p.get('description') or '', p.get('cost_usd') or 0, p.get('stock') or 0, raw_json=__import__('json').dumps(p.get('raw') or {}, ensure_ascii=False))
+                    fmt = detect_product_format(p)
+                    if fmt: update_ext_product(eid, delivery_format=fmt, format_detected=1)
+                    shown.append((eid, p))
+                except Exception:
+                    pass
+            if shown:
+                lines=[f"🆕 *New Supplier Products Detected*", "━━━━━━━━━━━━━━━━━━━━", f"🏬 Supplier: *{sup.get('name','?')}*", ""]
+                kb=[]
+                for eid,p in shown[:5]:
+                    lines.append(f"• {p.get('name','?')[:70]} — cost ${float(p.get('cost_usd') or 0):.2f}, stock {int(p.get('stock') or 0)}")
+                    kb.append([InlineKeyboardButton(f"🔄 Sync {str(p.get('name','?'))[:30]}", callback_data=f"ext_prod_sync_{eid}")])
+                kb.append([InlineKeyboardButton('⚙️ Supplier Panel', callback_data=f"ext_sup_view_{sid}")])
+                await context.bot.send_message(ADMIN_ID, '\n'.join(lines), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
+    except Exception as e:
+        print(f'[SupplierNewProducts] failed: {e}')
+
+
+async def _payment_risk_alert_job(context):
+    try:
+        from database import get_unnotified_payment_risks, mark_payment_risk_notified
+        for r in get_unnotified_payment_risks(limit=20):
+            try:
+                await context.bot.send_message(
+                    ADMIN_ID,
+                    f"⚠️ *Payment Risk Alert*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"👤 User: `{r['user_id']}`\n"
+                    f"🛒 Order: `#{r['order_id']}`\n"
+                    f"📊 Score: *{r['score']}*\n"
+                    f"💰 Amount: `{r['amount']}`\n"
+                    f"🧾 TXID: `{str(r['txid'])[:60]}`\n"
+                    f"❌ Reason: {r['reason']}",
+                    parse_mode='Markdown'
+                )
+                mark_payment_risk_notified(r['id'])
+            except Exception:
+                pass
+    except Exception as e:
+        print(f'[PaymentRisk] alert job failed: {e}')
+
+
+async def _delayed_live_notify_job(context):
+    """Send BOSS BOT IS LIVE only after DB looks stable for restore workflow."""
+    try:
+        from config import ADMIN_ID as _LIVE_ADMIN_ID
+        from database import get_connection
+        if not _LIVE_ADMIN_ID:
+            return
+        conn = get_connection(); c = conn.cursor()
+        try:
+            c.execute("SELECT COUNT(*) FROM products")
+            products = int(c.fetchone()[0] or 0)
+            c.execute("SELECT COUNT(*) FROM orders")
+            orders = int(c.fetchone()[0] or 0)
+        finally:
+            conn.close()
+        await context.bot.send_message(
+            _LIVE_ADMIN_ID,
+            f"BOSS BOT IS LIVE\nDB stable ✅ Products: {products} | Orders: {orders}"
+        )
+    except Exception as e:
+        print(f'[LiveNotify] delayed send failed: {e}')
 
 
 async def post_init(app):
@@ -699,13 +863,29 @@ async def post_init(app):
     except Exception as e:
         print(f'[SupplierRetry] Job setup error: {e}')
 
-    # 🆕 v138: Admin startup/live notification for Render deploys.
+
+    # 🆕 v142: business automation jobs
     try:
-        from config import ADMIN_ID as _LIVE_ADMIN_ID
-        if _LIVE_ADMIN_ID:
-            await app.bot.send_message(_LIVE_ADMIN_ID, "BOSS BOT IS LIVE")
+        if app.job_queue:
+            app.job_queue.run_repeating(_payment_pending_reminder_job, interval=300, first=180, name="payment_pending_reminders")
+            app.job_queue.run_repeating(_abandoned_cart_job, interval=600, first=600, name="abandoned_cart_recovery")
+            app.job_queue.run_repeating(_daily_admin_summary_job, interval=60, first=30, name="daily_admin_summary_2359_pkt")
+            app.job_queue.run_repeating(_supplier_new_products_job, interval=1800, first=300, name="supplier_new_products_detector")
+            app.job_queue.run_repeating(_payment_risk_alert_job, interval=300, first=240, name="payment_risk_alerts")
     except Exception as e:
-        print(f'[LiveNotify] failed: {e}')
+        print(f'[BizJobs] setup error: {e}')
+
+    # 🆕 v141: Live notification is delayed until startup DB checks/jobs settle.
+    # This prevents admin restoring DB right after an early message while old
+    # startup self-heals/jobs are still mutating the database.
+    try:
+        if app.job_queue:
+            app.job_queue.run_once(_delayed_live_notify_job, when=180, name="boss_live_notify_stable")
+        else:
+            # Local tests/no job queue: do nothing; Render worker has job_queue.
+            pass
+    except Exception as e:
+        print(f'[LiveNotify] schedule failed: {e}')
 
 
 # 🔧 v39 Bug #21: Proper async cancel handlers (replacing broken sync lambdas)
@@ -1308,7 +1488,8 @@ def main():
         ("^main_menu$", main_menu_callback), ("^my_account$", my_account_callback),
         ("^referral$", referral_callback),  # 🔧 support_callback removed
         ("^buy_points$", buy_points_callback), ("^transactions$", transactions_callback),
-        ("^shop$", shop_callback), ("^page_", page_callback), ("^prod_", product_detail_callback),
+        ("^shop$", shop_callback), ("^favorites$", favorites_callback), ("^fav_toggle_", favorite_toggle_callback),
+        ("^page_", page_callback), ("^prod_", product_detail_callback),
         # 🆕 v69: Price List screen + sort filters
         ("^price_list$",       price_list_callback),
         ("^price_list_",       price_list_callback),
@@ -1490,6 +1671,11 @@ def main():
         ("^bulkprod_clear_", bulk_product_delete_clear_callback),
         ("^bulkprod_confirm$", bulk_product_delete_confirm_callback),
         ("^bulkprod_do$", bulk_product_delete_do_callback),
+        ("^bulkprice_start$", bulk_price_start_callback),
+        ("^bulkprice_tgl_", bulk_price_toggle_callback),
+        ("^bulkprice_page_", bulk_price_page_callback),
+        ("^bulkprice_custom$", bulk_price_custom_callback),
+        ("^bulkprice_apply_", bulk_price_apply_callback),
         ("^togglemode_", toggle_delivery_mode_callback),
         # 🆕 v71: replacement window picker — MUST come before generic ^editfield_
         ("^editfield_repwin_", admin_repwin_picker_callback),

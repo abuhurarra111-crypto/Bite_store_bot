@@ -6979,6 +6979,96 @@ async def delete_product_do_callback(u, c):
     await admin_products_callback(u, c)
 
 
+async def bulk_price_start_callback(u, c):
+    q=u.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer(); c.user_data['bulk_price_products']=set(); await _bulk_price_screen(u,c,0)
+
+async def _bulk_price_screen(u,c,page=0):
+    q=u.callback_query; selected=c.user_data.setdefault('bulk_price_products',set())
+    selected={int(x) for x in selected}; c.user_data['bulk_price_products']=selected
+    products=list(get_all_products(include_hidden=True, include_inactive=True)); per=12
+    pages=max(1,(len(products)+per-1)//per); page=max(0,min(int(page or 0),pages-1)); chunk=products[page*per:(page+1)*per]
+    text=f"💰 *Bulk Price Editor*\n━━━━━━━━━━━━━━━━━━━━\nSelected: *{len(selected)}*\nPage: *{page+1}/{pages}*\n\nSelect products, then choose price action."
+    kb=[]
+    for p in chunk:
+        pid=int(p['id']); name=(p['name'] or f'#{pid}').replace('\n',' ')
+        if len(name)>54: name=name[:51]+'...'
+        kb.append([InlineKeyboardButton(("✅" if pid in selected else "☐")+" "+name, callback_data=f"bulkprice_tgl_{pid}_{page}")])
+    nav=[]
+    if page>0: nav.append(InlineKeyboardButton('⬅️ Prev', callback_data=f'bulkprice_page_{page-1}'))
+    if page<pages-1: nav.append(InlineKeyboardButton('Next ➡️', callback_data=f'bulkprice_page_{page+1}'))
+    if nav: kb.append(nav)
+    if selected:
+        kb.append([InlineKeyboardButton('📈 +10%', callback_data='bulkprice_apply_10'), InlineKeyboardButton('📉 -10%', callback_data='bulkprice_apply_-10')])
+        kb.append([InlineKeyboardButton('✏️ Custom %', callback_data='bulkprice_custom')])
+    kb.append([InlineKeyboardButton('❌ Cancel', callback_data='admin_products')])
+    await _safe_edit(q,text,parse_mode='Markdown',reply_markup=InlineKeyboardMarkup(kb))
+
+async def bulk_price_toggle_callback(u,c):
+    q=u.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    raw=q.data.replace('bulkprice_tgl_',''); pid_s,page_s=raw.rsplit('_',1); pid=int(pid_s); page=int(page_s)
+    selected=c.user_data.setdefault('bulk_price_products',set()); selected={int(x) for x in selected}
+    if pid in selected: selected.remove(pid); await q.answer('Removed')
+    else: selected.add(pid); await q.answer('Selected')
+    c.user_data['bulk_price_products']=selected; await _bulk_price_screen(u,c,page)
+
+async def bulk_price_page_callback(u,c):
+    q=u.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer(); await _bulk_price_screen(u,c,int(q.data.replace('bulkprice_page_','') or 0))
+
+async def bulk_price_custom_callback(u,c):
+    q=u.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer(); c.user_data['bulk_price_step']='custom_percent'
+    await _safe_edit(q,'✏️ Send percentage change. Example: `15` or `-7.5`',parse_mode='Markdown',reply_markup=inline_cancel_btn())
+
+async def bulk_price_custom_received(update, context):
+    if update.effective_user.id != ADMIN_ID or context.user_data.get('bulk_price_step')!='custom_percent': return False
+    try: pct=float((update.message.text or '').strip())
+    except Exception:
+        await update.message.reply_text('❌ Invalid percent. Example: 10 or -5'); return True
+    context.user_data.pop('bulk_price_step',None)
+    await _apply_bulk_price(update, context, pct)
+    return True
+
+async def bulk_price_apply_callback(u,c):
+    q=u.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    try: pct=float(q.data.replace('bulkprice_apply_',''))
+    except Exception: await q.answer('Bad percent',show_alert=True); return
+    await q.answer('Applying...'); await _apply_bulk_price(u,c,pct,query=q)
+
+async def _apply_bulk_price(update, context, pct, query=None):
+    selected=sorted({int(x) for x in (context.user_data.pop('bulk_price_products',set()) or set())})
+    if not selected:
+        msg='❌ No products selected.'
+        if query: await _safe_edit(query,msg,reply_markup=admin_products_keyboard(get_all_products(include_hidden=True, include_inactive=True)))
+        else: await update.message.reply_text(msg)
+        return
+    conn=get_connection(); cur=conn.cursor(); changed=[]
+    for pid in selected:
+        try:
+            p=get_product(pid)
+            if not p: continue
+            old=float(p['price'] or 0); new=max(0.0001, old*(1+pct/100.0))
+            cur.execute('UPDATE products SET price=? WHERE id=?',(new,pid))
+            try:
+                if int((dict(p).get('ext_product_id') or 0)):
+                    cur.execute('UPDATE ext_products SET sell_price=? WHERE id=?',(new,int(dict(p).get('ext_product_id'))))
+            except Exception: pass
+            changed.append((pid,p['name'],old,new))
+        except Exception: pass
+    conn.commit(); conn.close()
+    lines=[f"✅ *Bulk Price Updated*", f"Change: `{pct:+.2f}%`", f"Products: *{len(changed)}*", ""]
+    for _pid,name,old,new in changed[:10]: lines.append(f"• {escape_md(str(name)[:45])}: `${old:.4f}` → `${new:.4f}`")
+    text='\n'.join(lines)
+    if query: await _safe_edit(query,text,parse_mode='Markdown',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🛍️ Back to Edit Items',callback_data='admin_products')]]))
+    else: await update.message.reply_text(text,parse_mode='Markdown',reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🛍️ Back to Edit Items',callback_data='admin_products')]]))
+
+
 async def edit_product_field_callback(u, c):
     """Start editing a specific field of the product."""
     q = u.callback_query

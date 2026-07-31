@@ -2613,6 +2613,21 @@ async def my_order_detail_callback(update, context):
         f"💳 Payment: *{escape_md(o['payment_method'] or 'N/A')}*\n"
         f"📊 Status: *{escape_md(status)}*\n\n"
     )
+    # 🆕 v142: Better order tracking timeline
+    tracking_map = {
+        'pending': [('Order created','✅'), ('Payment','⏳'), ('Delivery','▫️')],
+        'binance_waiting': [('Order created','✅'), ('Payment verification','⏳'), ('Delivery','▫️')],
+        'screenshot_sent': [('Order created','✅'), ('Screenshot received','📸'), ('Delivery','▫️')],
+        'supplier_processing': [('Payment verified','✅'), ('Supplier processing','🔄'), ('Delivery','⏳')],
+        'supplier_retry_pending': [('Payment verified','✅'), ('Retrying delivery','🔁'), ('Auto-refund safety','⏳')],
+        'paid_pending_delivery': [('Payment verified','✅'), ('Manual delivery','⏳'), ('Completed','▫️')],
+        'delivered': [('Payment verified','✅'), ('Delivery','✅'), ('Completed','✅')],
+        'refunded': [('Payment verified','✅'), ('Delivery unavailable','⚠️'), ('Refunded','💎')],
+        'cancelled': [('Order','❌'), ('Payment','▫️'), ('Delivery','▫️')],
+        'rejected': [('Order','❌'), ('Payment','▫️'), ('Delivery','▫️')],
+    }
+    steps = tracking_map.get(status, [('Order status', 'ℹ️')])
+    text += "🧭 *Tracking:*\n" + "\n".join(f"{icon} {escape_md(label)}" for label, icon in steps) + "\n\n"
     rows = []
     if status == 'supplier_retry_pending':
         text += (

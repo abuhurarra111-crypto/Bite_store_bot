@@ -991,3 +991,38 @@ async def shop_flash_callback(update, context):
         
     kb.append([InlineKeyboardButton("🔙 Back to Shop", callback_data="shop")])
     await _safe_edit(q, "⚡ *Active Flash Sales*\n━━━━━━━━━━━━━━━━━━━━\nGrab these limited-time deals:\n", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def favorite_toggle_callback(update, context):
+    q = update.callback_query
+    await q.answer()
+    try:
+        pid = int(q.data.replace('fav_toggle_', ''))
+    except Exception:
+        await q.answer('Bad product', show_alert=True); return
+    from database import add_favorite, remove_favorite, is_favorite
+    if is_favorite(q.from_user.id, pid):
+        remove_favorite(q.from_user.id, pid)
+        await q.answer('Removed from favorites 💔', show_alert=False)
+    else:
+        add_favorite(q.from_user.id, pid)
+        await q.answer('Added to favorites ⭐', show_alert=False)
+    q.data = f'prod_{pid}'
+    await product_detail_callback(update, context)
+
+
+async def favorites_callback(update, context):
+    q = update.callback_query
+    await q.answer()
+    from database import get_user_favorites
+    favs = get_user_favorites(q.from_user.id)
+    if not favs:
+        await q.edit_message_text('⭐ *My Favorites*\n\nNo favorite products yet.', parse_mode='Markdown', reply_markup=back_btn())
+        return
+    text = '⭐ *My Favorites*\n━━━━━━━━━━━━━━━━━━━━\n\nTap a product to open:'
+    rows=[]
+    for p in favs[:20]:
+        name=(p['name'] or '')[:55]
+        rows.append([InlineKeyboardButton(name, callback_data=f"prod_{p['id']}")])
+    rows.append([InlineKeyboardButton('🔙 Back', callback_data='main_menu')])
+    await q.edit_message_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(rows))

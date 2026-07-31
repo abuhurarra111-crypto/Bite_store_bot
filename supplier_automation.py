@@ -43,6 +43,7 @@ _AUTOSYNC_BAL_RUNNING = False  # balance job lock
 # ------------------------------------------------------------
 DEFAULT_LOW_BAL_THRESHOLD = 3.00      # $3 default per new supplier
 LOW_BAL_ALERT_COOLDOWN = 6 * 3600     # don't DM same alert more than every 6h
+OOS_DELETE_AFTER_SECONDS = 5 * 24 * 3600  # v141: delete after 5 days continuously out of stock
 AUTOSYNC_PRICE_STOCK_INTERVAL = 30    # seconds — price+stock refresh
 AUTOSYNC_BALANCE_INTERVAL = 300       # seconds — every 5 min balance too
 
@@ -89,7 +90,8 @@ async def autosync_price_stock_job(context):
         try:
             from ext_suppliers import (
                 list_suppliers, get_adapter_for_supplier, get_ext_products,
-                _compute_sell_price, update_ext_product, get_connection as _gc,
+                _compute_sell_price, update_ext_product, delete_ext_product_completely,
+                get_connection as _gc,
             )
             from async_adapter_helpers import async_fetch_products
         except Exception as e:
@@ -145,47 +147,41 @@ async def autosync_price_stock_job(context):
                         continue
                     remote_id = str(ep.get("remote_id"))
                     if remote_id not in fresh_by_remote:
-                        # Supplier API no longer returns this product. Akunding
-                        # hides out-of-stock/unavailable products unless asked,
-                        # and other suppliers may remove products entirely. Do
-                        # NOT keep stale shop stock active; set remote stock to
-                        # 0 so customers cannot buy a product that will 404.
+                        # Supplier API no longer returns this product => supplier
+                        # deleted/removed it. Delete it from bot immediately so it
+                        # disappears from shop and admin Edit Items. Orders stay safe.
                         try:
                             old_stock_missing = int(ep.get("stock") or 0)
                         except Exception:
                             old_stock_missing = 0
-                        if old_stock_missing > 0:
-                            update_ext_product(int(ep["id"]), stock=0)
+                        try:
+                            stats = delete_ext_product_completely(int(ep["id"]))
                             total_updated += 1
                             total_stock_changes += 1
                             change_details.append({
                                 "supplier": sup.get("name", f"Supplier #{sid}"),
                                 "product": ep.get("name") or f"Remote {remote_id}",
-                                "type": "missing",
+                                "type": "missing_deleted",
                                 "old_stock": old_stock_missing,
                                 "new_stock": 0,
                                 "old_cost": float(ep.get("cost_usd") or 0),
                                 "new_cost": float(ep.get("cost_usd") or 0),
                                 "old_sell": float(ep.get("sell_price") or 0),
-                                "new_sell": float(ep.get("sell_price") or 0),
+                                "new_sell": 0,
                             })
-                            try:
-                                alert_key = f"supplier_missing_alert_{int(ep['id'])}"
-                                if (get_setting(alert_key, "") or "") != remote_id:
-                                    set_setting(alert_key, remote_id)
-                                    await context.bot.send_message(
-                                        ADMIN_ID,
-                                        f"⚠️ *Supplier product unavailable*\n"
-                                        f"━━━━━━━━━━━━━━━━━━━━\n"
-                                        f"🏬 Supplier: {escape_md(sup.get('name','?'))}\n"
-                                        f"📦 Product: {escape_md(str(ep.get('name') or '?')[:80])}\n"
-                                        f"🔢 Remote ID: `{escape_md(remote_id)}`\n"
-                                        f"📉 Stock set: `{old_stock_missing}` → `0`\n\n"
-                                        f"This prevents stale orders / HTTP 404 failures.",
-                                        parse_mode="Markdown"
-                                    )
-                            except Exception as _al:
-                                logger.debug(f"[AutoSync] missing-product alert failed ext#{ep.get('id')}: {_al}")
+                            await context.bot.send_message(
+                                ADMIN_ID,
+                                f"🗑 *Supplier Product Deleted from API*\n"
+                                f"━━━━━━━━━━━━━━━━━━━━\n"
+                                f"🏬 Supplier: {escape_md(sup.get('name','?'))}\n"
+                                f"📦 Product: {escape_md(str(ep.get('name') or '?')[:80])}\n"
+                                f"🔢 Remote ID: `{escape_md(remote_id)}`\n"
+                                f"🛍 Shop/Edit Items product removed: `{stats.get('shop_product_id',0)}`\n\n"
+                                f"Old order history remains safe.",
+                                parse_mode="Markdown"
+                            )
+                        except Exception as _al:
+                            logger.debug(f"[AutoSync] missing-product delete failed ext#{ep.get('id')}: {_al}")
                         continue
 
                     # Product is present again; clear one-shot missing alert.
@@ -201,6 +197,36 @@ async def autosync_price_stock_job(context):
                     old_cost = float(ep.get("cost_usd") or 0)
                     old_stock = int(ep.get("stock") or 0)
                     old_sell = float(ep.get("sell_price") or 0)
+                    old_oos_since = float(ep.get("out_of_stock_since") or 0)
+                    now_ts = time.time()
+
+                    # v141: supplier still has product but stock is 0 => track
+                    # continuous OOS. Delete only after 5 full days.
+                    if new_stock <= 0:
+                        if old_oos_since <= 0:
+                            update_ext_product(int(ep["id"]), out_of_stock_since=now_ts, missing_since=0)
+                            old_oos_since = now_ts
+                        elif (now_ts - old_oos_since) >= OOS_DELETE_AFTER_SECONDS:
+                            try:
+                                stats = delete_ext_product_completely(int(ep["id"]))
+                                total_updated += 1
+                                total_stock_changes += 1
+                                await context.bot.send_message(
+                                    ADMIN_ID,
+                                    f"🗑 *Supplier Product Auto-Deleted*\n"
+                                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                                    f"🏬 Supplier: {escape_md(sup.get('name','?'))}\n"
+                                    f"📦 Product: {escape_md(str(ep.get('name') or '?')[:80])}\n"
+                                    f"📊 Reason: Out of stock for 5 days continuously\n"
+                                    f"🛍 Shop/Edit Items product removed: `{stats.get('shop_product_id',0)}`\n\n"
+                                    f"Old order history remains safe.",
+                                    parse_mode="Markdown"
+                                )
+                            except Exception as _del_oos:
+                                logger.debug(f"[AutoSync] 5-day OOS delete failed ext#{ep.get('id')}: {_del_oos}")
+                            continue
+                    elif old_oos_since > 0:
+                        update_ext_product(int(ep["id"]), out_of_stock_since=0, missing_since=0)
 
                     # Recompute sell using SMART LOCK
                     new_sell = _compute_sell_price(

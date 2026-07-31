@@ -453,6 +453,13 @@ def product_detail_keyboard(product, user=None):
     stock = product['stock'] if (hasattr(product, '__getitem__') and 'stock' in _pkeys) else 1000
     size = _get_size()
     rows = []
+    try:
+        if user_id:
+            from database import is_favorite
+            fav = is_favorite(user_id, pid)
+            rows.append([InlineKeyboardButton("💔 Remove Favorite" if fav else "⭐ Add to Favorites", callback_data=f"fav_toggle_{pid}")])
+    except Exception:
+        pass
     if stock > 0:
         buy_lbl = _apply_styler("prod_buy", _translate_btn_label("prod_buy", {"small": "🛒", "medium": "🛒 Buy",
                      "large": "🛒 Buy Now", "xl": "🛒 Buy Now — Order this item"}.get(size, "🛒 Buy"), user_id=user_id))
@@ -802,6 +809,7 @@ def admin_products_keyboard(prods):
         else:
             kb.append([InlineKeyboardButton(lbl, callback_data=f"viewprod_{p['id']}")])
     kb.append([_btn("➕", "➕ Add", "➕ Add Item", "➕ Add New Product", callback_data="add_product")])
+    kb.append([InlineKeyboardButton("💰 Bulk Price Editor", callback_data="bulkprice_start")])
     kb.append([InlineKeyboardButton("🗑️ Bulk Delete Items", callback_data="bulkprod_start")])
     kb.append([_btn("🔙", "🔙 Return", "🔙 Return", "🔙 Back to Admin Panel", callback_data="admin_panel")])
     return InlineKeyboardMarkup(kb)
