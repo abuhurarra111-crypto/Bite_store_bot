@@ -540,9 +540,11 @@ def payment_method_keyboard(pid, qty=1):
             kb.append([InlineKeyboardButton("💎 Pay with Points (Wallet)", callback_data=f"pay_pts_{pid}_{qty}")])
     # Grouped external methods
     if any(is_payment_enabled(m) for m in ("binance", "usdt_trc20", "usdt_bep20")):
-        kb.append([InlineKeyboardButton("Binance", callback_data=f"pay_binance_menu_{pid}_{qty}")])
+        b = _rb("pay_group_binance", callback_data=f"pay_binance_menu_{pid}_{qty}")
+        kb.append([b] if b else [InlineKeyboardButton("Binance", callback_data=f"pay_binance_menu_{pid}_{qty}")])
     if any(is_payment_enabled(m) for m in ("bybit", "bybit_pay", "bybit_usdt_trc20", "bybit_usdt_bep20")):
-        kb.append([InlineKeyboardButton("Bybit", callback_data=f"pay_bybit_menu_{pid}_{qty}")])
+        b = _rb("pay_group_bybit", callback_data=f"pay_bybit_menu_{pid}_{qty}")
+        kb.append([b] if b else [InlineKeyboardButton("Bybit", callback_data=f"pay_bybit_menu_{pid}_{qty}")])
     if is_payment_enabled("easypaisa"):
         b = _rb("pay_easypaisa", callback_data=f"pay_easy_{pid}_{qty}")
         kb.append([b] if b else [InlineKeyboardButton("EasyPaisa", callback_data=f"pay_easy_{pid}_{qty}")])
@@ -630,9 +632,11 @@ def points_payment_keyboard(amt):
         _ipe = lambda m: True
     kb = []
     if any(_ipe(m) for m in ("binance", "usdt_trc20", "usdt_bep20")):
-        kb.append([InlineKeyboardButton("Binance", callback_data=f"ptspay_binance_menu_{amt}")])
+        b = _rb("pay_group_binance", callback_data=f"ptspay_binance_menu_{amt}")
+        kb.append([b] if b else [InlineKeyboardButton("Binance", callback_data=f"ptspay_binance_menu_{amt}")])
     if any(_ipe(m) for m in ("bybit", "bybit_pay", "bybit_usdt_trc20", "bybit_usdt_bep20")):
-        kb.append([InlineKeyboardButton("Bybit", callback_data=f"ptspay_bybit_menu_{amt}")])
+        b = _rb("pay_group_bybit", callback_data=f"ptspay_bybit_menu_{amt}")
+        kb.append([b] if b else [InlineKeyboardButton("Bybit", callback_data=f"ptspay_bybit_menu_{amt}")])
     if _ipe("easypaisa"):
         b = _rb("pay_easypaisa", callback_data=f"ptspay_easy_{amt}")
         kb.append([b] if b else [InlineKeyboardButton("EasyPaisa", callback_data=f"ptspay_easy_{amt}")])
@@ -1729,6 +1733,7 @@ def admin_payments_keyboard():
         [InlineKeyboardButton("🔶 Binance Pay", callback_data="pm_binance")],
         [InlineKeyboardButton("📱 EasyPaisa", callback_data="pm_easypaisa")],
         [InlineKeyboardButton("📱 JazzCash", callback_data="pm_jazzcash")],
+        [InlineKeyboardButton("🪙 Crypto / Bybit Settings", callback_data="pm_crypto")],
         [InlineKeyboardButton("🔙 Back to Settings", callback_data="admin_settings")],
     ])
 

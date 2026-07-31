@@ -780,6 +780,22 @@ BYBIT_API_BASE = os.getenv("BYBIT_API_BASE", "https://api.bybit.com").rstrip("/"
 BYBIT_RECV_WINDOW = "5000"
 BYBIT_PROXY_URL = os.getenv("BYBIT_PROXY_URL", "").strip()
 
+# 🔧 AUDIT-FIX v112 (2026-07-31): last Bybit API call diagnostics. Populated on
+# every _bybit_get() so verification code can tell the admin WHY a payment was
+# not found (API error / permission / no records) instead of a generic message.
+_bybit_last_meta = {
+    "path": "", "http": 0, "retCode": None, "retMsg": "",
+    "ok": False, "count": 0, "error": "",
+}
+
+
+def bybit_api_last_meta() -> dict:
+    """Copy of the last Bybit API call diagnostics (safe to read from anywhere)."""
+    try:
+        return dict(_bybit_last_meta)
+    except Exception:
+        return {}
+
 
 def bybit_api_is_configured():
     return bool(BYBIT_API_KEY and BYBIT_API_SECRET)
@@ -813,18 +829,57 @@ def _bybit_get(path: str, params: dict | None = None, timeout: int = 15):
     try:
         r = requests.get(url, headers=headers, timeout=timeout, proxies=_bybit_proxies())
         try:
-            return r.status_code, r.json()
+            data = r.json()
         except Exception:
-            return r.status_code, r.text[:500]
+            data = r.text[:500]
+        # 🔧 v112: always record what the API actually said
+        try:
+            _bybit_last_meta.update({
+                "path": path, "http": int(r.status_code),
+                "retCode": data.get("retCode") if isinstance(data, dict) else None,
+                "retMsg": data.get("retMsg") if isinstance(data, dict) else str(data)[:120],
+                "ok": r.status_code == 200 and (not isinstance(data, dict) or int(data.get("retCode", -1)) == 0),
+                "error": "",
+            })
+        except Exception:
+            pass
+        return r.status_code, data
     except Exception as e:
+        _bybit_last_meta.update({"path": path, "http": -1, "retCode": None,
+                                 "retMsg": str(e)[:160], "ok": False, "error": str(e)[:160]})
         return -1, {"error": str(e)}
 
 
 def bybit_test_connection():
+    """Test the TWO permissions Bybit payment verification actually needs:
+
+    1. /v5/asset/deposit/query-record         — on-chain USDT deposits
+    2. /v5/asset/deposit/query-internal-record — Bybit Pay / UID internal transfers
+
+    🔧 AUDIT-FIX v112: the old test only checked #1, so a key that could read
+    on-chain deposits but NOT internal records (or belonged to a different
+    account than the Pay UID) passed the test yet failed every Bybit Pay
+    verification in production — silently.
+    """
+    ok_onchain, ok_internal = False, False
+    lines = []
     code, data = _bybit_get("/v5/asset/deposit/query-record", {"coin": "USDT", "limit": 1}, timeout=15)
     if code == 200 and isinstance(data, dict) and int(data.get("retCode", -1)) == 0:
-        return True, "✅ Bybit API connected (deposit history readable)."
-    return False, f"❌ Bybit API failed: HTTP {code} — {str(data)[:200]}"
+        ok_onchain = True
+        lines.append("✅ On-chain deposit records: readable")
+    else:
+        lines.append(f"❌ On-chain deposit records: HTTP {code} — {str(data)[:160]}")
+    code, data = _bybit_get("/v5/asset/deposit/query-internal-record", {"coin": "USDT", "limit": 1}, timeout=15)
+    if code == 200 and isinstance(data, dict) and int(data.get("retCode", -1)) == 0:
+        ok_internal = True
+        lines.append("✅ Internal deposit records (Bybit Pay / UID transfers): readable")
+    else:
+        lines.append(f"❌ Internal deposit records: HTTP {code} — {str(data)[:160]}")
+        lines.append("⚠️ Bybit Pay verification NEEDS this permission — enable "
+                     "'Asset' (read) on the API key, and check IP whitelist / account UID.")
+    if ok_onchain and ok_internal:
+        return True, "✅ Bybit API connected — on-chain + internal deposit history readable."
+    return False, "❌ Bybit API partially failed:\n" + "\n".join(lines)
 
 
 def get_bybit_deposit_records(coin: str = "USDT", lookback_hours: int = 96, limit: int = 50, txid: str = ""):
@@ -836,6 +891,10 @@ def get_bybit_deposit_records(coin: str = "USDT", lookback_hours: int = 96, limi
     code, data = _bybit_get("/v5/asset/deposit/query-record", params)
     if code != 200 or not isinstance(data, dict) or int(data.get("retCode", -1)) != 0:
         logger.warning(f"[BybitAPI] deposit query failed: {code} {str(data)[:200]}")
+        try:
+            _bybit_last_meta.update({"ok": False, "count": 0})
+        except Exception:
+            pass
         return []
     rows = (((data.get("result") or {}).get("rows")) or [])
     out = []
@@ -845,18 +904,27 @@ def get_bybit_deposit_records(coin: str = "USDT", lookback_hours: int = 96, limi
             # Bybit on-chain deposit success is commonly 3 in V5 examples.
             if status not in (2, 3):
                 continue
+            identifiers = [
+                row.get("txID"), row.get("id"), row.get("transactionHash"),
+                row.get("hash"), row.get("txHash"), row.get("transactionId"),
+            ]
             out.append({
                 "amount": float(row.get("amount") or 0),
                 "currency": row.get("coin") or coin,
-                "txid": str(row.get("txID") or row.get("id") or ""),
+                "txid": str(row.get("txID") or row.get("transactionHash") or row.get("hash") or row.get("id") or ""),
                 "address": str(row.get("toAddress") or ""),
                 "network": str(row.get("chain") or ""),
                 "time_ms": int(row.get("successAt") or row.get("createdTime") or 0),
                 "status": status,
+                "identifiers": [str(x) for x in identifiers if x],
                 "raw": row,
             })
         except Exception as e:
             logger.debug(f"[BybitAPI] parse deposit row failed: {e}")
+    try:
+        _bybit_last_meta.update({"ok": True, "count": len(out)})
+    except Exception:
+        pass
     return out
 
 
@@ -869,6 +937,10 @@ def get_bybit_internal_deposits(coin: str = "USDT", lookback_hours: int = 96, li
     code, data = _bybit_get("/v5/asset/deposit/query-internal-record", params)
     if code != 200 or not isinstance(data, dict) or int(data.get("retCode", -1)) != 0:
         logger.warning(f"[BybitAPI] internal deposit query failed: {code} {str(data)[:200]}")
+        try:
+            _bybit_last_meta.update({"ok": False, "count": 0})
+        except Exception:
+            pass
         return []
     rows = (((data.get("result") or {}).get("rows")) or [])
     out = []
@@ -877,18 +949,38 @@ def get_bybit_internal_deposits(coin: str = "USDT", lookback_hours: int = 96, li
             status = int(row.get("status") or 0)
             if status != 2:  # internal deposit success
                 continue
+            identifiers = [
+                row.get("txID"), row.get("id"), row.get("transactionHash"),
+                row.get("hash"), row.get("txHash"), row.get("transactionId"),
+            ]
+            # 🔧 AUDIT-FIX v112: Bybit returns internal-deposit createdTime in
+            # SECONDS (10 digits, e.g. "1705393280") — the old code stored it
+            # raw into time_ms, which is milliseconds by convention. Converted
+            # here so recency checks/diagnostics are correct.
+            _ct = row.get("createdTime") or 0
+            try:
+                _ct = int(_ct)
+                if _ct and _ct < 10_000_000_000:   # seconds → ms
+                    _ct *= 1000
+            except Exception:
+                _ct = 0
             out.append({
                 "amount": float(row.get("amount") or 0),
                 "currency": row.get("coin") or coin,
-                "txid": str(row.get("txID") or row.get("id") or ""),
+                "txid": str(row.get("txID") or row.get("transactionHash") or row.get("hash") or row.get("id") or ""),
                 "address": str(row.get("address") or ""),
                 "network": "BYBIT_INTERNAL",
-                "time_ms": int(row.get("createdTime") or 0),
+                "time_ms": int(_ct),
                 "status": status,
+                "identifiers": [str(x) for x in identifiers if x],
                 "raw": row,
             })
         except Exception as e:
             logger.debug(f"[BybitAPI] parse internal row failed: {e}")
+    try:
+        _bybit_last_meta.update({"ok": True, "count": len(out)})
+    except Exception:
+        pass
     return out
 
 

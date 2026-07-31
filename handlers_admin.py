@@ -957,12 +957,35 @@ async def approve_order_callback(u,c):
             try: await c.bot.send_message(ADMIN_ID, admin_msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Deliver Now", callback_data=f"adm_deliver_{o['id']}")]]))
             except: pass
         else:
-            # 🆕 Deliver from product_accounts pool (consumes & marks sold)
-            from database import build_delivery_from_accounts
-            delivery = build_delivery_from_accounts(o['product_id'], o['id'], order_qty, o['user_id'])
-            # 🆕 v69: NO add_points here
-            update_order_status(o['id'], 'delivered')
-            msg = _r("payment_verified_product").format(order_id=o['id'], product=o['product_name'], delivery=delivery, points=pts)
+            # 🔧 AUDIT-FIX C1/C2 (2026-07-31): structured result — never mark
+            # 'delivered' when the stock pool couldn't cover the full qty.
+            from database import build_delivery_detailed
+            _dres = build_delivery_detailed(o['product_id'], o['id'], order_qty, o['user_id'])
+            delivery = _dres['text']
+            if _dres['ok']:
+                # 🆕 v69: NO add_points here
+                update_order_status(o['id'], 'delivered')
+                msg = _r("payment_verified_product").format(order_id=o['id'], product=o['product_name'], delivery=delivery, points=pts)
+            else:
+                _got, _want = _dres.get('delivered', 0), _dres.get('requested', order_qty)
+                update_order_status(o['id'], 'paid_pending_delivery')
+                msg = (f"⚠️ *Order #{o['id']} — not fully delivered*\n"
+                       f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                       f"📦 Product: {escape_md(str(o.get('product_name') or '?')[:70])}\n"
+                       f"🔢 Requested: *{_want}* · Delivered: *{_got}*\n\n"
+                       f"The product ran out of stock while processing.\n"
+                       f"Your order is in *Pending Delivery* — it will be completed "
+                       f"or refunded.")
+                try:
+                    await c.bot.send_message(ADMIN_ID,
+                        f"🚨 *Order #{o['id']} — partially delivered (OOS)*\n"
+                        f"🔢 Requested: `{_want}` · Delivered: `{_got}`\n"
+                        f"📦 Product: {escape_md(str(o.get('product_name') or '?')[:70])}\n"
+                        f"👤 Customer: `{o['user_id']}`\n\n"
+                        f"Complete the shortfall via *Pending Manual Delivery* or refund.",
+                        parse_mode="Markdown")
+                except Exception:
+                    pass
 
     try:
         send_text, send_mode = smart_text_and_mode(msg, "Markdown")
@@ -1256,14 +1279,14 @@ async def set_setting_callback(u,c):
     if q.from_user.id!=ADMIN_ID: await q.answer("❌",show_alert=True); return ConversationHandler.END
     await q.answer()
     key=q.data.replace("set_","")
-    labels={'shop_name':'Shop Name','whatsapp':'WhatsApp','binance':'Binance ID','easypaisa':'EasyPaisa Number','jazzcash':'JazzCash Number','account_name':'Account Name (legacy)','easypaisa_name':'EasyPaisa Holder Name','jazzcash_name':'JazzCash Holder Name','binance_name':'Binance Holder Name','email':'Support Email','pkr_rate':'USD→PKR Rate'}
+    labels={'shop_name':'Shop Name','whatsapp':'WhatsApp','binance':'Binance ID','easypaisa':'EasyPaisa Number','jazzcash':'JazzCash Number','account_name':'Account Name (legacy)','easypaisa_name':'EasyPaisa Holder Name','jazzcash_name':'JazzCash Holder Name','binance_name':'Binance Holder Name','email':'Support Email','pkr_rate':'USD→PKR Rate','binance_usdt_trc20_address':'Binance USDT TRC20 Address','binance_usdt_bep20_address':'Binance USDT BEP20 Address','bybit_pay_id':'Bybit Pay ID / UID','bybit_usdt_trc20_address':'Bybit USDT TRC20 Address','bybit_usdt_bep20_address':'Bybit USDT BEP20 Address'}
     c.user_data['sk']=key
     await _safe_edit(q, f"✏️ New *{labels.get(key,key)}*:", parse_mode="Markdown", reply_markup=inline_cancel_btn()); return SET_VALUE
 
 async def setting_value_received(u,c):
     if u.effective_user.id!=ADMIN_ID: return ConversationHandler.END
     key=c.user_data.get('sk','')
-    km={'binance':'binance_id','easypaisa':'easypaisa','jazzcash':'jazzcash','whatsapp':'whatsapp','shop_name':'shop_name','account_name':'account_name','easypaisa_name':'easypaisa_name','jazzcash_name':'jazzcash_name','binance_name':'binance_name','email':'email','pkr_rate':'usd_pkr_rate'}
+    km={'binance':'binance_id','easypaisa':'easypaisa','jazzcash':'jazzcash','whatsapp':'whatsapp','shop_name':'shop_name','account_name':'account_name','easypaisa_name':'easypaisa_name','jazzcash_name':'jazzcash_name','binance_name':'binance_name','email':'email','pkr_rate':'usd_pkr_rate','binance_usdt_trc20_address':'binance_usdt_trc20_address','binance_usdt_bep20_address':'binance_usdt_bep20_address','bybit_pay_id':'bybit_pay_id','bybit_usdt_trc20_address':'bybit_usdt_trc20_address','bybit_usdt_bep20_address':'bybit_usdt_bep20_address'}
     val = u.message.text.strip()
     if key == 'pkr_rate':
         try: float(val.replace('Rs.','').replace(',','').strip())
@@ -5821,6 +5844,8 @@ async def admin_payments_callback(u, c):
   Name: {escape_md(jn)}
 
 ━━━━━━━━━━━━━━━━━━━━
+Crypto addresses / Bybit Pay ID are in *Crypto Settings*.
+
 Tap any method below to edit:"""
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=admin_payments_keyboard())
 
@@ -8215,4 +8240,38 @@ async def admin_repwin_set_callback(u, c):
     # Re-render product detail
     q.data = f"viewprod_{pid}"
     await view_product_callback(u, c)
+
+
+async def admin_pm_crypto_callback(u, c):
+    """🪙 Crypto/Bybit payment configuration screen."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    b_trc = get_setting('binance_usdt_trc20_address', 'TAYv4LPE92rixGsr2sKe3Pz8mGfFU5cDW7')
+    b_bep = get_setting('binance_usdt_bep20_address', '0xe171a20f64b002b839344f67b04620c8a90d1f78')
+    by_pay = get_setting('bybit_pay_id', '')
+    by_trc = get_setting('bybit_usdt_trc20_address', 'TF4dCTJw42VT99NfUg95YNi5yF6uK7P2FG')
+    by_bep = get_setting('bybit_usdt_bep20_address', '0xfb57f22306f460221c01ad28378fd2ce07a57bd6')
+    text = (
+        f"🪙 *Crypto Payment Settings*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"*Binance USDT*\n"
+        f"TRC20: `{escape_md(b_trc)}`\n"
+        f"BEP20: `{escape_md(b_bep)}`\n\n"
+        f"*Bybit*\n"
+        f"Pay ID/UID: `{escape_md(by_pay or 'not set')}`\n"
+        f"TRC20: `{escape_md(by_trc)}`\n"
+        f"BEP20: `{escape_md(by_bep)}`\n\n"
+        f"Tap below to edit."
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✏️ Binance TRC20 Address", callback_data="set_binance_usdt_trc20_address")],
+        [InlineKeyboardButton("✏️ Binance BEP20 Address", callback_data="set_binance_usdt_bep20_address")],
+        [InlineKeyboardButton("✏️ Bybit Pay ID / UID", callback_data="set_bybit_pay_id")],
+        [InlineKeyboardButton("✏️ Bybit TRC20 Address", callback_data="set_bybit_usdt_trc20_address")],
+        [InlineKeyboardButton("✏️ Bybit BEP20 Address", callback_data="set_bybit_usdt_bep20_address")],
+        [InlineKeyboardButton("🔙 Back to Payment Methods", callback_data="admin_payments")],
+    ])
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
 

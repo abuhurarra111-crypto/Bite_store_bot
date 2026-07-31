@@ -17,7 +17,7 @@ def _get_min_qty(p):
 # ============================================
 # 🛒 ORDERS (v25 — Auto-Verify for Binance + EasyPaisa)
 # ============================================
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton
 from config import *
 from database import *
 from keyboards import *
@@ -145,6 +145,21 @@ async def _bot_send_smart(bot, chat_id, text, **kwargs):
         if "parse" in str(e).lower():
             return await bot.send_message(chat_id, send_text, **kwargs)
         raise
+
+
+def _pay_resp(key):
+    try:
+        return get_response_with_auto_register(key, DEFAULT_RESPONSES.get(key, ""))
+    except Exception:
+        return DEFAULT_RESPONSES.get(key, "")
+
+
+def _fmt_usdt_amount(value):
+    """Display USDT amount like product price (no unnecessary trailing zeros)."""
+    try:
+        return fmt_price(float(value)).lstrip('$')
+    except Exception:
+        return str(value)
 
 
 async def _safe_send(q, context, text, **kwargs):
@@ -482,31 +497,16 @@ async def _start_binance_note_order(update, context, *, is_points=False, product
 # 🆕 v62 — BINANCE ORDER-ID FLOW (clean professional, no API mention)
 # ════════════════════════════════════════════════════════════════
 def _binance_orderid_instructions(*, title, amount, order_id_for_display=None):
-    """Build user-facing Binance instructions. NO mention of 'API' or 'Gmail'."""
     bid = get_setting("binance_id", BINANCE_PAY_ID)
     holder = get_setting("binance_name", get_setting("account_name", ACCOUNT_NAME))
-    parts = [
-        "🟡 *Binance Pay Checkout*",
-        "━━━━━━━━━━━━━━━━━━━━",
-        "",
-        title,
-        f"💵 Amount: *{fmt_price(amount)}*",
-        "",
-        "📋 *Step 1 — Send the payment*",
-        f"  • Pay ID:  `{bid}`",
-        f"  • Name:    *{escape_md(holder)}*",
-        f"  • Amount:  *{fmt_price(amount)}*",
-        "",
-        "📨 *Step 2 — Send your Order ID*",
-        "After completing the payment, open the transaction "
-        "in your Binance app, copy the *Order ID*, and "
-        "paste it below.",
-        "",
-        "_Your order will be confirmed automatically within a few seconds._",
-    ]
+    tpl = _pay_resp("payment_binance_pay_orderid")
+    txt = tpl.format(
+        title=title, amount=_fmt_usdt_amount(amount),
+        pay_id=escape_md(bid), holder=escape_md(holder)
+    )
     if order_id_for_display:
-        parts += ["", f"_Your last submitted Order ID:_ `{order_id_for_display}`"]
-    return "\n".join(parts)
+        txt += f"\n\n_Your last submitted Order ID:_ `{escape_md(order_id_for_display)}`"
+    return txt
 
 
 async def _start_binance_order_id_flow(update, context, *, is_points, product, qty, amount, points_amount=None):
@@ -551,7 +551,9 @@ async def _start_binance_order_id_flow(update, context, *, is_points, product, q
     context.user_data["binance_step"]     = "waiting_order_id"
     context.user_data["binance_amount"]   = amount
 
+    bid_for_copy = get_setting("binance_id", BINANCE_PAY_ID)
     kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📋 Copy Binance Pay ID", copy_text=CopyTextButton(bid_for_copy))],
         [InlineKeyboardButton("❌ Cancel Payment", callback_data="cancel_order")],
     ])
     await _safe_send(
@@ -1076,11 +1078,56 @@ async def fulfill_paid_product_order(bot, order, paid_amount=None, *, payment_me
     if pd.get('delivery_file_id'):
         return await _send_static_media_delivery(bot, order, p, method, amount, pts_bonus=pts_bonus)
 
-    # Auto/static text delivery: static text handled inside build_delivery_from_accounts();
+    # Auto/static text delivery: static text handled inside build_delivery_detailed();
     # account-pool delivery is also handled there.
-    from database import build_delivery_from_accounts, save_order_delivery_content
-    delivery = build_delivery_from_accounts(order['product_id'], order['id'], qty, order['user_id'])
+    # 🔧 AUDIT-FIX C1/C2 (2026-07-31): use the structured result so an order is
+    # NEVER marked 'delivered' when the stock pool couldn't cover the full qty.
+    from database import build_delivery_detailed, save_order_delivery_content
+    dres = build_delivery_detailed(order['product_id'], order['id'], qty, order['user_id'])
+    delivery = dres['text']
     save_order_delivery_content(order['id'], delivery)
+
+    if not dres['ok']:
+        # ⛔ Not fully fulfilled — park the order for the admin instead of
+        # silently "delivering" an out-of-stock notice.
+        got, want = dres.get('delivered', 0), dres.get('requested', qty)
+        update_order_status(order['id'], 'paid_pending_delivery')
+        note = (
+            f"⚠️ *Order #{order['id']} — not fully delivered*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"📦 Product: *{_fmt_msg_name(order['product_name'])}*\n"
+            f"🔢 Requested: *{want}* · Delivered: *{got}*\n\n"
+        )
+        if got:
+            note += "✅ What was available has been sent in the next message.\n"
+        note += (
+            f"The product ran out of stock while your order was processing.\n"
+            f"Your order is now in *Pending Delivery* — the store will complete "
+            f"the remaining *{max(0, want - got)}* or refund your wallet.\n\n"
+            f"🎫 You can also open a Support Ticket anytime."
+        )
+        kb_pending = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎫 Support", callback_data="support_menu")],
+            [InlineKeyboardButton("📜 Order History", callback_data="my_orders")],
+            [InlineKeyboardButton("🛒 Buy More", callback_data="shop")],
+        ])
+        await _bot_send_smart(bot, order['user_id'], note, parse_mode="Markdown")
+        if delivery and got:
+            await _bot_send_smart(bot, order['user_id'], delivery, parse_mode=None,
+                                  reply_markup=kb_pending)
+        try:
+            from utils import notify_admin as _na
+            await _na(bot,
+                f"🚨 *Order #{order['id']} — partially delivered (OOS)*\n"
+                f"🔢 Requested: `{want}` · Delivered: `{got}`\n"
+                f"📦 Product: {escape_md(str(order.get('product_name') or '?')[:70])}\n"
+                f"👤 Customer: `{order['user_id']}`\n\n"
+                f"Complete the shortfall via *Pending Manual Delivery* or refund.")
+        except Exception as _na_err:
+            import logging as _l
+            _l.getLogger(__name__).warning(f"[fulfill] admin OOS alert failed: {_na_err}")
+        return True
+
     update_order_status(order['id'], 'delivered')
 
     # 🆕 v66: bonus 10pts removed entirely — no add_points here.
@@ -2180,7 +2227,7 @@ async def ep_verify_callback(update, context):
                         msg += f"\n\n📝 *Instructions:*\n{p['delivery_text']}"
                     admin_msg = f"🔔 *New Order! (Readymade)*\nOrder #{oid}\nProduct: {p['name']}\n\nPlease deliver the account."
                     from config import ADMIN_ID
-                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton
                     try: await context.bot.send_message(ADMIN_ID, admin_msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Upload Account", callback_data=f"adm_upacct_{oid}")]]))
                     except: pass
                 else:
@@ -2195,30 +2242,59 @@ async def ep_verify_callback(update, context):
                     try: await context.bot.send_message(o['user_id'] if (o is not None and 'user_id' in o.keys()) else u.id, prompt, parse_mode="Markdown")
                     except: pass
             else:
-                update_order_status(oid, 'delivered')
-                from database import build_delivery_from_accounts
-                delivery = build_delivery_from_accounts(o['product_id'], o['id'], order_qty, o['user_id'])
+                # 🔧 AUDIT-FIX C1/C2 (2026-07-31): structured result — never mark
+                # 'delivered' when the stock pool couldn't cover the full qty.
+                from database import build_delivery_detailed
+                _dres = build_delivery_detailed(o['product_id'], o['id'], order_qty, o['user_id'])
+                delivery = _dres['text']
                 # 🆕 v66: bonus 10pts removed
                 # 🆕 v72: byte-perfect — receipt header (Markdown) + delivery
                 # content (HTML, native format) sent as 2 separate messages so
                 # neither parse mode mangles the other.
-                msg = (f"🎉 *Order Delivered!* ✅\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                       f"📦 {escape_md(o['product_name'])}\n\n"
-                       f"📨 *Your Product* — see the next message.\n\n"
-                       f"Thank you! 🙏")
-                # Send the delivery content separately, with no parse_mode
-                # override so smart_text_and_mode picks HTML for [[HTML]] sentinel
-                try:
-                    await context.bot.send_message(o['user_id'], delivery)
-                except Exception:
-                    pass
-                # v121: Tier progress hint only. No extra points on payment success.
-                try:
-                    from loyalty_extras import build_tier_progress_line
-                    tline = build_tier_progress_line(o['user_id'])
-                    if tline:
-                        msg += f"\n\n{tline}"
-                except Exception: pass
+                if _dres['ok']:
+                    update_order_status(oid, 'delivered')
+                    msg = (f"🎉 *Order Delivered!* ✅\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                           f"📦 {escape_md(o['product_name'])}\n\n"
+                           f"📨 *Your Product* — see the next message.\n\n"
+                           f"Thank you! 🙏")
+                    # Send the delivery content separately, with no parse_mode
+                    # override so smart_text_and_mode picks HTML for [[HTML]] sentinel
+                    try:
+                        await context.bot.send_message(o['user_id'], delivery)
+                    except Exception:
+                        pass
+                    # v121: Tier progress hint only. No extra points on payment success.
+                    try:
+                        from loyalty_extras import build_tier_progress_line
+                        tline = build_tier_progress_line(o['user_id'])
+                        if tline:
+                            msg += f"\n\n{tline}"
+                    except Exception: pass
+                else:
+                    _got, _want = _dres.get('delivered', 0), _dres.get('requested', order_qty)
+                    update_order_status(oid, 'paid_pending_delivery')
+                    msg = (f"⚠️ *Order #{oid} — not fully delivered*\n"
+                           f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                           f"📦 {escape_md(o['product_name'])}\n"
+                           f"🔢 Requested: *{_want}* · Delivered: *{_got}*\n\n"
+                           f"The product ran out of stock while your order was "
+                           f"processing. Your order is in *Pending Delivery* — "
+                           f"the remaining items will be completed or refunded.")
+                    if delivery and _got:
+                        try:
+                            await context.bot.send_message(o['user_id'], delivery)
+                        except Exception:
+                            pass
+                    try:
+                        from utils import notify_admin as _na
+                        await _na(context.bot,
+                            f"🚨 *Order #{oid} — partially delivered (OOS)*\n"
+                            f"🔢 Requested: `{_want}` · Delivered: `{_got}`\n"
+                            f"📦 Product: {escape_md(str(o.get('product_name') or '?')[:70])}\n"
+                            f"👤 Customer: `{o['user_id']}`\n\n"
+                            f"Complete the shortfall via *Pending Manual Delivery* or refund.")
+                    except Exception:
+                        pass
 
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("📊 My Account", callback_data="my_account")],
@@ -2330,7 +2406,20 @@ USDT_PAYMENT_METHODS = {
 
 
 def _usdt_cfg(method):
-    return USDT_PAYMENT_METHODS.get(str(method or '').lower()) or {}
+    method = str(method or '').lower()
+    cfg = dict(USDT_PAYMENT_METHODS.get(method) or {})
+    try:
+        if method == 'usdt_trc20':
+            cfg['address'] = get_setting('binance_usdt_trc20_address', cfg.get('address',''))
+        elif method == 'usdt_bep20':
+            cfg['address'] = get_setting('binance_usdt_bep20_address', cfg.get('address',''))
+        elif method == 'bybit_usdt_trc20':
+            cfg['address'] = get_setting('bybit_usdt_trc20_address', cfg.get('address',''))
+        elif method == 'bybit_usdt_bep20':
+            cfg['address'] = get_setting('bybit_usdt_bep20_address', cfg.get('address',''))
+    except Exception:
+        pass
+    return cfg
 
 
 def _usdt_amount_match(actual, expected, tolerance=0.0001):
@@ -2356,6 +2445,7 @@ def _find_matching_usdt_deposit(order, lookback_hours=96):
     if not cfg:
         return None, 'unknown_method'
     expected = float(order.get('binance_amount') or order.get('price') or 0)
+    note = str(order.get('payment_note_id') or '').strip()
     if expected <= 0:
         return None, 'bad_amount'
     try:
@@ -2372,6 +2462,8 @@ def _find_matching_usdt_deposit(order, lookback_hours=96):
     for d in deps:
         txid = d.get('txid') or ''
         if not txid or is_txid_used(txid):
+            continue
+        if note and note.lower() not in txid.lower():
             continue
         if not _usdt_network_ok(d.get('network'), cfg):
             continue
@@ -2419,14 +2511,27 @@ async def _verify_usdt_order_and_respond(target, context, oid):
             return
         reason = msg
     await _send_or_edit(target,
-        f"⏳ *Payment Not Found Yet*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"If you already sent USDT, please wait for blockchain confirmations and tap *Verify Again*.\n\n"
-        f"Internal status: `{escape_md(str(reason)[:80])}`",
+        _pay_resp('payment_not_found_txid').format(reason=escape_md(str(reason)[:80])),
         parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton('🔄 Verify Again', callback_data=f'usdtv_{oid}')],
             [InlineKeyboardButton('🎫 Support', callback_data='support_menu')],
             [InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')],
         ]))
+
+
+async def usdt_txid_received(update, context):
+    if context.user_data.get('usdt_step') != 'waiting_txid':
+        return False
+    oid = context.user_data.get('pending_order_id')
+    note = (update.message.text or '').strip()
+    if not oid:
+        await update.message.reply_text('❌ No pending order.')
+        return True
+    from database import set_order_payment_note
+    set_order_payment_note(int(oid), note)
+    context.user_data.pop('usdt_step', None)
+    await _verify_usdt_order_and_respond(update, context, int(oid))
+    return True
 
 
 async def usdt_verify_callback(update, context):
@@ -2466,6 +2571,7 @@ async def _start_usdt_payment(update, context, method, *, is_points=False, amoun
     if is_points:
         total_usd = float(amount or 0)
         pts = points_from_usd(total_usd)
+        title_line = f"💎 You will receive *{fmt_points(pts)} Points*"
         oid = create_order(u.id, u.first_name or str(u.id), 0, f"💎 {fmt_points(pts)} Points", total_usd, method, '', total_usd, 'USDT', 'points')
     else:
         p = product
@@ -2473,27 +2579,23 @@ async def _start_usdt_payment(update, context, method, *, is_points=False, amoun
             await _safe_send(q, context, '❌ Product not found.', reply_markup=back_btn()); return
         total_usd = _get_eff_price(p) * int(qty or 1)
         pname = p['name'] if int(qty or 1) == 1 else f"{p['name']} × {int(qty or 1)}"
+        title_line = f"📦 Product: *{_fmt_msg_name(pname)}*"
         creds = context.user_data.pop('order_creds', '')
         oid = create_order(u.id, u.first_name or str(u.id), p['id'], pname, total_usd, method, '', total_usd, 'USDT', 'product', creds, qty=qty)
     update_order_status(oid, 'usdt_waiting')
     context.user_data['pending_order_id'] = oid
+    context.user_data['usdt_step'] = 'waiting_txid'
     address = cfg['address']
-    await _safe_send(q, context,
-        f"🪙 *Order #{oid} — {cfg['label']} Payment*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💰 Send exactly: *{total_usd:.4f} USDT*\n"
-        f"🌐 Network: *{cfg['network_label']}*\n"
-        f"📥 Deposit address:\n`{address}`\n\n"
-        f"*Important instructions:*\n"
-        f"1. Send *only USDT* on *{cfg['network_label']}*.\n"
-        f"2. Send the *exact amount* shown above.\n"
-        f"3. Do NOT use another network, exchange, coin, or address. Wrong network payments may not verify.\n"
-        f"4. After sending, wait for blockchain confirmation and tap Verify Payment.\n\n"
-        f"Bot will auto-check Binance deposit history.",
+    instr = title_line + "\n" + _pay_resp('payment_binance_usdt').format(
+        method_label=cfg['label'], order_id=oid, amount=_fmt_usdt_amount(total_usd),
+        network_label=cfg['network_label'], address=address
+    )
+    await _safe_send(q, context, instr,
         parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton('🔄 Verify Payment', callback_data=f'usdtv_{oid}')],
+            [InlineKeyboardButton('📋 Copy Address', copy_text=CopyTextButton(address))],
             [InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')],
         ]))
+
 
 
 async def points_usdt_callback(update, context):
@@ -2524,64 +2626,158 @@ async def payment_binance_menu_callback(update, context):
     parts=q.data.split('_'); pid=int(parts[3]); qty=int(parts[4]) if len(parts)>4 else 1
     from database import is_payment_enabled
     kb=[]
+    from keyboards import _rb
     if is_payment_enabled('binance'):
-        kb.append([InlineKeyboardButton('Binance Pay', callback_data=f'pay_binance_{pid}_{qty}')])
+        b=_rb('pay_binance', callback_data=f'pay_binance_{pid}_{qty}'); kb.append([b] if b else [InlineKeyboardButton('Binance Pay', callback_data=f'pay_binance_{pid}_{qty}')])
     if is_payment_enabled('usdt_bep20'):
-        kb.append([InlineKeyboardButton('USDT BEP20', callback_data=f'pay_usdt_bep20_{pid}_{qty}')])
+        b=_rb('pay_usdt_bep20', callback_data=f'pay_usdt_bep20_{pid}_{qty}'); kb.append([b] if b else [InlineKeyboardButton('USDT BEP20', callback_data=f'pay_usdt_bep20_{pid}_{qty}')])
     if is_payment_enabled('usdt_trc20'):
-        kb.append([InlineKeyboardButton('USDT TRC20', callback_data=f'pay_usdt_trc20_{pid}_{qty}')])
+        b=_rb('pay_usdt_trc20', callback_data=f'pay_usdt_trc20_{pid}_{qty}'); kb.append([b] if b else [InlineKeyboardButton('USDT TRC20', callback_data=f'pay_usdt_trc20_{pid}_{qty}')])
     kb.append([InlineKeyboardButton('🔙 Back', callback_data=f'buy_{pid}' if qty==1 else f'buyx_{pid}')])
-    await _safe_send(q, context, 'Binance payment methods:', reply_markup=InlineKeyboardMarkup(kb))
+    await _safe_send(q, context, _pay_resp('payment_binance_menu_text'), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
 
 async def points_binance_menu_callback(update, context):
     q=update.callback_query; await q.answer()
     amt=q.data.replace('ptspay_binance_menu_','')
     from database import is_payment_enabled
     kb=[]
+    from keyboards import _rb
     if is_payment_enabled('binance'):
-        kb.append([InlineKeyboardButton('Binance Pay', callback_data=f'ptspay_binance_{amt}')])
+        b=_rb('pay_binance', callback_data=f'ptspay_binance_{amt}'); kb.append([b] if b else [InlineKeyboardButton('Binance Pay', callback_data=f'ptspay_binance_{amt}')])
     if is_payment_enabled('usdt_bep20'):
-        kb.append([InlineKeyboardButton('USDT BEP20', callback_data=f'ptspay_usdt_bep20_{amt}')])
+        b=_rb('pay_usdt_bep20', callback_data=f'ptspay_usdt_bep20_{amt}'); kb.append([b] if b else [InlineKeyboardButton('USDT BEP20', callback_data=f'ptspay_usdt_bep20_{amt}')])
     if is_payment_enabled('usdt_trc20'):
-        kb.append([InlineKeyboardButton('USDT TRC20', callback_data=f'ptspay_usdt_trc20_{amt}')])
+        b=_rb('pay_usdt_trc20', callback_data=f'ptspay_usdt_trc20_{amt}'); kb.append([b] if b else [InlineKeyboardButton('USDT TRC20', callback_data=f'ptspay_usdt_trc20_{amt}')])
     kb.append([InlineKeyboardButton('🔙 Back', callback_data='buy_points')])
-    await _safe_send(q, context, 'Binance payment methods:', reply_markup=InlineKeyboardMarkup(kb))
+    await _safe_send(q, context, _pay_resp('payment_binance_menu_text'), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
 
 async def payment_bybit_menu_callback(update, context):
     q=update.callback_query; await q.answer()
     parts=q.data.split('_'); pid=int(parts[3]); qty=int(parts[4]) if len(parts)>4 else 1
     from database import is_payment_enabled
     kb=[]
+    from keyboards import _rb
     if is_payment_enabled('bybit_pay'):
-        kb.append([InlineKeyboardButton('Bybit Pay', callback_data=f'pay_bybit_pay_{pid}_{qty}')])
+        b=_rb('pay_bybit_pay', callback_data=f'pay_bybit_pay_{pid}_{qty}'); kb.append([b] if b else [InlineKeyboardButton('Bybit Pay', callback_data=f'pay_bybit_pay_{pid}_{qty}')])
     if is_payment_enabled('bybit_usdt_bep20'):
-        kb.append([InlineKeyboardButton('USDT BEP20', callback_data=f'pay_bybit_usdt_bep20_{pid}_{qty}')])
+        b=_rb('pay_bybit_usdt_bep20', callback_data=f'pay_bybit_usdt_bep20_{pid}_{qty}'); kb.append([b] if b else [InlineKeyboardButton('USDT BEP20', callback_data=f'pay_bybit_usdt_bep20_{pid}_{qty}')])
     if is_payment_enabled('bybit_usdt_trc20'):
-        kb.append([InlineKeyboardButton('USDT TRC20', callback_data=f'pay_bybit_usdt_trc20_{pid}_{qty}')])
+        b=_rb('pay_bybit_usdt_trc20', callback_data=f'pay_bybit_usdt_trc20_{pid}_{qty}'); kb.append([b] if b else [InlineKeyboardButton('USDT TRC20', callback_data=f'pay_bybit_usdt_trc20_{pid}_{qty}')])
     kb.append([InlineKeyboardButton('🔙 Back', callback_data=f'buy_{pid}' if qty==1 else f'buyx_{pid}')])
-    await _safe_send(q, context, 'Bybit payment methods:', reply_markup=InlineKeyboardMarkup(kb))
+    await _safe_send(q, context, _pay_resp('payment_bybit_menu_text'), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
 
 async def points_bybit_menu_callback(update, context):
     q=update.callback_query; await q.answer()
     amt=q.data.replace('ptspay_bybit_menu_','')
     from database import is_payment_enabled
     kb=[]
+    from keyboards import _rb
     if is_payment_enabled('bybit_pay'):
-        kb.append([InlineKeyboardButton('Bybit Pay', callback_data=f'ptspay_bybit_pay_{amt}')])
+        b=_rb('pay_bybit_pay', callback_data=f'ptspay_bybit_pay_{amt}'); kb.append([b] if b else [InlineKeyboardButton('Bybit Pay', callback_data=f'ptspay_bybit_pay_{amt}')])
     if is_payment_enabled('bybit_usdt_bep20'):
-        kb.append([InlineKeyboardButton('USDT BEP20', callback_data=f'ptspay_bybit_usdt_bep20_{amt}')])
+        b=_rb('pay_bybit_usdt_bep20', callback_data=f'ptspay_bybit_usdt_bep20_{amt}'); kb.append([b] if b else [InlineKeyboardButton('USDT BEP20', callback_data=f'ptspay_bybit_usdt_bep20_{amt}')])
     if is_payment_enabled('bybit_usdt_trc20'):
-        kb.append([InlineKeyboardButton('USDT TRC20', callback_data=f'ptspay_bybit_usdt_trc20_{amt}')])
+        b=_rb('pay_bybit_usdt_trc20', callback_data=f'ptspay_bybit_usdt_trc20_{amt}'); kb.append([b] if b else [InlineKeyboardButton('USDT TRC20', callback_data=f'ptspay_bybit_usdt_trc20_{amt}')])
     kb.append([InlineKeyboardButton('🔙 Back', callback_data='buy_points')])
-    await _safe_send(q, context, 'Bybit payment methods:', reply_markup=InlineKeyboardMarkup(kb))
+    await _safe_send(q, context, _pay_resp('payment_bybit_menu_text'), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
+
+
+def _norm_hash(value):
+    return re.sub(r"[^a-zA-Z0-9]", "", str(value or "")).lower()
+
+
+def _bybit_hash_matches(record, note):
+    if not note:
+        return True
+    key = _norm_hash(note)
+    if not key:
+        return False
+    candidates = []
+    for k in ("txid", "id", "transactionHash", "hash", "txHash", "transactionId"):
+        v = record.get(k) if isinstance(record, dict) else None
+        if v: candidates.append(v)
+    try:
+        candidates.extend(record.get("identifiers") or [])
+    except Exception:
+        pass
+    try:
+        raw = record.get("raw") or {}
+        if isinstance(raw, dict):
+            for k in ("txID", "id", "transactionHash", "hash", "txHash", "transactionId"):
+                if raw.get(k): candidates.append(raw.get(k))
+    except Exception:
+        pass
+    for cand in candidates:
+        c = _norm_hash(cand)
+        if c and (key == c or key in c or c in key):
+            return True
+    return False
+
+
+def _bybit_recent_amount_fallback(rows, expected, window_min=30):
+    """🔧 v113: Safe fallback when the customer's pasted Bybit Pay Order ID
+    does not exactly equal the API's internal-deposit txID (Bybit Pay may show
+    a different order number than the internal transfer ID).
+
+    Matches ONLY when:
+      - the deposit is an internal transfer (BYBIT_INTERNAL),
+      - the amount matches within tolerance,
+      - it arrived within the last `window_min` minutes,
+      - it is not already marked used,
+      - and it is the ONLY such deposit (unambiguous).
+    This keeps it fraud-safe: a random/wrong ID alone can never claim a payment.
+    """
+    try:
+        from database import is_txid_used
+    except Exception:
+        is_txid_used = lambda tx: False
+    now_ms = int(_time.time() * 1000)
+    hits = []
+    seen = set()
+    for d in rows:
+        try:
+            txid = d.get('txid') or ''
+            # Dedup: the exact-ID query + full-scan query both return the same
+            # deposit, so a single transfer can appear twice in `rows`.
+            sig = (txid, d.get('amount'), d.get('network'))
+            if sig in seen:
+                continue
+            seen.add(sig)
+            if not txid or is_txid_used(txid):
+                continue
+            if str(d.get('network') or '').upper() != 'BYBIT_INTERNAL':
+                continue
+            if not _usdt_amount_match(d.get('amount'), expected):
+                continue
+            t = int(d.get('time_ms') or 0)
+            if t and (now_ms - t) > window_min * 60 * 1000:
+                continue
+            hits.append(d)
+        except Exception:
+            continue
+    return hits[0] if len(hits) == 1 else None
 
 
 def _find_matching_bybit_payment(order, lookback_hours=96):
+    """Find a Bybit deposit matching the order.
+
+    🔧 AUDIT-FIX v112 (2026-07-31): returns a *diagnostic* reason string instead
+    of the old generic "transaction_hash_not_found", so a failed verification
+    tells the admin exactly what happened:
+      - bybit_api_not_configured      → BYBIT_API_KEY/SECRET missing on server
+      - api_error:<retMsg>            → the Bybit API itself returned an error
+                                        (e.g. permission denied, IP blocked)
+      - no_records:<details>          → API OK but 0 deposits in the window
+      - hash_not_found:<N>            → N records scanned, hash matched none
+      - amount_mismatch               → hash matched but the sent amount differs
+      - matched                       → verified
+    """
     method=str(order.get('payment_method') or '').lower()
     expected=float(order.get('binance_amount') or order.get('price') or 0)
     note=str(order.get('payment_note_id') or '').strip()
     try:
-        from payments import bybit_api_is_configured, get_bybit_deposit_records, get_bybit_internal_deposits
+        from payments import (bybit_api_is_configured, get_bybit_deposit_records,
+                              get_bybit_internal_deposits, bybit_api_last_meta)
         if not bybit_api_is_configured(): return None, 'bybit_api_not_configured'
     except Exception as e:
         return None, f'import_error:{e}'
@@ -2591,22 +2787,73 @@ def _find_matching_bybit_payment(order, lookback_hours=96):
         is_txid_used=lambda tx: False
     cfg=_usdt_cfg(method)
     if method == 'bybit_pay':
-        rows=get_bybit_internal_deposits('USDT', lookback_hours=lookback_hours, txid=note) if note else get_bybit_internal_deposits('USDT', lookback_hours=lookback_hours)
+        rows = []
+        diag = {"internal_ok": None, "internal_count": 0,
+                "onchain_ok": None, "onchain_count": 0}
+        # First try exact ID query, then always scan recent list. Bybit UI may
+        # show an ID that does not return with the exact txID filter, while the
+        # same ID exists in the recent payload — the full scan covers that.
+        try:
+            if note:
+                rows.extend(get_bybit_internal_deposits('USDT', lookback_hours=lookback_hours, txid=note))
+        except Exception:
+            pass
+        try:
+            rows.extend(get_bybit_internal_deposits('USDT', lookback_hours=lookback_hours))
+        except Exception:
+            pass
+        m = bybit_api_last_meta()
+        diag["internal_ok"] = bool(m.get("ok"))
+        diag["internal_count"] = int(m.get("count") or 0)
+        # Some Bybit-to-Bybit receipts appear in normal deposit records
+        # depending on account/site, so scan both exact and full on-chain too.
+        try:
+            if note:
+                rows.extend(get_bybit_deposit_records('USDT', lookback_hours=lookback_hours, txid=note))
+        except Exception:
+            pass
+        try:
+            rows.extend(get_bybit_deposit_records('USDT', lookback_hours=lookback_hours))
+        except Exception:
+            pass
+        m2 = bybit_api_last_meta()
+        diag["onchain_ok"] = bool(m2.get("ok"))
+        diag["onchain_count"] = int(m2.get("count") or 0)
+
+        if diag["internal_ok"] is False or diag["onchain_ok"] is False:
+            err = (m or m2 or {}).get("retMsg") or (m or m2 or {}).get("error") or "unknown"
+            return None, f"api_error:{str(err)[:140]}"
+
+        seen = set()
         for d in rows:
             txid=d.get('txid') or ''
+            sig = (txid, d.get('amount'), d.get('network'))
+            if sig in seen: continue
+            seen.add(sig)
             if not txid or is_txid_used(txid): continue
-            if note and note.lower() not in txid.lower(): continue
-            if _usdt_amount_match(d.get('amount'), expected): return d, 'matched'
-        return None, 'not_found'
+            hash_ok = _bybit_hash_matches(d, note)
+            if hash_ok and not _usdt_amount_match(d.get('amount'), expected):
+                return None, 'amount_mismatch'
+            if hash_ok and _usdt_amount_match(d.get('amount'), expected):
+                return d, 'matched'
+        # 🔧 v113: Bybit Pay Order ID vs internal txID fallback (see helper).
+        fb = _bybit_recent_amount_fallback(rows, expected)
+        if fb:
+            return fb, 'matched'
+        if not rows:
+            return None, f"no_records:internal={diag['internal_count']},onchain={diag['onchain_count']}"
+        return None, f"hash_not_found:{len(rows)}"
     if method in ('bybit_usdt_trc20','bybit_usdt_bep20'):
         rows=get_bybit_deposit_records('USDT', lookback_hours=lookback_hours, txid=note) if note else get_bybit_deposit_records('USDT', lookback_hours=lookback_hours)
         for d in rows:
             txid=d.get('txid') or ''
             if not txid or is_txid_used(txid): continue
-            if note and note.lower() not in txid.lower(): continue
+            if not _bybit_hash_matches(d, note): continue
             if not _usdt_network_ok(d.get('network'), cfg): continue
             if not _usdt_address_ok(d.get('address'), cfg): continue
             if _usdt_amount_match(d.get('amount'), expected): return d, 'matched'
+        if not rows:
+            return None, 'no_records'
         return None, 'not_found'
     return None, 'unknown_method'
 
@@ -2622,6 +2869,131 @@ async def _complete_bybit_order(bot, order, dep):
     else: await fulfill_paid_product_order(bot, order, amount, payment_method_label=str(order.get('payment_method') or 'BYBIT').upper())
     return True, 'delivered'
 
+def _bybit_failure_hint(reason):
+    """Human explanation of a Bybit verification failure reason (v112)."""
+    r = str(reason or '')
+    if r == 'bybit_api_not_configured':
+        return "BYBIT_API_KEY / BYBIT_API_SECRET are missing on the server — set them in Render env."
+    if r == 'amount_mismatch':
+        return "The transfer ID was FOUND but the received amount differs from the order amount."
+    if r.startswith('api_error:'):
+        return (f"The Bybit API itself returned an error:\n`{r[len('api_error:'):]}`\n"
+                f"Fix: 1) In Bybit → API Management, under *Wallet* enable **Asset Information** "
+                f"(资产信息) — this is the permission that gates deposit records. "
+                f"2) Set the key to *No IP restriction* (or add Render's IPs). "
+                f"3) Make sure the key belongs to the *same Bybit UID* as the Pay ID "
+                f"customers pay to. All three are read-only and safe.")
+    if r.startswith('no_records:'):
+        return "Bybit API works, but no deposits were found in the last 96h for this API key's account. Check that the Bybit Pay ID / UID in the bot matches THIS API key's account."
+    if r.startswith('hash_not_found:'):
+        return (f"The bot scanned {r.split(':',1)[1]} record(s) but none matched the pasted ID, "
+                f"and no fresh same-amount Bybit Pay transfer was found either. Ask the customer "
+                f"to re-copy the exact *Transfer ID* from Bybit Pay → Transaction History, or "
+                f"confirm the deposit in the Bybit app and tap 'Mark Received & Credit'.")
+    return "Payment could not be auto-verified. Confirm the deposit in your Bybit app before crediting."
+
+
+async def _notify_admin_bybit_failure(bot, order, reason):
+    """Send the admin an ACTIONABLE alert when Bybit auto-verification fails.
+
+    🔧 AUDIT-FIX v112: the old code either sent a passive debug message or
+    (in the background job) NOTHING at all — stuck bybit_waiting orders were
+    invisible until a customer complained. Now the admin gets a one-tap
+    "Mark Received & Credit" button to resolve it instantly.
+    """
+    try:
+        from config import ADMIN_ID as _AID
+        oid = int(order.get('id') or 0)
+        note_dbg = str(order.get('payment_note_id') or '').strip()
+        exp = float(order.get('binance_amount') or order.get('price') or 0)
+        txt = (
+            "⚠️ *Bybit Payment — needs your check*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"🧾 Order: `#{oid}`\n"
+            f"👤 Customer: `{order.get('user_id') or '?'}`\n"
+            f"💵 Amount: *{fmt_price(exp)} USDT*\n"
+            f"🔗 ID pasted: `{escape_md(note_dbg[:60]) or '—'}`\n"
+            f"📋 Reason: `{escape_md(str(reason)[:120])}`\n"
+            f"💡 {_bybit_failure_hint(reason)}\n\n"
+            f"_Check your Bybit app (Funding → History → Bybit Pay / Deposit). "
+            f"If the payment is there, tap below — points/order will be credited "
+            f"and this hash marked used so it can't be reused._"
+        )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Mark Received & Credit", callback_data=f"bybit_manual_confirm_{oid}")],
+            [InlineKeyboardButton("👤 Customer Chat", callback_data=f"adm_chat_{order.get('user_id') or 0}")],
+        ])
+        await bot.send_message(_AID, txt, parse_mode='Markdown', reply_markup=kb)
+    except Exception as e:
+        import logging as _l
+        _l.getLogger(__name__).warning(f"[BybitAlert] admin notify failed: {e}")
+
+
+def _bybit_failure_alerted_recently(order_id, cooldown_min=30):
+    """Throttle: don't spam the admin every 45s for the same stuck order."""
+    try:
+        from database import get_setting, set_setting
+        key = f"bybit_alerted_{int(order_id)}"
+        last = 0
+        try:
+            last = float(get_setting(key, '0') or 0)
+        except Exception:
+            last = 0
+        now = _time.time()
+        if now - last < cooldown_min * 60:
+            return True
+        set_setting(key, f"{now}")
+        return False
+    except Exception:
+        return False
+
+
+async def bybit_manual_confirm_callback(update, context):
+    """✅ Admin one-tap manual confirm for a stuck Bybit payment (v112)."""
+    q = update.callback_query
+    try:
+        if q.from_user.id != ADMIN_ID:
+            await q.answer("❌", show_alert=True)
+            return
+        await q.answer("Crediting…")
+        oid = int(q.data.replace('bybit_manual_confirm_', ''))
+    except Exception:
+        return
+    try:
+        o = get_order(oid)
+        if not o:
+            await q.edit_message_text("❌ Order not found.")
+            return
+        if str(o.get('status') or '') == 'delivered':
+            await q.edit_message_text("✅ Order already delivered.")
+            return
+        if str(o.get('status') or '') not in ('bybit_waiting', 'usdt_waiting', 'paid_pending_delivery', 'pending'):
+            await q.edit_message_text(f"⚠️ Order status is `{o.get('status')}` — no credit applied.", parse_mode='Markdown')
+            return
+        # Reuse the same completion logic as auto-verify (idempotent: marks
+        # the pasted ID used so the same transfer can't be re-credited).
+        amount = float(o.get('binance_amount') or o.get('price') or 0)
+        note = str(o.get('payment_note_id') or '').strip()
+        dep = {"txid": note or "", "amount": amount}
+        ok, msg = await _complete_bybit_order(context.bot, o, dep)
+        if ok:
+            await q.edit_message_text(
+                f"✅ *Order #{oid} credited manually.*\n"
+                f"💵 Amount: `{fmt_price(amount)} USDT`\n"
+                f"🔗 ID: `{escape_md((note or '—')[:60])}`\n\n"
+                f"Customer has been notified.",
+                parse_mode='Markdown')
+        else:
+            await q.edit_message_text(f"⚠️ Could not credit: {escape_md(str(msg))}", parse_mode='Markdown')
+    except Exception as e:
+        import logging as _l
+        _l.getLogger(__name__).exception(f"[BybitManual] confirm failed for {oid}")
+        try:
+            await q.edit_message_text("❌ Failed to credit. Check logs.")
+        except Exception:
+            pass
+
+
 async def _verify_bybit_order_and_respond(target, context, oid):
     o=get_order(int(oid))
     if not o: await _send_or_edit(target, '❌ Order not found.', reply_markup=back_btn()); return
@@ -2632,7 +3004,15 @@ async def _verify_bybit_order_and_respond(target, context, oid):
         if ok:
             await _send_or_edit(target, f"✅ *Bybit Payment Verified!*\n━━━━━━━━━━━━━━━━━━━━\nOrder: `#{oid}`\nAmount: *{float(dep.get('amount') or 0):.4f} USDT*\nTXID: `{escape_md((dep.get('txid') or '')[:80])}`", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('📜 Order History', callback_data='my_orders')]])); return
         reason=msg
-    await _send_or_edit(target, f"⏳ *Bybit Payment Not Found Yet*\n\nPaste correct TXID/Order ID or wait for confirmations and tap Verify Again.\n\nStatus: `{escape_md(str(reason)[:80])}`", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🔄 Verify Again', callback_data=f'bybitv_{oid}')],[InlineKeyboardButton('🎫 Support', callback_data='support_menu')],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]]))
+    # 🔧 AUDIT-FIX v112: actionable admin alert (throttled to avoid spam when
+    # the customer taps "Check Again" repeatedly). Customer still sees the
+    # friendly "not found yet" screen with retry/support options.
+    try:
+        if not _bybit_failure_alerted_recently(oid, cooldown_min=15):
+            await _notify_admin_bybit_failure(context.bot, o, reason)
+    except Exception:
+        pass
+    await _send_or_edit(target, _pay_resp('payment_not_found_txid').format(reason="not found yet"), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🔄 Check Again', callback_data=f'bybitv_{oid}')],[InlineKeyboardButton('🎫 Support', callback_data='support_menu')],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]]))
 
 async def bybit_verify_callback(update, context):
     q=update.callback_query; await q.answer('Checking Bybit payment...')
@@ -2651,16 +3031,46 @@ async def bybit_txid_received(update, context):
     return True
 
 async def bybit_deposit_background_job(context):
+    """Background Bybit payment checker (every 45s).
+
+    🔧 AUDIT-FIX v112: previously a failed verification was 100% silent and
+    orders could sit in bybit_waiting forever (seen in the live DB: orders
+    141/147/148). Now, when auto-verify fails, the admin gets ONE actionable
+    alert per stuck order (throttled to once per 15 min) with a manual-credit
+    button, so a real payment is never stranded.
+    """
     try:
         from database import get_pending_bybit_orders
         orders=get_pending_bybit_orders(limit=25)
     except Exception:
         return
+    import datetime as _dt
+    now = _dt.datetime.utcnow()
     for o in orders:
         try:
             dep,reason=_find_matching_bybit_payment(o)
-            if dep: await _complete_bybit_order(context.bot,o,dep)
-        except Exception: pass
+            if dep:
+                await _complete_bybit_order(context.bot,o,dep)
+                continue
+            # Only alert for orders old enough that the interactive path had
+            # a chance (>= 3 min) — avoids racing the customer's own tap.
+            try:
+                created = o.get('created_at') or ''
+                age = 0.0
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
+                    try:
+                        age = (now - _dt.datetime.strptime(created, fmt)).total_seconds()
+                        break
+                    except Exception:
+                        continue
+                if age < 180:
+                    continue
+            except Exception:
+                pass
+            if not _bybit_failure_alerted_recently(o.get('id') or 0, cooldown_min=15):
+                await _notify_admin_bybit_failure(context.bot, o, reason)
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"[BybitJob] order {o.get('id') if o else '?'}: {e}")
 
 async def _start_bybit_payment(update, context, method, *, is_points=False, amount=None, product=None, qty=1):
     from database import is_payment_enabled, get_payment_disable_msg
@@ -2669,21 +3079,30 @@ async def _start_bybit_payment(update, context, method, *, is_points=False, amou
     u=q.from_user; save_user(u.id,u.username or '',u.first_name or '')
     if is_points:
         total_usd=float(amount or 0); pts=points_from_usd(total_usd)
+        title_line = f"💎 You will receive *{fmt_points(pts)} Points*"
         oid=create_order(u.id,u.first_name or str(u.id),0,f"💎 {fmt_points(pts)} Points",total_usd,method,'',total_usd,'USDT','points')
     else:
         p=product
         total_usd=_get_eff_price(p)*int(qty or 1); pname=p['name'] if int(qty or 1)==1 else f"{p['name']} × {int(qty or 1)}"
+        title_line = f"📦 Product: *{_fmt_msg_name(pname)}*"
         creds=context.user_data.pop('order_creds','')
         oid=create_order(u.id,u.first_name or str(u.id),p['id'],pname,total_usd,method,'',total_usd,'USDT','product',creds,qty=qty)
     update_order_status(oid,'bybit_waiting'); context.user_data['pending_order_id']=oid; context.user_data['bybit_step']='waiting_txid'
     if method=='bybit_pay':
         pay_id=get_setting('bybit_pay_id', os.getenv('BYBIT_PAY_ID','')).strip()
         if not pay_id:
-            await _safe_send(q, context, '❌ Bybit Pay ID is not configured. Admin must set BYBIT_PAY_ID in Render env.', reply_markup=back_btn()); return
-        instr=(f"🟡 *Order #{oid} — Bybit Pay*\n━━━━━━━━━━━━━━━━━━━━\n💰 Send exactly: *{total_usd:.4f} USDT*\n📥 Bybit Pay ID / UID: `{escape_md(pay_id)}`\n\n*Instructions:*\n1. Open Bybit → Pay/Transfer inside Bybit.\n2. Send *USDT* exactly as shown.\n3. After payment, paste the Bybit Pay Order ID / internal TXID below.\n4. Bot will verify from Bybit internal deposit records.")
+            await _safe_send(q, context, '❌ Bybit Pay ID is not configured. Admin must set BYBIT_PAY_ID in Render env or Payment Settings.', reply_markup=back_btn()); return
+        instr = title_line + "\n" + _pay_resp('payment_bybit_pay').format(order_id=oid, amount=_fmt_usdt_amount(total_usd), pay_id=escape_md(pay_id))
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton('📋 Copy Bybit Pay ID', copy_text=CopyTextButton(pay_id))],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]])
     else:
-        cfg=_usdt_cfg(method); instr=(f"🟡 *Order #{oid} — {cfg['label']}*\n━━━━━━━━━━━━━━━━━━━━\n💰 Send exactly: *{total_usd:.4f} USDT*\n🌐 Network: *{cfg['network_label']}*\n📥 Address:\n`{cfg['address']}`\n\n*Instructions:*\n1. Send only USDT on this exact network.\n2. Wrong network/address will not verify.\n3. After sending, paste TXID below.\n4. Bot will verify from Bybit deposit records.")
-    await _safe_send(q, context, instr, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🔄 Verify Payment', callback_data=f'bybitv_{oid}')],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]]))
+        cfg=_usdt_cfg(method)
+        instr = title_line + "\n" + _pay_resp('payment_bybit_usdt').format(
+            method_label=cfg['label'], order_id=oid, amount=_fmt_usdt_amount(total_usd),
+            network_label=cfg['network_label'], address=cfg['address']
+        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton('📋 Copy Address', copy_text=CopyTextButton(cfg['address']))],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]])
+    await _safe_send(q, context, instr, parse_mode='Markdown', reply_markup=kb)
+
 
 async def points_bybit_callback(update, context):
     q=update.callback_query; raw=q.data.replace('ptspay_',''); method,amt_s=raw.rsplit('_',1)
@@ -3400,7 +3819,7 @@ async def jc_verify_callback(update, context):
                         msg += f"\n\n📝 *Instructions:*\n{p['delivery_text']}"
                     admin_msg = f"🔔 *New Order! (Readymade)*\nOrder #{oid}\nProduct: {p['name']}\n\nPlease deliver the account."
                     from config import ADMIN_ID
-                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton
                     try: await context.bot.send_message(ADMIN_ID, admin_msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Upload Account", callback_data=f"adm_upacct_{oid}")]]))
                     except: pass
                 else:
@@ -3415,30 +3834,59 @@ async def jc_verify_callback(update, context):
                     try: await context.bot.send_message(o['user_id'] if (o is not None and 'user_id' in o.keys()) else u.id, prompt, parse_mode="Markdown")
                     except: pass
             else:
-                update_order_status(oid, 'delivered')
-                from database import build_delivery_from_accounts
-                delivery = build_delivery_from_accounts(o['product_id'], o['id'], order_qty, o['user_id'])
+                # 🔧 AUDIT-FIX C1/C2 (2026-07-31): structured result — never mark
+                # 'delivered' when the stock pool couldn't cover the full qty.
+                from database import build_delivery_detailed
+                _dres = build_delivery_detailed(o['product_id'], o['id'], order_qty, o['user_id'])
+                delivery = _dres['text']
                 # 🆕 v66: bonus 10pts removed
                 # 🆕 v72: byte-perfect — receipt header (Markdown) + delivery
                 # content (HTML, native format) sent as 2 separate messages so
                 # neither parse mode mangles the other.
-                msg = (f"🎉 *Order Delivered!* ✅\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                       f"📦 {escape_md(o['product_name'])}\n\n"
-                       f"📨 *Your Product* — see the next message.\n\n"
-                       f"Thank you! 🙏")
-                # Send the delivery content separately, with no parse_mode
-                # override so smart_text_and_mode picks HTML for [[HTML]] sentinel
-                try:
-                    await context.bot.send_message(o['user_id'], delivery)
-                except Exception:
-                    pass
-                # v121: Tier progress hint only. No extra points on payment success.
-                try:
-                    from loyalty_extras import build_tier_progress_line
-                    tline = build_tier_progress_line(o['user_id'])
-                    if tline:
-                        msg += f"\n\n{tline}"
-                except Exception: pass
+                if _dres['ok']:
+                    update_order_status(oid, 'delivered')
+                    msg = (f"🎉 *Order Delivered!* ✅\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                           f"📦 {escape_md(o['product_name'])}\n\n"
+                           f"📨 *Your Product* — see the next message.\n\n"
+                           f"Thank you! 🙏")
+                    # Send the delivery content separately, with no parse_mode
+                    # override so smart_text_and_mode picks HTML for [[HTML]] sentinel
+                    try:
+                        await context.bot.send_message(o['user_id'], delivery)
+                    except Exception:
+                        pass
+                    # v121: Tier progress hint only. No extra points on payment success.
+                    try:
+                        from loyalty_extras import build_tier_progress_line
+                        tline = build_tier_progress_line(o['user_id'])
+                        if tline:
+                            msg += f"\n\n{tline}"
+                    except Exception: pass
+                else:
+                    _got, _want = _dres.get('delivered', 0), _dres.get('requested', order_qty)
+                    update_order_status(oid, 'paid_pending_delivery')
+                    msg = (f"⚠️ *Order #{oid} — not fully delivered*\n"
+                           f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                           f"📦 {escape_md(o['product_name'])}\n"
+                           f"🔢 Requested: *{_want}* · Delivered: *{_got}*\n\n"
+                           f"The product ran out of stock while your order was "
+                           f"processing. Your order is in *Pending Delivery* — "
+                           f"the remaining items will be completed or refunded.")
+                    if delivery and _got:
+                        try:
+                            await context.bot.send_message(o['user_id'], delivery)
+                        except Exception:
+                            pass
+                    try:
+                        from utils import notify_admin as _na
+                        await _na(context.bot,
+                            f"🚨 *Order #{oid} — partially delivered (OOS)*\n"
+                            f"🔢 Requested: `{_want}` · Delivered: `{_got}`\n"
+                            f"📦 Product: {escape_md(str(o.get('product_name') or '?')[:70])}\n"
+                            f"👤 Customer: `{o['user_id']}`\n\n"
+                            f"Complete the shortfall via *Pending Manual Delivery* or refund.")
+                    except Exception:
+                        pass
 
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("📊 My Account", callback_data="my_account")],
@@ -3987,20 +4435,30 @@ async def pay_pts_callback(update, context):
         await _safe_send(q, context, "❌ Product not found!", reply_markup=back_btn())
         return
         
-    from database import get_user, deduct_points, create_order, get_order
+    # 🔧 AUDIT-FIX C3 (2026-07-31): the debit and the balance check must be a
+    # single atomic operation. Reading the balance first, then deducting in a
+    # second transaction, allows a race to create two orders for one payment.
+    # deduct_points_if_enough() does check+debit inside BEGIN IMMEDIATE and
+    # returns False when the balance is insufficient OR the debit failed — only
+    # on True do we create the order and fulfill it.
+    from database import get_user, deduct_points_if_enough, create_order, get_order
     from config import POINTS_PER_DOLLAR, ADMIN_ID
     
     user = get_user(q.from_user.id)
-    # 🔧 CRITICAL BUG FIX: `'points' in user` on a sqlite3.Row checks VALUES,
-    # not keys → it was always False → balance read as 0 → NOBODY could buy with
-    # wallet/points (always "Insufficient balance"). Use .keys() instead.
     balance = user['points'] if (user is not None and 'points' in user.keys()) else 0
     
     cost_usd = _get_eff_price(p) * qty
     cost_pts = points_from_usd(cost_usd)
-    
-    if balance < cost_pts:
-        missing = cost_pts - balance
+
+    if not deduct_points_if_enough(q.from_user.id, cost_pts, tx_type='purchase',
+                                   description=f"Product #{pid}"):
+        # Refresh balance for accurate messaging (it may have changed under us).
+        try:
+            fresh = get_user(q.from_user.id)
+            balance = fresh['points'] if (fresh is not None and 'points' in fresh.keys()) else 0
+        except Exception:
+            pass
+        missing = max(0.0, cost_pts - balance)
         txt = (f"❌ *Insufficient Wallet Balance*\n"
                f"━━━━━━━━━━━━━━━━━━━━\n\n"
                f"📦 Product: *{_fmt_msg_name(p['name'])}* (x{qty})\n"
@@ -4017,7 +4475,6 @@ async def pay_pts_callback(update, context):
         return
 
     # --- 🟢 SUFFICIENT POINTS: Process Instant Checkout ---
-    deduct_points(q.from_user.id, cost_pts, tx_type='purchase', description=f"Product #{pid}")
     new_balance = balance - cost_pts
     
     un = q.from_user.username or q.from_user.first_name
