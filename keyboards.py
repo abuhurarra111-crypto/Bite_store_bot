@@ -1729,6 +1729,7 @@ def admin_payments_keyboard():
         [InlineKeyboardButton("🔶 Binance Pay", callback_data="pm_binance")],
         [InlineKeyboardButton("📱 EasyPaisa", callback_data="pm_easypaisa")],
         [InlineKeyboardButton("📱 JazzCash", callback_data="pm_jazzcash")],
+        [InlineKeyboardButton("🪙 Crypto / Bybit Settings", callback_data="pm_crypto")],
         [InlineKeyboardButton("🔙 Back to Settings", callback_data="admin_settings")],
     ])
 

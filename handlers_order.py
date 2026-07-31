@@ -2330,7 +2330,20 @@ USDT_PAYMENT_METHODS = {
 
 
 def _usdt_cfg(method):
-    return USDT_PAYMENT_METHODS.get(str(method or '').lower()) or {}
+    method = str(method or '').lower()
+    cfg = dict(USDT_PAYMENT_METHODS.get(method) or {})
+    try:
+        if method == 'usdt_trc20':
+            cfg['address'] = get_setting('binance_usdt_trc20_address', cfg.get('address',''))
+        elif method == 'usdt_bep20':
+            cfg['address'] = get_setting('binance_usdt_bep20_address', cfg.get('address',''))
+        elif method == 'bybit_usdt_trc20':
+            cfg['address'] = get_setting('bybit_usdt_trc20_address', cfg.get('address',''))
+        elif method == 'bybit_usdt_bep20':
+            cfg['address'] = get_setting('bybit_usdt_bep20_address', cfg.get('address',''))
+    except Exception:
+        pass
+    return cfg
 
 
 def _usdt_amount_match(actual, expected, tolerance=0.0001):

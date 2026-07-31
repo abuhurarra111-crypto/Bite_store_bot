@@ -1621,6 +1621,7 @@ def main():
         ("^pm_binance$", admin_pm_binance_callback),
         ("^pm_easypaisa$", admin_pm_easypaisa_callback),
         ("^pm_jazzcash$", admin_pm_jazzcash_callback),
+        ("^pm_crypto$", admin_pm_crypto_callback),
         # 🆕 v30: Binance proxy removed (screenshot verifier doesn't need it)
         # 🆕 v23: Product Color Indicators
         ("^admin_colors$", admin_colors_callback),
