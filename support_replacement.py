@@ -361,7 +361,7 @@ from telegram.ext import ContextTypes
 from config import ADMIN_ID
 from database import (
     get_order, get_product, save_order_delivery_content,
-    update_order_status, build_delivery_detailed,
+    update_order_status, build_delivery_from_accounts,
 )
 from utils import escape_md, smart_text_and_mode
 # [v77-merge] from replacement_system import (
@@ -520,11 +520,7 @@ async def admin_replace_approve_callback(update: Update, context: ContextTypes.D
         qty = int(qm.group(1))
 
     try:
-        # 🔧 AUDIT-FIX C1/C2 (2026-07-31): structured result — a replacement is
-        # only approved when the FULL quantity can be dispensed. The old code
-        # checked for "no stock" in the text, which never matched the actual
-        # out-of-stock message, so replacements were "approved" with an OOS text.
-        dres = build_delivery_detailed(
+        new_delivery = build_delivery_from_accounts(
             o['product_id'], o['id'], qty, o['user_id'],
         )
     except Exception as e:
@@ -534,7 +530,7 @@ async def admin_replace_approve_callback(update: Update, context: ContextTypes.D
             parse_mode="Markdown")
         return
 
-    if not dres['ok']:
+    if not new_delivery or "no stock" in str(new_delivery).lower():
         await q.edit_message_text(
             "⚠️ *No stock available*\n\n"
             "Please add more stock to this product and try again,\n"
@@ -544,8 +540,6 @@ async def admin_replace_approve_callback(update: Update, context: ContextTypes.D
                 [InlineKeyboardButton("📦 Pending Delivery", callback_data="adm_pending_delivery")],
             ]))
         return
-
-    new_delivery = dres['text']
 
     # Save replacement delivery + mark order
     try:

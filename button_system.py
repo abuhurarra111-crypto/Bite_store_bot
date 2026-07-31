@@ -408,49 +408,6 @@ BUTTONS = {
         "xl": "💎 Pay with Points (Wallet)",
         "callback": None,  # dynamic — actual callback set at render: pay_pts_<pid>_<qty>
     },
-
-    "pay_group_binance": {
-        "group": "payment", "essential": False,
-        "short": "🔶", "medium": "Binance",
-        "large": "Binance", "xl": "Binance",
-        "callback": None,
-    },
-    "pay_group_bybit": {
-        "group": "payment", "essential": False,
-        "short": "🟡", "medium": "Bybit",
-        "large": "Bybit", "xl": "Bybit",
-        "callback": None,
-    },
-    "pay_usdt_trc20": {
-        "group": "payment", "essential": False,
-        "short": "TRC", "medium": "USDT TRC20",
-        "large": "USDT TRC20", "xl": "USDT TRC20",
-        "callback": None,
-    },
-    "pay_usdt_bep20": {
-        "group": "payment", "essential": False,
-        "short": "BEP", "medium": "USDT BEP20",
-        "large": "USDT BEP20", "xl": "USDT BEP20",
-        "callback": None,
-    },
-    "pay_bybit_pay": {
-        "group": "payment", "essential": False,
-        "short": "🟡", "medium": "Bybit Pay",
-        "large": "Bybit Pay", "xl": "Bybit Pay",
-        "callback": None,
-    },
-    "pay_bybit_usdt_trc20": {
-        "group": "payment", "essential": False,
-        "short": "TRC", "medium": "USDT TRC20",
-        "large": "USDT TRC20", "xl": "USDT TRC20",
-        "callback": None,
-    },
-    "pay_bybit_usdt_bep20": {
-        "group": "payment", "essential": False,
-        "short": "BEP", "medium": "USDT BEP20",
-        "large": "USDT BEP20", "xl": "USDT BEP20",
-        "callback": None,
-    },
     "pay_binance": {
         "group": "payment", "essential": False,
         "short": "🔶", "medium": "🔶 Binance Auto",

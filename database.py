@@ -1487,39 +1487,12 @@ def purge_expired_sold_accounts(days=60):
     return deleted
 
 
-# 🔧 AUDIT-FIX C1/C2 (2026-07-31): Sentinels for "could not be fulfilled".
-DELIVERY_OOS_TEXT = "⚠️ Out of stock right now. Please contact admin for your order."
-
-
 def build_delivery_from_accounts(pid, order_id, qty=1, buyer_uid=None):
-    """Back-compat wrapper — returns just the delivery text.
-
-    Use build_delivery_detailed() in money paths so the caller can tell a real
-    delivery apart from an out-of-stock / partial-fulfilment result.
-    """
-    return build_delivery_detailed(pid, order_id, qty, buyer_uid)["text"]
-
-
-def build_delivery_detailed(pid, order_id, qty=1, buyer_uid=None):
-    """Build delivery text with full fulfilment info.
-
-    Returns a dict:
-      ok:        True when the FULL requested qty was fulfilled
-      text:      rendered delivery text (or DELIVERY_OOS_TEXT when nothing)
-      delivered: number of accounts actually consumed
-      requested: qty requested
-      mode:      'static' (admin delivery_text) | 'accounts' | 'none'
-
-    🔧 AUDIT-FIX C1/C2: previously callers got only a string and blindly marked
-    the order 'delivered' even when it contained the out-of-stock message or a
-    partial (fewer-than-requested) delivery. Never trust only the string.
-    """
     from templates_bundle import render_delivery_bundle, normalize_product_format
 
     product_name = "Product"
     product_format = 'email_pass'
     template_id = 1
-    qty = max(1, int(qty or 1))
 
     if pid:
         p = get_product(pid)
@@ -1533,50 +1506,29 @@ def build_delivery_detailed(pid, order_id, qty=1, buyer_uid=None):
                 template_id = 1
 
         if p and (dict(p) if p else {}).get('delivery_text'):
-            # Static delivery text mode — atomic stock guard (stock>=qty).
+            # Static delivery text mode!
             conn = get_connection(); c = conn.cursor()
-            try:
-                c.execute("UPDATE products SET stock=stock-? WHERE id=? AND stock>=?", (qty, pid, qty))
-                fulfilled = c.rowcount == 1
-                conn.commit()
-            except Exception:
-                try: conn.rollback()
-                except Exception: pass
-                fulfilled = False
-            finally:
-                try: conn.close()
-                except Exception: pass
+            c.execute("UPDATE products SET stock=stock-? WHERE id=? AND stock>=?", (qty, pid, qty))
+            conn.commit(); conn.close()
 
-            if not fulfilled:
-                return {"ok": False, "text": DELIVERY_OOS_TEXT,
-                        "delivered": 0, "requested": qty, "mode": "static"}
             body = p['delivery_text']
             if qty > 1:
                 body = f"📦 Bulk Order × {qty}\n\n{body}"
-            return {"ok": True, "text": body,
-                    "delivered": qty, "requested": qty, "mode": "static"}
+            return body
 
     parts = []
     if pid:
-        try:
-            avail = int(count_product_accounts(pid, 'available') or 0)
-        except Exception:
-            avail = 0
+        avail = count_product_accounts(pid, 'available')
         take = min(qty, avail)
         for _ in range(take):
             acct = consume_product_account(pid, order_id, buyer_uid)
             if acct:
                 parts.append(acct)
-
-    delivered = len(parts)
     if not parts:
-        return {"ok": False, "text": DELIVERY_OOS_TEXT,
-                "delivered": 0, "requested": qty, "mode": "accounts"}
-    text = render_delivery_bundle(parts, product_name=product_name,
+        return "⚠️ Out of stock right now. Please contact admin for your order."
+    return render_delivery_bundle(parts, product_name=product_name,
                                   product_format=product_format,
                                   template_id=template_id)
-    return {"ok": delivered >= qty, "text": text,
-            "delivered": delivered, "requested": qty, "mode": "accounts"}
 
 
 def sync_product_stock_from_accounts(pid):
@@ -4243,50 +4195,6 @@ def deduct_points(user_id, amount, tx_type='debit', description='', event_id='',
         c.execute("SELECT COALESCE(points,0) FROM users WHERE user_id=?", (user_id,))
         row = c.fetchone(); before = _points_float(row[0]) if row else 0.0
         after = max(0.0, before - amount)
-        c.execute("UPDATE users SET points=? WHERE user_id=?", (after, user_id))
-        c.execute("""INSERT OR IGNORE INTO points_ledger
-                     (user_id, amount, balance_before, balance_after,
-                      tx_type, description, event_id, order_id)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                  (user_id, -abs(amount), before, after, str(tx_type or 'debit'),
-                   str(description or ''), str(event_id or ''), int(order_id or 0)))
-        conn.commit(); conn.close(); return True
-    except Exception:
-        try: conn.rollback()
-        except Exception: pass
-        try: conn.close()
-        except Exception: pass
-        return False
-
-
-def deduct_points_if_enough(user_id, amount, tx_type='debit', description='', event_id='', order_id=0):
-    """Atomically deduct points ONLY when the balance covers `amount`.
-
-    Returns True on success, False when the balance is insufficient or the
-    operation failed. Unlike deduct_points() (which clamps at 0 and always
-    "succeeds"), the wallet checkout path must use this so a paid order is
-    never created/delivered for a debit that did not actually happen.
-
-    🔧 AUDIT-FIX C3 (2026-07-31).
-    """
-    amount = _points_float(amount)
-    conn = get_connection(); c = conn.cursor()
-    try:
-        user_id = int(user_id)
-    except Exception:
-        conn.close(); return False
-    try:
-        ensure_points_ledger_table(c)
-        c.execute("BEGIN IMMEDIATE")
-        if event_id:
-            c.execute("SELECT 1 FROM points_ledger WHERE event_id=? LIMIT 1", (str(event_id),))
-            if c.fetchone():
-                conn.rollback(); conn.close(); return False
-        c.execute("SELECT COALESCE(points,0) FROM users WHERE user_id=?", (user_id,))
-        row = c.fetchone(); before = _points_float(row[0]) if row else 0.0
-        if before + 1e-9 < amount:
-            conn.rollback(); conn.close(); return False
-        after = before - amount
         c.execute("UPDATE users SET points=? WHERE user_id=?", (after, user_id))
         c.execute("""INSERT OR IGNORE INTO points_ledger
                      (user_id, amount, balance_before, balance_after,

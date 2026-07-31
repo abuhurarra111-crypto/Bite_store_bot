@@ -236,52 +236,6 @@ def _heal_orphaned_sessions():
     pass
 
 
-def _heal_bybit_instruction_text():
-    """🆕 v112: update the Bybit Pay instruction default ONLY when it is still
-    the untouched old default ("Transaction Hash"). Admin-customized text is
-    never overwritten. Internal Bybit transfers have a *Transfer ID*, not a
-    blockchain hash — telling customers to paste a "hash" caused mismatches.
-    """
-    try:
-        from database import get_connection, get_setting, set_setting
-        old_default = ("4. Copy the *Transaction Hash* from Bybit receipt."
-                       "\n5. Paste the Transaction Hash here in chat.")
-        cur = get_connection()
-        c = cur.cursor()
-        try:
-            c.execute("SELECT value FROM bot_responses WHERE key='payment_bybit_pay'")
-            row = c.fetchone()
-            if row:
-                val = str(row[0] or '')
-                if "Transaction Hash" in val and "Transfer ID" not in val:
-                    updated = val.replace("4. Copy the *Transaction Hash* from Bybit receipt.",
-                                          "4. Copy the *Transfer ID* from your Bybit receipt (transaction history).")
-                    updated = updated.replace("5. Paste the Transaction Hash here in chat.",
-                                              "5. Paste the Transfer ID here in chat.")
-                    c.execute("UPDATE bot_responses SET value=? WHERE key='payment_bybit_pay'", (updated,))
-                    cur.commit()
-                    _log("Bybit Pay instruction updated to 'Transfer ID' (was old default)")
-            # Generic "not found" message — same Transfer-ID wording for Bybit.
-            c.execute("SELECT value FROM bot_responses WHERE key='payment_not_found_txid'")
-            row2 = c.fetchone()
-            if row2:
-                val2 = str(row2[0] or '')
-                if "Transaction Hash Not Found Yet" in val2 and "Transfer ID" not in val2:
-                    c.execute("UPDATE bot_responses SET value=? WHERE key='payment_not_found_txid'",
-                              (val2.replace("Transaction Hash Not Found Yet", "Transaction Not Found Yet")
-                                   .replace("paste the correct Transaction Hash again",
-                                            "paste the correct Transaction / Transfer ID again"),))
-                    cur.commit()
-                    _log("Generic TXID not-found message updated to 'Transfer ID' wording")
-        except Exception as e:
-            _log(f"bybit instruction heal failed: {e}", "WARN")
-        finally:
-            try: cur.close()
-            except Exception: pass
-    except Exception:
-        pass
-
-
 async def _gemini_safe_scan_optional(bot):
     """Optional Gemini pass — ONLY reports findings, never edits code.
 
@@ -364,10 +318,6 @@ def run_all_heals() -> list:
         _heal_payment_settings()
     except Exception as e:
         _log(f"heal_pay outer: {e}", "ERROR")
-    try:
-        _heal_bybit_instruction_text()
-    except Exception as e:
-        _log(f"heal_bybit outer: {e}", "ERROR")
     _log("Self-heal completed")
     return list(_HEAL_REPORT)
 

@@ -52,22 +52,17 @@ def validate_required_config():
 #      (looks like -1001234567890), OR leave 0 to send backups to your own DM (ADMIN_ID).
 #   4. Paste the ID below.
 # Set to 0 to send backups to the admin's private chat instead.
-# 🔧 AUDIT-FIX M3 (2026-07-31): all business values below are now
-# env-overridable (e.g. BACKUP_CHANNEL_ID=-100123456789) while keeping the
-# original defaults when the variable is not set — zero behavior change for
-# existing deployments. Payment numbers still honor their bot_settings
-# overrides (easypaisa / jazzcash / binance_name / account_name) first.
-BACKUP_CHANNEL_ID = _env_int("BACKUP_CHANNEL_ID", 0)
+BACKUP_CHANNEL_ID = 0
 # How often to auto-backup (in hours). v120: owner requested every 3 hours.
-BACKUP_INTERVAL_HOURS = max(1, _env_int("BACKUP_INTERVAL_HOURS", 3))
+BACKUP_INTERVAL_HOURS = 3
 
 # 💰 Payment
-EASYPAISA_NUMBER = _env_str("EASYPAISA_NUMBER", "923193840214")
-JAZZCASH_NUMBER = _env_str("JAZZCASH_NUMBER", "923193840214")
-ACCOUNT_NAME = _env_str("ACCOUNT_NAME", "Zayam Iqbal")
+EASYPAISA_NUMBER = "923193840214"
+JAZZCASH_NUMBER = "923193840214"
+ACCOUNT_NAME = "Zayam Iqbal"
 
 # 🔶 Binance
-BINANCE_PAY_ID = _env_str("BINANCE_PAY_ID", "887012522")
+BINANCE_PAY_ID = "887012522"
 
 # 🤖 Gemini AI (for AI Admin Assistant)
 # RECOMMENDED: Put this in .env file instead of here
@@ -102,8 +97,8 @@ BINANCE_EMAIL_PASSWORD = _env_str("BINANCE_EMAIL_PASSWORD")
 SHOP_NAME = "BITE STORE"
 
 # 📞 Support
-WHATSAPP_NUMBER = _env_str("WHATSAPP_NUMBER", "923193840214")
-SUPPORT_EMAIL = _env_str("SUPPORT_EMAIL", "trendbiteservices@gmail.com")
+WHATSAPP_NUMBER = "923193840214"
+SUPPORT_EMAIL = "trendbiteservices@gmail.com"
 
 # 🎁 Referral
 REFERRAL_POINTS = 1
@@ -663,14 +658,3 @@ ID: `{user_id}`""",
     "tier_progress_max":      "🏆 Tier: {tier} (Max tier reached!)",
     "tier_bonus_credited":    "💎 *Tier bonus: +{points} points*",
 }
-
-# 🆕 v148: Editable payment screen texts (auto-registered in bot_responses)
-DEFAULT_RESPONSES.update({
-    "payment_binance_menu_text": """🔶 *Binance Payment Methods*\n━━━━━━━━━━━━━━━━━━━━\nChoose how you want to pay via Binance.\n\n• Binance Pay — paste Order ID after payment\n• USDT BEP20 — paste TXID after payment\n• USDT TRC20 — paste TXID after payment""",
-    "payment_bybit_menu_text": """🟡 *Bybit Payment Methods*\n━━━━━━━━━━━━━━━━━━━━\nChoose how you want to pay via Bybit.\n\n• Bybit Pay — paste Transaction Hash after payment\n• USDT BEP20 — paste Transaction Hash after payment\n• USDT TRC20 — paste Transaction Hash after payment""",
-    "payment_binance_pay_orderid": """🔶 *Binance Pay — Checkout*\n━━━━━━━━━━━━━━━━━━━━\n{title}\n💰 Amount: *{amount} USDT*\n📋 Binance Pay ID: `{pay_id}`\n👤 Holder: *{holder}*\n\n*How to pay:*\n1. Open Binance app.\n2. Go to Binance Pay.\n3. Send the exact amount shown above.\n4. After payment, copy the *Order ID* from Binance receipt.\n5. Paste the Order ID here in chat.\n\n⚠️ Send exact amount only. Wrong amount may not verify automatically.""",
-    "payment_binance_usdt": """🪙 *Binance {method_label} — Order #{order_id}*\n━━━━━━━━━━━━━━━━━━━━\n💰 Amount: *{amount} USDT*\n🌐 Network: *{network_label}*\n\n📥 *Send to address*\n`{address}`\n\n*Important:*\n✅ Coin must be USDT\n✅ Network must be {network_label}\n✅ Send exact amount\n❌ Do not use another network or coin\n\nAfter payment, paste the *TXID / transaction hash* here.""",
-    "payment_bybit_pay": """🟡 *Bybit Pay — Order #{order_id}*\n━━━━━━━━━━━━━━━━━━━━\n💰 Amount: *{amount} USDT*\n📥 Bybit Pay ID / UID: `{pay_id}`\n\n*How to pay:*\n1. Open Bybit app.\n2. Use Pay / Internal Transfer.\n3. Send exact USDT amount shown above.\n4. Copy the *Transfer ID* from your Bybit receipt (transaction history).\n5. Paste the Transfer ID here in chat.\n\nBot will verify from Bybit deposit records.\n\n⚠️ Internal transfers have a *Transfer ID*, not a blockchain hash — copy the exact ID shown in the Bybit app.""",
-    "payment_bybit_usdt": """🟡 *{method_label} — Order #{order_id}*\n━━━━━━━━━━━━━━━━━━━━\n💰 Amount: *{amount} USDT*\n🌐 Network: *{network_label}*\n\n📥 *Send to address*\n`{address}`\n\n*Important:*\n✅ Coin must be USDT\n✅ Network must be {network_label}\n✅ Send exact amount\n❌ Wrong network/address will not verify\n\nAfter payment, paste the *Transaction Hash* here.""",
-    "payment_not_found_txid": """⏳ *Transaction Not Found Yet*\n━━━━━━━━━━━━━━━━━━━━\nIf you already paid, wait a moment and paste the correct Transaction / Transfer ID again.\n\nPlease make sure:\n• amount is exact\n• correct network/payment method was used\n• the ID matches the one in your Bybit receipt\n\nIf it still doesn't verify, contact support — the store will check manually.""",
-})

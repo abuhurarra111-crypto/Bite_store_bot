@@ -180,8 +180,10 @@ async def maintenance_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if uid == ADMIN_ID:
             return  # admin bypass
 
-        # During maintenance, block ALL non-admin updates (commands, callbacks,
-        # payment buttons, shop actions). Admin still bypasses.
+        # Allow-list check for callbacks so a user in the middle of a
+        # payment flow doesn't get stuck.
+        if update.callback_query and _is_completion_callback(update.callback_query.data or ""):
+            return
 
         # We're blocking this update. Reply with the maintenance message.
         text = get_maintenance_message()
