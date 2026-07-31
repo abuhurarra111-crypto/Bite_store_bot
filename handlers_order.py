@@ -2656,18 +2656,36 @@ def _find_matching_bybit_payment(order, lookback_hours=96):
     cfg=_usdt_cfg(method)
     if method == 'bybit_pay':
         rows = []
+        # First try exact Transaction Hash query, then always scan recent list.
+        # Bybit UI may show a hash that does not return with exact txID filter,
+        # while the same hash exists in the recent record payload. Full scan fixes
+        # that without spending balance or requiring user screenshots.
         try:
-            rows.extend(get_bybit_internal_deposits('USDT', lookback_hours=lookback_hours, txid=note) if note else get_bybit_internal_deposits('USDT', lookback_hours=lookback_hours))
+            if note:
+                rows.extend(get_bybit_internal_deposits('USDT', lookback_hours=lookback_hours, txid=note))
         except Exception:
             pass
-        # Some Bybit-to-Bybit receipts show "Transaction Hash" and may still be
-        # returned through the normal deposit endpoint depending on account/site.
         try:
-            rows.extend(get_bybit_deposit_records('USDT', lookback_hours=lookback_hours, txid=note) if note else get_bybit_deposit_records('USDT', lookback_hours=lookback_hours))
+            rows.extend(get_bybit_internal_deposits('USDT', lookback_hours=lookback_hours))
         except Exception:
             pass
+        # Some Bybit-to-Bybit receipts appear in normal deposit records depending
+        # on account/site, so scan both exact and full on-chain records too.
+        try:
+            if note:
+                rows.extend(get_bybit_deposit_records('USDT', lookback_hours=lookback_hours, txid=note))
+        except Exception:
+            pass
+        try:
+            rows.extend(get_bybit_deposit_records('USDT', lookback_hours=lookback_hours))
+        except Exception:
+            pass
+        seen = set()
         for d in rows:
             txid=d.get('txid') or ''
+            sig = (txid, d.get('amount'), d.get('network'))
+            if sig in seen: continue
+            seen.add(sig)
             if not txid or is_txid_used(txid): continue
             if not _bybit_hash_matches(d, note): continue
             if _usdt_amount_match(d.get('amount'), expected): return d, 'matched'
@@ -2706,7 +2724,23 @@ async def _verify_bybit_order_and_respond(target, context, oid):
         if ok:
             await _send_or_edit(target, f"✅ *Bybit Payment Verified!*\n━━━━━━━━━━━━━━━━━━━━\nOrder: `#{oid}`\nAmount: *{float(dep.get('amount') or 0):.4f} USDT*\nTXID: `{escape_md((dep.get('txid') or '')[:80])}`", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('📜 Order History', callback_data='my_orders')]])); return
         reason=msg
-    await _send_or_edit(target, _pay_resp('payment_not_found_txid').format(reason=escape_md(str(reason)[:80])), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🔄 Check Again', callback_data=f'bybitv_{oid}')],[InlineKeyboardButton('🎫 Support', callback_data='support_menu')],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]]))
+    # Admin debug (not shown to customer)
+    try:
+        from config import ADMIN_ID as _AID
+        note_dbg = escape_md(str(o.get('payment_note_id') or '')[:120])
+        await context.bot.send_message(
+            _AID,
+            f"⚠️ *Bybit Verify Not Found*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Order: `#{oid}`\n"
+            f"Method: `{escape_md(str(o.get('payment_method') or ''))}`\n"
+            f"Expected: `{float(o.get('binance_amount') or o.get('price') or 0):.8g} USDT`\n"
+            f"Hash pasted: `{note_dbg}`\n"
+            f"Reason: `{escape_md(str(reason)[:120])}`",
+            parse_mode='Markdown')
+    except Exception:
+        pass
+    await _send_or_edit(target, _pay_resp('payment_not_found_txid').format(reason="not found yet"), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('🔄 Check Again', callback_data=f'bybitv_{oid}')],[InlineKeyboardButton('🎫 Support', callback_data='support_menu')],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]]))
 
 async def bybit_verify_callback(update, context):
     q=update.callback_query; await q.answer('Checking Bybit payment...')
