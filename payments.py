@@ -80,6 +80,31 @@ if _alt:
 # used if neither BINANCE_PROXY_URL nor BINANCE_PROXY_LIST is set.
 # Update via the admin panel any time without redeploying.
 _DEFAULT_PROXY_POOL = [
+    # ── v114.1: LIVE-VERIFIED against Bybit private API + Binance (2026-07-31) ──
+    # Each of these reached api.bybit.com/v5/asset/deposit/query-record with a
+    # proper JSON response (retCode 10002 = "reached, bad signature") — i.e. the
+    # CloudFront geo-block is bypassed. Free public proxies die quickly; the
+    # Gemini scout refreshes the pool automatically. For production, prefer a
+    # paid Pakistani VPS as BYBIT_PROXY_URL / BINANCE_PROXY_URL.
+    "http://8.211.170.91:14680",
+    "http://129.226.127.245:18080",
+    "http://129.226.72.101:18080",
+    "http://165.154.7.156:8888",
+    "http://95.211.174.135:3128",
+    "http://103.237.102.191:11111",
+    "http://82.102.11.164:3460",
+    "http://78.17.60.92:8080",
+    "http://94.156.180.137:3128",
+    "http://113.160.132.26:8080",
+    "http://181.39.25.196:8118",
+    "http://178.250.156.112:443",
+    "http://117.236.124.166:3128",
+    "http://47.81.56.193:8888",
+    "http://202.28.194.139:31280",
+    "http://43.155.179.47:8080",
+    "http://159.195.49.27:8888",
+    "http://176.111.37.216:39811",   # Bybit OK (Binance 451 — Bybit-only candidate)
+    # ── legacy PK defaults ──
     "socks5://103.121.120.242:1080",   # Logon Broadband
     "socks5://103.236.134.210:1080",   # Eurekanet Karachi
     "socks5://182.184.119.180:1080",   # PK SOCKS5 elite

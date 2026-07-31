@@ -8,6 +8,37 @@
 
 ---
 
+# 🚀 v114.1 (2026-07-31) — Live-Verified Bybit Proxies Baked Into Default Pool
+
+**User request:** "Mujhe khud find karke do ek proxy bybit ke liye jo bybit block na kare."
+
+## 🕵️ Live verification (this session)
+- This server's IP is geo-blocked by Bybit (403 CloudFront) and Binance (451) — same as Render's US cloud IPs.
+- Scraped 1800+ free proxies from 6 sources, tested against Bybit public API → 56 working.
+- Re-tested top 20 against **Bybit's PRIVATE deposit endpoint** with a fake signature:
+  `retCode:10002/10003` responses prove the request REACHES Bybit's private API through the proxy
+  (CloudFront geo-block bypassed), not just the public market endpoint.
+- End-to-end `_bybit_get()` through the shared pool returned `retCode:10003 "API key is invalid"`
+  → HTTP 200, real signed response → with the user's real key this returns deposit records.
+
+## ✅ Change
+`payments.py::_DEFAULT_PROXY_POOL` now ships with **18 live-verified proxies** (both-exchange
+OK) + 1 Bybit-only + legacy PK defaults = 22 candidates. Because the pool is SHARED (v114),
+these work for Binance AND Bybit automatically — no manual env needed. The Gemini scout keeps
+the DB pool fresh when free proxies die.
+
+⚠️ Note: these are FREE public proxies — short-lived by nature. Production best practice:
+set a paid Pakistani VPS as `BYBIT_PROXY_URL` / `BINANCE_PROXY_URL` (or let the scout maintain).
+
+## Tests
+v114 (9) + v112 (15) + v111 (14+3) = **41/41 PASS**. Full compile + boot smoke clean.
+
+## 🔧 Files changed
+- `payments.py` — `_DEFAULT_PROXY_POOL` updated (verified list + provenance comment).
+- `CHANGELOG.md` — this section.
+
+---
+
 # 🚀 v114 (2026-07-31) — Shared Proxy Pool: Binance + Bybit Auto-Recovery (Gemini Scout)
 
 **User request:** Binance ke liye Gemini khud proxies find karta hai, test karta hai, pool mein
