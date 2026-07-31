@@ -918,7 +918,7 @@ from urllib.parse import quote
 from config import ADMIN_ID
 from database import get_custom_button, get_product
 from button_system import get_nav_target
-from utils import escape_md, set_cb_data, location_back_callback
+from utils import escape_md, set_cb_data, location_back_callback, fmt_price
 
 
 async def _safe_edit(q, text, **kwargs):

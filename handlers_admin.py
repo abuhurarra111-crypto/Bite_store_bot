@@ -957,12 +957,35 @@ async def approve_order_callback(u,c):
             try: await c.bot.send_message(ADMIN_ID, admin_msg, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Deliver Now", callback_data=f"adm_deliver_{o['id']}")]]))
             except: pass
         else:
-            # 🆕 Deliver from product_accounts pool (consumes & marks sold)
-            from database import build_delivery_from_accounts
-            delivery = build_delivery_from_accounts(o['product_id'], o['id'], order_qty, o['user_id'])
-            # 🆕 v69: NO add_points here
-            update_order_status(o['id'], 'delivered')
-            msg = _r("payment_verified_product").format(order_id=o['id'], product=o['product_name'], delivery=delivery, points=pts)
+            # 🔧 AUDIT-FIX C1/C2 (2026-07-31): structured result — never mark
+            # 'delivered' when the stock pool couldn't cover the full qty.
+            from database import build_delivery_detailed
+            _dres = build_delivery_detailed(o['product_id'], o['id'], order_qty, o['user_id'])
+            delivery = _dres['text']
+            if _dres['ok']:
+                # 🆕 v69: NO add_points here
+                update_order_status(o['id'], 'delivered')
+                msg = _r("payment_verified_product").format(order_id=o['id'], product=o['product_name'], delivery=delivery, points=pts)
+            else:
+                _got, _want = _dres.get('delivered', 0), _dres.get('requested', order_qty)
+                update_order_status(o['id'], 'paid_pending_delivery')
+                msg = (f"⚠️ *Order #{o['id']} — not fully delivered*\n"
+                       f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                       f"📦 Product: {escape_md(str(o.get('product_name') or '?')[:70])}\n"
+                       f"🔢 Requested: *{_want}* · Delivered: *{_got}*\n\n"
+                       f"The product ran out of stock while processing.\n"
+                       f"Your order is in *Pending Delivery* — it will be completed "
+                       f"or refunded.")
+                try:
+                    await c.bot.send_message(ADMIN_ID,
+                        f"🚨 *Order #{o['id']} — partially delivered (OOS)*\n"
+                        f"🔢 Requested: `{_want}` · Delivered: `{_got}`\n"
+                        f"📦 Product: {escape_md(str(o.get('product_name') or '?')[:70])}\n"
+                        f"👤 Customer: `{o['user_id']}`\n\n"
+                        f"Complete the shortfall via *Pending Manual Delivery* or refund.",
+                        parse_mode="Markdown")
+                except Exception:
+                    pass
 
     try:
         send_text, send_mode = smart_text_and_mode(msg, "Markdown")

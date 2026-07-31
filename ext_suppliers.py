@@ -35,7 +35,7 @@ from telegram.ext import ContextTypes
 
 from config import ADMIN_ID
 from database import get_connection, ensure_column, get_setting, set_setting, ensure_product_accounts_table, ensure_default_free_claim_for_product
-from utils import escape_md, html_code_block, html_escape_plain, smart_text_and_mode, fmt_price, points_from_usd, fmt_points
+from utils import escape_md, html_code_block, html_escape_plain, smart_text_and_mode, fmt_price, points_from_usd, fmt_points, notify_admin
 
 logger = logging.getLogger(__name__)
 

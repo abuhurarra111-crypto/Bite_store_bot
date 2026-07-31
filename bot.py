@@ -966,21 +966,38 @@ async def _cloud_backup_job(context):
 
 
 async def _cancel_unpaid_orders_job(context):
-    """Cancel unpaid payment-waiting orders older than 60 minutes."""
+    """Cancel unpaid payment-waiting orders older than the timeout window.
+
+    🔧 AUDIT-FIX H3 (2026-07-31): the old query only covered
+    binance/easypaisa/jazzcash — USDT TRC20/BEP20 and Bybit waiting orders were
+    never cancelled and could sit in 'usdt_waiting'/'bybit_waiting' forever.
+
+    Window: default 60 minutes (same as before). Admins can override per
+    deployment via bot_settings key 'unpaid_order_timeout_minutes' (the value
+    is cached in the DB row, so it applies from the next run of this job).
+    """
     try:
-        from database import get_connection
+        from database import get_connection, get_setting
         conn = get_connection(); c = conn.cursor()
+        try:
+            timeout_min = max(5, int(get_setting('unpaid_order_timeout_minutes', '60') or 60))
+        except Exception:
+            timeout_min = 60
         c.execute("""
             UPDATE orders
                SET status='cancelled'
-             WHERE status IN ('binance_waiting','screenshot_sent','pending')
-               AND LOWER(COALESCE(payment_method,'')) IN ('binance','easypaisa','jazzcash')
-               AND datetime(created_at, '+60 minutes') < CURRENT_TIMESTAMP
-        """)
+             WHERE status IN ('binance_waiting','screenshot_sent','pending',
+                              'usdt_waiting','bybit_waiting')
+               AND LOWER(COALESCE(payment_method,'')) IN
+                   ('binance','easypaisa','jazzcash',
+                    'usdt_trc20','usdt_bep20',
+                    'bybit_pay','bybit_usdt_trc20','bybit_usdt_bep20')
+               AND datetime(created_at, '+' || ? || ' minutes') < CURRENT_TIMESTAMP
+        """, (int(timeout_min),))
         changed = c.rowcount
         conn.commit(); conn.close()
         if changed:
-            print(f"[AutoCancel] cancelled {changed} unpaid old order(s)")
+            print(f"[AutoCancel] cancelled {changed} unpaid old order(s) (window {timeout_min} min)")
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning(f"[AutoCancel] {e}")
@@ -1545,6 +1562,7 @@ def main():
         ("^pay_bybit_", payment_bybit_callback),
         ("^usdtv_", usdt_verify_callback),
         ("^bybitv_", bybit_verify_callback),
+        ("^bybit_manual_confirm_", bybit_manual_confirm_callback),
         ("^buy_", buy_callback), ("^pay_binance_", payment_binance_callback),
         ("^pay_easy_", payment_easypaisa_callback), ("^pay_jazz_", payment_jazzcash_callback),
         # 🆕 Buy Multiple (bulk)
@@ -1662,6 +1680,7 @@ def main():
         ("^ptspay_bybit_", points_bybit_callback),
         ("^pay_bybit_", payment_bybit_callback),
         ("^bybitv_", bybit_verify_callback),
+        ("^bybit_manual_confirm_", bybit_manual_confirm_callback),
         ("^pay_pts_", pay_pts_callback),
         ("^admin_panel$", admin_panel_callback),
         ("^admin_categories$", admin_categories_callback), ("^delcat_", delete_category_callback),
