@@ -2,6 +2,7 @@
 # 👑 ADMIN
 # ============================================
 from telegram.ext import ConversationHandler
+import asyncio
 from config import *
 from database import *
 from keyboards import *
@@ -8253,6 +8254,12 @@ async def admin_pm_crypto_callback(u, c):
     by_pay = get_setting('bybit_pay_id', '')
     by_trc = get_setting('bybit_usdt_trc20_address', 'TF4dCTJw42VT99NfUg95YNi5yF6uK7P2FG')
     by_bep = get_setting('bybit_usdt_bep20_address', '0xfb57f22306f460221c01ad28378fd2ce07a57bd6')
+    # 🔧 v113: show whether the Bybit API key is actually configured on the server
+    try:
+        from payments import bybit_api_is_configured
+        by_cfg = "🟢 set" if bybit_api_is_configured() else "🔴 MISSING (set BYBIT_API_KEY + BYBIT_API_SECRET in Render env)"
+    except Exception:
+        by_cfg = "?"
     text = (
         f"🪙 *Crypto Payment Settings*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -8260,18 +8267,60 @@ async def admin_pm_crypto_callback(u, c):
         f"TRC20: `{escape_md(b_trc)}`\n"
         f"BEP20: `{escape_md(b_bep)}`\n\n"
         f"*Bybit*\n"
+        f"API Key: {by_cfg}\n"
         f"Pay ID/UID: `{escape_md(by_pay or 'not set')}`\n"
         f"TRC20: `{escape_md(by_trc)}`\n"
         f"BEP20: `{escape_md(by_bep)}`\n\n"
-        f"Tap below to edit."
+        f"Tap *Bybit Test & Refresh* to check the API connection and permissions."
     )
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✏️ Binance TRC20 Address", callback_data="set_binance_usdt_trc20_address")],
-        [InlineKeyboardButton("✏️ Binance BEP20 Address", callback_data="set_binance_usdt_bep20_address")],
+        [InlineKeyboardButton("🔄 Bybit Test & Refresh", callback_data="bybit_test")],
         [InlineKeyboardButton("✏️ Bybit Pay ID / UID", callback_data="set_bybit_pay_id")],
         [InlineKeyboardButton("✏️ Bybit TRC20 Address", callback_data="set_bybit_usdt_trc20_address")],
         [InlineKeyboardButton("✏️ Bybit BEP20 Address", callback_data="set_bybit_usdt_bep20_address")],
+        [InlineKeyboardButton("✏️ Binance TRC20 Address", callback_data="set_binance_usdt_trc20_address")],
+        [InlineKeyboardButton("✏️ Binance BEP20 Address", callback_data="set_binance_usdt_bep20_address")],
         [InlineKeyboardButton("🔙 Back to Payment Methods", callback_data="admin_payments")],
     ])
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
 
+
+
+async def bybit_test_callback(u, c):
+    """🔄 Test the Bybit API connection (on-chain + internal deposits).
+
+    🔧 v113: the old code had no Bybit test button at all, so API-key /
+    permission problems were invisible until a real customer paid. This calls
+    payments.bybit_test_connection() which tests BOTH deposit endpoints and
+    explains exactly what is missing.
+    """
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer("Testing Bybit API…")
+    try:
+        from payments import bybit_api_is_configured, bybit_test_connection
+        if not bybit_api_is_configured():
+            await q.edit_message_text(
+                "🔴 *Bybit API key not set*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Set these in Render → Environment, then restart the worker:\n"
+                "`BYBIT_API_KEY`\n`BYBIT_API_SECRET`\n\n"
+                "Without them the bot cannot verify any Bybit payment.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Crypto Settings", callback_data="pm_crypto")]]))
+            return
+        ok, msg = await asyncio.to_thread(bybit_test_connection)
+        status = "✅ *PASS*" if ok else "❌ *FAIL*"
+        await q.edit_message_text(
+            f"{status} — Bybit API Test\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n{escape_md(msg)}",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Crypto Settings", callback_data="pm_crypto")]]))
+    except Exception as e:
+        import logging as _l
+        _l.getLogger(__name__).exception("Bybit test callback failed")
+        try:
+            await q.edit_message_text(f"❌ Test error: {escape_md(str(e)[:160])}", parse_mode="Markdown")
+        except Exception:
+            pass

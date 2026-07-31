@@ -879,7 +879,18 @@ def bybit_test_connection():
                      "'Asset' (read) on the API key, and check IP whitelist / account UID.")
     if ok_onchain and ok_internal:
         return True, "✅ Bybit API connected — on-chain + internal deposit history readable."
-    return False, "❌ Bybit API partially failed:\n" + "\n".join(lines)
+    # 🔧 v113: geo-block detection — Render (US) IPs are often blocked by Bybit.
+    joined = "\n".join(lines)
+    low = joined.lower()
+    if ("451" in joined or "cloudfront" in low or "block" in low or "country" in low):
+        joined += (
+            "\n\n⚠️ *Geo-block detected:* Bybit blocks US/cloud server IPs. "
+            "On Render you almost certainly need a proxy.\n"
+            "Set `BYBIT_PROXY_URL` in Render env to a Pakistani VPS/proxy "
+            "(e.g. `http://user:pass@host:port` or `socks5://host:port`), "
+            "then restart the worker and test again."
+        )
+    return False, "❌ Bybit API partially failed:\n" + joined
 
 
 def get_bybit_deposit_records(coin: str = "USDT", lookback_hours: int = 96, limit: int = 50, txid: str = ""):

@@ -8,6 +8,36 @@
 
 ---
 
+# 🚀 v113.1 (2026-07-31) — Bybit "Test & Refresh" Button in Admin Panel + Geo-Block Hint
+
+**User need:** couldn't find any Bybit connection test — because none existed in the UI.
+`bybit_test_connection()` was written (v112) but never wired to a button, so API-key /
+permission / IP problems stayed invisible until a real customer paid.
+
+## ✅ Fix
+- New **"🔄 Bybit Test & Refresh"** button in Admin → 💳 Payment Methods → 🪙 Crypto Settings.
+- New `bybit_test_callback` in `handlers_admin.py` (registered as `^bybit_test$`):
+  - Shows 🔴 "API key not set" + exact Render env instructions when keys are missing.
+  - Runs the dual-endpoint test (on-chain + internal deposits) in a thread and shows
+    ✅ PASS / ❌ FAIL with full detail.
+- Crypto Settings panel now also shows live status: **API Key: 🟢 set / 🔴 MISSING**.
+- **Geo-block detection:** live testing from a US cloud IP proved Bybit returns
+  *403 "CloudFront distribution is configured to block access from your country"*.
+  The test message now detects 451/403/CloudFront/block and tells the admin to set
+  `BYBIT_PROXY_URL` (Pakistani VPS/proxy) in Render env — this is almost certainly
+  required for Bybit API to work from Render's US servers.
+
+## Tests
+Full suite re-verified: Bybit 15/15, v111 17/17 — **32/32 PASS**. Boot smoke clean.
+
+## 🔧 Files changed
+- `handlers_admin.py` — `bybit_test_callback`, Test button + API-key status in `admin_pm_crypto_callback`, `import asyncio`.
+- `bot.py` — import + `^bybit_test$` registration.
+- `payments.py` — geo-block detection in `bybit_test_connection()` result.
+- `CHANGELOG.md` — this section.
+
+---
+
 # 🚀 v113 (2026-07-31) — Bybit Pay Order-ID ↔ Transfer-ID Fallback Matcher
 
 **User follow-up (live):** Customer paid via **Bybit Pay transfer** (not Withdraw) and
