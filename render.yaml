@@ -56,6 +56,8 @@ services:
         sync: false             # 🆕 v63: comma-separated list for auto-rotation
       - key: BINANCE_API_BASE
         sync: false             # optional override (api.binance.com / api1 / api2 / api3)
+      - key: SUPPLIER_SHOP_CRON_API_KEY
+        sync: false             # optional: auto-register/update Shop Cron supplier
       - key: PYTHON_VERSION
         value: "3.12.5"
 

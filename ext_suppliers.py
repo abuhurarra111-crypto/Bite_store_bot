@@ -193,6 +193,45 @@ def update_supplier(sid, **fields):
     conn.commit(); conn.close()
 
 
+def ensure_env_supplier_presets():
+    """Auto-register/update safe env-configured supplier presets.
+
+    Shop Cron uses Canboso Buyer API v2.1. The API key MUST live in Render env:
+      SUPPLIER_SHOP_CRON_API_KEY
+    We never hardcode secrets into source code.
+    """
+    import os
+    key = (os.getenv("SUPPLIER_SHOP_CRON_API_KEY", "") or "").strip()
+    if not key:
+        return 0, "missing_env"
+    ensure_ext_supplier_tables()
+    name = "Shop Cron"
+    adapter = "canboso"
+    base_url = "https://canboso.com"
+    docs_url = "https://canboso.com/api/swagger"
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("SELECT id FROM ext_suppliers WHERE lower(name)=lower(?) OR (adapter=? AND base_url=? AND api_key=?) LIMIT 1",
+                  (name, adapter, base_url, key))
+        row = c.fetchone()
+        if row:
+            sid = int(row["id"] if hasattr(row, "keys") else row[0])
+            c.execute("""UPDATE ext_suppliers
+                         SET name=?, adapter=?, base_url=?, api_key=?, docs_url=?, enabled=1
+                         WHERE id=?""", (name, adapter, base_url, key, docs_url, sid))
+            conn.commit(); conn.close(); return sid, "updated"
+        c.execute("""INSERT INTO ext_suppliers (name, adapter, base_url, api_key, docs_url, enabled)
+                     VALUES (?, ?, ?, ?, ?, 1)""", (name, adapter, base_url, key, docs_url))
+        sid = c.lastrowid
+        conn.commit(); conn.close(); return sid, "created"
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
+        raise
+
+
 def delete_supplier(sid):
     """Delete supplier and every synced shop product linked to it.
 
@@ -1081,7 +1120,9 @@ class CanbosoAdapter(SupplierAdapterBase):
             return []
         out = []
         for p in arr:
-            usd = float(p.get("usdPricing", 0) or 0)
+            # Canboso tenants vary slightly. Support both legacy Mongo-style
+            # fields and documented/simple fields.
+            usd = float(p.get("usdPricing", p.get("price", p.get("base_price", p.get("cost_usd", 0)))) or 0)
             # 🐛 v97 CRITICAL FIX: Canboso API does NOT return a top-level
             # "stock" field. Real stock lives in `stats.available`.
             # Old code: p.get("stock", 0) → always 0 → ALL products showed
@@ -1114,8 +1155,8 @@ class CanbosoAdapter(SupplierAdapterBase):
                     except (TypeError, ValueError):
                         continue
             out.append({
-                "remote_id": str(p.get("_id")),
-                "name": p.get("product_name") or "",
+                "remote_id": str(p.get("_id") or p.get("id") or p.get("product_id")),
+                "name": p.get("product_name") or p.get("name") or p.get("title") or "",
                 "description": (p.get("description") or "") + (
                     "\n\nUsage: " + p.get("usageGuide", "") if p.get("usageGuide") else ""
                 ),
@@ -1139,12 +1180,14 @@ class CanbosoAdapter(SupplierAdapterBase):
         import uuid as _uu
         qty = max(1, min(100, int(quantity or 1)))
         body = {"key": self.api_key, "product_id": str(remote_id), "quantity": qty}
-        # Canboso v1.4 docs require Idempotency-Key for purchases. The router
-        # already prevents duplicate paid calls; this header satisfies the API
-        # and keeps a retry from creating a second supplier order.
+        internal_oid = str(getattr(self, "_current_internal_order_id", "") or "").strip()
+        # Stable idempotency for the same bot order prevents duplicate paid
+        # supplier purchases if a retry happens after a timeout.
+        idem = (f"bite-store-{internal_oid}-{remote_id}-{qty}"
+                if internal_oid else f"bite-{remote_id}-{qty}-{_uu.uuid4().hex[:16]}")
         url = self.base_url + self.PURCHASE_PATH
         headers = self._headers()
-        headers["Idempotency-Key"] = f"bite-{remote_id}-{qty}-{_uu.uuid4().hex[:16]}"
+        headers["Idempotency-Key"] = idem
         try:
             r = requests.post(url, headers=headers, params=self._params(), json=body, timeout=45)
         except Exception as e:
