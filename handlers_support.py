@@ -6,6 +6,7 @@ from telegram.ext import ConversationHandler  # 🔧 BUG FIX: used (Conversation
 from config import ADMIN_ID, DEFAULT_RESPONSES, POINTS_PER_DOLLAR
 from database import *
 from keyboards import back_btn
+from customization import play_transition
 from utils import escape_md, nav_push, set_cb_data, smart_text_and_mode, contains_premium_markup, fmt_price, points_from_usd, fmt_points
 from datetime import datetime
 from templates_bundle import render_delivery_bundle, normalize_product_format, format_label, format_hint, format_example
@@ -99,6 +100,7 @@ async def support_menu_callback(update, context):
     """🎫 Support ticket main menu"""
     q = update.callback_query
     await q.answer()
+    await play_transition(q, 'support')
     nav_push(context, 'support_menu')
     user_id = q.from_user.id
 

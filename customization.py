@@ -3783,3 +3783,255 @@ async def scl_preview_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                      f"━━━━━━━━━━━━━━━━━━━━\n\n{sample}\n\n"
                      f"_(Sample values shown; real values come from the order.)_",
                      parse_mode="Markdown", reply_markup=kb)
+
+
+# ════════════════════════════════════════════════════════════
+# 🎬 v129 — FULL BOT ANIMATIONS (admin panel)
+# ════════════════════════════════════════════════════════════
+
+async def admin_animations_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🎬 Animations master panel."""
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        from animations import anim_enabled, anim_style_for, ANIM_STYLE_LABELS, list_locations
+    except Exception:
+        await _safe_edit(q, "❌ animations module missing.", reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔙 Back", callback_data="admin_customization")]]))
+        return
+    on = anim_enabled()
+    gstyle = anim_style_for("global")
+    status = "🟢 ON" if on else "🔴 OFF"
+    text = (
+        f"🎬 *Bot Animations*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Status: {status}\n"
+        f"Global style: {ANIM_STYLE_LABELS.get(gstyle, gstyle)}\n\n"
+        f"_When ON, Telegram Premium animated emojis appear at the top of "
+        f"each screen. Non-premium users see the fallback emoji (no error)._\n\n"
+        f"Set a *global style*, then optionally per-location styles below."
+    )
+    kb = [
+        [InlineKeyboardButton(f"{'🔴 Turn ON' if not on else '🟢 Turn OFF'}",
+                              callback_data="anim_toggle")],
+        [InlineKeyboardButton("🎨 Global Style", callback_data="anim_style_pick_global")],
+        [InlineKeyboardButton("📍 Per-Location Styles", callback_data="anim_loc_pick")],
+        [InlineKeyboardButton("🔙 Back to Customization", callback_data="admin_customization")],
+    ]
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def anim_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    try:
+        from animations import anim_enabled, set_anim_enabled
+    except Exception:
+        await q.answer("module missing", show_alert=True); return
+    set_anim_enabled(not anim_enabled())
+    await q.answer("Toggled")
+    await admin_animations_callback(update, context)
+
+
+async def anim_style_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Global style picker."""
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    try:
+        from animations import ANIM_STYLES, ANIM_STYLE_LABELS
+    except Exception:
+        await q.answer("module missing", show_alert=True); return
+    kb = []
+    for key, label in ANIM_STYLE_LABELS.items():
+        mark = " ".join(ANIM_STYLES.get(key, [])) if key != "none" else "🚫"
+        kb.append([InlineKeyboardButton(f"{mark} {label}", callback_data=f"anim_style_set_global_{key}")])
+    kb.append([InlineKeyboardButton("🔙 Back to Animations", callback_data="admin_animations")])
+    await _safe_edit(q, "🎨 *Global Animation Style*\n━━━━━━━━━━━━━━━━━━━━\n\nPick a style:",
+                     parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def anim_style_set_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    try:
+        from animations import set_anim_style, ANIM_STYLE_LABELS
+    except Exception:
+        await q.answer("module missing", show_alert=True); return
+    raw = q.data.replace("anim_style_set_", "", 1)
+    loc, style = raw.rsplit("_", 1)
+    set_anim_style(loc, style)
+    await q.answer(f"Style set: {ANIM_STYLE_LABELS.get(style, style)}")
+    if loc == "global":
+        await admin_animations_callback(update, context)
+    else:
+        await anim_loc_pick_callback(update, context)
+
+
+async def anim_loc_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Pick a location to set its animation style."""
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    try:
+        from animations import list_locations, anim_style_for, ANIM_STYLE_LABELS
+    except Exception:
+        await q.answer("module missing", show_alert=True); return
+    kb = []
+    for loc in list_locations():
+        cur = anim_style_for(loc)
+        lbl = ANIM_STYLE_LABELS.get(cur, cur)
+        kb.append([InlineKeyboardButton(f"📍 {loc}  ({lbl})", callback_data=f"anim_loc_style_{loc}")])
+    kb.append([InlineKeyboardButton("🔙 Back to Animations", callback_data="admin_animations")])
+    await _safe_edit(q, "📍 *Per-Location Animations*\n━━━━━━━━━━━━━━━━━━━━\n\nTap a location to choose its style:",
+                     parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def anim_loc_style_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Style picker for a specific location."""
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    loc = q.data.replace("anim_loc_style_", "", 1)
+    try:
+        from animations import ANIM_STYLES, ANIM_STYLE_LABELS
+    except Exception:
+        await q.answer("module missing", show_alert=True); return
+    kb = []
+    for key, label in ANIM_STYLE_LABELS.items():
+        mark = " ".join(ANIM_STYLES.get(key, [])) if key != "none" else "🚫"
+        kb.append([InlineKeyboardButton(f"{mark} {label}", callback_data=f"anim_style_set_{loc}_{key}")])
+    kb.append([InlineKeyboardButton("🔙 Back to Locations", callback_data="anim_loc_pick")])
+    await _safe_edit(q, f"🎬 *Style for: {loc}*\n━━━━━━━━━━━━━━━━━━━━\n\nPick a style:",
+                     parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+# ════════════════════════════════════════════════════════════
+# 🎬 v129 — FRAME-BASED NAVIGATION ANIMATIONS (merged into customization)
+
+    try:
+        frames = anim_frames_for(location)
+        if not frames:
+            return
+        for f in frames[:-1]:
+            try:
+                await q.edit_message_text(f"{f} {suffix}")
+            except Exception:
+                break  # message no longer editable / stale — stop cleanly
+            await asyncio.sleep(_FRAME_DELAY)
+    except Exception as e:
+        logger.debug(f"[Anim] transition failed for {location}: {e}")
+
+
+def list_locations() -> list:
+    return ANIM_LOCATIONS
+
+
+# ════════════════════════════════════════════════════════════
+# 🎬 v129 — FRAME-BASED NAVIGATION ANIMATIONS (merged into customization)
+# ════════════════════════════════════════════════════════════
+import asyncio as _anim_asyncio
+import logging as _anim_logging
+
+_anim_logger = _anim_logging.getLogger(__name__)
+
+ANIM_STYLES = {
+    "spinner": ["◐", "◓", "◑", "◒", "◐"],
+    "pulse": ["●", "◉", "◎", "◉", "●"],
+    "arrows": ["←", "↔", "→", "↔", "←"],
+    "dots": ["●○○", "◐○○", "○◐○", "○○◐", "○○●"],
+    "flash": ["✨", "💫", "✨", "💫", "✨"],
+    "bounce": ["🔄", "⏳", "🔄", "⏳", "🔄"],
+    "zoom": ["＋", "✛", "✚", "✛", "＋"],
+    "none": [],
+}
+
+ANIM_STYLE_LABELS = {
+    "spinner": "◐ Spinner",
+    "pulse": "● Pulse",
+    "arrows": "←→ Arrows",
+    "dots": "●○○ Dots",
+    "flash": "✨ Flash",
+    "bounce": "🔄 Bounce",
+    "zoom": "＋ Zoom",
+    "none": "🚫 Off",
+}
+
+_FRAME_DELAY = 0.12
+ANIM_LOCATIONS = ["main_menu", "shop", "buy_points", "account", "orders",
+                  "transactions", "support", "referrals", "warranty",
+                  "reviews", "loyalty", "language", "settings", "admin",
+                  "bybit", "payment", "success", "back", "product"]
+
+
+def anim_enabled() -> bool:
+    try:
+        from database import get_setting
+        return get_setting("anim_enabled", "0") == "1"
+    except Exception:
+        return False
+
+
+def set_anim_enabled(on: bool):
+    try:
+        from database import set_setting
+        set_setting("anim_enabled", "1" if on else "0")
+    except Exception:
+        pass
+
+
+def anim_style_for(location: str) -> str:
+    try:
+        from database import get_setting
+        loc_key = get_setting(f"anim_loc_{location}", "")
+        if loc_key and loc_key in ANIM_STYLES:
+            return loc_key
+        g = get_setting("anim_style", "spinner")
+        return g if g in ANIM_STYLES else "spinner"
+    except Exception:
+        return "spinner"
+
+
+def set_anim_style(location: str, style: str):
+    try:
+        from database import set_setting
+        if location in ("global", ""):
+            set_setting("anim_style", style if style in ANIM_STYLES else "none")
+        else:
+            set_setting(f"anim_loc_{location}", style if style in ANIM_STYLES else "")
+    except Exception:
+        pass
+
+
+def anim_frames_for(location: str) -> list:
+    try:
+        if not anim_enabled():
+            return []
+        style = anim_style_for(location)
+        return list(ANIM_STYLES.get(style, []))
+    except Exception:
+        return []
+
+
+async def play_transition(q, location: str, suffix: str = "…"):
+    """Play a short frame-based transition on the tapped message."""
+    try:
+        frames = anim_frames_for(location)
+        if not frames:
+            return
+        for f in frames[:-1]:
+            try:
+                await q.edit_message_text(f"{f} {suffix}")
+            except Exception:
+                break
+            await _anim_asyncio.sleep(_FRAME_DELAY)
+    except Exception as e:
+        _anim_logger.debug(f"[Anim] transition failed for {location}: {e}")
+
+
+def list_locations() -> list:
+    return ANIM_LOCATIONS

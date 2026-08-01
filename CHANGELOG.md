@@ -8,6 +8,79 @@
 
 ---
 
+# 🚀 v129 (2026-08-01) — Binance USDT TXID-only + Bybit amount-only + no double-ask + frame animations
+
+**User request (combined):**
+1. Binance USDT (TRC-20/BEP-20): TXID-based — instructions say TXID, user pastes TXID,
+   bot checks API and auto-adds. No Check button on Binance USDT.
+2. Bybit USDT (TRC-20/BEP-20): amount-only detection — auto-add when the user taps
+   "Check payment" (click-triggered). Check button ONLY on Bybit networks.
+3. BUG: Buy Points → select amount → Bybit → bot asked the amount AGAIN. Fixed — pre-selected
+   amount is reused (no double-ask).
+4. Edit Responses: every response covered in a named category (audit: 0 uncovered).
+5. Screen-by-screen editor: already comprehensive; new Bybit buttons/screens are editable
+   (rename + premium emoji + green/blue/red).
+6. Animations: full-bot + per-location **frame-based transition effect** on button taps.
+
+## ✅ What changed
+
+### 1. Binance USDT = TXID-only
+- `payment_binance_usdt` instructions rewritten: "🧾 Copy the TXID (transaction hash) →
+  📨 Paste the TXID here in chat → 🤖 bot checks the blockchain and adds your balance".
+- Removed the "🔍 Check Payment" button from `_start_usdt_payment` (Binance). Customer pastes
+  TXID → `usdt_txid_received` → API match (network+address+amount+txid) → auto-add.
+
+### 2. Bybit USDT = amount-only, click-triggered (Check button only here)
+- Bybit USDT deposit screen keeps: Copy address / Copy amount / **🔍 Check payment** / Cancel.
+- Verification only on Check click (v126 bg no-op still holds). Match = network+address+amount.
+
+### 3. No double-ask bug (Buy Points → Bybit)
+- `bybit_flow_continue_callback` (USDT) and `bybit_flow_uid_received` (Pay): when the flow
+  already carries `base_amount` (selected on the Buy Points screen), the amount prompt is
+  **skipped** — the order is created immediately with the unique amount derived from the
+  chosen base. No second "enter amount" screen.
+
+### 4. Edit Responses — full coverage
+- Audit confirms **0 uncovered** DEFAULT_RESPONSES keys; the 💳 Payment category catches
+  `bybit_*`; 🧾 Order Flow catches `order_*`/`refund_*`; etc.
+
+### 5. Animations (frame-based transitions) — NEW module `animations.py`
+- Telegram bot API can't do true carousel/slide transitions (client-side). The closest
+  supported effect is **fast frame editing**: on a button tap, the tapped message flips
+  through 2–3 short frames (spinner/pulse/arrows/dots/flash/bounce/zoom) then the next
+  location renders. Gives a real "transition" feel on every navigation.
+- Admin: **Admin → 🎨 Customization → 🎬 Animations** — global on/off, global style picker,
+  per-location style picker (main_menu, shop, buy_points, account, orders, transactions,
+  support, referrals, warranty, reviews, loyalty, language, settings, admin, bybit, payment,
+  success, back, product).
+- Wired into main navigation: main_menu, my_account, referral, buy_points, transactions,
+  shop, my_orders, support_menu, go_back. Fully silent on failure (navigation never breaks).
+- Callbacks: `admin_animations`, `anim_toggle`, `anim_style_pick_`, `anim_style_set_`,
+  `anim_loc_pick`, `anim_loc_style_`. Button added to the Customization menu.
+
+## Tests (v129)
+`_test_v129_anim_fix.py` — **10/10 PASS**: animations disabled default / enable+frames /
+global+per-location styles / none → empty / transition no-crash when disabled / frames played
+when enabled / Bybit Pay with pre-selected amount skips prompt / Bybit USDT with pre-selected
+skips prompt / Bybit USDT has Check button / Binance USDT TXID-only (no Check button) ✅.
+
+Regression: v127 3 + v126 3 + v125 8 + v124 4 + v123 12 + v122 13 + v120 7 + v119 14 + v118 8
++ v117 4 + v116 6 + v114 9 + v112 15 + v111 17 = **134/134 PASS** (incl. v129 10). Boot clean.
+
+## 🔧 Files changed
+- `handlers_order.py` — Binance USDT Check removed + TXID flow; Bybit skip-amount;
+  `_bybit_flow_target` duck-typed.
+- `config.py` — `payment_binance_usdt` TXID instructions.
+- `animations.py` — NEW frame-transition engine + styles + per-location.
+- `customization.py` — admin animations panel callbacks.
+- `keyboards.py` — 🎬 Animations button in Customization menu.
+- `handlers_start.py`, `handlers_shop.py`, `handlers_order.py`, `handlers_support.py` —
+  `play_transition` wired into navigation.
+- `bot.py` — animation callbacks registered.
+- `CHANGELOG.md` — this section.
+
+---
+
 # 🚀 v128 (2026-08-01) — CRITICAL: copy_text must be CopyTextButton object (BadRequest fix)
 
 **User bug report (Render logs screenshot):**

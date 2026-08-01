@@ -313,6 +313,9 @@ from customization import (
     se_noop_callback,
     bypl_apply_callback, bypl_preview_callback,
     scl_apply_callback, scl_preview_callback,
+    admin_animations_callback, anim_toggle_callback,
+    anim_style_pick_callback, anim_style_set_callback,
+    anim_loc_pick_callback, anim_loc_style_callback,
 )
 # 🆕 Fake Broadcast & Fake Reviews systems
 # fake_broadcast + fake_reviews panels removed (use Fake Activity instead)
@@ -1811,6 +1814,12 @@ def main():
         ("^profit_all$", profit_all_callback),
         # 🆕 Customization handlers
         ("^admin_customization$", admin_customization_callback),
+        ("^admin_animations$", admin_animations_callback),
+        ("^anim_toggle$", anim_toggle_callback),
+        ("^anim_style_pick_", anim_style_pick_callback),
+        ("^anim_style_set_", anim_style_set_callback),
+        ("^anim_loc_pick$", anim_loc_pick_callback),
+        ("^anim_loc_style_", anim_loc_style_callback),
         ("^admin_toggles$", admin_toggles_callback),
         ("^toggle_show_", toggle_field_callback),
         ("^toggle_auto_product_colors$", toggle_field_callback),

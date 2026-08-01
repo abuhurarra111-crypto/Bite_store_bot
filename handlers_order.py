@@ -21,6 +21,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton
 from config import *
 from database import *
 from keyboards import *
+from customization import play_transition
 from utils import escape_md, format_pkr, nav_push, build_manual_order_whatsapp_url, get_product_mode_tag, smart_text_and_mode, contains_premium_markup, fmt_price, points_from_usd, fmt_points
 import re
 import os
@@ -2597,6 +2598,8 @@ async def _start_usdt_payment(update, context, method, *, is_points=False, amoun
         method_label=cfg['label'], order_id=oid, amount=_fmt_usdt_amount(total_usd),
         network_label=cfg['network_label'], address=address
     )
+    # 🔧 v129: Binance USDT is TXID-only — the customer pastes the TXID and the
+    # bot auto-verifies via API. No Check button (that's Bybit USDT only).
     await _safe_send(q, context, instr,
         parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton('📋 Copy Address', copy_text=CopyTextButton(address))],
@@ -3554,6 +3557,7 @@ async def handle_screenshot(update, context):
 # 📜 MY ORDERS (Product History)
 # ════════════════════════════════════════════
 async def my_orders_callback(update, context):
+    await play_transition(q, 'orders')
     q = update.callback_query; await q.answer()
     nav_push(context, 'my_orders')
     orders = get_user_product_orders(q.from_user.id)
@@ -4773,13 +4777,16 @@ def _bybit_flow_target(target):
     """Normalize a send target (CallbackQuery or Message) → (user, send_fn).
 
     🔧 v127: send is robust (never silent) — see _bf_send_retry.
+    🔧 v129: duck-type instead of isinstance(CallbackQuery) — works with real
+    PTB objects AND any test double that has .message / .from_user.
     """
-    from telegram import CallbackQuery
-    if isinstance(target, CallbackQuery):
-        user = target.from_user
+    if getattr(target, "message", None) is not None:
+        # CallbackQuery-like: replies go through target.message
+        user = getattr(target, "from_user", None)
         async def send(text, **kw):
             return await _bf_send_retry(target.message.reply_text, text, **kw)
         return user, send
+    # Message-like
     user = getattr(target, "from_user", None)
     async def send(text, **kw):
         return await _bf_send_retry(target.reply_text, text, **kw)
@@ -4830,6 +4837,14 @@ async def bybit_flow_continue_callback(update, context):
     if mode == 'product':
         await _bybit_create_and_show(q, context)
         return
+    # 🔧 v129: amount already selected on the Buy Points screen → skip the
+    # amount prompt entirely and go straight to the deposit screen (unique
+    # amount generated from the chosen base). No double-asking.
+    if fl.get('base_amount') is not None:
+        fl['step'] = 'ready_create'
+        context.user_data['bybit_flow'] = fl
+        await _bybit_create_and_show(q, context)
+        return
     fl['step'] = 'waiting_amount'
     context.user_data['bybit_flow'] = fl
     cfg = _usdt_cfg(method)
@@ -4867,7 +4882,9 @@ async def bybit_flow_uid_received(update, context):
         await update.message.reply_text(_pay_resp('bybit_uid_invalid'), parse_mode='Markdown')
         return True
     fl['uid'] = txt
-    if fl.get('mode') == 'product':
+    # 🔧 v129: product → straight to deposit; points with pre-selected amount →
+    # skip the amount prompt (no double-asking); points without amount → ask.
+    if fl.get('mode') == 'product' or fl.get('base_amount') is not None:
         fl['step'] = 'ready_create'
         context.user_data['bybit_flow'] = fl
         await _bybit_create_and_show(update.message, context)

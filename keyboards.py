@@ -966,6 +966,8 @@ def customization_menu_keyboard():
     kb.extend(_custom_buttons_for("customization"))
     # 🛍️ Product Design moved here from Admin Panel
     kb.append([InlineKeyboardButton("🛍️ Product Design", callback_data="pd_panel")])
+    # 🆕 v129: 🎬 Full-bot Animations (button-tap transitions)
+    kb.append([InlineKeyboardButton("🎬 Animations", callback_data="admin_animations")])
     # 🆕 v92: 🎨 Main Menu Layout Picker — 50 layouts, auto-adjusts to custom buttons
     try:
         from main_menu_layouts import get_active_layout_id, LAYOUTS

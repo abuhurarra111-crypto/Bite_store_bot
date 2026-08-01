@@ -10,6 +10,7 @@ from keyboards import (all_products_keyboard, product_detail_keyboard, back_btn,
                        shop_categories_keyboard,
                        shop_category_products_keyboard)
 from config import DEFAULT_RESPONSES, USD_TO_PKR_RATE, ADMIN_ID
+from customization import play_transition
 from utils import (fmt_price,
     escape_md, format_pkr, nav_push,
     get_product_delivery_mode, get_product_mode_tag,
@@ -506,6 +507,7 @@ def _set_user_shop_filter(context, mode):
 async def shop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+    await play_transition(q, 'shop')
     # v128: opening Shop verifies pending referrals immediately.
     try:
         from handlers_start import approve_pending_referral_for_user

@@ -6,6 +6,7 @@ from telegram.ext import ContextTypes
 from config import *
 from keyboards import *
 from database import *
+from customization import play_transition
 from utils import escape_md, format_date, notify_admin, nav_push, nav_pop, set_cb_data, smart_text_and_mode, fmt_price, fmt_points
 
 def _r(key, user_id=None):
@@ -646,6 +647,9 @@ async def handle_main_menu_button(update: Update, context: ContextTypes.DEFAULT_
         reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
 
 async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    await play_transition(q, 'main_menu')
     q = update.callback_query; await q.answer(); u = q.from_user
     nav_push(context, 'main_menu')  # 🔙 Track navigation
     shop = get_setting("shop_name", SHOP_NAME)
@@ -654,6 +658,9 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
 
 async def my_account_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    await play_transition(q, 'account')
     q = update.callback_query; await q.answer(); u = q.from_user; db = get_user(u.id)
     nav_push(context, 'my_account')  # 🔙 Track navigation
     from database import get_ref_points  # 🆕 v48
@@ -684,6 +691,9 @@ async def my_account_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def referral_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    await play_transition(q, 'referrals')
     q = update.callback_query; await q.answer(); u = q.from_user
     nav_push(context, 'referral')  # 🔙 Track navigation
     from database import get_ref_points  # 🆕 v48
@@ -719,6 +729,9 @@ class _SafeDict(dict):
         return "{" + key + "}"
 
 async def buy_points_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    await play_transition(q, 'buy_points')
     q = update.callback_query; await q.answer()
     nav_push(context, 'buy_points')  # 🔙 Track navigation
     pts = get_user_points(q.from_user.id)
@@ -737,6 +750,9 @@ async def buy_points_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         parse_mode="Markdown", reply_markup=_IKM(rows))
 
 async def transactions_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    await play_transition(q, 'transactions')
     nav_push(context, 'transactions')  # 🔙 Track navigation
     """🔄 Transaction History — Deposits only with date/time + status"""
     q = update.callback_query; await q.answer()
@@ -811,6 +827,7 @@ async def go_back_callback(update, context):
     """
     q = update.callback_query
     await q.answer()
+    await play_transition(q, 'back')
     target = nav_pop(context)
 
     # Map targets to handler functions
