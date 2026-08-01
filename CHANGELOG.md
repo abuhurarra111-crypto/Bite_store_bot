@@ -8,6 +8,45 @@
 
 ---
 
+# 🚀 v126 (2026-08-01) — Bybit verification is CLICK-ONLY (Check payment), background auto-detect OFF
+
+**User request:** "Bot payment auto detect sirf tabhi karega jab customer khud Check payment par
+click kare — us se pehle bot khud API se payment na detect kare." Also asked to verify no
+workflow gets stuck.
+
+## ✅ Change
+- `bybit_deposit_background_job` is now a **no-op** (v126). It no longer queries Bybit's API
+  or completes any order automatically. Bybit payments (bybit_pay + bybit_usdt_trc20 +
+  bybit_usdt_bep20) are verified **only when the customer taps "🔍 Check payment"**
+  (`bybitv_<oid>` → `_verify_bybit_order_and_respond`).
+- The click path still: matches by sender-UID+amount (bybit_pay) or network+address+amount
+  (bybit_usdt_*), credits points / delivers the product, marks the txid used (anti-fraud),
+  and on no-match shows the retry screen + sends the admin the actionable alert with
+  "✅ Mark Received & Credit".
+- Binance USDT background auto-check is unchanged (separate flow, not part of the Bybit
+  workflow request).
+
+## Why this is safe
+- The unique 4-decimal amount + UID/address matching still guarantees the correct deposit is
+  credited — but only after the customer confirms by clicking Check.
+- No customer is ever credited before they ask — the owner wanted explicit control.
+
+## Tests (v126)
+`_test_v126_click_only.py` — **3/3 PASS**: background job does NOT complete an order even when
+a matching deposit exists ✅ · Check click verifies + credits points + marks txid used ✅ ·
+Check click with no match stays `bybit_waiting` + shows retry ✅.
+
+Regression: v125 8 + v124 4 + v123 12 + v122 13 + v120 7 + v119 14 + v118 8 + v117 4 + v116 6
++ v114 9 + v112 15 + v111 17 = **120/120 PASS**. Boot clean; no undefined names.
+
+## 🔧 Files changed
+- `handlers_order.py` — `bybit_deposit_background_job` → no-op with explanatory docstring.
+- `_test_v112_bybit.py` (backup) — bg-alert test replaced with v126 no-op assertion.
+- `BYBIT_WORKFLOW_SCREENS.md` — notes updated: "CLICK = verification moment".
+- `CHANGELOG.md` — this section.
+
+---
+
 # 🚀 v125 (2026-08-01) — Bybit flow CLEAN REBUILD (deleted + rebuilt unified, bug-free)
 
 **User request:** "Bybit par click karne ke baad ka sara workflow delete karo aur dubara banao,

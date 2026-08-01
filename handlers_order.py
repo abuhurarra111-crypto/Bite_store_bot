@@ -3207,46 +3207,17 @@ async def bybit_txid_received(update, context):
     return True
 
 async def bybit_deposit_background_job(context):
-    """Background Bybit payment checker (every 45s).
+    """🔧 v126: Bybit payments are verified ONLY when the customer taps
+    "Check payment" (bybitv_<oid>). The background job is intentionally a no-op
+    so the bot never auto-detects/credits a Bybit payment before the customer
+    clicks Check — per the store owner's requirement.
 
-    🔧 AUDIT-FIX v112: previously a failed verification was 100% silent and
-    orders could sit in bybit_waiting forever (seen in the live DB: orders
-    141/147/148). Now, when auto-verify fails, the admin gets ONE actionable
-    alert per stuck order (throttled to once per 15 min) with a manual-credit
-    button, so a real payment is never stranded.
+    The customer-facing Check button runs _verify_bybit_order_and_respond(),
+    which matches by sender-UID+amount (bybit_pay) or network+address+amount
+    (bybit_usdt_*), credits points / delivers the product, and on failure sends
+    the admin an actionable alert with a "Mark Received & Credit" button.
     """
-    try:
-        from database import get_pending_bybit_orders
-        orders=get_pending_bybit_orders(limit=25)
-    except Exception:
-        return
-    import datetime as _dt
-    now = _dt.datetime.utcnow()
-    for o in orders:
-        try:
-            dep,reason=_find_matching_bybit_payment(o)
-            if dep:
-                await _complete_bybit_order(context.bot,o,dep)
-                continue
-            # Only alert for orders old enough that the interactive path had
-            # a chance (>= 3 min) — avoids racing the customer's own tap.
-            try:
-                created = o.get('created_at') or ''
-                age = 0.0
-                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
-                    try:
-                        age = (now - _dt.datetime.strptime(created, fmt)).total_seconds()
-                        break
-                    except Exception:
-                        continue
-                if age < 180:
-                    continue
-            except Exception:
-                pass
-            if not _bybit_failure_alerted_recently(o.get('id') or 0, cooldown_min=15):
-                await _notify_admin_bybit_failure(context.bot, o, reason)
-        except Exception as e:
-            logging.getLogger(__name__).warning(f"[BybitJob] order {o.get('id') if o else '?'}: {e}")
+    return  # no-op — verification is click-triggered only
 
 async def _start_bybit_payment(update, context, method, *, is_points=False, amount=None, product=None, qty=1):
     from database import is_payment_enabled, get_payment_disable_msg
