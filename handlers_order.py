@@ -4722,23 +4722,67 @@ def _make_flow_btn(btn_id, callback_data=None, copy_text=None):
 #   Check payment (bybitv_<oid>) → API auto-match → credit/deliver
 # ════════════════════════════════════════════════════════════
 
+async def _bf_send_retry(reply_fn, text, **kw):
+    """Send with graceful fallback — NEVER silently swallow.
+
+    🔧 v127 FIX: the old closure did `except Exception: return None` which made
+    any failure (Markdown parse error, 429 FloodWait, BadRequest) invisible —
+    the customer saw NO response after typing the amount. Now:
+      1. try as requested (parse_mode=Markdown)
+      2. on parse error → retry WITHOUT parse_mode
+      3. on FloodWait/RetryAfter → wait and retry once
+      4. on other errors → log + retry as plain text
+      5. if everything fails → raise so callers can show a visible fallback
+    """
+    import logging as _l
+    try:
+        return await reply_fn(text, **kw)
+    except Exception as _e1:
+        _l.getLogger(__name__).warning(f"[BybitFlow] send failed (1st): {type(_e1).__name__}: {str(_e1)[:120]}")
+        # Markdown parse error → retry without parse_mode
+        if kw.get("parse_mode") and "parse" in str(_e1).lower():
+            kw2 = dict(kw); kw2.pop("parse_mode", None)
+            try:
+                return await reply_fn(text, **kw2)
+            except Exception as _e2:
+                _l.getLogger(__name__).warning(f"[BybitFlow] send failed (no-md): {type(_e2).__name__}")
+                return None
+        # FloodWait / RetryAfter → wait and retry
+        try:
+            from telegram.error import RetryAfter, FloodWait
+            if isinstance(_e1, (RetryAfter, FloodWait)):
+                wait = getattr(_e1, "retry_after", None) or 5
+                await asyncio.sleep(min(int(wait) + 1, 20))
+                kw2 = dict(kw); kw2.pop("parse_mode", None)
+                try:
+                    return await reply_fn(text, **kw2)
+                except Exception as _e3:
+                    _l.getLogger(__name__).warning(f"[BybitFlow] send failed (flood-retry): {type(_e3).__name__}")
+                    return None
+        except Exception:
+            pass
+        # Last resort: plain text without any kwargs that may fail
+        try:
+            return await reply_fn(text)
+        except Exception as _e4:
+            _l.getLogger(__name__).error(f"[BybitFlow] send failed (plain): {type(_e4).__name__}: {str(_e4)[:120]}")
+            raise
+
+
 def _bybit_flow_target(target):
-    """Normalize a send target (CallbackQuery or Message) → (user, send_fn)."""
+    """Normalize a send target (CallbackQuery or Message) → (user, send_fn).
+
+    🔧 v127: send is robust (never silent) — see _bf_send_retry.
+    """
     from telegram import CallbackQuery
     if isinstance(target, CallbackQuery):
         user = target.from_user
         async def send(text, **kw):
-            try:
-                return await target.message.reply_text(text, **kw)
-            except Exception:
-                return None
+            return await _bf_send_retry(target.message.reply_text, text, **kw)
         return user, send
     user = getattr(target, "from_user", None)
     async def send(text, **kw):
-        try:
-            return await target.reply_text(text, **kw)
-        except Exception:
-            return None
+        return await _bf_send_retry(target.reply_text, text, **kw)
     return user, send
 
 
@@ -4855,7 +4899,22 @@ async def bybit_flow_amount_received(update, context):
     fl['base_amount'] = base
     fl['step'] = 'ready_create'
     context.user_data['bybit_flow'] = fl
-    await _bybit_create_and_show(update.message, context)
+    try:
+        await _bybit_create_and_show(update.message, context)
+    except Exception as e:
+        import logging as _l
+        _l.getLogger(__name__).exception("[BybitFlow] amount → create_and_show failed")
+        # NEVER leave the customer with silence
+        try:
+            await update.message.reply_text(
+                "⚠️ *Oops — could not process your amount.*\n"
+                "Please tap *🔍 Check payment* or try again. If it keeps failing, contact support.",
+                parse_mode="Markdown")
+        except Exception:
+            try:
+                await update.message.reply_text("⚠️ Could not process your amount. Please try again.")
+            except Exception:
+                pass
     return True
 
 

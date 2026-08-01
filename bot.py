@@ -357,11 +357,24 @@ async def payment_flow_text_handler(update, context):
     """
     ud = context.user_data
     # 🟡 v125: unified Bybit flow (warning → UID → amount → deposit)
+    # 🔧 v127: never silent — any flow exception is logged and the customer gets
+    # a visible fallback instead of nothing.
     _bf = ud.get('bybit_flow') or {}
-    if _bf.get('step') == 'waiting_uid':
-        if await bybit_flow_uid_received(update, context): return True
-    if _bf.get('step') == 'waiting_amount':
-        if await bybit_flow_amount_received(update, context): return True
+    try:
+        if _bf.get('step') == 'waiting_uid':
+            if await bybit_flow_uid_received(update, context): return True
+        if _bf.get('step') == 'waiting_amount':
+            if await bybit_flow_amount_received(update, context): return True
+    except Exception as _e:
+        logging.getLogger(__name__).exception("[BybitFlow] priority handler error")
+        try:
+            await update.effective_message.reply_text(
+                "⚠️ *Oops — something went wrong with your payment step.*\n"
+                "Please try again, or open a support ticket if it keeps happening.",
+                parse_mode="Markdown")
+        except Exception:
+            pass
+        return True
     # TXID / TID pastes (crypto + EP/JC + points custom)
     if ud.get('usdt_step') == 'waiting_txid':
         if await usdt_txid_received(update, context): return True

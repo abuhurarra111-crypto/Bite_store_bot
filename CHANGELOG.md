@@ -8,6 +8,59 @@
 
 ---
 
+# 🚀 v127 (2026-08-01) — NO-SILENCE fix: amount typed → no response was a swallowed send error
+
+**User bug report (screenshot):** user reached the Bybit Pay amount prompt
+("Deposit via Bybit — UID"), typed `2.10`, and got **no response at all**.
+
+## 🕵️ Root cause
+The Bybit flow's send helper (`_bybit_flow_target`) did:
+```python
+async def send(text, **kw):
+    try:
+        return await target.reply_text(text, **kw)
+    except Exception:
+        return None      # ← SILENT SWALLOW
+```
+Any failure of `reply_text` — Markdown parse error, Telegram 429 FloodWait/RetryAfter,
+BadRequest, network hiccup — was silently swallowed. The order was created in the DB but the
+customer never saw the deposit screen. No log, no fallback, no error. Same class of bug as the
+older "stuck" reports: **a failure that looks like nothing happened**.
+
+(Verified: the deposit-instructions texts in the restore-ready DB are valid; the failure was
+at the send step, not the template.)
+
+## ✅ Fixes
+1. **`_bf_send_retry()`** — bulletproof send used by every Bybit flow message:
+   - try as requested (parse_mode=Markdown)
+   - Markdown parse error → retry WITHOUT parse_mode
+   - `FloodWait`/`RetryAfter` → wait (retry_after) and retry once
+   - other errors → log with exception type + retry as plain text
+   - if everything fails → **raise** (no more silent None)
+2. **`bybit_flow_amount_received`** — wraps `_bybit_create_and_show` in try/except; on error it
+   logs the full traceback and sends the customer a visible fallback ("⚠️ Oops — could not
+   process your amount …") instead of silence.
+3. **`payment_flow_text_handler`** (group −80) — wraps the UID/amount steps in try/except; any
+   exception is logged and the customer gets a visible fallback, and the update is consumed
+   (returns True) so no other handler double-processes.
+4. **`bybit_flow_uid_received`** invalid paths already reply; now also safe.
+
+## Tests (v127)
+`_test_v127_no_silence.py` — **3/3 PASS**: reply raises once → retry succeeds → deposit screen
+shown ✅ · Markdown parse error → retry without parse_mode → reply shown ✅ · total failure →
+flow does not leave user hanging (fallback path, no crash) ✅.
+
+Regression: v126 3 + v125 8 + v124 4 + v123 12 + v122 13 + v120 7 + v119 14 + v118 8 + v117 4
++ v116 6 + v114 9 + v112 15 + v111 17 = **123/123 PASS**. Boot clean; no undefined names.
+
+## 🔧 Files changed
+- `handlers_order.py` — `_bf_send_retry()` (async, robust), `_bybit_flow_target` uses it,
+  `bybit_flow_amount_received` visible fallback.
+- `bot.py` — `payment_flow_text_handler` try/except + visible fallback.
+- `CHANGELOG.md` — this section.
+
+---
+
 # 🚀 v126 (2026-08-01) — Bybit verification is CLICK-ONLY (Check payment), background auto-detect OFF
 
 **User request:** "Bot payment auto detect sirf tabhi karega jab customer khud Check payment par
