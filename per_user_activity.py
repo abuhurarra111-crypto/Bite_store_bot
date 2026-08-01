@@ -152,16 +152,27 @@ def get_speed():
 
 
 def get_speed_seconds():
-    """Returns (min_seconds, max_seconds) interval between messages based on unit."""
+    """Returns (min_seconds, max_seconds) interval between messages based on unit.
+
+    🔧 v123 FLOOD GUARD: the interval can NEVER go below FLOOR_SECONDS per user.
+    A restored DB had pua_interval_unit=seconds, min=1, max=10 with 233 active
+    users → hundreds of Telegram sends/second → FloodWait/429 → bot stuck in a
+    loop. This floor makes that class of misconfiguration impossible.
+    """
+    FLOOR_SECONDS = 30   # absolute minimum between two fake msgs for one user
     try:
         unit = _g("pua_interval_unit", "minutes")
         mn, mx = get_speed()
         if unit == "minutes":
-            return mn * 60, mx * 60
+            mn_s, mx_s = mn * 60, mx * 60
         else:
-            return mn, mx
+            mn_s, mx_s = mn, mx
+        # clamp to the floor (max interval must stay >= min)
+        mn_s = max(FLOOR_SECONDS, int(mn_s))
+        mx_s = max(mn_s, int(mx_s))
+        return mn_s, mx_s
     except Exception:
-        return 60, 3600
+        return FLOOR_SECONDS, 3600
 
 
 def get_first_delay():

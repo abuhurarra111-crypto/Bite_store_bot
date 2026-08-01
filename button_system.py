@@ -106,6 +106,12 @@ BUTTONS = {
         "large": "📋 Copy amount", "xl": "📋 Copy amount",
         "callback": "se_noop",
     },
+    "bybit_copy_address": {
+        "group": "pay", "essential": True,
+        "short": "📋", "medium": "📋 Copy address",
+        "large": "📋 Copy address", "xl": "📋 Copy address",
+        "callback": "se_noop",
+    },
     "bybit_copy_uid": {
         "group": "pay", "essential": True,
         "short": "📋", "medium": "📋 Copy UID",

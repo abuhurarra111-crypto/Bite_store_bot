@@ -427,6 +427,9 @@ async def handle_text(update, context):
         if await bybit_uid_received(update, context): return
     if context.user_data.get('bybit_flow_step') == 'waiting_amount':
         if await bybit_amount_received(update, context): return
+    # 🔧 v123: Bybit USDT flow amount step
+    if context.user_data.get('bybit_usdt_step') == 'waiting_amount':
+        if await bybit_usdt_amount_received(update, context): return
     if context.user_data.get('ownmail_step') == 'email':
         from handlers_order import ownmail_email_received
         if await ownmail_email_received(update, context): return
@@ -1572,6 +1575,8 @@ def main():
         ("^bybit_manual_confirm_", bybit_manual_confirm_callback),
         ("^bybit_warn_ok$", bybit_warn_ok_callback),
         ("^bybit_warn_cancel$", bybit_warn_cancel_callback),
+        ("^bybit_usdt_warn_ok$", bybit_usdt_warn_ok_callback),
+        ("^bybit_usdt_warn_cancel$", bybit_usdt_warn_cancel_callback),
         ("^buy_", buy_callback), ("^pay_binance_", payment_binance_callback),
         ("^pay_easy_", payment_easypaisa_callback), ("^pay_jazz_", payment_jazzcash_callback),
         # 🆕 Buy Multiple (bulk)
@@ -1693,6 +1698,8 @@ def main():
         ("^bybit_manual_confirm_", bybit_manual_confirm_callback),
         ("^bybit_warn_ok$", bybit_warn_ok_callback),
         ("^bybit_warn_cancel$", bybit_warn_cancel_callback),
+        ("^bybit_usdt_warn_ok$", bybit_usdt_warn_ok_callback),
+        ("^bybit_usdt_warn_cancel$", bybit_usdt_warn_cancel_callback),
         ("^pay_pts_", pay_pts_callback),
         ("^admin_panel$", admin_panel_callback),
         ("^admin_categories$", admin_categories_callback), ("^delcat_", delete_category_callback),

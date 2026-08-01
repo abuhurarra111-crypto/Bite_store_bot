@@ -740,3 +740,49 @@ DEFAULT_RESPONSES.update({
         "Your order was cancelled. No amount was charged."
     ),
 })
+
+
+# 🔧 v123: Bybit USDT (TRC-20 / BEP-20) new UID-free deposit flow
+DEFAULT_RESPONSES.update({
+    "bybit_usdt_warning_text": (
+        "⚠️ *Before you transfer — read carefully*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🔢 *Copy the full amount with all decimals* (e.g. 5.0087)\n\n"
+        "💯 *Send the exact same amount shown in the Bybit app*\n\n"
+        "🧾 The amount we receive must match exactly — decimals included\n\n"
+        "❗️ Any small difference in the decimals = the bot won't detect your transfer.\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "💸 *Fee note:* if the network deducts any fee, add it on top so the full required amount reaches us.\n"
+        "We are not responsible for network fees.\n\n"
+        "_Tap Continue to proceed, or Cancel to go back._"
+    ),
+    "bybit_usdt_amount_prompt": (
+        "🟡 *Deposit via USDT — {network_label} Network*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "💡 *Send the USD amount you want to deposit:*\n\n"
+        "📌 Examples: 5 / 10 / 25 / 50\n"
+        "⚠️ Minimum: $1\n\n"
+        "_Type the amount (numbers only)._\n"
+        "Your *exact unique payment amount* will be shown next."
+    ),
+    "bybit_usdt_amount_invalid": (
+        "❌ *Invalid amount*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Please enter a number, e.g. `1`, `5`, `10`.\n"
+        "Minimum: $1"
+    ),
+    "bybit_usdt_deposit_instructions": (
+        "💸 *Bybit — USDT — {network_label} Network*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "✉️ *Address:*\n`{address}`\n\n"
+        "💰 *Amount (exactly):*\n*{amount}*\n\n"
+        "⚠️ *Make sure you use the correct network — sending on the wrong network loses the amount.*\n"
+        "⏰ Expiry: 30 minutes\n"
+        "✨ The balance is added automatically after confirmation"
+    ),
+    "bybit_usdt_cancelled": (
+        "❌ *Bybit USDT payment cancelled.*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Your order was cancelled. No amount was charged."
+    ),
+})

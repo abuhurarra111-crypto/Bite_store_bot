@@ -231,6 +231,25 @@ def _heal_payment_settings():
         _log(f"payment settings heal failed: {e}", "WARN")
 
 
+def _heal_activity_flood_settings():
+    """🔧 v123: per-user fake-activity settings that would flood Telegram
+    (seconds unit + tiny intervals + many users = FloodWait/429 = bot stuck).
+    Restores a sane floor so the bot can never lock itself up on restore."""
+    try:
+        from database import get_setting, set_setting
+        unit = (get_setting("pua_interval_unit", "minutes") or "minutes").strip().lower()
+        if unit == "seconds":
+            mn = int(get_setting("pua_min_interval", "1") or 1)
+            mx = int(get_setting("pua_max_interval", "10") or 10)
+            if mn < 30 or mx < 60:
+                set_setting("pua_min_interval", "1")
+                set_setting("pua_max_interval", "60")
+                set_setting("pua_interval_unit", "minutes")
+                _log("PUA flood settings corrected: seconds→minutes (min=1, max=60)")
+    except Exception as e:
+        _log(f"activity flood heal failed: {e}", "WARN")
+
+
 def _heal_orphaned_sessions():
     """No-op — user sessions are per-context, cleared naturally by force_main_menu."""
     pass
@@ -399,6 +418,10 @@ def run_all_heals() -> list:
         _heal_payment_settings()
     except Exception as e:
         _log(f"heal_pay outer: {e}", "ERROR")
+    try:
+        _heal_activity_flood_settings()
+    except Exception as e:
+        _log(f"heal_activity outer: {e}", "ERROR")
     try:
         _heal_bybit_instruction_text()
     except Exception as e:

@@ -2042,6 +2042,7 @@ async def _show_screen(q, sid, context):
         "jazzcash_layouts": "jazzcash",
         "order_flow_layouts": "order_flow",
         "bybit_uid_layouts": "bybit_uid",
+        "bybit_usdt_flow_layouts": "bybit_usdt_flow",
     }
     if sid in _layout_map:
         await _show_screen_layouts(q, _layout_map[sid], context)
@@ -2706,6 +2707,12 @@ SCREEN_TREE = {
             ("bybit_amount_invalid", "📝 Invalid Amount"),
             ("bybit_deposit_instructions", "📝 Deposit Instructions (Screen 4)"),
             ("bybit_cancelled", "📝 Flow Cancelled"),
+            # 🔧 v123: Bybit USDT flow screens
+            ("bybit_usdt_warning_text", "📝 USDT Warning (Screen 1)"),
+            ("bybit_usdt_amount_prompt", "📝 USDT Amount Prompt (Screen 2)"),
+            ("bybit_usdt_amount_invalid", "📝 USDT Invalid Amount"),
+            ("bybit_usdt_deposit_instructions", "📝 USDT Deposit Instructions (Screen 3)"),
+            ("bybit_usdt_cancelled", "📝 USDT Flow Cancelled"),
         ],
         "buttons": [
             {"id": "pay_bybit_pay", "kind": "registry"},
@@ -2721,10 +2728,57 @@ SCREEN_TREE = {
             {"id": "bybit_copy_uid", "kind": "registry"},
             {"id": "bybit_check_payment", "kind": "registry"},
             {"id": "bybit_cancel_payment", "kind": "registry"},
+            # 🔧 v123: USDT flow buttons
+            {"id": "bybit_copy_address", "kind": "registry"},
         ],
         "children": ["error_messages_screen", "bybit_pay_layouts", "bybit_usdt_layouts",
                      "bybit_warning_screen", "bybit_uid_screen", "bybit_amount_screen",
-                     "bybit_deposit_screen", "bybit_uid_layouts"],
+                     "bybit_deposit_screen", "bybit_uid_layouts",
+                     "bybit_usdt_warning_screen", "bybit_usdt_amount_screen",
+                     "bybit_usdt_deposit_screen", "bybit_usdt_flow_layouts"],
+    },
+
+    # 🔧 v123: Bybit USDT flow screen nodes
+    "bybit_usdt_warning_screen": {
+        "icon": "⚠️",
+        "title": "USDT Warning (Screen 1)",
+        "description": "Decimals + fee warning before USDT deposit",
+        "texts": [("bybit_usdt_warning_text", "📝 Warning Text")],
+        "buttons": [
+            {"id": "bybit_continue", "kind": "registry"},
+            {"id": "bybit_cancel_flow", "kind": "registry"},
+        ],
+        "children": [],
+    },
+    "bybit_usdt_amount_screen": {
+        "icon": "🟡",
+        "title": "USDT Amount Prompt (Screen 2)",
+        "description": "Bot asks deposit amount (min $1)",
+        "texts": [("bybit_usdt_amount_prompt", "📝 Amount Prompt"),
+                  ("bybit_usdt_amount_invalid", "📝 Invalid Amount")],
+        "buttons": [{"id": "bybit_cancel_flow", "kind": "registry"}],
+        "children": [],
+    },
+    "bybit_usdt_deposit_screen": {
+        "icon": "💸",
+        "title": "USDT Deposit Instructions (Screen 3)",
+        "description": "Address + unique amount + copy/check/cancel buttons",
+        "texts": [("bybit_usdt_deposit_instructions", "📝 Deposit Instructions")],
+        "buttons": [
+            {"id": "bybit_copy_address", "kind": "registry"},
+            {"id": "bybit_copy_amount", "kind": "registry"},
+            {"id": "bybit_check_payment", "kind": "registry"},
+            {"id": "bybit_cancel_payment", "kind": "registry"},
+        ],
+        "children": [],
+    },
+    "bybit_usdt_flow_layouts": {
+        "icon": "🎨",
+        "title": "USDT Deposit Readymade Layouts",
+        "description": "Apply a readymade Bybit USDT deposit layout (preview first).",
+        "texts": [],
+        "buttons": [],
+        "children": [],
     },
 
     # 🔧 v122: UID-flow screen nodes
@@ -3476,6 +3530,87 @@ SCREEN_LAYOUT_GROUPS = {
                 "jazzcash_pay_instructions": (
                     "📱 *JazzCash*\n━━━━━━━━━━━━━━━━━━━━\n"
                     "Rs.{rs_amount} → `{number}`\n\nSend → upload screenshot."
+                )}},
+        },
+    },
+    # ── Bybit USDT deposit screen (v123) ──
+    "bybit_usdt_flow": {
+        "name": "Bybit USDT Deposit",
+        "icon": "💸",
+        "sample": {"network_label": "TRC-20", "address": "TF4dCTJw42VT99NfUg95YNi5yF6uK7P2FG",
+                   "amount": "1.4800", "reference_id": "48271936"},
+        "keys": ["bybit_usdt_deposit_instructions", "bybit_usdt_warning_text",
+                 "bybit_usdt_amount_prompt"],
+        "layouts": {
+            "simple": {"name": "Simple", "emoji": "💸", "texts": {
+                "bybit_usdt_deposit_instructions": (
+                    "💸 *Bybit — USDT — {network_label} Network*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    "✉️ *Address:*\n`{address}`\n\n"
+                    "💰 *Amount (exactly):*\n*{amount}*\n\n"
+                    "⚠️ *Make sure you use the correct network — sending on the wrong network loses the amount.*\n"
+                    "⏰ Expiry: 30 minutes\n"
+                    "✨ The balance is added automatically after confirmation"
+                ),
+                "bybit_usdt_warning_text": (
+                    "⚠️ *Before you transfer — read carefully*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    "🔢 *Copy the full amount with all decimals* (e.g. 5.0087)\n\n"
+                    "💯 *Send the exact same amount shown in the Bybit app*\n\n"
+                    "❗️ Any small difference in the decimals = the bot won't detect your transfer.\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "💸 *Fee note:* if the network deducts any fee, add it on top.\n"
+                    "We are not responsible for network fees."
+                ),
+                "bybit_usdt_amount_prompt": (
+                    "🟡 *Deposit via USDT — {network_label} Network*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    "💡 *Send the USD amount you want to deposit:*\n\n"
+                    "📌 Examples: 5 / 10 / 25 / 50\n⚠️ Minimum: $1"
+                )}},
+            "pro": {"name": "Pro", "emoji": "🟡", "texts": {
+                "bybit_usdt_deposit_instructions": (
+                    "💸 *Bybit — USDT — {network_label} Network*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    "✉️ *Address:*\n`{address}`\n\n"
+                    "💰 *Amount (exactly):*\n*{amount}*\n\n"
+                    "⚠️ *Make sure you use the correct network — sending on the wrong network loses the amount.*\n"
+                    "⏰ Expiry: 30 minutes\n"
+                    "✨ The balance is added automatically after confirmation"
+                ),
+                "bybit_usdt_warning_text": (
+                    "⚠️ *Before you transfer — read carefully*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    "🔢 *Copy the full amount with all decimals* (e.g. 5.0087)\n\n"
+                    "💯 *Send the exact same amount shown in the Bybit app*\n\n"
+                    "🧾 The amount we receive must match exactly — decimals included\n\n"
+                    "❗️ Any small difference in the decimals = the bot won't detect your transfer.\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "💸 *Fee note:* if the network deducts any fee, add it on top so the full required amount reaches us.\n"
+                    "We are not responsible for network fees."
+                ),
+                "bybit_usdt_amount_prompt": (
+                    "🟡 *Deposit via USDT — {network_label} Network*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    "💡 *Send the USD amount you want to deposit:*\n\n"
+                    "📌 Examples: 5 / 10 / 25 / 50\n"
+                    "⚠️ Minimum: $1\n\n"
+                    "_Type the amount (numbers only)._\n"
+                    "Your *exact unique payment amount* will be shown next."
+                )}},
+            "minimal": {"name": "Minimal", "emoji": "⚡", "texts": {
+                "bybit_usdt_deposit_instructions": (
+                    "💸 *Bybit USDT ({network_label})*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "💰 *{amount}* USDT →\n`{address}`\n\n"
+                    "Correct network = auto-credit. ✅"
+                ),
+                "bybit_usdt_warning_text": (
+                    "⚠️ Send the *exact amount with decimals* — difference = not detected."
+                ),
+                "bybit_usdt_amount_prompt": (
+                    "🟡 *Deposit via USDT — {network_label}*\n"
+                    "Amount (min $1):"
                 )}},
         },
     },

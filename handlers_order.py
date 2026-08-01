@@ -3305,6 +3305,15 @@ async def points_bybit_callback(update, context):
             pass
         await _bybit_show_warning(q, context, float(amt_s))
         return
+    # 🔧 v123: Bybit USDT (TRC-20/BEP-20) uses the new deposit flow.
+    if method in ('bybit_usdt_trc20', 'bybit_usdt_bep20'):
+        try:
+            await q.answer()
+        except Exception:
+            pass
+        await _bybit_usdt_show_warning(q, context, method, is_points=True,
+                                       base_amount=float(amt_s))
+        return
     await _start_bybit_payment(update, context, method, is_points=True, amount=float(amt_s))
 
 async def payment_bybit_callback(update, context):
@@ -3315,6 +3324,15 @@ async def payment_bybit_callback(update, context):
     p=get_product(pid)
     if not p: await _safe_send(q, context, '❌ Product not found.', reply_markup=back_btn()); return
     if p['stock'] < qty: await _safe_send(q, context, f"❌ Only {p['stock']} in stock!", reply_markup=back_btn()); return
+    # 🔧 v123: Bybit USDT methods → new deposit flow (warning → deposit screen).
+    if method in ('bybit_usdt_trc20', 'bybit_usdt_bep20'):
+        try:
+            await q.answer()
+        except Exception:
+            pass
+        await _bybit_usdt_show_warning(q, context, method, is_points=False,
+                                       product=p, qty=qty)
+        return
     await _start_bybit_payment(update, context, method, is_points=False, product=p, qty=qty)
 
 
@@ -4854,6 +4872,168 @@ async def _bybit_show_deposit_screen(target, context, oid, unique_amount, uid, r
     kb = InlineKeyboardMarkup([
         [_make_flow_btn('bybit_copy_amount', copy_text=amount_str),
          _make_flow_btn('bybit_copy_uid', copy_text=store_uid)],
+        [_make_flow_btn('bybit_check_payment', callback_data=f"bybitv_{oid}")],
+        [_make_flow_btn('bybit_cancel_payment', callback_data='cancel_order')],
+    ])
+    try:
+        await target.reply_text(text, parse_mode="Markdown", reply_markup=kb)
+    except Exception:
+        try:
+            await target.reply_text(text, reply_markup=kb)
+        except Exception:
+            pass
+
+
+# ════════════════════════════════════════════════════════════
+# 🔧 v123 — BYBIT USDT FLOW (TRC-20 / BEP-20)
+# warning → amount (points) → unique-amount deposit screen → auto-check
+# ════════════════════════════════════════════════════════════
+
+async def _bybit_usdt_show_warning(q, context, method, *, is_points=True,
+                                   base_amount=None, product=None, qty=1):
+    """Screen 1 — decimals + fee warning for Bybit USDT (TRC-20/BEP-20)."""
+    from database import is_payment_enabled, get_payment_disable_msg
+    if not is_payment_enabled(method):
+        await _safe_send(q, context, get_payment_disable_msg(method),
+                          reply_markup=back_btn())
+        return
+    context.user_data['bybit_usdt_step'] = 'warned'
+    context.user_data['bybit_usdt_method'] = method
+    context.user_data['bybit_usdt_points'] = is_points
+    context.user_data['bybit_usdt_product_id'] = product['id'] if product else 0
+    context.user_data['bybit_usdt_qty'] = int(qty or 1)
+    if is_points:
+        context.user_data['bybit_usdt_base'] = float(base_amount or 1)
+    text = _pay_resp('bybit_usdt_warning_text')
+    kb = InlineKeyboardMarkup([
+        [_make_flow_btn('bybit_continue', callback_data='bybit_usdt_warn_ok')],
+        [_make_flow_btn('bybit_cancel_flow', callback_data='bybit_usdt_warn_cancel')],
+    ])
+    await _safe_send(q, context, text, parse_mode="Markdown", reply_markup=kb)
+
+
+async def bybit_usdt_warn_ok_callback(update, context):
+    """Continue → ask amount (points) or go straight to deposit (product)."""
+    q = update.callback_query
+    await q.answer()
+    is_points = context.user_data.get('bybit_usdt_points', True)
+    if is_points:
+        context.user_data['bybit_usdt_step'] = 'waiting_amount'
+        method = context.user_data.get('bybit_usdt_method', 'bybit_usdt_trc20')
+        cfg = _usdt_cfg(method)
+        net = (cfg.get('network_label') or 'TRC-20')
+        text = _pay_resp('bybit_usdt_amount_prompt').format(network_label=escape_md(net))
+        kb = InlineKeyboardMarkup([[_make_flow_btn('bybit_cancel_flow', callback_data='bybit_usdt_warn_cancel')]])
+        await _safe_send(q, context, text, parse_mode="Markdown", reply_markup=kb)
+        return
+    # Product: amount is the product price — go straight to deposit screen
+    await _bybit_usdt_create_and_show(q, context, use_amount=None, via_callback=True)
+
+
+async def bybit_usdt_warn_cancel_callback(update, context):
+    """Cancel → back to Buy Points / product."""
+    q = update.callback_query
+    try:
+        await q.answer("Cancelled", show_alert=False)
+    except Exception:
+        pass
+    context.user_data.pop('bybit_usdt_step', None)
+    context.user_data.pop('bybit_usdt_method', None)
+    context.user_data.pop('bybit_usdt_points', None)
+    context.user_data.pop('bybit_usdt_product_id', None)
+    context.user_data.pop('bybit_usdt_qty', None)
+    context.user_data.pop('bybit_usdt_base', None)
+    try:
+        from handlers_start import buy_points_callback
+        q.data = "buy_points"
+        await buy_points_callback(update, context)
+    except Exception:
+        await _safe_send(q, context, _pay_resp('bybit_usdt_cancelled'),
+                          parse_mode="Markdown", reply_markup=back_btn())
+
+
+async def bybit_usdt_amount_received(update, context):
+    """User sends deposit amount → create order with unique amount + deposit screen."""
+    if context.user_data.get('bybit_usdt_step') != 'waiting_amount':
+        return False
+    txt = (update.message.text or '').strip().replace('$', '').replace(',', '')
+    import re as _re
+    m = _re.search(r'(\d+(?:\.\d+)?)', txt)
+    if not m:
+        await update.message.reply_text(_pay_resp('bybit_usdt_amount_invalid'),
+                                        parse_mode="Markdown")
+        return True
+    base = float(m.group(1))
+    if base < 1 or base > 5000:
+        await update.message.reply_text(_pay_resp('bybit_usdt_amount_invalid'),
+                                        parse_mode="Markdown")
+        return True
+    await _bybit_usdt_create_and_show(update.message, context, use_amount=base)
+    return True
+
+
+async def _bybit_usdt_create_and_show(target, context, use_amount=None, via_callback=False):
+    """Create the Bybit USDT order (unique amount for points) and show deposit screen."""
+    method = context.user_data.get('bybit_usdt_method', 'bybit_usdt_trc20')
+    is_points = context.user_data.get('bybit_usdt_points', True)
+    pid = int(context.user_data.get('bybit_usdt_product_id') or 0)
+    qty = int(context.user_data.get('bybit_usdt_qty') or 1)
+    cfg = _usdt_cfg(method)
+    address = str(cfg.get('address') or '')
+    net = str(cfg.get('network_label') or 'TRC-20')
+
+    if is_points:
+        base = float(use_amount if use_amount is not None else context.user_data.get('bybit_usdt_base') or 1)
+        unique_amount = _gen_unique_bybit_amount(base)
+        pts = points_from_usd(unique_amount)
+        pname = f"💎 {fmt_points(pts)} Points"
+        otype = 'points'
+    else:
+        p = get_product(pid) if pid else None
+        if not p:
+            try:
+                await target.reply_text("❌ Product not found.")
+            except Exception:
+                pass
+            return
+        unique_amount = float(_get_eff_price(p)) * qty   # exact price, no random add
+        pts = 0
+        pname = p['name'] if qty == 1 else f"{p['name']} × {qty}"
+        otype = 'product'
+
+    from database import gen_unique_pay_reference, set_order_pay_reference
+    u = getattr(target, 'from_user', None) or getattr(getattr(target, 'effective_user', None), 'from_user', None)
+    if u is None:
+        try:
+            u = (target or {}).get('effective_user')
+        except Exception:
+            u = None
+    uid_tg = getattr(u, 'id', None)
+    uname = getattr(u, 'username', '') or ''
+    fname = getattr(u, 'first_name', '') or ''
+    if not uid_tg:
+        return
+    save_user(uid_tg, uname, fname)
+    ref = gen_unique_pay_reference()
+    oid = create_order(uid_tg, fname or str(uid_tg), pid if pid else 0,
+                       pname, unique_amount, method, '', unique_amount, 'USDT',
+                       otype, '', qty=qty if not is_points else 1)
+    update_order_status(oid, 'usdt_waiting')
+    set_order_pay_reference(oid, ref)
+    context.user_data['pending_order_id'] = oid
+    context.user_data.pop('bybit_usdt_step', None)
+    context.user_data.pop('bybit_usdt_method', None)
+    context.user_data.pop('bybit_usdt_points', None)
+    context.user_data.pop('bybit_usdt_product_id', None)
+    context.user_data.pop('bybit_usdt_qty', None)
+    context.user_data.pop('bybit_usdt_base', None)
+
+    amount_str = f"{unique_amount:.6f}".rstrip('0').rstrip('.') if unique_amount == int(unique_amount) else f"{unique_amount:.4f}"
+    text = _pay_resp('bybit_usdt_deposit_instructions').format(
+        network_label=escape_md(net), address=escape_md(address), amount=amount_str)
+    kb = InlineKeyboardMarkup([
+        [_make_flow_btn('bybit_copy_address', copy_text=address),
+         _make_flow_btn('bybit_copy_amount', copy_text=amount_str)],
         [_make_flow_btn('bybit_check_payment', callback_data=f"bybitv_{oid}")],
         [_make_flow_btn('bybit_cancel_payment', callback_data='cancel_order')],
     ])

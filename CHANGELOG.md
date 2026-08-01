@@ -8,6 +8,72 @@
 
 ---
 
+# 🚀 v123 (2026-08-01) — FLOOD FIX (bot stuck after restore) + Bybit USDT deposit flow (TRC-20/BEP-20)
+
+## 🐛 CRITICAL FIX — bot stuck in a loop after DB restore
+**Symptom:** bot repeated "stuck" since restoring the DB; was fine before.
+
+**Root cause (found by inspecting the restored DB):** the backup carried
+`pua_interval_unit=seconds`, `pua_min_interval=1`, `pua_max_interval=10` with
+`pua_global_enabled=1` and **233 active users**. The per-user fake-activity engine
+therefore scheduled **hundreds of Telegram sends per second** → `429 Too Many Requests` /
+`FloodWait` → every handler blocked → bot appeared dead/stuck, and it re-flooded on every
+restart. These settings were leftovers from an old test run.
+
+**Fixes:**
+1. `per_user_activity.get_speed_seconds()` — new **FLOOR_SECONDS=30** clamp: no matter the
+   stored unit/intervals, a single user can never be messaged more often than every 30s.
+   This makes the whole class of misconfiguration impossible.
+2. `self_heal._heal_activity_flood_settings()` — on startup, if `pua_interval_unit=seconds`
+   with tiny intervals, it resets to `minutes`, min=1, max=60 and logs it.
+3. **Restore-ready DB fixed**: `pua_interval_unit=minutes`, `pua_min_interval=1`,
+   `pua_max_interval=60` (so a fresh restore is safe immediately).
+
+## ✅ Bybit USDT deposit flow (both TRC-20 & BEP-20) — screen by screen
+Same UX as the Bybit Pay UID flow, adapted for on-chain USDT:
+
+1. ⚠️ **Warning** (decimals matter + **fee note**: network fee deduct hone par amount upar
+   add karo; bot network fees ki zimmedar nahi) — Continue / Cancel.
+2. 🟡 **Amount prompt** — "Deposit via USDT — {TRC-20|BEP-20} Network", min $1.
+3. 💸 **Deposit screen** — address, **unique exact amount** (e.g. 1.4800), network warning
+   (Arabic included in default), 30-min expiry, auto-add note. Buttons:
+   Copy address · Copy exact amount · Check payment · Cancel payment.
+4. **Check payment** → existing `bybitv_` verifier → API auto-detects by
+   network + address + exact amount (+ order-anchor) → credits points or delivers product.
+
+- New editable responses: `bybit_usdt_warning_text`, `bybit_usdt_amount_prompt`,
+  `bybit_usdt_amount_invalid`, `bybit_usdt_deposit_instructions`, `bybit_usdt_cancelled`.
+- New editable button: `bybit_copy_address` (reuses bybit_continue / bybit_cancel_flow /
+  bybit_copy_amount / bybit_check_payment / bybit_cancel_payment).
+- Screen editor: new nodes `bybit_usdt_warning_screen`, `bybit_usdt_amount_screen`,
+  `bybit_usdt_deposit_screen`, `bybit_usdt_flow_layouts` (Simple/Pro/Minimal presets via the
+  generic layouts engine — preview + apply).
+- Buy Points and Product flows both branch `bybit_usdt_trc20`/`bybit_usdt_bep20` into the
+  new flow. Points → unique amount (base + random 4-decimal fraction). Products → exact
+  price (no random add; overpay avoided), delivered on check.
+
+## Tests (v123)
+`_test_v123_usdt_flood.py` — **12/12 PASS**: seconds-unit clamped ≥30s ✅ · minutes normal ✅ ·
+heal fixes dangerous settings ✅ · warning has fee note ✅ · deposit/amount responses format ✅ ·
+unique amount ✅ · screen nodes + children + layouts render ✅ · copy-address button ✅ ·
+USDT order created with method/status/price ✅.
+
+Regression: v122 13 + v120 7 + v119 14 + v118 8 + v117 4 + v116 6 + v114 9 + v112 15 + v111 17
+= **105/105 PASS** (plugin pytest-asyncio required). Boot clean; restore-ready DB re-verified
+(integrity ok, all 108 responses, flood settings fixed).
+
+## 🔧 Files changed
+- `per_user_activity.py` — flood floor (30s) in `get_speed_seconds()`.
+- `self_heal.py` — `_heal_activity_flood_settings()`.
+- `config.py` — 5 new bybit_usdt responses.
+- `button_system.py` — `bybit_copy_address`.
+- `handlers_order.py` — USDT flow (warning/amount/deposit), entry-point branching.
+- `customization.py` — 4 new screen nodes + `bybit_usdt_flow` layouts group + buttons/texts.
+- `bot.py` — routing + `^bybit_usdt_warn_ok/cancel` registration.
+- `CHANGELOG.md` — this section.
+
+---
+
 # 🚀 v122 (2026-08-01) — Bybit Pay UID flow: warning → UID → amount → unique deposit, auto-match by UID+amount
 
 **User request (full screen-by-screen flow):** redesign Bybit Pay for auto-detection:
