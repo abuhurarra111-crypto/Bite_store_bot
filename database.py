@@ -185,6 +185,20 @@ def _migrate_orders_table(c):
             print("✅ Added column: orders.binance_txid")
         except Exception as e:
             print(f"⚠️ Could not add binance_txid: {e}")
+    # 🔧 v118: per-order Bybit Pay Reference ID (8 digits, shown to customer).
+    if "pay_reference" not in existing_cols:
+        try:
+            c.execute("ALTER TABLE orders ADD COLUMN pay_reference TEXT DEFAULT ''")
+            print("✅ Added column: orders.pay_reference")
+        except Exception as e:
+            print(f"⚠️ Could not add pay_reference: {e}")
+    # 🔧 v122: customer's own Bybit UID (for UID+amount auto-match).
+    if "customer_bybit_uid" not in existing_cols:
+        try:
+            c.execute("ALTER TABLE orders ADD COLUMN customer_bybit_uid TEXT DEFAULT ''")
+            print("✅ Added column: orders.customer_bybit_uid")
+        except Exception as e:
+            print(f"⚠️ Could not add customer_bybit_uid: {e}")
 
 
 def ensure_supplier_retry_columns(c):
@@ -1722,6 +1736,58 @@ def set_order_payment_note(oid, note_id):
     ensure_column(c, "orders", "payment_note_id", "TEXT DEFAULT ''")
     c.execute("UPDATE orders SET payment_note_id=? WHERE id=?", (str(note_id).strip(), oid))
     conn.commit(); conn.close()
+
+
+# ── 🔧 v118: per-order Bybit Pay Reference ID ──
+def set_order_pay_reference(oid, ref):
+    conn = get_connection(); c = conn.cursor()
+    ensure_column(c, "orders", "pay_reference", "TEXT DEFAULT ''")
+    c.execute("UPDATE orders SET pay_reference=? WHERE id=?", (str(ref).strip(), oid))
+    conn.commit(); conn.close()
+
+
+def get_order_pay_reference(oid):
+    try:
+        o = get_order(oid)
+        if o and 'pay_reference' in o.keys():
+            return str(o.get('pay_reference') or '')
+    except Exception:
+        pass
+    return ''
+
+
+def set_order_customer_bybit_uid(oid, uid):
+    conn = get_connection(); c = conn.cursor()
+    ensure_column(c, "orders", "customer_bybit_uid", "TEXT DEFAULT ''")
+    c.execute("UPDATE orders SET customer_bybit_uid=? WHERE id=?", (str(uid).strip(), oid))
+    conn.commit(); conn.close()
+
+
+def get_order_customer_bybit_uid(oid):
+    try:
+        o = get_order(oid)
+        if o and 'customer_bybit_uid' in o.keys():
+            return str(o.get('customer_bybit_uid') or '')
+    except Exception:
+        pass
+    return ''
+
+
+def gen_unique_pay_reference():
+    """8-digit numeric reference, unique across orders (best effort)."""
+    import random as _r
+    conn = get_connection(); c = conn.cursor()
+    ensure_column(c, "orders", "pay_reference", "TEXT DEFAULT ''")
+    for _ in range(60):
+        ref = str(_r.randint(10000000, 99999999))
+        try:
+            c.execute("SELECT COUNT(*) FROM orders WHERE pay_reference=?", (ref,))
+            if int(c.fetchone()[0] or 0) == 0:
+                conn.close(); return ref
+        except Exception:
+            conn.close(); return ref
+    conn.close()
+    return str(_r.randint(10000000, 99999999))
 
 
 def save_order_delivery_content(oid, content):

@@ -8,6 +8,319 @@
 
 ---
 
+# 🚀 v122 (2026-08-01) — Bybit Pay UID flow: warning → UID → amount → unique deposit, auto-match by UID+amount
+
+**User request (full screen-by-screen flow):** redesign Bybit Pay for auto-detection:
+1. ⚠️ Warning (copy full amount with decimals, exact amount matters) — Continue / Cancel
+2. 🆔 Enter your Bybit UID (digits) — user sends it
+3. 🟡 Enter deposit amount (min $1) — user sends it
+4. 💸 Deposit instructions — send to store UID, **unique 4-decimal amount** (e.g. 1.9076 /
+   1.9700), 8-digit reference, 30 min, copy amount / copy UID / check payment / cancel buttons
+Bot auto-matches by **sender Bybit UID + exact amount** — no pasted ID needed.
+
+## ✅ Implemented
+
+### New flow (Buy Points → Bybit Pay)
+- `_bybit_show_warning()` — warning screen with Continue/Cancel (editable buttons).
+- `bybit_warn_ok_callback` / `bybit_warn_cancel_callback` — continue asks UID; cancel returns
+  to Buy Points and clears flow state.
+- `bybit_uid_received()` — validates digits (6–12), stores the customer's Bybit UID.
+- `bybit_amount_received()` — validates ≥ $1, generates the **unique amount** and 8-digit
+  reference, creates the order (price/binance_amount = unique amount, stores UID + reference),
+  shows the deposit screen.
+- `_bybit_show_deposit_screen()` — editable deposit instructions + buttons:
+  Copy amount / Copy UID (copy-text), Check payment (reuses bybitv_ verify), Cancel payment.
+- `_gen_unique_bybit_amount(base)` — `round(base + rand(0.0001..0.9999), 4)` → unique
+  4-decimal amount per order (1 → 1.9076, 5 → 5.0087). Same nominal deposit from many users
+  at once still yields distinct amounts.
+- Matching: `_find_matching_bybit_payment` — when the order carries `customer_bybit_uid`,
+  it matches an internal deposit **only** from that exact sender UID with the exact amount
+  (no generic fallback → no cross-crediting). Legacy orders without a stored UID keep the
+  old fallbacks.
+
+### New editable responses (config.py)
+`bybit_warning_text`, `bybit_uid_prompt`, `bybit_uid_invalid`, `bybit_amount_prompt`,
+`bybit_amount_invalid`, `bybit_deposit_instructions`, `bybit_check_payment_ok`, `bybit_cancelled`.
+
+### New editable buttons (button_system.py)
+`bybit_continue`, `bybit_cancel_flow`, `bybit_check_payment`, `bybit_cancel_payment`,
+`bybit_copy_amount`, `bybit_copy_uid` — rename / premium emoji / color from the screen editor.
+
+### Screen editor (customization.py)
+New nodes under Bybit Flow: `bybit_warning_screen`, `bybit_uid_screen`, `bybit_amount_screen`,
+`bybit_deposit_screen`, plus `bybit_uid_layouts` (readymade Simple/Pro/Minimal deposit layouts
+via the generic engine). New texts+buttons registered in the flow screen.
+
+### DB
+- New `orders.customer_bybit_uid` column + set/get helpers.
+- `payments.get_bybit_internal_deposits` now exposes `from_member_id` (sender UID).
+- Response editor: 💳 Payment category also catches `bybit_*` keys.
+
+## Tests (v122)
+`_test_v122_bybit_uid_flow.py` — **13/13 PASS**: unique amount 4-decimals + ≥ base + random ✅ ·
+correct UID+amount matches ✅ · wrong UID not matched ✅ · wrong amount not matched ✅ · legacy
+order (no UID) still falls back ✅ · new responses registered + formattable ✅ · screen nodes +
+children + layouts render ✅.
+
+Regression: v120 7 + v119 14 + v118 8 + v117 4 + v116 6 + v114 9 + v112 15 + v111 17 =
+**93/93 PASS**. Boot clean, no undefined names.
+
+## 🔧 Files changed
+- `database.py` — customer_bybit_uid column + helpers.
+- `payments.py` — from_member_id in internal deposits.
+- `config.py` — 8 new responses.
+- `button_system.py` — 6 new registry buttons.
+- `handlers_order.py` — UID flow, unique amount, exclusive UID+amount match.
+- `customization.py` — 5 new screen nodes + bybit_uid layouts group.
+- `handlers_admin.py` — bybit_* category prefix.
+- `bot.py` — text routing + callbacks.
+- `CHANGELOG.md` — this section.
+
+---
+
+# 🚀 v121 (2026-08-01) — Bybit Pay instructions updated: auto-detect, no pasting
+
+**User request:** "Bybit pay ki instructions ander sy change krdo — waha kuch paste karne ki
+zaroorat hi nahi, os hisab sy likho."
+
+## ✅ What changed
+The bot now auto-detects Bybit Pay payments (v117 order-anchor + v118 reference), so the
+instructions no longer ask customers to copy/paste a Transfer ID / Order ID into the chat.
+
+### New default (config.py)
+```
+🟡 *Bybit Pay — Order #{order_id}*
+━━━━━━━━━━━━━━━━━━━━
+💰 Amount: *{amount} USDT*
+📥 Bybit Pay ID / UID: `{pay_id}`
+
+*How to pay:*
+1. Open Bybit app → Bybit Pay → Send
+2. Send exactly *{amount} USDT* to the UID above
+3. Done — that's it! ✅
+
+🤖 Your payment is detected automatically from your Bybit account and credited within seconds.
+_No need to paste any ID or screenshot._
+```
+- `payment_bybit_pay_reference` now marked **Optional** ("Not required — payment is
+  auto-detected either way").
+
+### Readymade layouts updated (customization.py)
+All 3 Bybit Pay layouts (Simple / Pro / Minimal) reworded to the no-paste flow. The Reference
+ID remains optional in each.
+
+### Self-heal (self_heal.py)
+`_heal_bybit_instruction_text()` now also catches the common edited variant
+("Paste it here in chat" / "Paste the Transfer ID here in chat") and rewrites it to the new
+no-paste text — so a live DB carrying the old wording gets updated on deploy. Admin text that
+is already different is preserved.
+
+## Tests
+- New default + all 3 layouts verified: no leftover `{placeholders}`, no "paste" wording.
+- Full regression: v120 7 + v119 14 + v118 8 + v117 4 + v116 6 + v114 9 + v112 15 + v111 17 =
+  **80/80 PASS**.
+
+## 🔧 Files changed
+- `config.py` — `payment_bybit_pay` + `payment_bybit_pay_reference` defaults.
+- `customization.py` — 3 Bybit Pay layout texts.
+- `self_heal.py` — heal catches paste variants.
+- `CHANGELOG.md` — this section.
+
+---
+
+# 🚀 v120 (2026-08-01) — Readymade layouts for EVERY screen + 100% response coverage in editor
+
+**User request:** "In sab ke liye bhi bana do" (layouts for all screens like Bybit Pay), and
+"edit responses mein sab responses add kar dena jo nahi hain abhi".
+
+## ✅ 1. Edit Responses — every response now in a named category
+Audit: 95 DEFAULT_RESPONSES keys. 8 payment_* keys (`payment_bybit_pay`, `payment_bybit_pay_reference`,
+`payment_binance_pay_orderid`, `payment_binance_usdt`, `payment_bybit_usdt`, `payment_binance_menu_text`,
+`payment_bybit_menu_text`, `payment_not_found_txid`) were falling into the "uncategorized" catch-all.
+- `handlers_admin.py` category rules updated: the 💳 Payment category now also catches `payment_*`
+  prefix; new 🧾 Order Flow category catches `order_*`/`refund_*`; 💎 Points also catches `points_*`.
+- Result: **0 uncovered keys** — every response appears in a named category (plus the catch-all
+  stays for future-proofing). The 8 payment_* keys now show under 💳 Payment Screens.
+
+## ✅ 2. Readymade layouts for every payment flow screen
+New generic engine in `customization.py`:
+- `SCREEN_LAYOUT_GROUPS` — each group defines its response keys + sample values + presets:
+  - 🔶 **binance_pay** (Simple/Pro/Minimal) → rewrites `payment_binance_pay_orderid`
+  - 🪙 **binance_usdt** (Simple/Pro/Minimal) → `payment_binance_usdt`
+  - 🟡 **bybit_usdt** (Simple/Pro/Minimal) → `payment_bybit_usdt`
+  - 📱 **easypaisa** (Simple/Pro/Minimal) → `easypaisa_pay_instructions`
+  - 📱 **jazzcash** (Simple/Pro/Minimal) → `jazzcash_pay_instructions`
+  - 📜 **order_flow** (Standard/Friendly) → order_created/cancelled/rejected set
+- New screen-editor nodes (each a child of its flow screen, 🎨 icon):
+  `binance_pay_layouts`, `binance_usdt_layouts`, `bybit_usdt_layouts`,
+  `easypaisa_layouts`, `jazzcash_layouts`, `order_flow_layouts`.
+- Callbacks `scl_preview_<group>_<layout>` / `scl_apply_<group>_<layout>` — same
+  preview-then-apply UX as Bybit Pay layouts. After applying, texts stay editable.
+- Preview renders with sample values so the admin sees the exact customer-facing screen.
+
+## Tests (v120)
+`_test_v120_responses_layouts.py` — **7/7 PASS**: all 95 responses covered by category rules ✅
+· payment_* keys reachable ✅ · all 6 layout groups defined with ≥2 presets ✅ · every preset
+renders with no leftover `{placeholders}` ✅ · layout screens valid in SCREEN_TREE ✅ · flow
+screens link their layout children ✅ · apply writes responses + formats ✅.
+
+Regression: v119 14 + v118 8 + v117 4 + v116 6 + v114 9 + v112 15 + v111 17 = **80/80 PASS**.
+Boot clean, no undefined names.
+
+## 🔧 Files changed
+- `handlers_admin.py` — response category rules (payment_* + orderflow + points_*).
+- `customization.py` — `SCREEN_LAYOUT_GROUPS` (6 groups, 16 presets), `_scl_sample_render`,
+  `_show_screen_layouts`, `scl_apply_callback`, `scl_preview_callback`, SCREEN_TREE nodes.
+- `bot.py` — imports + `^scl_apply_` / `^scl_preview_` registration.
+- `CHANGELOG.md` — this section.
+
+---
+
+# 🚀 v119 (2026-08-01) — Bybit Pay screens fully editable (screen-by-screen) + readymade layouts
+
+**User request:** "Screen by screen mein ja k in sab screens ko edit kar saku — buttons rename
+(premium emoji), background color (blue/red/green), aur har full screen ke readymade layouts
+with preview."
+
+## ✅ What changed
+
+### 1. Reference ID line is now editable
+- New editable response key `payment_bybit_pay_reference` (`{reference_id}` placeholder) with a
+  default. The Bybit Pay checkout now appends this editable line (was hardcoded).
+- Registered in the Screen-by-Screen editor tree: Bybit Flow → **📝 Bybit Pay Reference ID Line**.
+
+### 2. Copy buttons are now real editable buttons
+- New registry buttons `pay_copy_reference` (🔖 Copy Reference ID) and `pay_copy_bybitpay`
+  (📋 Copy Bybit Pay ID), group `pay`, **essential** (can't be hidden).
+- New `button_system.make_copy_text_button()` — builds the button from the standard
+  `btn_label_pay_copy_*` (rename + premium emoji via [[HTML]]<tg-emoji>) and
+  `btn_style_pay_copy_*` (background color) settings, with `copy_text` preserved.
+- They appear in the Screen Editor (Bybit Flow → buttons) and the Manage Buttons panel →
+  rename / color / premium emoji exactly like every other button.
+
+### 3. Readymade Bybit Pay layouts with preview + apply
+- New screen **🎨 Bybit Pay Readymade Layouts** (child of Bybit Flow in the screen editor).
+- 3 presets: 🔖 Simple · 🟡 Pro · ⚡ Minimal — each a full checkout text + reference line.
+- Per preset: **👁 Preview** (shows the exact customer-facing screen with sample values) and
+  **✅ Apply** (writes the two editable response keys). After applying, every text stays
+  editable in the normal screen editor.
+- Callbacks: `bypl_preview_<key>` / `bypl_apply_<key>`.
+
+## Tests (v119)
+`_test_v119_screens.py` — **14/14 PASS**: copy buttons in registry ✅ · default/custom/premium
+label ✅ · color applied ✅ · reference response registered + format ✅ · screen tree contains
+reference text + copy buttons ✅ · layouts screen valid + 3 presets formattable ✅ · sample
+render ✅ · apply writes responses ✅ · ref gen/store roundtrip ✅.
+
+Regression: v118 8 + v117 4 + v116 6 + v114 9 + v112 15 + v111 17 = **73/73 PASS**. Boot clean.
+
+## 🔧 Files changed
+- `button_system.py` — 2 registry buttons + `make_copy_text_button()`.
+- `config.py` — `payment_bybit_pay_reference` default.
+- `handlers_order.py` — reference line via editable response; copy buttons via the new builder.
+- `customization.py` — SCREEN_TREE (reference text, copy buttons, layouts child),
+  `BYBIT_PAY_LAYOUTS`, `_bypl_sample_render`, `_show_bybit_pay_layouts`,
+  `bypl_apply_callback`, `bypl_preview_callback`, special-case render.
+- `bot.py` — imports + `^bypl_apply_` / `^bypl_preview_` registration.
+- `CHANGELOG.md` — this section.
+
+---
+
+# 🚀 v118 (2026-08-01) — Bybit Pay Reference ID (8-digit) + USDT order-anchor
+
+**User request:** bot should give every order its own 8-digit Reference ID with a copy
+button (like the UID), customer pastes it into Bybit Pay's Reference/Note field when sending,
+and the bot auto-matches the payment. Also asked how USDT payments get auto-checked.
+
+## 🕵️ Honest technical finding (live-verified)
+The Bybit internal-deposit API record does **NOT** include the sender's Bybit Pay reference/note
+(the live record showed only id/amount/type/coin/address/status/createdTime/txID/fromMemberId/
+tax*/compliance fields). So the reference cannot be used as the *only* verification key via the
+current API. **However** the bot already auto-adds payments without any pasted ID (proven in
+production: the v117 unique-same-amount + order-creation anchor matched the wife's payment with
+zero input). The Reference ID is therefore implemented as:
+- a deterministic identifier per order (great UX, matches the user's ask),
+- a **best-effort deep-match** candidate (if Bybit ever surfaces it, it matches instantly),
+- plus the proven fallback still covers the case where it is not exposed.
+
+## ✅ Implemented
+
+### database.py
+- New `orders.pay_reference` column (additive migration).
+- Helpers: `set_order_pay_reference`, `get_order_pay_reference`, `gen_unique_pay_reference()`
+  (8-digit numeric, collision-checked).
+
+### handlers_order.py
+- `_start_bybit_payment` (bybit_pay): generates + stores the Reference ID, appends
+  **"🔖 YOUR REFERENCE ID: `12345678`"** to the instructions, and adds a
+  **"🔖 Copy Reference ID"** copy button (beside Copy Bybit Pay ID).
+- `_find_matching_bybit_payment`: match candidates now = pasted ID **or** stored Reference ID
+  found anywhere in the record (deep-search, digits-normalized) **or** the proven
+  unique-same-amount order-anchor fallback.
+- `_find_matching_usdt_deposit`: **order-anchor** — a deposit that landed BEFORE the order was
+  created can never match (on-chain USDT has no note, so time + address + amount + network +
+  txid are the identifiers). This answers the user's USDT question: USDT auto-check already
+  runs via the background job using network/address/amount (txid when pasted); now it is also
+  anchored to order creation time for extra safety.
+
+## Tests (v118)
+`_test_v118_reference.py` — **8/8 PASS**: ref is 8-digit ✅ · unique ✅ · set/get roundtrip ✅ ·
+stored-reference-found-in-record matches ✅ · not-in-record still falls back ✅ · USDT deposit
+after order matches ✅ · before order rejected ✅ · wrong address rejected ✅.
+
+Regression: v117 4 + v116 6 + v114 9 + v112 15 + v111 17 = **59/59 PASS**.
+
+## 🔧 Files changed
+- `database.py` — pay_reference column + 3 helpers.
+- `handlers_order.py` — reference generation/show/copy in bybit_pay flow; reference deep-match;
+  USDT order-anchor.
+- `CHANGELOG.md` — this section.
+
+---
+
+# 🚀 v117 (2026-08-01) — Bybit Pay Fallback: Order-Creation Anchor (live-verified fix)
+
+**User bug (live, resolved):** Bybit Pay order ID pasted but never verified even after v116.
+User asked me to check the order ID directly against their API key.
+
+## 🕵️ Live API investigation (user's real key)
+- API key UID = `503209510` ✅ (matches bybit_pay_id — account correct).
+- Internal deposit records: **exactly 1** — `id=36982932`, `txID=7efd6bc9-234f-4b8b-9794-151aa2d0`,
+  `amount=1 USDT`, `status=2 (Success)`, `fromMemberId=563918642` (the sender's UID from the
+  receipt screenshot), created `2026-07-31 12:57 UTC`.
+- **The Bybit Pay "Order ID" (32-digit) is NOT stored anywhere in the API record** — the API
+  only has the UUID txID + numeric id. So neither exact-ID match nor v116 deep-search can
+  find it.
+- Root cause of the live failure: the v113 fallback required the deposit to be **within 30
+  minutes**. The payment was made hours before the customer pasted the ID → window expired →
+  `hash_not_found:1` even though the payment was there the whole time.
+
+## ✅ Fix — replace "within 30 min" with "after the order was created"
+`_bybit_recent_amount_fallback()` now takes the `order` and matches a deposit ONLY when:
+- internal transfer (Bybit Pay/UID), amount matches, txid not used,
+- deposit `createdTime` **>= order.created_at** (parsed via new `_parse_order_created_epoch`;
+  SQLite stores created_at in UTC, deposit times are ms — converted consistently),
+- and it's the **only** such deposit (unambiguous → fraud-safe; ambiguous → admin decides via
+  "Mark Received & Credit").
+
+This retroactively matches payments that arrived hours ago as long as the bot order was
+placed before the deposit — the exact scenario that was failing.
+
+## Tests (v117)
+`_test_v117_live.py` — **4/4 PASS** using the REAL record shape (id=36982932,
+txID=7efd6bc9…, amount=1, createdTime=1785502625):
+order(12:50UTC) before deposit(12:57UTC) → MATCH ✅ · order(13:05UTC) after deposit → reject ✅
+· two same-amount deposits → no auto-fill (admin decides) ✅ · epoch parse ✅.
+
+Regression: v116 6 + v114 9 + v112 15 + v111 17 = **51/51 PASS**.
+
+## 🔧 Files changed
+- `handlers_order.py` — `_parse_order_created_epoch()`, `_bybit_recent_amount_fallback(order=...)`
+  order-anchor logic, module-level `import datetime as _dt`.
+- `CHANGELOG.md` — this section.
+
+---
+
 # 🚀 v116 (2026-08-01) — Bybit Pay "Order ID" Deep-Match (the REAL fix for received-but-not-verified)
 
 **User follow-up (live):** Confirmed UID matches, payment IS received on the same account,

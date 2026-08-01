@@ -99,6 +99,7 @@ def _expected_binance_order_amount(order):
 # Tracks last verify timestamp per (user_id, order_id) pair.
 # Prevents users from spamming the verify button.
 import time as _time
+import datetime as _dt
 _verify_cooldowns = {}   # {(user_id, order_id): last_verify_timestamp}
 VERIFY_COOLDOWN_SEC = 20
 
@@ -2459,6 +2460,7 @@ def _find_matching_usdt_deposit(order, lookback_hours=96):
         from database import is_txid_used
     except Exception:
         is_txid_used = lambda tx: False
+    order_ts = _parse_order_created_epoch(order) if order else 0
     for d in deps:
         txid = d.get('txid') or ''
         if not txid or is_txid_used(txid):
@@ -2470,6 +2472,11 @@ def _find_matching_usdt_deposit(order, lookback_hours=96):
         if not _usdt_address_ok(d.get('address'), cfg):
             continue
         if not _usdt_amount_match(d.get('amount'), expected):
+            continue
+        # 🔧 v118: on-chain deposits have no note — anchor on time. A deposit that
+        # landed BEFORE the order was created can't be this payment.
+        t = int(d.get('time_ms') or 0)
+        if t and order_ts and t < order_ts:
             continue
         return d, 'matched'
     return None, 'not_found'
@@ -2714,31 +2721,47 @@ def _bybit_hash_matches(record, note):
     return False
 
 
-def _bybit_recent_amount_fallback(rows, expected, window_min=30):
-    """🔧 v113: Safe fallback when the customer's pasted Bybit Pay Order ID
-    does not exactly equal the API's internal-deposit txID (Bybit Pay may show
-    a different order number than the internal transfer ID).
+def _parse_order_created_epoch(order) -> int:
+    """Parse orders.created_at ("YYYY-MM-DD HH:MM:SS") to epoch ms. 0 on fail."""
+    try:
+        raw = str((order or {}).get('created_at') or '')
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
+            try:
+                return int(_dt.datetime.strptime(raw, fmt).replace(tzinfo=_dt.timezone.utc).timestamp() * 1000)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return 0
 
-    Matches ONLY when:
-      - the deposit is an internal transfer (BYBIT_INTERNAL),
-      - the amount matches within tolerance,
-      - it arrived within the last `window_min` minutes,
-      - it is not already marked used,
+
+def _bybit_recent_amount_fallback(rows, expected, order=None, window_min=0):
+    """🔧 v113/v117: Safe fallback when the customer's pasted Bybit Pay Order ID
+    does not exactly equal the API's internal-deposit txID (Bybit Pay may show
+    a different order number than the internal transfer ID — the Order ID is
+    NOT stored in the API record at all, only a UUID txID).
+
+    Matching rules (all must hold, fraud-safe):
+      - deposit is an internal transfer (BYBIT_INTERNAL = Bybit Pay/UID transfer),
+      - amount matches within tolerance,
+      - NOT already marked used,
+      - it arrived AFTER the order was created (when `order` is given) — this
+        replaces the old 30-min window so older-but-valid payments still match,
       - and it is the ONLY such deposit (unambiguous).
-    This keeps it fraud-safe: a random/wrong ID alone can never claim a payment.
+    v117: the recency window is replaced by "created after the order", which
+    fixes the real case where a Bybit Pay transfer arrives and the customer
+    pastes the app Order ID hours later — the old 30-min window had expired.
     """
     try:
         from database import is_txid_used
     except Exception:
         is_txid_used = lambda tx: False
-    now_ms = int(_time.time() * 1000)
+    order_ts = _parse_order_created_epoch(order) if order else 0
     hits = []
     seen = set()
     for d in rows:
         try:
             txid = d.get('txid') or ''
-            # Dedup: the exact-ID query + full-scan query both return the same
-            # deposit, so a single transfer can appear twice in `rows`.
             sig = (txid, d.get('amount'), d.get('network'))
             if sig in seen:
                 continue
@@ -2750,7 +2773,8 @@ def _bybit_recent_amount_fallback(rows, expected, window_min=30):
             if not _usdt_amount_match(d.get('amount'), expected):
                 continue
             t = int(d.get('time_ms') or 0)
-            if t and (now_ms - t) > window_min * 60 * 1000:
+            if t and order_ts and t < order_ts:
+                # Deposit BEFORE the order was placed → can't be this payment.
                 continue
             hits.append(d)
         except Exception:
@@ -2821,6 +2845,39 @@ def _find_matching_bybit_payment(order, lookback_hours=96):
         rows = []
         diag = {"internal_ok": None, "internal_count": 0,
                 "onchain_ok": None, "onchain_count": 0}
+        # 🔧 v122: UID+unique-amount match (new flow). When the order carries the
+        # customer's Bybit UID and a unique 4-decimal amount, match an internal
+        # deposit from that exact sender UID with the exact amount. This is the
+        # primary detection for the new flow — no pasted ID needed.
+        try:
+            cust_uid = str((order or {}).get('customer_bybit_uid') or '').strip()
+        except Exception:
+            cust_uid = ''
+        if cust_uid:
+            try:
+                uid_rows = get_bybit_internal_deposits('USDT', lookback_hours=lookback_hours)
+            except Exception:
+                uid_rows = []
+            for d in uid_rows:
+                try:
+                    txid = d.get('txid') or ''
+                    if not txid or is_txid_used(txid):
+                        continue
+                    if str(d.get('from_member_id') or '').strip() != cust_uid:
+                        continue
+                    if not _usdt_amount_match(d.get('amount'), expected):
+                        continue
+                    return d, 'matched'
+                except Exception:
+                    continue
+            # 🔧 v122: when the customer's UID is known, only a deposit FROM that
+            # UID can credit this order — a same-amount deposit from someone else
+            # must NOT match (avoids cross-crediting when many users deposit the
+            # same nominal amount). No generic fallback in this mode.
+            if not rows:
+                return None, 'no_records'
+            return None, 'uid_amount_not_found'
+            # (falls through below only for legacy orders without stored UID)
         # First try exact ID query, then always scan recent list. Bybit UI may
         # show an ID that does not return with the exact txID filter, while the
         # same ID exists in the recent payload — the full scan covers that.
@@ -2857,21 +2914,31 @@ def _find_matching_bybit_payment(order, lookback_hours=96):
 
         seen = set()
         note_norm = _norm_digits(note)
+        # 🔧 v118: the per-order Reference ID (if any) is another match candidate —
+        # best-effort, in case Bybit surfaces it in the record (it is not in the
+        # internal-deposit response today, but deep-match is harmless).
+        try:
+            ref = str(order.get('pay_reference') or '') if order else ''
+        except Exception:
+            ref = ''
+        ref_norm = _norm_digits(ref)
         for d in rows:
             txid=d.get('txid') or ''
             sig = (txid, d.get('amount'), d.get('network'))
             if sig in seen: continue
             seen.add(sig)
             if not txid or is_txid_used(txid): continue
-            # 🔧 v116: match by hash OR by deep-searching the whole raw record
-            # for the pasted Bybit Pay Order ID (digits-normalized).
-            hash_ok = _bybit_hash_matches(d, note) or (note_norm and _deep_find_id(d, note_norm))
+            # 🔧 v116/v118: match by hash, pasted Order ID, or stored Reference ID
+            # found anywhere in the record (digits-normalized).
+            hash_ok = (_bybit_hash_matches(d, note)
+                       or (note_norm and _deep_find_id(d, note_norm))
+                       or (ref_norm and _deep_find_id(d, ref_norm)))
             if hash_ok and not _usdt_amount_match(d.get('amount'), expected):
                 return None, 'amount_mismatch'
             if hash_ok and _usdt_amount_match(d.get('amount'), expected):
                 return d, 'matched'
-        # 🔧 v113: Bybit Pay Order ID vs internal txID fallback (see helper).
-        fb = _bybit_recent_amount_fallback(rows, expected)
+        # 🔧 v113/v117: Bybit Pay Order ID vs internal txID fallback (see helper).
+        fb = _bybit_recent_amount_fallback(rows, expected, order=order)
         if fb:
             return fb, 'matched'
         if not rows:
@@ -3201,8 +3268,23 @@ async def _start_bybit_payment(update, context, method, *, is_points=False, amou
         pay_id=get_setting('bybit_pay_id', os.getenv('BYBIT_PAY_ID','')).strip()
         if not pay_id:
             await _safe_send(q, context, '❌ Bybit Pay ID is not configured. Admin must set BYBIT_PAY_ID in Render env or Payment Settings.', reply_markup=back_btn()); return
+        # 🔧 v118: per-order Reference ID — customer pastes it into the Bybit Pay
+        # "Reference" field when sending, so the bot can identify the payment.
+        # 🔧 v119: reference line + copy buttons are now EDITABLE (screen editor):
+        #   - the reference text uses the editable response payment_bybit_pay_reference
+        #   - the Copy buttons read btn_label_pay_copy_* / btn_style_pay_copy_*
+        #     (rename with premium emoji + pick blue/green/red), see make_copy_text_button
+        from database import gen_unique_pay_reference, set_order_pay_reference
+        from button_system import make_copy_text_button
+        ref = gen_unique_pay_reference()
+        set_order_pay_reference(oid, ref)
         instr = title_line + "\n" + _pay_resp('payment_bybit_pay').format(order_id=oid, amount=_fmt_usdt_amount(total_usd), pay_id=escape_md(pay_id))
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton('📋 Copy Bybit Pay ID', copy_text=CopyTextButton(pay_id))],[InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')]])
+        instr += "\n\n" + _pay_resp('payment_bybit_pay_reference').format(reference_id=ref)
+        kb = InlineKeyboardMarkup([
+            [make_copy_text_button('pay_copy_reference', ref)],
+            [make_copy_text_button('pay_copy_bybitpay', pay_id)],
+            [InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')],
+        ])
     else:
         cfg=_usdt_cfg(method)
         instr = title_line + "\n" + _pay_resp('payment_bybit_usdt').format(
@@ -3215,6 +3297,14 @@ async def _start_bybit_payment(update, context, method, *, is_points=False, amou
 
 async def points_bybit_callback(update, context):
     q=update.callback_query; raw=q.data.replace('ptspay_',''); method,amt_s=raw.rsplit('_',1)
+    # 🔧 v122: Bybit Pay uses the new UID flow (warning → UID → amount → unique deposit).
+    if method == 'bybit_pay':
+        try:
+            await q.answer()
+        except Exception:
+            pass
+        await _bybit_show_warning(q, context, float(amt_s))
+        return
     await _start_bybit_payment(update, context, method, is_points=True, amount=float(amt_s))
 
 async def payment_bybit_callback(update, context):
@@ -4607,3 +4697,170 @@ async def pay_pts_callback(update, context):
 
 
 
+
+
+# ════════════════════════════════════════════════════════════
+# 🔧 v122 — BYBIT PAY UID FLOW (warning → UID → amount → unique deposit)
+# Auto-match: sender Bybit UID + unique 4-decimal amount (+ reference)
+# ════════════════════════════════════════════════════════════
+
+def _gen_unique_bybit_amount(base_amount: float) -> float:
+    """Base amount + random 4-decimal fraction → each order's amount is unique
+    (e.g. 1 → 1.9076, 5 → 5.0087). This lets the bot match by UID + exact amount
+    even when many customers deposit the same nominal value at the same time."""
+    import random as _r
+    try:
+        base = float(base_amount or 0)
+    except Exception:
+        base = 0.0
+    base = max(1.0, base)
+    frac = round(_r.uniform(0.0001, 0.9999), 4)
+    return round(base + frac, 4)
+
+
+def _make_flow_btn(btn_id, callback_data=None, copy_text=None):
+    """Editable flow button (label + premium emoji + color) for the Bybit flow."""
+    try:
+        from button_system import get_button_label, resolve_button_style, make_premium_button
+        from database import get_setting as _gs
+        size = _gs("button_size", "large")
+        _alias = {"small": "short", "full": "xl"}
+        size = _alias.get(size, size)
+        label = get_button_label(btn_id, size) or "…"
+        style = resolve_button_style(btn_id)
+        return make_premium_button(label, callback_data=callback_data,
+                                   copy_text=copy_text, style=style)
+    except Exception:
+        return InlineKeyboardButton("…", callback_data=callback_data or "se_noop",
+                                    copy_text=copy_text)
+
+
+async def _bybit_show_warning(q, context, base_amount):
+    """Screen 1 — decimals warning + Continue/Cancel."""
+    from database import is_payment_enabled, get_payment_disable_msg
+    if not is_payment_enabled("bybit_pay"):
+        await _safe_send(q, context, get_payment_disable_msg("bybit_pay"),
+                          reply_markup=back_btn())
+        return
+    context.user_data['bybit_flow_step'] = 'warned'
+    context.user_data['bybit_flow_base'] = float(base_amount or 1)
+    text = _pay_resp('bybit_warning_text')
+    kb = InlineKeyboardMarkup([
+        [_make_flow_btn('bybit_continue', callback_data='bybit_warn_ok')],
+        [_make_flow_btn('bybit_cancel_flow', callback_data='bybit_warn_cancel')],
+    ])
+    await _safe_send(q, context, text, parse_mode="Markdown", reply_markup=kb)
+
+
+async def bybit_warn_ok_callback(update, context):
+    """Continue → ask Bybit UID."""
+    q = update.callback_query
+    await q.answer()
+    context.user_data['bybit_flow_step'] = 'waiting_uid'
+    text = _pay_resp('bybit_uid_prompt')
+    kb = InlineKeyboardMarkup([[_make_flow_btn('bybit_cancel_flow', callback_data='bybit_warn_cancel')]])
+    await _safe_send(q, context, text, parse_mode="Markdown", reply_markup=kb)
+
+
+async def bybit_warn_cancel_callback(update, context):
+    """Cancel the whole Bybit flow → back to Buy Points."""
+    q = update.callback_query
+    try:
+        await q.answer("Cancelled", show_alert=False)
+    except Exception:
+        pass
+    context.user_data.pop('bybit_flow_step', None)
+    context.user_data.pop('bybit_flow_base', None)
+    context.user_data.pop('bybit_flow_uid', None)
+    try:
+        from handlers_start import buy_points_callback
+        q.data = "buy_points"
+        await buy_points_callback(update, context)
+    except Exception:
+        await _safe_send(q, context, _pay_resp('bybit_cancelled'),
+                          parse_mode="Markdown", reply_markup=back_btn())
+
+
+async def bybit_uid_received(update, context):
+    """User sends their Bybit UID (text)."""
+    if context.user_data.get('bybit_flow_step') != 'waiting_uid':
+        return False
+    txt = (update.message.text or '').strip()
+    if not txt.isdigit() or not (6 <= len(txt) <= 12):
+        await update.message.reply_text(_pay_resp('bybit_uid_invalid'),
+                                        parse_mode="Markdown")
+        return True
+    context.user_data['bybit_flow_uid'] = txt
+    context.user_data['bybit_flow_step'] = 'waiting_amount'
+    text = _pay_resp('bybit_amount_prompt')
+    kb = InlineKeyboardMarkup([[_make_flow_btn('bybit_cancel_flow', callback_data='bybit_warn_cancel')]])
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=kb)
+    return True
+
+
+async def bybit_amount_received(update, context):
+    """User sends the deposit amount → build order with unique amount + ref."""
+    if context.user_data.get('bybit_flow_step') != 'waiting_amount':
+        return False
+    txt = (update.message.text or '').strip().replace('$', '').replace(',', '')
+    import re as _re
+    m = _re.search(r'(\d+(?:\.\d+)?)', txt)
+    if not m:
+        await update.message.reply_text(_pay_resp('bybit_amount_invalid'),
+                                        parse_mode="Markdown")
+        return True
+    base = float(m.group(1))
+    if base < 1 or base > 5000:
+        await update.message.reply_text(_pay_resp('bybit_amount_invalid'),
+                                        parse_mode="Markdown")
+        return True
+
+    uid = context.user_data.get('bybit_flow_uid') or ''
+    unique_amount = _gen_unique_bybit_amount(base)
+    pts = points_from_usd(unique_amount)
+    from database import (gen_unique_pay_reference, set_order_pay_reference,
+                          set_order_customer_bybit_uid)
+    from config import ADMIN_ID
+    u = update.effective_user
+    save_user(u.id, u.username or '', u.first_name or '')
+    ref = gen_unique_pay_reference()
+    oid = create_order(u.id, u.first_name or str(u.id), 0,
+                       f"💎 {fmt_points(pts)} Points", unique_amount,
+                       'bybit_pay', '', unique_amount, 'USDT', 'points')
+    update_order_status(oid, 'bybit_waiting')
+    set_order_pay_reference(oid, ref)
+    set_order_customer_bybit_uid(oid, uid)
+    context.user_data['pending_order_id'] = oid
+    context.user_data.pop('bybit_flow_step', None)
+    context.user_data.pop('bybit_flow_base', None)
+    context.user_data.pop('bybit_flow_uid', None)
+
+    await _bybit_show_deposit_screen(update.message, context, oid, unique_amount, uid, ref)
+    return True
+
+
+async def _bybit_show_deposit_screen(target, context, oid, unique_amount, uid, ref):
+    """Screen 4 — deposit instructions + copy/check/cancel buttons."""
+    store_uid = get_setting('bybit_pay_id', os.getenv('BYBIT_PAY_ID', '')).strip()
+    if not store_uid:
+        try:
+            await target.reply_text("❌ Bybit Pay ID is not configured. Please contact support.")
+        except Exception:
+            pass
+        return
+    amount_str = f"{unique_amount:.4f}"
+    text = _pay_resp('bybit_deposit_instructions').format(
+        store_uid=escape_md(store_uid), amount=amount_str, reference_id=ref)
+    kb = InlineKeyboardMarkup([
+        [_make_flow_btn('bybit_copy_amount', copy_text=amount_str),
+         _make_flow_btn('bybit_copy_uid', copy_text=store_uid)],
+        [_make_flow_btn('bybit_check_payment', callback_data=f"bybitv_{oid}")],
+        [_make_flow_btn('bybit_cancel_payment', callback_data='cancel_order')],
+    ])
+    try:
+        await target.reply_text(text, parse_mode="Markdown", reply_markup=kb)
+    except Exception:
+        try:
+            await target.reply_text(text, reply_markup=kb)
+        except Exception:
+            pass

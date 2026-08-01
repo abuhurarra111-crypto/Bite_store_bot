@@ -1332,13 +1332,29 @@ async def _show_responses_category(u, c, category="all", page=1):
     all_keys = get_all_response_keys()
 
     # Define categories — hardcoded lists for the well-known groups.
+    # 🔧 v120: coverage audit — every DEFAULT_RESPONSES / DB key now lands in a
+    # named category (no more stragglers in "uncategorized" for known keys).
+    # Grouping rules:
+    #   payment   → payment_*, binance_*, jazzcash_*, easypaisa_*, jc_*, ep_*,
+    #               buy_points*, and the method-menu texts
+    #   verify    → payment_verified*, analyzing_*, screenshot_*, reupload_*,
+    #               jc_reupload*, upload_image*
+    #   orderflow → order_* (created/cancelled/rejected/refund)
+    #   error     → error_*
+    #   points    → points/referral/deposit texts
+    #   tier      → tier_*
+    #   freeclaim → freeclaim_*
+    #   features  → header/menu screens
+    #   other     → support/terms/notifications
+    _p = lambda *pfx: [k for k in all_keys if k.startswith(pfx)]
     CATEGORIES = {
         "main": {"name": "🏠 Main Menu", "keys": ["welcome", "my_account", "cancelled_message"]},
         "shop": {"name": "🛒 Shop & Products", "keys": ["shop_title", "shop_categories_title", "product_detail", "no_products", "out_of_stock", "confirm_purchase", "confirm_bulk_purchase", "bulk_confirmed", "no_orders", "orders_title", "shop_no_available", "shop_no_unavailable"]},
-        "payment": {"name": "💳 Payment Screens", "keys": [k for k in all_keys if k.startswith(("binance_", "jazzcash_", "easypaisa_", "jc_", "ep_", "buy_points"))]},
+        "payment": {"name": "💳 Payment Screens", "keys": [k for k in all_keys if k.startswith(("payment_", "binance_", "jazzcash_", "easypaisa_", "jc_", "ep_", "buy_points", "bybit_"))]},
         "verify": {"name": "✅ Verification Messages", "keys": [k for k in all_keys if k.startswith(("payment_verified", "analyzing_", "screenshot_", "reupload_", "jc_reupload", "upload_image"))]},
+        "orderflow": {"name": "🧾 Order Flow", "keys": [k for k in all_keys if k.startswith(("order_", "refund_"))]},
         "error": {"name": "❌ Error Messages", "keys": [k for k in all_keys if k.startswith("error_")]},
-        "points": {"name": "💎 Points & Referrals", "keys": ["buy_points", "buy_points_title", "buy_points_custom", "buy_points_custom_confirmed", "referral_text", "no_transactions", "order_created", "order_cancelled", "order_cancelled_no_reason", "order_cancelled_with_reason", "referral_blocked_by_admin", "referral_success_notification"]},
+        "points": {"name": "💎 Points & Referrals", "keys": [k for k in all_keys if k.startswith(("points_", "referral_", "no_transactions", "buy_points"))]},
         "features": {"name": "🧩 Feature Screens", "keys": ["support_menu_header", "warranty_menu_header", "warranty_no_orders", "reviews_menu_header", "loyalty_menu_header", "language_menu_header"]},
         # 🆕 v95: NEW category for tier / freeclaim / refund groups (were missing)
         "tier": {"name": "🏆 Loyalty & Tiers", "keys": [k for k in all_keys if k.startswith("tier_")]},

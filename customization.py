@@ -2032,6 +2032,23 @@ async def _show_screen(q, sid, context):
                          reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
                              "🌳 Back to Tree", callback_data="se_root")]]))
         return
+    # 🔧 v119/v120: readymade-layouts pickers (special render)
+    _layout_map = {
+        "bybit_pay_layouts": "bybit_pay",
+        "bybit_usdt_layouts": "bybit_usdt",
+        "binance_pay_layouts": "binance_pay",
+        "binance_usdt_layouts": "binance_usdt",
+        "easypaisa_layouts": "easypaisa",
+        "jazzcash_layouts": "jazzcash",
+        "order_flow_layouts": "order_flow",
+        "bybit_uid_layouts": "bybit_uid",
+    }
+    if sid in _layout_map:
+        await _show_screen_layouts(q, _layout_map[sid], context)
+        return
+    if sid == "bybit_pay_layouts":
+        await _show_bybit_pay_layouts(q, sid, context)
+        return
 
     icon = node.get("icon", "📄")
     title = node.get("title", sid)
@@ -2650,7 +2667,24 @@ SCREEN_TREE = {
             {"id": "pay_usdt_bep20", "kind": "registry"},
             {"id": "pay_usdt_trc20", "kind": "registry"},
         ],
-        "children": ["error_messages_screen"],
+        "children": ["error_messages_screen", "binance_pay_layouts", "binance_usdt_layouts"],
+    },
+
+    "binance_pay_layouts": {
+        "icon": "🎨",
+        "title": "Binance Pay Readymade Layouts",
+        "description": "Apply a readymade Binance Pay checkout layout (preview first).",
+        "texts": [],
+        "buttons": [],
+        "children": [],
+    },
+    "binance_usdt_layouts": {
+        "icon": "🎨",
+        "title": "Binance USDT Readymade Layouts",
+        "description": "Apply a readymade Binance USDT checkout layout (preview first).",
+        "texts": [],
+        "buttons": [],
+        "children": [],
     },
 
     "bybit_flow_screen": {
@@ -2660,15 +2694,106 @@ SCREEN_TREE = {
         "texts": [
             ("payment_bybit_menu_text", "📝 Bybit Method Menu"),
             ("payment_bybit_pay", "📝 Bybit Pay Checkout"),
+            # 🔧 v119: per-order Reference ID line (editable)
+            ("payment_bybit_pay_reference", "📝 Bybit Pay Reference ID Line"),
             ("payment_bybit_usdt", "📝 Bybit USDT Checkout"),
             ("payment_not_found_txid", "📝 Payment Not Found / Retry Text"),
+            # 🔧 v122: new UID-flow screens
+            ("bybit_warning_text", "📝 Warning — Decimals (Screen 1)"),
+            ("bybit_uid_prompt", "📝 Enter Bybit UID (Screen 2)"),
+            ("bybit_uid_invalid", "📝 Invalid UID"),
+            ("bybit_amount_prompt", "📝 Enter Deposit Amount (Screen 3)"),
+            ("bybit_amount_invalid", "📝 Invalid Amount"),
+            ("bybit_deposit_instructions", "📝 Deposit Instructions (Screen 4)"),
+            ("bybit_cancelled", "📝 Flow Cancelled"),
         ],
         "buttons": [
             {"id": "pay_bybit_pay", "kind": "registry"},
+            # 🔧 v119: editable copy buttons (rename + premium emoji + color)
+            {"id": "pay_copy_reference", "kind": "registry"},
+            {"id": "pay_copy_bybitpay", "kind": "registry"},
             {"id": "pay_bybit_usdt_bep20", "kind": "registry"},
             {"id": "pay_bybit_usdt_trc20", "kind": "registry"},
+            # 🔧 v122: UID-flow buttons
+            {"id": "bybit_continue", "kind": "registry"},
+            {"id": "bybit_cancel_flow", "kind": "registry"},
+            {"id": "bybit_copy_amount", "kind": "registry"},
+            {"id": "bybit_copy_uid", "kind": "registry"},
+            {"id": "bybit_check_payment", "kind": "registry"},
+            {"id": "bybit_cancel_payment", "kind": "registry"},
         ],
-        "children": ["error_messages_screen"],
+        "children": ["error_messages_screen", "bybit_pay_layouts", "bybit_usdt_layouts",
+                     "bybit_warning_screen", "bybit_uid_screen", "bybit_amount_screen",
+                     "bybit_deposit_screen", "bybit_uid_layouts"],
+    },
+
+    # 🔧 v122: UID-flow screen nodes
+    "bybit_warning_screen": {
+        "icon": "⚠️",
+        "title": "Bybit Warning (Screen 1)",
+        "description": "Decimals warning shown first. Buttons: Continue / Cancel",
+        "texts": [("bybit_warning_text", "📝 Warning Text")],
+        "buttons": [
+            {"id": "bybit_continue", "kind": "registry"},
+            {"id": "bybit_cancel_flow", "kind": "registry"},
+        ],
+        "children": [],
+    },
+    "bybit_uid_screen": {
+        "icon": "🆔",
+        "title": "Enter Bybit UID (Screen 2)",
+        "description": "Bot asks the customer for their Bybit UID",
+        "texts": [("bybit_uid_prompt", "📝 UID Prompt"), ("bybit_uid_invalid", "📝 Invalid UID")],
+        "buttons": [{"id": "bybit_cancel_flow", "kind": "registry"}],
+        "children": [],
+    },
+    "bybit_amount_screen": {
+        "icon": "🟡",
+        "title": "Enter Deposit Amount (Screen 3)",
+        "description": "Bot asks how much to deposit (min $1)",
+        "texts": [("bybit_amount_prompt", "📝 Amount Prompt"), ("bybit_amount_invalid", "📝 Invalid Amount")],
+        "buttons": [{"id": "bybit_cancel_flow", "kind": "registry"}],
+        "children": [],
+    },
+    "bybit_deposit_screen": {
+        "icon": "💸",
+        "title": "Deposit Instructions (Screen 4)",
+        "description": "Unique amount + reference + copy/check/cancel buttons",
+        "texts": [("bybit_deposit_instructions", "📝 Deposit Instructions")],
+        "buttons": [
+            {"id": "bybit_copy_amount", "kind": "registry"},
+            {"id": "bybit_copy_uid", "kind": "registry"},
+            {"id": "bybit_check_payment", "kind": "registry"},
+            {"id": "bybit_cancel_payment", "kind": "registry"},
+        ],
+        "children": [],
+    },
+    "bybit_uid_layouts": {
+        "icon": "🎨",
+        "title": "Bybit Deposit Readymade Layouts",
+        "description": "Apply a readymade Bybit UID-flow deposit layout (preview first).",
+        "texts": [],
+        "buttons": [],
+        "children": [],
+    },
+
+    "bybit_usdt_layouts": {
+        "icon": "🎨",
+        "title": "Bybit USDT Readymade Layouts",
+        "description": "Apply a readymade Bybit USDT checkout layout (preview first).",
+        "texts": [],
+        "buttons": [],
+        "children": [],
+    },
+
+    # 🔧 v119: readymade Bybit Pay checkout layouts with preview + apply
+    "bybit_pay_layouts": {
+        "icon": "🎨",
+        "title": "Bybit Pay Readymade Layouts",
+        "description": "Apply a readymade checkout layout (text + reference line). Preview first, then apply.",
+        "texts": [],
+        "buttons": [],
+        "children": [],
     },
 
     "crypto_usdt_flow_screen": {
@@ -2703,7 +2828,16 @@ SCREEN_TREE = {
             ("ep_payment_verified_product","📝 Verified — Product Delivered"),
         ],
         "buttons": [],
-        "children": ["error_messages_screen"],
+        "children": ["error_messages_screen", "easypaisa_layouts"],
+    },
+
+    "easypaisa_layouts": {
+        "icon": "🎨",
+        "title": "EasyPaisa Readymade Layouts",
+        "description": "Apply a readymade EasyPaisa payment layout (preview first).",
+        "texts": [],
+        "buttons": [],
+        "children": [],
     },
 
     # ═══════════════════════════════════════════════════════════
@@ -2721,7 +2855,16 @@ SCREEN_TREE = {
             ("jc_payment_verified_product","📝 Verified — Product Delivered"),
         ],
         "buttons": [],
-        "children": ["error_messages_screen"],
+        "children": ["error_messages_screen", "jazzcash_layouts"],
+    },
+
+    "jazzcash_layouts": {
+        "icon": "🎨",
+        "title": "JazzCash Readymade Layouts",
+        "description": "Apply a readymade JazzCash payment layout (preview first).",
+        "texts": [],
+        "buttons": [],
+        "children": [],
     },
 
     "order_created_screen": {
@@ -2736,6 +2879,15 @@ SCREEN_TREE = {
             ("screenshot_received_manual", "📝 Manual Screenshot Received"),
             ("upload_image_only", "📝 'Image Only' Warning"),
         ],
+        "buttons": [],
+        "children": ["order_flow_layouts"],
+    },
+
+    "order_flow_layouts": {
+        "icon": "🎨",
+        "title": "Order Flow Readymade Layouts",
+        "description": "Apply a readymade order created/cancelled/rejected layout set (preview first).",
+        "texts": [],
         "buttons": [],
         "children": [],
     },
@@ -3003,3 +3155,496 @@ def summary_counts(screen_id):
         len(node.get("children", [])),
     )
 
+
+
+# ════════════════════════════════════════════════════════════
+# 🎨 v119 — BYBIT PAY READYMADE LAYOUTS (preview + apply)
+# ════════════════════════════════════════════════════════════
+
+# Readymade Bybit Pay checkout layouts. Each sets the checkout instructions
+# (payment_bybit_pay) and the Reference ID line (payment_bybit_pay_reference).
+# Admin can preview how the customer will see it, then apply. After applying,
+# every field remains editable in the screen editor as usual.
+BYBIT_PAY_LAYOUTS = {
+    "simple": {
+        "name": "Simple",
+        "emoji": "🔖",
+        "checkout": (
+            "🟡 *Bybit Pay — Order #{order_id}*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "💰 Amount: *{amount} USDT*\n"
+            "📥 Pay to UID: `{pay_id}`\n\n"
+            "*Steps:*\n"
+            "1. Open Bybit → Bybit Pay → Send\n"
+            "2. Send exactly *{amount} USDT* to the UID above\n"
+            "3. Done — that's it! ✅\n\n"
+            "🤖 Payment is detected automatically and credited within seconds.\n"
+            "_No need to paste any ID._"
+        ),
+        "reference": (
+            "🔖 *Optional — YOUR REFERENCE ID:* `{reference_id}`\n"
+            "_Tip: paste it in the Reference field when sending to match instantly. Not required._"
+        ),
+    },
+    "pro": {
+        "name": "Pro",
+        "emoji": "🟡",
+        "checkout": (
+            "🟡 *Bybit Pay — Secure Checkout*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🧾 Order: `#{order_id}`\n"
+            "💰 Amount: *{amount} USDT*\n"
+            "📥 Bybit Pay ID / UID: `{pay_id}`\n\n"
+            "1. Open Bybit app → Bybit Pay → Send\n"
+            "2. Enter UID above, amount *{amount} USDT*\n"
+            "3. Confirm & send\n\n"
+            "🔒 Payment is auto-detected from your Bybit account and credited instantly.\n"
+            "_No pasting required._"
+        ),
+        "reference": (
+            "🔖 *Optional — YOUR REFERENCE ID:* `{reference_id}`\n"
+            "_Paste it in the Reference field when sending for instant matching. Not required._"
+        ),
+    },
+    "minimal": {
+        "name": "Minimal",
+        "emoji": "⚡",
+        "checkout": (
+            "🟡 *Bybit Pay*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "💰 *{amount} USDT* to `{pay_id}`\n\n"
+            "Send — the bot auto-detects and credits it. ✅"
+        ),
+        "reference": (
+            "🔖 *Reference ID:* `{reference_id}` (optional)"
+        ),
+    },
+}
+
+
+def _bypl_sample_render(layout_key):
+    """Render what the customer would see for a layout (sample values)."""
+    lay = BYBIT_PAY_LAYOUTS.get(layout_key) or BYBIT_PAY_LAYOUTS["simple"]
+    sample = {
+        "order_id": "12345",
+        "amount": "1.00",
+        "pay_id": "503209510",
+        "reference_id": "48271936",
+    }
+    out = lay["checkout"].format(**sample)
+    ref = lay["reference"].format(**sample)
+    return out + "\n\n" + ref
+
+
+async def _show_bybit_pay_layouts(q, sid, context):
+    """Render the Bybit Pay readymade-layouts picker inside the screen editor."""
+    header = (
+        "🎨 *Bybit Pay — Readymade Layouts*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Pick a layout to see how the checkout screen will look,\n"
+        "then *Preview* it and *Apply* it.\n\n"
+        "After applying, every text stays editable in the screen editor."
+    )
+    kb = []
+    for key, lay in BYBIT_PAY_LAYOUTS.items():
+        kb.append([
+            InlineKeyboardButton(f"{lay['emoji']} {lay['name']} Layout",
+                                 callback_data=f"bypl_preview_{key}"),
+            InlineKeyboardButton(f"✅ Apply {lay['name']}",
+                                 callback_data=f"bypl_apply_{key}"),
+        ])
+    kb.append([InlineKeyboardButton("⬆️ Back to Bybit Flow",
+                                    callback_data="se_open_bybit_flow_screen")])
+    kb.append([InlineKeyboardButton("🔙 Back to Manage Buttons",
+                                    callback_data="admin_buttons")])
+    await _safe_edit(q, header, parse_mode="Markdown",
+                     reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def bypl_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Apply a readymade Bybit Pay layout (sets the editable texts)."""
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    key = q.data.replace("bypl_apply_", "")
+    lay = BYBIT_PAY_LAYOUTS.get(key)
+    if not lay:
+        await q.answer("Unknown layout", show_alert=True); return
+    try:
+        from database import set_response
+        set_response("payment_bybit_pay", lay["checkout"])
+        set_response("payment_bybit_pay_reference", lay["reference"])
+    except Exception as e:
+        await q.answer(f"Apply failed: {e}", show_alert=True); return
+    await q.answer(f"✅ {lay['name']} layout applied!", show_alert=True)
+    await _show_bybit_pay_layouts(q, "bybit_pay_layouts", context)
+
+
+async def bypl_preview_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show a preview of the chosen Bybit Pay layout (as the customer sees it)."""
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    key = q.data.replace("bypl_preview_", "")
+    lay = BYBIT_PAY_LAYOUTS.get(key)
+    if not lay:
+        await q.answer("Unknown layout", show_alert=True); return
+    await q.answer(f"Previewing {lay['name']} layout…")
+    sample = _bypl_sample_render(key)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"✅ Apply {lay['name']}", callback_data=f"bypl_apply_{key}")],
+        [InlineKeyboardButton("⬆️ Back to Layouts", callback_data="se_open_bybit_pay_layouts")],
+    ])
+    await _safe_edit(q,
+                     f"👁 *Preview — {lay['name']} Layout*\n"
+                     f"━━━━━━━━━━━━━━━━━━━━\n\n{sample}\n\n"
+                     f"_(Sample values shown; real values come from the order.)_",
+                     parse_mode="Markdown", reply_markup=kb)
+
+
+# ════════════════════════════════════════════════════════════
+# 🎨 v120 — GENERIC READYMADE LAYOUTS for every flow screen
+# ════════════════════════════════════════════════════════════
+# Same preview+apply pattern as the Bybit Pay layouts, but generic:
+# each group defines which response keys it rewrites + the sample
+# values used for previews. Add a group here → it appears in the
+# screen editor automatically.
+SCREEN_LAYOUT_GROUPS = {
+    # ── Binance Pay checkout ──
+    "binance_pay": {
+        "name": "Binance Pay Checkout",
+        "icon": "🔶",
+        "sample": {"order_id": "12345", "title": "Order #12345",
+                   "amount": "1.00", "pay_id": "887012522",
+                   "holder": "Trendbite Services"},
+        "keys": ["payment_binance_pay_orderid"],
+        "layouts": {
+            "simple": {"name": "Simple", "emoji": "🔶", "texts": {
+                "payment_binance_pay_orderid": (
+                    "🔶 *Binance Pay — Checkout*\n━━━━━━━━━━━━━━━━━━━━\n"
+                    "{title}\n💰 Amount: *{amount} USDT*\n📋 Pay ID: `{pay_id}`\n"
+                    "👤 Holder: *{holder}*\n\n"
+                    "1. Open Binance → Pay\n2. Send exactly *{amount} USDT*\n"
+                    "3. Copy the Order ID from your receipt\n4. Paste it here"
+                )}},
+            "pro": {"name": "Pro", "emoji": "🔶", "texts": {
+                "payment_binance_pay_orderid": (
+                    "🔶 *Binance Pay — Secure Checkout*\n━━━━━━━━━━━━━━━━━━━━\n"
+                    "🧾 {title}\n💰 Amount: *{amount} USDT*\n"
+                    "📋 Pay ID: `{pay_id}`\n👤 {holder}\n\n"
+                    "*Steps:*\n1. Open Binance app → Binance Pay\n"
+                    "2. Send *{amount} USDT* to the Pay ID above\n"
+                    "3. After payment, copy the *Order ID*\n"
+                    "4. Paste it here — auto-verified instantly"
+                )}},
+            "minimal": {"name": "Minimal", "emoji": "⚡", "texts": {
+                "payment_binance_pay_orderid": (
+                    "🔶 *Binance Pay*\n━━━━━━━━━━━━━━━━━━━━\n"
+                    "💰 *{amount} USDT* → `{pay_id}`\n\n"
+                    "Send, paste Order ID, done."
+                )}},
+        },
+    },
+    # ── Binance USDT on-chain ──
+    "binance_usdt": {
+        "name": "Binance USDT (on-chain)",
+        "icon": "🪙",
+        "sample": {"method_label": "USDT TRC20", "order_id": "12345",
+                   "amount": "1.00", "network_label": "TRC20",
+                   "address": "TAYv4LPE92rixGsr2sKe3Pz8mGfFU5cDW7"},
+        "keys": ["payment_binance_usdt"],
+        "layouts": {
+            "simple": {"name": "Simple", "emoji": "🪙", "texts": {
+                "payment_binance_usdt": (
+                    "🪙 *{method_label} — Order #{order_id}*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n💰 Amount: *{amount} USDT*\n"
+                    "🌐 Network: *{network_label}*\n\n📥 Send to:\n`{address}`\n\n"
+                    "Send exact amount, then paste the *TXID*."
+                )}},
+            "pro": {"name": "Pro", "emoji": "🪙", "texts": {
+                "payment_binance_usdt": (
+                    "🪙 *{method_label} — Order #{order_id}*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n💰 Amount: *{amount} USDT*\n"
+                    "🌐 Network: *{network_label}*\n\n📥 *Send to address*\n`{address}`\n\n"
+                    "*Important:*\n✅ Coin: USDT\n✅ Network: {network_label}\n"
+                    "❌ Wrong network = lost funds\n\nAfter sending, paste the *TXID*."
+                )}},
+            "minimal": {"name": "Minimal", "emoji": "⚡", "texts": {
+                "payment_binance_usdt": (
+                    "🪙 *{method_label}*\n━━━━━━━━━━━━━━━━━━━━\n"
+                    "💰 *{amount} USDT* ({network_label})\n`{address}`\n\n"
+                    "Send → paste TXID."
+                )}},
+        },
+    },
+    # ── Bybit USDT on-chain ──
+    "bybit_usdt": {
+        "name": "Bybit USDT (on-chain)",
+        "icon": "🟡",
+        "sample": {"method_label": "USDT TRC20", "order_id": "12345",
+                   "amount": "1.00", "network_label": "TRC20",
+                   "address": "TF4dCTJw42VT99NfUg95YNi5yF6uK7P2FG"},
+        "keys": ["payment_bybit_usdt"],
+        "layouts": {
+            "simple": {"name": "Simple", "emoji": "🟡", "texts": {
+                "payment_bybit_usdt": (
+                    "🟡 *{method_label} — Order #{order_id}*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n💰 Amount: *{amount} USDT*\n"
+                    "🌐 Network: *{network_label}*\n\n📥 Send to:\n`{address}`\n\n"
+                    "Send exact amount, then paste the *Transaction Hash*."
+                )}},
+            "pro": {"name": "Pro", "emoji": "🟡", "texts": {
+                "payment_bybit_usdt": (
+                    "🟡 *{method_label} — Order #{order_id}*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n💰 Amount: *{amount} USDT*\n"
+                    "🌐 Network: *{network_label}*\n\n📥 *Send to address*\n`{address}`\n\n"
+                    "*Important:*\n✅ Coin: USDT\n✅ Network: {network_label}\n"
+                    "❌ Wrong network = lost funds\n\nAfter sending, paste the *Transaction Hash*."
+                )}},
+            "minimal": {"name": "Minimal", "emoji": "⚡", "texts": {
+                "payment_bybit_usdt": (
+                    "🟡 *{method_label}*\n━━━━━━━━━━━━━━━━━━━━\n"
+                    "💰 *{amount} USDT* ({network_label})\n`{address}`\n\n"
+                    "Send → paste hash."
+                )}},
+        },
+    },
+    # ── EasyPaisa ──
+    "easypaisa": {
+        "name": "EasyPaisa Payment",
+        "icon": "📱",
+        "sample": {"order_id": "12345", "product": "Product",
+                   "qty_text": "", "amount": "1.00", "pkr": "Rs. 300",
+                   "rs_amount": "300", "number": "923193840214",
+                   "holder": "Zayam Iqbal", "tid": "50568603579"},
+        "keys": ["easypaisa_pay_instructions"],
+        "layouts": {
+            "simple": {"name": "Simple", "emoji": "📱", "texts": {
+                "easypaisa_pay_instructions": (
+                    "📱 *Order #{order_id} — EasyPaisa*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n📦 {product}{qty_text}\n"
+                    "💰 Pay: *Rs.{rs_amount}*\n\n📲 *Send to:* `{number}`\n"
+                    "Name: {holder}\n\n1. Send Rs.{rs_amount}\n"
+                    "2. Enter the Trx ID from SMS below"
+                )}},
+            "pro": {"name": "Pro", "emoji": "📱", "texts": {
+                "easypaisa_pay_instructions": (
+                    "📱 *Order #{order_id} — EasyPaisa Payment*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n📦 {product}{qty_text}\n"
+                    "💰 Amount: *Rs.{rs_amount}*\n\n📲 *Send Rs.{rs_amount} to:*\n"
+                    "  Number: `{number}`\n  Name: {holder}\n\n"
+                    "📝 *Instructions:*\n1. Send exact amount\n"
+                    "2. EasyPaisa sends SMS with Trx ID\n"
+                    "3. Enter the Trx ID below — bot checks itself!"
+                )}},
+            "minimal": {"name": "Minimal", "emoji": "⚡", "texts": {
+                "easypaisa_pay_instructions": (
+                    "📱 *EasyPaisa*\n━━━━━━━━━━━━━━━━━━━━\n"
+                    "Rs.{rs_amount} → `{number}`\n\nSend → enter Trx ID."
+                )}},
+        },
+    },
+    # ── JazzCash ──
+    "jazzcash": {
+        "name": "JazzCash Payment",
+        "icon": "📱",
+        "sample": {"order_id": "12345", "product": "Product",
+                   "qty_text": "", "amount": "1.00", "pkr": "Rs. 300",
+                   "rs_amount": "300", "number": "923193840214",
+                   "holder": "Zayam Iqbal"},
+        "keys": ["jazzcash_pay_instructions"],
+        "layouts": {
+            "simple": {"name": "Simple", "emoji": "📱", "texts": {
+                "jazzcash_pay_instructions": (
+                    "📱 *Order #{order_id} — JazzCash*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n📦 {product}{qty_text}\n"
+                    "💰 Pay: *Rs.{rs_amount}*\n\n📲 *Send to:* `{number}`\n"
+                    "Name: {holder}\n\n1. Send Rs.{rs_amount}\n"
+                    "2. Upload the transaction screenshot"
+                )}},
+            "pro": {"name": "Pro", "emoji": "📱", "texts": {
+                "jazzcash_pay_instructions": (
+                    "📱 *Order #{order_id} — JazzCash Payment*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n📦 {product}{qty_text}\n"
+                    "💰 Amount: *Rs.{rs_amount}*\n\n📲 *Send Rs.{rs_amount} to:*\n"
+                    "  Number: `{number}`\n  Name: {holder}\n\n"
+                    "📸 *Instructions:*\n1. Send via JazzCash\n"
+                    "2. Screenshot 'Transaction Successful'\n"
+                    "3. Upload here — bot verifies automatically"
+                )}},
+            "minimal": {"name": "Minimal", "emoji": "⚡", "texts": {
+                "jazzcash_pay_instructions": (
+                    "📱 *JazzCash*\n━━━━━━━━━━━━━━━━━━━━\n"
+                    "Rs.{rs_amount} → `{number}`\n\nSend → upload screenshot."
+                )}},
+        },
+    },
+    # ── Bybit UID-flow deposit screen (v122) ──
+    "bybit_uid": {
+        "name": "Bybit Deposit (UID flow)",
+        "icon": "💸",
+        "sample": {"store_uid": "503209510", "amount": "1.9700",
+                   "reference_id": "82863628"},
+        "keys": ["bybit_deposit_instructions"],
+        "layouts": {
+            "simple": {"name": "Simple", "emoji": "💸", "texts": {
+                "bybit_deposit_instructions": (
+                    "💸 *Bybit — internal transfer (UID)*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    "1️⃣ Open Bybit ← Bybit Pay ← Send\n"
+                    "2️⃣ Send to UID: `{store_uid}`\n"
+                    "3️⃣ Send USDT exactly: *{amount}*\n"
+                    "✏️ Reference: `{reference_id}`\n\n"
+                    "⚠️ Exact amount = how we recognize you.\n"
+                    "✨ Balance added automatically"
+                )}},
+            "pro": {"name": "Pro", "emoji": "🟡", "texts": {
+                "bybit_deposit_instructions": (
+                    "💸 *Bybit — internal transfer (UID)*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n\n"
+                    "1️⃣ Open the Bybit application ← Bybit Pay ← Send\n\n"
+                    "2️⃣ Send to the UID:\n`{store_uid}`\n\n"
+                    "3️⃣ Send USDT with this amount exactly:\n*{amount}*\n\n"
+                    "✏️ Your reference id: `{reference_id}`\n\n"
+                    "⚠️ The amount must be exactly the same — this is how we recognize your transfer.\n"
+                    "⏰ Valid for: 30 minutes\n"
+                    "✨ The balance is added automatically"
+                )}},
+            "minimal": {"name": "Minimal", "emoji": "⚡", "texts": {
+                "bybit_deposit_instructions": (
+                    "💸 *Bybit Deposit*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "Send *{amount}* USDT → `{store_uid}`\n"
+                    "Ref: `{reference_id}`\n\n"
+                    "Exact amount = auto-credit. ✅"
+                )}},
+        },
+    },
+    # ── Order flow messages ──
+    "order_flow": {
+        "name": "Order Created / Status",
+        "icon": "📜",
+        "sample": {"order_id": "12345", "product": "Product", "price": "1.00",
+                   "amount": "1.00", "reason": "out of stock", "points": "10",
+                   "new_balance": "50"},
+        "keys": ["order_created", "order_cancelled", "order_cancelled_no_reason",
+                 "order_cancelled_with_reason", "order_rejected"],
+        "layouts": {
+            "standard": {"name": "Standard", "emoji": "📜", "texts": {
+                "order_created": "✅ *Order #{order_id} Created!*\n━━━━━━━━━━━━━━━━━━━━\n📦 *{product}* — ${price}",
+                "order_cancelled": "❌ *Order #{order_id} Cancelled.*",
+                "order_cancelled_no_reason": "❌ *Order Cancelled*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 Order: `#{order_id}`\n📌 Product: *{product}*\n💰 Amount: `${amount}`\n\nYour order has been cancelled.",
+                "order_cancelled_with_reason": "❌ *Order Cancelled*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 Order: `#{order_id}`\n📌 Product: *{product}*\n📋 *Reason:* _{reason}_",
+                "order_rejected": "❌ Order #{order_id} was rejected.\nContact support for help.",
+            }},
+            "friendly": {"name": "Friendly", "emoji": "💬", "texts": {
+                "order_created": "🎉 *Order #{order_id} is in!*\n━━━━━━━━━━━━━━━━━━━━\n📦 {product} — ${price}",
+                "order_cancelled": "🙏 *Order #{order_id} cancelled.*\nAnything else we can help with?",
+                "order_cancelled_no_reason": "🙏 *Order Cancelled*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 Order: `#{order_id}`\n📌 Product: *{product}*\n\nIf you already paid, contact support for a refund.",
+                "order_cancelled_with_reason": "🙏 *Order Cancelled*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 Order: `#{order_id}`\n📋 *Reason:* _{reason}_",
+                "order_rejected": "❌ Order #{order_id} could not be processed.\nPlease contact support.",
+            }},
+        },
+    },
+}
+
+
+def _scl_group_has(group_key):
+    return group_key in SCREEN_LAYOUT_GROUPS
+
+
+def _scl_sample_render(group_key, layout_key):
+    """Render what the customer would see for a layout (sample values)."""
+    group = SCREEN_LAYOUT_GROUPS.get(group_key)
+    if not group:
+        return ""
+    lay = group.get("layouts", {}).get(layout_key)
+    if not lay:
+        lay = list(group.get("layouts", {}).values())[0]
+    sample = group.get("sample", {})
+    lines = []
+    for key in group.get("keys", []):
+        txt = lay.get("texts", {}).get(key)
+        if txt:
+            try:
+                lines.append(txt.format(**sample))
+            except Exception:
+                lines.append(txt)
+    return "\n\n".join(lines)
+
+
+async def _show_screen_layouts(q, group_key, context):
+    """Generic readymade-layouts picker for a flow screen group."""
+    group = SCREEN_LAYOUT_GROUPS.get(group_key)
+    if not group:
+        await _safe_edit(q, "❌ Unknown layout group.", reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🌳 Back to Tree", callback_data="se_root")]]))
+        return
+    header = (
+        f"{group['icon']} *{group['name']} — Readymade Layouts*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Pick a layout to preview, then apply.\n"
+        f"_After applying, every text stays editable in the screen editor._"
+    )
+    kb = []
+    for key, lay in group.get("layouts", {}).items():
+        kb.append([
+            InlineKeyboardButton(f"{lay['emoji']} {lay['name']}",
+                                 callback_data=f"scl_preview_{group_key}_{key}"),
+            InlineKeyboardButton(f"✅ Apply {lay['name']}",
+                                 callback_data=f"scl_apply_{group_key}_{key}"),
+        ])
+    kb.append([InlineKeyboardButton("⬆️ Back to Tree", callback_data="se_root")])
+    kb.append([InlineKeyboardButton("🔙 Back to Manage Buttons",
+                                    callback_data="admin_buttons")])
+    await _safe_edit(q, header, parse_mode="Markdown",
+                     reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def scl_apply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Apply a readymade layout for any flow screen group."""
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    data = q.data.replace("scl_apply_", "", 1)
+    parts = data.split("_", 1)
+    group_key = parts[0]
+    layout_key = parts[1] if len(parts) > 1 else ""
+    group = SCREEN_LAYOUT_GROUPS.get(group_key)
+    lay = (group or {}).get("layouts", {}).get(layout_key) if group else None
+    if not group or not lay:
+        await q.answer("Unknown layout", show_alert=True); return
+    try:
+        from database import set_response
+        for key, txt in lay.get("texts", {}).items():
+            set_response(key, txt)
+    except Exception as e:
+        await q.answer(f"Apply failed: {e}", show_alert=True); return
+    await q.answer(f"✅ {lay['name']} layout applied!", show_alert=True)
+    await _show_screen_layouts(q, group_key, context)
+
+
+async def scl_preview_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Preview a readymade layout for any flow screen group."""
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    data = q.data.replace("scl_preview_", "", 1)
+    parts = data.split("_", 1)
+    group_key = parts[0]
+    layout_key = parts[1] if len(parts) > 1 else ""
+    group = SCREEN_LAYOUT_GROUPS.get(group_key)
+    lay = (group or {}).get("layouts", {}).get(layout_key) if group else None
+    if not group or not lay:
+        await q.answer("Unknown layout", show_alert=True); return
+    await q.answer(f"Previewing {lay['name']}…")
+    sample = _scl_sample_render(group_key, layout_key)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"✅ Apply {lay['name']}", callback_data=f"scl_apply_{group_key}_{layout_key}")],
+        [InlineKeyboardButton("⬆️ Back to Layouts", callback_data=f"se_open_{group_key}_layouts")],
+    ])
+    await _safe_edit(q,
+                     f"👁 *Preview — {group['icon']} {group['name']} / {lay['name']}*\n"
+                     f"━━━━━━━━━━━━━━━━━━━━\n\n{sample}\n\n"
+                     f"_(Sample values shown; real values come from the order.)_",
+                     parse_mode="Markdown", reply_markup=kb)

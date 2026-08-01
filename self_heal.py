@@ -261,6 +261,41 @@ def _heal_bybit_instruction_text():
                     c.execute("UPDATE bot_responses SET value=? WHERE key='payment_bybit_pay'", (updated,))
                     cur.commit()
                     _log("Bybit Pay instruction updated to 'Transfer ID' (was old default)")
+            # 🔧 v121: the bot now AUTO-DETECTS Bybit payments — no pasting needed.
+            # Update any old paste-style wording (default OR the common edited
+            # variant "Paste it here in chat") to the new no-paste text.
+            _old_paste_markers = ("Paste the Transfer ID here in chat",
+                                  "Paste it here in chat",
+                                  "Copy the *Transfer ID* from your Bybit receipt")
+            if any(m in val for m in _old_paste_markers):
+                new_default = (
+                    "🟡 *Bybit Pay — Order #{order_id}*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    "💰 Amount: *{amount} USDT*\n"
+                    "📥 Bybit Pay ID / UID: `{pay_id}`\n\n"
+                    "*How to pay:*\n"
+                    "1. Open Bybit app → Bybit Pay → Send\n"
+                    "2. Send exactly *{amount} USDT* to the UID above\n"
+                    "3. Done — that's it! ✅\n\n"
+                    "🤖 Your payment is detected automatically from your Bybit account and credited within seconds.\n"
+                    "_No need to paste any ID or screenshot._"
+                )
+                c.execute("UPDATE bot_responses SET value=? WHERE key='payment_bybit_pay'", (new_default,))
+                cur.commit()
+                _log("Bybit Pay instruction updated to auto-detect wording (no paste)")
+            # Reference line: mark as optional (auto-detect works without it).
+            c.execute("SELECT value FROM bot_responses WHERE key='payment_bybit_pay_reference'")
+            row_ref = c.fetchone()
+            if row_ref:
+                val_ref = str(row_ref[0] or '')
+                if "tap 'Reference' / 'Note' and paste this ID" in val_ref:
+                    new_ref = (
+                        "🔖 *Optional — YOUR REFERENCE ID:* `{reference_id}`\n"
+                        "_Tip: paste it in the 'Reference' field when sending so we can match it instantly. Not required — payment is auto-detected either way._"
+                    )
+                    c.execute("UPDATE bot_responses SET value=? WHERE key='payment_bybit_pay_reference'", (new_ref,))
+                    cur.commit()
+                    _log("Bybit Pay reference line updated to optional wording")
             # Generic "not found" message — same Transfer-ID wording for Bybit.
             c.execute("SELECT value FROM bot_responses WHERE key='payment_not_found_txid'")
             row2 = c.fetchone()

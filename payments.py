@@ -1076,6 +1076,8 @@ def get_bybit_internal_deposits(coin: str = "USDT", lookback_hours: int = 96, li
                 "network": "BYBIT_INTERNAL",
                 "time_ms": int(_ct),
                 "status": status,
+                # 🔧 v122: sender's Bybit UID — used for UID+amount auto-match.
+                "from_member_id": str(row.get("fromMemberId") or ""),
                 "identifiers": [str(x) for x in identifiers if x],
                 "raw": row,
             })

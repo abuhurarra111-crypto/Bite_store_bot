@@ -75,6 +75,57 @@ BUTTONS = {
         "large": "🔄 Transactions", "xl": "🔄 Transaction History — All activity",
         "callback": "transactions",
     },
+    # 🔧 v122: Bybit Pay UID-flow buttons (warning / deposit screen)
+    "bybit_continue": {
+        "group": "pay", "essential": True,
+        "short": "✅", "medium": "✅ Continue",
+        "large": "✅ Continue", "xl": "✅ Continue",
+        "callback": "bybit_warn_ok",
+    },
+    "bybit_cancel_flow": {
+        "group": "pay", "essential": True,
+        "short": "❌", "medium": "❌ Cancel",
+        "large": "❌ Cancel", "xl": "❌ Cancel",
+        "callback": "bybit_warn_cancel",
+    },
+    "bybit_check_payment": {
+        "group": "pay", "essential": True,
+        "short": "🔍", "medium": "🔍 Check payment",
+        "large": "🔍 Check payment", "xl": "🔍 Check payment",
+        "callback": "bybit_check_0",  # replaced per-order at runtime
+    },
+    "bybit_cancel_payment": {
+        "group": "pay", "essential": True,
+        "short": "🚫", "medium": "🚫 Cancel payment",
+        "large": "🚫 Cancel payment", "xl": "🚫 Cancel payment",
+        "callback": "cancel_order",
+    },
+    "bybit_copy_amount": {
+        "group": "pay", "essential": True,
+        "short": "📋", "medium": "📋 Copy amount",
+        "large": "📋 Copy amount", "xl": "📋 Copy amount",
+        "callback": "se_noop",
+    },
+    "bybit_copy_uid": {
+        "group": "pay", "essential": True,
+        "short": "📋", "medium": "📋 Copy UID",
+        "large": "📋 Copy UID", "xl": "📋 Copy UID",
+        "callback": "se_noop",
+    },
+    # 🔧 v119: Bybit Pay copy buttons — editable label (premium emoji) + color.
+    # Built via make_copy_text_button() with copy_text; never rendered by _rb().
+    "pay_copy_reference": {
+        "group": "pay", "essential": True,
+        "short": "🔖", "medium": "🔖 Ref ID",
+        "large": "🔖 Copy Reference ID", "xl": "🔖 Copy Reference ID",
+        "callback": "se_noop",
+    },
+    "pay_copy_bybitpay": {
+        "group": "pay", "essential": True,
+        "short": "📋", "medium": "📋 Pay ID",
+        "large": "📋 Copy Bybit Pay ID", "xl": "📋 Copy Bybit Pay ID",
+        "callback": "se_noop",
+    },
     # 🆕 v75: main_api button REMOVED — API system disabled on Worker deployment.
     # 🆕 v78: main_how_to inline button REMOVED — now on persistent reply
     # keyboard (always visible at bottom of chat next to 🏠 Main Menu).
@@ -2671,6 +2722,33 @@ def make_premium_button(label, *, emoji_id=None, style=None,
         pass
     # Path C: plain fallback
     return InlineKeyboardButton(plain, **kw)
+
+
+def make_copy_text_button(btn_id, copy_value, size=None):
+    """Build an editable copy-text button for payment screens.
+
+    🔧 v119: the Bybit Pay "Copy Reference ID" / "Copy Bybit Pay ID" buttons were
+    hardcoded with fixed text. Now they read the same btn_label_*/btn_style_* settings
+    as every other button, so the admin can rename them (premium emoji included) and
+    pick a background color (blue/green/red) from the screen/button editor.
+
+    Uses make_premium_button() so [[HTML]]<tg-emoji> labels render as premium icons,
+    and resolve_button_style() for the color.
+    """
+    try:
+        from database import get_setting
+        if size is None:
+            size = get_setting("button_size", "large")
+    except Exception:
+        size = size or "large"
+    _alias = {"small": "short", "full": "xl"}
+    size = _alias.get(size, size)
+    label = get_button_label(btn_id, size)
+    if not label:
+        btn = BUTTONS.get(btn_id, {})
+        label = btn.get("medium") or btn.get("large") or "Copy"
+    style = resolve_button_style(btn_id)
+    return make_premium_button(label, copy_text=str(copy_value or ""), style=style)
 
 
 def wrap_button_for_premium_emoji(btn):

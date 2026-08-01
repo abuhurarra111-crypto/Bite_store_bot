@@ -311,6 +311,8 @@ from customization import (
     se_edittext_callback, se_text_received,
     se_preview_callback, se_reset_callback,
     se_noop_callback,
+    bypl_apply_callback, bypl_preview_callback,
+    scl_apply_callback, scl_preview_callback,
 )
 # 🆕 Fake Broadcast & Fake Reviews systems
 # fake_broadcast + fake_reviews panels removed (use Fake Activity instead)
@@ -420,6 +422,11 @@ async def handle_text(update, context):
         if await usdt_txid_received(update, context): return
     if context.user_data.get('bybit_step') == 'waiting_txid':
         if await bybit_txid_received(update, context): return
+    # 🔧 v122: Bybit Pay UID flow text steps
+    if context.user_data.get('bybit_flow_step') == 'waiting_uid':
+        if await bybit_uid_received(update, context): return
+    if context.user_data.get('bybit_flow_step') == 'waiting_amount':
+        if await bybit_amount_received(update, context): return
     if context.user_data.get('ownmail_step') == 'email':
         from handlers_order import ownmail_email_received
         if await ownmail_email_received(update, context): return
@@ -1563,6 +1570,8 @@ def main():
         ("^usdtv_", usdt_verify_callback),
         ("^bybitv_", bybit_verify_callback),
         ("^bybit_manual_confirm_", bybit_manual_confirm_callback),
+        ("^bybit_warn_ok$", bybit_warn_ok_callback),
+        ("^bybit_warn_cancel$", bybit_warn_cancel_callback),
         ("^buy_", buy_callback), ("^pay_binance_", payment_binance_callback),
         ("^pay_easy_", payment_easypaisa_callback), ("^pay_jazz_", payment_jazzcash_callback),
         # 🆕 Buy Multiple (bulk)
@@ -1682,6 +1691,8 @@ def main():
         ("^pay_bybit_", payment_bybit_callback),
         ("^bybitv_", bybit_verify_callback),
         ("^bybit_manual_confirm_", bybit_manual_confirm_callback),
+        ("^bybit_warn_ok$", bybit_warn_ok_callback),
+        ("^bybit_warn_cancel$", bybit_warn_cancel_callback),
         ("^pay_pts_", pay_pts_callback),
         ("^admin_panel$", admin_panel_callback),
         ("^admin_categories$", admin_categories_callback), ("^delcat_", delete_category_callback),
@@ -2080,6 +2091,10 @@ def main():
         # 🆕 v50: Screen-by-Screen Editor (user-side drill-down editor)
         ("^se_root$",           se_root_callback),
         ("^se_open_",           se_open_callback),
+        ("^bypl_apply_",        bypl_apply_callback),
+        ("^bypl_preview_",      bypl_preview_callback),
+        ("^scl_apply_",         scl_apply_callback),
+        ("^scl_preview_",       scl_preview_callback),
         ("^se_edittext_",       se_edittext_callback),
         ("^se_preview_",        se_preview_callback),
         ("^se_reset_",          se_reset_callback),

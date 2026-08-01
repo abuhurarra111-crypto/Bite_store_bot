@@ -670,7 +670,73 @@ DEFAULT_RESPONSES.update({
     "payment_bybit_menu_text": """🟡 *Bybit Payment Methods*\n━━━━━━━━━━━━━━━━━━━━\nChoose how you want to pay via Bybit.\n\n• Bybit Pay — paste Transaction Hash after payment\n• USDT BEP20 — paste Transaction Hash after payment\n• USDT TRC20 — paste Transaction Hash after payment""",
     "payment_binance_pay_orderid": """🔶 *Binance Pay — Checkout*\n━━━━━━━━━━━━━━━━━━━━\n{title}\n💰 Amount: *{amount} USDT*\n📋 Binance Pay ID: `{pay_id}`\n👤 Holder: *{holder}*\n\n*How to pay:*\n1. Open Binance app.\n2. Go to Binance Pay.\n3. Send the exact amount shown above.\n4. After payment, copy the *Order ID* from Binance receipt.\n5. Paste the Order ID here in chat.\n\n⚠️ Send exact amount only. Wrong amount may not verify automatically.""",
     "payment_binance_usdt": """🪙 *Binance {method_label} — Order #{order_id}*\n━━━━━━━━━━━━━━━━━━━━\n💰 Amount: *{amount} USDT*\n🌐 Network: *{network_label}*\n\n📥 *Send to address*\n`{address}`\n\n*Important:*\n✅ Coin must be USDT\n✅ Network must be {network_label}\n✅ Send exact amount\n❌ Do not use another network or coin\n\nAfter payment, paste the *TXID / transaction hash* here.""",
-    "payment_bybit_pay": """🟡 *Bybit Pay — Order #{order_id}*\n━━━━━━━━━━━━━━━━━━━━\n💰 Amount: *{amount} USDT*\n📥 Bybit Pay ID / UID: `{pay_id}`\n\n*How to pay:*\n1. Open Bybit app.\n2. Use Pay / Internal Transfer.\n3. Send exact USDT amount shown above.\n4. Copy the *Transfer ID* from your Bybit receipt (transaction history).\n5. Paste the Transfer ID here in chat.\n\nBot will verify from Bybit deposit records.\n\n⚠️ Internal transfers have a *Transfer ID*, not a blockchain hash — copy the exact ID shown in the Bybit app.""",
+    "payment_bybit_pay": """🟡 *Bybit Pay — Order #{order_id}*\n━━━━━━━━━━━━━━━━━━━━\n💰 Amount: *{amount} USDT*\n📥 Bybit Pay ID / UID: `{pay_id}`\n\n*How to pay:*\n1. Open Bybit app → Bybit Pay → Send\n2. Send exactly *{amount} USDT* to the UID above\n3. Done — that's it! ✅\n\n🤖 Your payment is detected automatically from your Bybit account and credited within seconds.\n_No need to paste any ID or screenshot._""",
+    "payment_bybit_pay_reference": """🔖 *Optional — YOUR REFERENCE ID:* `{reference_id}`\n_Tip: paste it in the 'Reference' field when sending so we can match it instantly. Not required — payment is auto-detected either way._""",
     "payment_bybit_usdt": """🟡 *{method_label} — Order #{order_id}*\n━━━━━━━━━━━━━━━━━━━━\n💰 Amount: *{amount} USDT*\n🌐 Network: *{network_label}*\n\n📥 *Send to address*\n`{address}`\n\n*Important:*\n✅ Coin must be USDT\n✅ Network must be {network_label}\n✅ Send exact amount\n❌ Wrong network/address will not verify\n\nAfter payment, paste the *Transaction Hash* here.""",
     "payment_not_found_txid": """⏳ *Transaction Not Found Yet*\n━━━━━━━━━━━━━━━━━━━━\nIf you already paid, wait a moment and paste the correct Transaction / Transfer ID again.\n\nPlease make sure:\n• amount is exact\n• correct network/payment method was used\n• the ID matches the one in your Bybit receipt\n\nIf it still doesn't verify, contact support — the store will check manually.""",
+})
+
+
+# 🔧 v122: Bybit Pay new UID-flow screens (auto-match by UID + unique amount)
+DEFAULT_RESPONSES.update({
+    "bybit_warning_text": (
+        "⚠️ *Before you transfer — read carefully*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🔢 *Copy the full amount with all decimals* (e.g. 5.0087)\n\n"
+        "💯 *Send the exact same amount shown in the Bybit app*\n\n"
+        "🧾 The amount we receive must match exactly — decimals included\n\n"
+        "❗️ Any small difference in the decimals = the bot won't detect your transfer.\n\n"
+        "_Tap Continue to proceed, or Cancel to go back._"
+    ),
+    "bybit_uid_prompt": (
+        "🆔 *Enter your Bybit UID*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Find it in: Bybit app → your Profile (next to your name).\n\n"
+        "Digits only, e.g. `543120799`\n\n"
+        "_We need it to detect your transfer automatically._"
+    ),
+    "bybit_uid_invalid": (
+        "❌ *Invalid Bybit UID*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Your Bybit UID is numbers only (e.g. `543120799`).\n\n"
+        "Please send it again — find it in Bybit app → Profile."
+    ),
+    "bybit_amount_prompt": (
+        "🟡 *Deposit via Bybit — UID*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "💡 *Send the USD amount you want to deposit:*\n\n"
+        "📌 Examples: 5 / 10 / 25 / 50\n"
+        "⚠️ Minimum: $1\n\n"
+        "_Type the amount (numbers only)._\n"
+        "Your *exact unique payment amount* will be shown next."
+    ),
+    "bybit_amount_invalid": (
+        "❌ *Invalid amount*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Please enter a number, e.g. `1`, `5`, `10`.\n"
+        "Minimum: $1"
+    ),
+    "bybit_deposit_instructions": (
+        "💸 *Bybit — internal transfer (UID)*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "1️⃣ Open the Bybit application ← Bybit Pay ← Send\n\n"
+        "2️⃣ Send to the UID:\n`{store_uid}`\n\n"
+        "3️⃣ Send USDT with this amount exactly:\n*{amount}*\n\n"
+        "✏️ Your reference id: `{reference_id}`\n\n"
+        "⚠️ The amount must be exactly the same — this is how we recognize your transfer.\n"
+        "⏰ Valid for: 30 minutes\n"
+        "✨ The balance is added automatically"
+    ),
+    "bybit_check_payment_ok": (
+        "✅ *Bybit Payment Verified!*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Amount: *{amount} USDT*\n"
+        "Sender UID: `{uid}`\n\n"
+        "Your balance has been added."
+    ),
+    "bybit_cancelled": (
+        "❌ *Bybit payment cancelled.*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Your order was cancelled. No amount was charged."
+    ),
 })
