@@ -21,7 +21,6 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton
 from config import *
 from database import *
 from keyboards import *
-from customization import play_transition
 from utils import escape_md, format_pkr, nav_push, build_manual_order_whatsapp_url, get_product_mode_tag, smart_text_and_mode, contains_premium_markup, fmt_price, points_from_usd, fmt_points
 import re
 import os
@@ -3557,7 +3556,6 @@ async def handle_screenshot(update, context):
 # 📜 MY ORDERS (Product History)
 # ════════════════════════════════════════════
 async def my_orders_callback(update, context):
-    await play_transition(q, 'orders')
     q = update.callback_query; await q.answer()
     nav_push(context, 'my_orders')
     orders = get_user_product_orders(q.from_user.id)

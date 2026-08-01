@@ -308,14 +308,12 @@ from handlers_referral_admin import (
 # 🆕 v50: Screen-by-Screen Editor (drill-down user-side editor)
 from customization import (
     se_root_callback, se_open_callback,
+    se_btns_callback, se_sub_callback, se_subbtn_callback,
     se_edittext_callback, se_text_received,
     se_preview_callback, se_reset_callback,
     se_noop_callback,
     bypl_apply_callback, bypl_preview_callback,
     scl_apply_callback, scl_preview_callback,
-    admin_animations_callback, anim_toggle_callback,
-    anim_style_pick_callback, anim_style_set_callback,
-    anim_loc_pick_callback, anim_loc_style_callback,
 )
 # 🆕 Fake Broadcast & Fake Reviews systems
 # fake_broadcast + fake_reviews panels removed (use Fake Activity instead)
@@ -1814,12 +1812,6 @@ def main():
         ("^profit_all$", profit_all_callback),
         # 🆕 Customization handlers
         ("^admin_customization$", admin_customization_callback),
-        ("^admin_animations$", admin_animations_callback),
-        ("^anim_toggle$", anim_toggle_callback),
-        ("^anim_style_pick_", anim_style_pick_callback),
-        ("^anim_style_set_", anim_style_set_callback),
-        ("^anim_loc_pick$", anim_loc_pick_callback),
-        ("^anim_loc_style_", anim_loc_style_callback),
         ("^admin_toggles$", admin_toggles_callback),
         ("^toggle_show_", toggle_field_callback),
         ("^toggle_auto_product_colors$", toggle_field_callback),
@@ -2142,6 +2134,9 @@ def main():
         # 🆕 v50: Screen-by-Screen Editor (user-side drill-down editor)
         ("^se_root$",           se_root_callback),
         ("^se_open_",           se_open_callback),
+        ("^se_btns_",           se_btns_callback),
+        ("^se_sub_",            se_sub_callback),
+        ("^se_subbtn_",         se_subbtn_callback),
         ("^bypl_apply_",        bypl_apply_callback),
         ("^bypl_preview_",      bypl_preview_callback),
         ("^scl_apply_",         scl_apply_callback),

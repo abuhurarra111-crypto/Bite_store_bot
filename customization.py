@@ -1996,17 +1996,81 @@ def _short_preview(s, n=50):
 # 1. ENTRY: from Manage Buttons → 🌳 Screen-by-Screen Editor
 # ════════════════════════════════════════════════════════════════
 
+# ── v130: NEW recursive screen editor ─────────────────────────
+# Structure (user-specified):
+#   Root → list of main screens
+#   Tap screen → 2 options: [🎛️ Button Editor] [📂 Sub Menu]
+#   Button Editor → per-button: rename / color / premium emoji / hide / reset / size
+#   Sub Menu → renders the REAL screen; tapping any button → same 2 options
+#   (recursive drill-down)
+
+MAIN_SCREENS = [
+    ("main_menu", "🏠 Main Menu"),
+    ("shop_screen", "🛒 Shop"),
+    ("product_detail_screen", "📦 Product Detail"),
+    ("confirm_purchase_screen", "🛒 Confirm Purchase"),
+    ("buy_points_screen", "💎 Buy Points"),
+    ("buy_points_payment_screen", "💎 Buy Points — Payment"),
+    ("my_account_screen", "📊 My Account"),
+    ("my_orders_screen", "📜 My Orders"),
+    ("my_transactions_screen", "💱 Transactions"),
+    ("referral_screen", "🎁 Referrals"),
+    ("support_screen", "📞 Support"),
+    ("warranty_screen", "🛡️ Warranty"),
+    ("reviews_screen", "⭐ Reviews"),
+    ("loyalty_screen", "🏆 Loyalty"),
+    ("language_screen", "🌐 Language"),
+    ("freeclaim_screens", "🎁 Free Claim"),
+    ("terms_screen", "📜 Terms"),
+    # Payment flows
+    ("binance_flow_screen", "🔶 Binance Flow"),
+    ("bybit_flow_screen", "🟡 Bybit Flow"),
+    ("crypto_usdt_flow_screen", "🪙 Crypto USDT"),
+    ("easypaisa_flow_screen", "📱 EasyPaisa Flow"),
+    ("jazzcash_flow_screen", "📱 JazzCash Flow"),
+    ("order_created_screen", "📜 Order Created/Status"),
+    ("error_messages_screen", "❌ Error Messages"),
+]
+
+# Map a registry button id → the screen it opens (for Sub Menu recursion).
+BTN_TARGET_SCREEN = {
+    "main_shop": "shop_screen", "main_points": "buy_points_screen",
+    "main_account": "my_account_screen", "main_orders": "my_orders_screen",
+    "main_transactions": "my_transactions_screen", "main_support": "support_screen",
+    "main_referral": "referral_screen", "main_price_list": "shop_screen",
+    "main_loyalty": "loyalty_screen", "main_language": "language_screen",
+    "main_reviews": "reviews_screen", "main_warranty": "warranty_screen",
+    "pay_binance": "binance_flow_screen", "pay_usdt_trc20": "crypto_usdt_flow_screen",
+    "pay_usdt_bep20": "crypto_usdt_flow_screen", "pay_bybit_pay": "bybit_flow_screen",
+    "pay_bybit_usdt_trc20": "bybit_flow_screen", "pay_bybit_usdt_bep20": "bybit_flow_screen",
+    "pay_easypaisa": "easypaisa_flow_screen", "pay_jazzcash": "jazzcash_flow_screen",
+    "pay_pts": "buy_points_payment_screen",
+}
+
+
 async def se_root_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Open the screen editor at the root (main_menu)."""
+    """📋 Screen Editor root — list of main screens."""
     q = update.callback_query
     if not _is_admin(q.from_user.id):
         await q.answer("❌", show_alert=True); return
     await q.answer()
-    await _show_screen(q, ROOT_SCREEN, context)
+    header = (
+        "📋 *Screen-by-Screen Editor*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Pick a screen. Each screen gives you:\n"
+        "🎛️ *Button Editor* — rename / color / premium emoji / hide / reset\n"
+        "📂 *Sub Menu* — see the real screen; tap any button to keep editing\n\n"
+        "_Tap a screen below:_"
+    )
+    kb = []
+    for sid, label in MAIN_SCREENS:
+        kb.append([InlineKeyboardButton(label, callback_data=f"se_open_{sid}")])
+    kb.append([InlineKeyboardButton("🔙 Back to Manage Buttons", callback_data="admin_buttons")])
+    await _safe_edit(q, header, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 
 async def se_open_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Drill into a specific screen by id. Callback: se_open_<screen_id>"""
+    """Screen panel — [🎛️ Button Editor] [📂 Sub Menu] + editable texts."""
     q = update.callback_query
     if not _is_admin(q.from_user.id):
         await q.answer("❌", show_alert=True); return
@@ -2016,9 +2080,52 @@ async def se_open_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _safe_edit(q, f"❌ Unknown screen: `{sid}`",
                          parse_mode="Markdown",
                          reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
-                             "🌳 Back to Tree", callback_data="se_root")]]))
+                             "📋 Back to Screens", callback_data="se_root")]]))
         return
-    await _show_screen(q, sid, context)
+    # Layout screens open their picker directly
+    if sid.endswith("_layouts"):
+        _lm = {
+            "bybit_pay_layouts": "bybit_pay",
+            "bybit_usdt_flow_layouts": "bybit_usdt_flow",
+            "bybit_uid_layouts": "bybit_uid",
+            "binance_pay_layouts": "binance_pay",
+            "binance_usdt_layouts": "binance_usdt",
+            "easypaisa_layouts": "easypaisa",
+            "jazzcash_layouts": "jazzcash",
+            "order_flow_layouts": "order_flow",
+        }
+        if sid in _lm:
+            await _show_screen_layouts(q, _lm[sid], context)
+            return
+    await _show_screen_editor(q, sid, context)
+
+
+async def _show_screen_editor(q, sid, context):
+    """Render the 2-option panel for a screen."""
+    node = get_screen(sid) or {}
+    icon = node.get("icon", "📄")
+    title = node.get("title", sid)
+    desc = node.get("description", "")
+    n_btns = len(node.get("buttons", []) or [])
+    n_texts = len(node.get("texts", []) or [])
+    text = (
+        f"{icon} *{escape_md(title)}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        + (f"_{escape_md(desc)}_\n\n" if desc else "\n")
+        + f"🎛️ Buttons: *{n_btns}*  ·  📝 Texts: *{n_texts}*\n\n"
+        f"_Choose what you want to edit:_"
+    )
+    kb = [
+        [InlineKeyboardButton("🎛️ Button Editor", callback_data=f"se_btns_{sid}"),
+         InlineKeyboardButton("📂 Sub Menu", callback_data=f"se_sub_{sid}")],
+    ]
+    # 🎨 v130: keep readymade layouts reachable from flow screens (children)
+    for ch in (node.get("children", []) or []):
+        if str(ch).endswith("_layouts") and is_valid_screen(ch):
+            kb.insert(0, [InlineKeyboardButton("🎨 Readymade Layouts", callback_data=f"se_open_{ch}")])
+            break
+    kb.append([InlineKeyboardButton("📋 Back to Screens", callback_data="se_root")])
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 
 # ════════════════════════════════════════════════════════════════
@@ -3785,253 +3892,122 @@ async def scl_preview_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                      parse_mode="Markdown", reply_markup=kb)
 
 
+
+
 # ════════════════════════════════════════════════════════════
-# 🎬 v129 — FULL BOT ANIMATIONS (admin panel)
+# 🎛️ v130 — BUTTON EDITOR + SUB MENU (recursive)
 # ════════════════════════════════════════════════════════════
 
-async def admin_animations_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """🎬 Animations master panel."""
+async def se_btns_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🎛️ Button Editor — list buttons of a screen; tap → full edit panel."""
     q = update.callback_query
     if not _is_admin(q.from_user.id):
         await q.answer("❌", show_alert=True); return
     await q.answer()
-    try:
-        from animations import anim_enabled, anim_style_for, ANIM_STYLE_LABELS, list_locations
-    except Exception:
-        await _safe_edit(q, "❌ animations module missing.", reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🔙 Back", callback_data="admin_customization")]]))
+    sid = q.data.replace("se_btns_", "", 1)
+    node = get_screen(sid) or {}
+    buttons = node.get("buttons", []) or []
+    title = node.get("title", sid)
+    if not buttons:
+        await _safe_edit(q, f"🎛️ *Button Editor — {escape_md(title)}*\n━━━━━━━━━━━━━━━━━━━━\n\n_No buttons on this screen._",
+                         parse_mode="Markdown",
+                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"se_open_{sid}")]]))
         return
-    on = anim_enabled()
-    gstyle = anim_style_for("global")
-    status = "🟢 ON" if on else "🔴 OFF"
     text = (
-        f"🎬 *Bot Animations*\n"
+        f"🎛️ *Button Editor — {escape_md(title)}*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Status: {status}\n"
-        f"Global style: {ANIM_STYLE_LABELS.get(gstyle, gstyle)}\n\n"
-        f"_When ON, Telegram Premium animated emojis appear at the top of "
-        f"each screen. Non-premium users see the fallback emoji (no error)._\n\n"
-        f"Set a *global style*, then optionally per-location styles below."
+        f"Tap a button to edit it:\n"
+        f"(rename + premium emoji · color · hide/show · reset)"
     )
-    kb = [
-        [InlineKeyboardButton(f"{'🔴 Turn ON' if not on else '🟢 Turn OFF'}",
-                              callback_data="anim_toggle")],
-        [InlineKeyboardButton("🎨 Global Style", callback_data="anim_style_pick_global")],
-        [InlineKeyboardButton("📍 Per-Location Styles", callback_data="anim_loc_pick")],
-        [InlineKeyboardButton("🔙 Back to Customization", callback_data="admin_customization")],
-    ]
+    kb = []
+    for b in buttons:
+        bid = b.get("id")
+        kind = b.get("kind", "registry")
+        lbl = _button_friendly_label(bid, kind)
+        cb = _button_callback_for(bid, kind)  # mbedit_<bid> (full panel) or bs_edit_<key>
+        if cb:
+            kb.append([InlineKeyboardButton(lbl, callback_data=cb)])
+    kb.append([InlineKeyboardButton("🔙 Back to Screen", callback_data=f"se_open_{sid}")])
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 
-async def anim_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def se_sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """📂 Sub Menu — render the REAL screen; each button taps back into the editor."""
     q = update.callback_query
     if not _is_admin(q.from_user.id):
         await q.answer("❌", show_alert=True); return
-    try:
-        from animations import anim_enabled, set_anim_enabled
-    except Exception:
-        await q.answer("module missing", show_alert=True); return
-    set_anim_enabled(not anim_enabled())
-    await q.answer("Toggled")
-    await admin_animations_callback(update, context)
+    await q.answer()
+    sid = q.data.replace("se_sub_", "", 1)
+    node = get_screen(sid) or {}
+    buttons = node.get("buttons", []) or []
+    title = node.get("title", sid)
+    icon = node.get("icon", "📄")
+    texts = node.get("texts", []) or []
 
+    # Header = screen title; also list first editable text as the screen body
+    body = f"{icon} *{escape_md(title)}*"
+    if texts:
+        try:
+            from database import get_response_with_auto_register
+            from config import DEFAULT_RESPONSES
+            rk = texts[0][0]
+            t = get_response_with_auto_register(rk, DEFAULT_RESPONSES.get(rk, ""))
+            body += "\n\n" + t[:300]
+        except Exception:
+            pass
 
-async def anim_style_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Global style picker."""
-    q = update.callback_query
-    if not _is_admin(q.from_user.id):
-        await q.answer("❌", show_alert=True); return
-    try:
-        from animations import ANIM_STYLES, ANIM_STYLE_LABELS
-    except Exception:
-        await q.answer("module missing", show_alert=True); return
     kb = []
-    for key, label in ANIM_STYLE_LABELS.items():
-        mark = " ".join(ANIM_STYLES.get(key, [])) if key != "none" else "🚫"
-        kb.append([InlineKeyboardButton(f"{mark} {label}", callback_data=f"anim_style_set_global_{key}")])
-    kb.append([InlineKeyboardButton("🔙 Back to Animations", callback_data="admin_animations")])
-    await _safe_edit(q, "🎨 *Global Animation Style*\n━━━━━━━━━━━━━━━━━━━━\n\nPick a style:",
-                     parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    if not buttons:
+        kb.append([InlineKeyboardButton("(no buttons)", callback_data="se_noop")])
+    for b in buttons:
+        bid = b.get("id")
+        kind = b.get("kind", "registry")
+        # Real-looking button: styled label (rename + premium emoji) + color,
+        # but callback goes back into the editor (recursion).
+        try:
+            from button_system import get_button_label, resolve_button_style, make_premium_button
+            from database import get_setting as _gs
+            size = _gs("button_size", "large")
+            _alias = {"small": "short", "full": "xl"}
+            size = _alias.get(size, size)
+            label = get_button_label(bid, size)
+            if not label:
+                label = bid
+            style = resolve_button_style(bid)
+            btn = make_premium_button(label, callback_data=f"se_subbtn_{sid}_{bid}", style=style)
+        except Exception:
+            btn = InlineKeyboardButton(str(bid), callback_data=f"se_subbtn_{sid}_{bid}")
+        kb.append([btn])
+    kb.append([InlineKeyboardButton("🔙 Back to Screen", callback_data=f"se_open_{sid}")])
+    await _safe_edit(q, body, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 
-async def anim_style_set_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def se_subbtn_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """A button tapped inside Sub Menu → 2 options for the screen it opens."""
     q = update.callback_query
     if not _is_admin(q.from_user.id):
         await q.answer("❌", show_alert=True); return
-    try:
-        from animations import set_anim_style, ANIM_STYLE_LABELS
-    except Exception:
-        await q.answer("module missing", show_alert=True); return
-    raw = q.data.replace("anim_style_set_", "", 1)
-    loc, style = raw.rsplit("_", 1)
-    set_anim_style(loc, style)
-    await q.answer(f"Style set: {ANIM_STYLE_LABELS.get(style, style)}")
-    if loc == "global":
-        await admin_animations_callback(update, context)
-    else:
-        await anim_loc_pick_callback(update, context)
-
-
-async def anim_loc_pick_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Pick a location to set its animation style."""
-    q = update.callback_query
-    if not _is_admin(q.from_user.id):
-        await q.answer("❌", show_alert=True); return
-    try:
-        from animations import list_locations, anim_style_for, ANIM_STYLE_LABELS
-    except Exception:
-        await q.answer("module missing", show_alert=True); return
-    kb = []
-    for loc in list_locations():
-        cur = anim_style_for(loc)
-        lbl = ANIM_STYLE_LABELS.get(cur, cur)
-        kb.append([InlineKeyboardButton(f"📍 {loc}  ({lbl})", callback_data=f"anim_loc_style_{loc}")])
-    kb.append([InlineKeyboardButton("🔙 Back to Animations", callback_data="admin_animations")])
-    await _safe_edit(q, "📍 *Per-Location Animations*\n━━━━━━━━━━━━━━━━━━━━\n\nTap a location to choose its style:",
-                     parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-
-
-async def anim_loc_style_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Style picker for a specific location."""
-    q = update.callback_query
-    if not _is_admin(q.from_user.id):
-        await q.answer("❌", show_alert=True); return
-    loc = q.data.replace("anim_loc_style_", "", 1)
-    try:
-        from animations import ANIM_STYLES, ANIM_STYLE_LABELS
-    except Exception:
-        await q.answer("module missing", show_alert=True); return
-    kb = []
-    for key, label in ANIM_STYLE_LABELS.items():
-        mark = " ".join(ANIM_STYLES.get(key, [])) if key != "none" else "🚫"
-        kb.append([InlineKeyboardButton(f"{mark} {label}", callback_data=f"anim_style_set_{loc}_{key}")])
-    kb.append([InlineKeyboardButton("🔙 Back to Locations", callback_data="anim_loc_pick")])
-    await _safe_edit(q, f"🎬 *Style for: {loc}*\n━━━━━━━━━━━━━━━━━━━━\n\nPick a style:",
-                     parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-
-
-# ════════════════════════════════════════════════════════════
-# 🎬 v129 — FRAME-BASED NAVIGATION ANIMATIONS (merged into customization)
-
-    try:
-        frames = anim_frames_for(location)
-        if not frames:
-            return
-        for f in frames[:-1]:
-            try:
-                await q.edit_message_text(f"{f} {suffix}")
-            except Exception:
-                break  # message no longer editable / stale — stop cleanly
-            await asyncio.sleep(_FRAME_DELAY)
-    except Exception as e:
-        logger.debug(f"[Anim] transition failed for {location}: {e}")
-
-
-def list_locations() -> list:
-    return ANIM_LOCATIONS
-
-
-# ════════════════════════════════════════════════════════════
-# 🎬 v129 — FRAME-BASED NAVIGATION ANIMATIONS (merged into customization)
-# ════════════════════════════════════════════════════════════
-import asyncio as _anim_asyncio
-import logging as _anim_logging
-
-_anim_logger = _anim_logging.getLogger(__name__)
-
-ANIM_STYLES = {
-    "spinner": ["◐", "◓", "◑", "◒", "◐"],
-    "pulse": ["●", "◉", "◎", "◉", "●"],
-    "arrows": ["←", "↔", "→", "↔", "←"],
-    "dots": ["●○○", "◐○○", "○◐○", "○○◐", "○○●"],
-    "flash": ["✨", "💫", "✨", "💫", "✨"],
-    "bounce": ["🔄", "⏳", "🔄", "⏳", "🔄"],
-    "zoom": ["＋", "✛", "✚", "✛", "＋"],
-    "none": [],
-}
-
-ANIM_STYLE_LABELS = {
-    "spinner": "◐ Spinner",
-    "pulse": "● Pulse",
-    "arrows": "←→ Arrows",
-    "dots": "●○○ Dots",
-    "flash": "✨ Flash",
-    "bounce": "🔄 Bounce",
-    "zoom": "＋ Zoom",
-    "none": "🚫 Off",
-}
-
-_FRAME_DELAY = 0.12
-ANIM_LOCATIONS = ["main_menu", "shop", "buy_points", "account", "orders",
-                  "transactions", "support", "referrals", "warranty",
-                  "reviews", "loyalty", "language", "settings", "admin",
-                  "bybit", "payment", "success", "back", "product"]
-
-
-def anim_enabled() -> bool:
-    try:
-        from database import get_setting
-        return get_setting("anim_enabled", "0") == "1"
-    except Exception:
-        return False
-
-
-def set_anim_enabled(on: bool):
-    try:
-        from database import set_setting
-        set_setting("anim_enabled", "1" if on else "0")
-    except Exception:
-        pass
-
-
-def anim_style_for(location: str) -> str:
-    try:
-        from database import get_setting
-        loc_key = get_setting(f"anim_loc_{location}", "")
-        if loc_key and loc_key in ANIM_STYLES:
-            return loc_key
-        g = get_setting("anim_style", "spinner")
-        return g if g in ANIM_STYLES else "spinner"
-    except Exception:
-        return "spinner"
-
-
-def set_anim_style(location: str, style: str):
-    try:
-        from database import set_setting
-        if location in ("global", ""):
-            set_setting("anim_style", style if style in ANIM_STYLES else "none")
-        else:
-            set_setting(f"anim_loc_{location}", style if style in ANIM_STYLES else "")
-    except Exception:
-        pass
-
-
-def anim_frames_for(location: str) -> list:
-    try:
-        if not anim_enabled():
-            return []
-        style = anim_style_for(location)
-        return list(ANIM_STYLES.get(style, []))
-    except Exception:
-        return []
-
-
-async def play_transition(q, location: str, suffix: str = "…"):
-    """Play a short frame-based transition on the tapped message."""
-    try:
-        frames = anim_frames_for(location)
-        if not frames:
-            return
-        for f in frames[:-1]:
-            try:
-                await q.edit_message_text(f"{f} {suffix}")
-            except Exception:
-                break
-            await _anim_asyncio.sleep(_FRAME_DELAY)
-    except Exception as e:
-        _anim_logger.debug(f"[Anim] transition failed for {location}: {e}")
-
-
-def list_locations() -> list:
-    return ANIM_LOCATIONS
+    await q.answer()
+    raw = q.data.replace("se_subbtn_", "", 1)
+    # format: <current_sid>_<bid> — bid may contain underscores, so split on LAST _
+    *sid_parts, bid = raw.rsplit("_", 1)
+    cur_sid = "_".join(sid_parts)
+    target = BTN_TARGET_SCREEN.get(bid, cur_sid)
+    if not is_valid_screen(target):
+        target = cur_sid
+    node = get_screen(target) or {}
+    t_icon = node.get("icon", "📄")
+    t_title = node.get("title", target)
+    text = (
+        f"{t_icon} *{escape_md(t_title)}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"_Button `{escape_md(bid)}` opens this screen._\n\n"
+        f"Choose what to edit:"
+    )
+    kb = [
+        [InlineKeyboardButton("🎛️ Button Editor", callback_data=f"se_btns_{target}"),
+         InlineKeyboardButton("📂 Sub Menu", callback_data=f"se_sub_{target}")],
+        [InlineKeyboardButton("🔙 Back to Sub Menu", callback_data=f"se_sub_{cur_sid}")],
+        [InlineKeyboardButton("📋 Back to Screens", callback_data="se_root")],
+    ]
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))

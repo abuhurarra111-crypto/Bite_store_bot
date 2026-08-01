@@ -8,6 +8,54 @@
 
 ---
 
+# 🚀 v130 (2026-08-01) — Animations REMOVED + new recursive screen-by-screen editor
+
+**User request:** remove the animation feature; rework the screen editor to:
+Root → list of main screens → tap a screen → [🎛️ Button Editor] [📂 Sub Menu] →
+Button Editor = per-button rename / color (blue-green-red) / premium emoji / hide / reset;
+Sub Menu = the real screen; tap any button → same 2 options (recursive drill-down).
+
+## ✅ 1. Animations fully removed
+- Deleted `animations.py` (was merged into customization.py); removed `play_transition`
+  calls from all navigation handlers (start/shop/order/support), the admin panel callbacks,
+  the bot.py registrations, and the 🎬 button from the Customization menu. Zero references
+  remain. Telegram bot API can't do true slide/carousel transitions anyway — removed cleanly.
+
+## ✅ 2. New recursive screen editor (v130)
+- `se_root` → lists **24 main screens** (Main Menu, Shop, Product Detail, Buy Points,
+  Account, Orders, Transactions, Referrals, Support, Warranty, Reviews, Loyalty, Language,
+  Free Claim, Terms, Binance/Bybit/Crypto/EasyPaisa/JazzCash flows, Order flow, Errors).
+- `se_open_<sid>` → **2 options**: 🎛️ Button Editor · 📂 Sub Menu (+ shows button/text counts,
+  and a 🎨 Readymade Layouts button when the screen has layout children).
+- 🎛️ **Button Editor** (`se_btns_<sid>`) → lists that screen's buttons → tap → the full
+  per-button panel (rename per size with premium emoji, background color blue/green/red,
+  hide/show, reset) — reuses the proven `mbedit_` panel.
+- 📂 **Sub Menu** (`se_sub_<sid>`) → renders the REAL screen with REAL styled buttons
+  (current labels + premium emoji + colors); tapping any button → `se_subbtn_` shows the
+  same 2 options for the screen that button opens (via `BTN_TARGET_SCREEN` map) — fully
+  recursive drill-down, exactly as requested.
+- Readymade layouts still reachable (flow screens show a 🎨 Readymade Layouts button).
+
+## Tests (v130)
+`_test_v130_editor.py` — **8/8 PASS**: no anim functions / no play_transition / no Animations
+button ✅ · 24 main screens defined + all valid ✅ · button→screen map ✅ · new callbacks
+registered ✅ · editor offers Button Editor + Sub Menu ✅.
+
+Regression: v129 4 + v127 3 + v126 3 + v125 8 + v124 4 + v123 12 + v122 13 + v120 7 + v119 14
++ v118 8 + v117 4 + v116 6 + v114 9 + v112 15 + v111 17 = **142/142 PASS**. Boot clean.
+
+## 🔧 Files changed
+- `customization.py` — removed animations; new `MAIN_SCREENS`, `BTN_TARGET_SCREEN`,
+  `se_root_callback`, `se_open_callback`, `_show_screen_editor`, `se_btns_callback`,
+  `se_sub_callback`, `se_subbtn_callback`; layouts wiring preserved.
+- `handlers_start.py`, `handlers_shop.py`, `handlers_order.py`, `handlers_support.py` —
+  play_transition calls + imports removed.
+- `keyboards.py` — Animations button removed.
+- `bot.py` — anim registrations removed; se_btns_/se_sub_/se_subbtn_ added.
+- `CHANGELOG.md` — this section.
+
+---
+
 # 🚀 v129 (2026-08-01) — Binance USDT TXID-only + Bybit amount-only + no double-ask + frame animations
 
 **User request (combined):**
