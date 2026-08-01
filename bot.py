@@ -344,6 +344,41 @@ async def _flush_tier_notifications(context):
         pass
 
 
+async def payment_flow_text_handler(update, context):
+    """🔧 v124 CRITICAL FIX: payment text inputs must NEVER be swallowed by a
+    stale ConversationHandler (support ticket / warranty / admin chat states are
+    allow_reentry=True with NO timeout — a user who started and abandoned one
+    stays 'in conversation' forever, so their later text (e.g. a Bybit amount)
+    was claimed by that conversation and the bot appeared STUCK).
+
+    This handler is registered in a NEGATIVE group (before all conversations)
+    and only consumes text when a payment-flow step is actually active; otherwise
+    it returns None and the update flows on to normal handlers.
+    """
+    ud = context.user_data
+    # Bybit Pay UID flow
+    if ud.get('bybit_flow_step') == 'waiting_uid':
+        if await bybit_uid_received(update, context): return True
+    if ud.get('bybit_flow_step') == 'waiting_amount':
+        if await bybit_amount_received(update, context): return True
+    # Bybit USDT flow
+    if ud.get('bybit_usdt_step') == 'waiting_amount':
+        if await bybit_usdt_amount_received(update, context): return True
+    # TXID / TID pastes (crypto + EP/JC + points custom)
+    if ud.get('usdt_step') == 'waiting_txid':
+        if await usdt_txid_received(update, context): return True
+    if ud.get('bybit_step') == 'waiting_txid':
+        if await bybit_txid_received(update, context): return True
+    if ud.get('ep_step') == 'waiting_tid':
+        if await ep_tid_received(update, context): return True
+    if ud.get('jc_step') == 'waiting_tid':
+        if await jc_tid_received(update, context): return True
+    if ud.get('points_step') == 'waiting_custom_amount':
+        if await points_custom_amount_received(update, context): return True
+    # Not a payment-flow step — let other handlers process it
+    return None
+
+
 async def handle_text(update, context):
     t = update.message.text
     # v132: global premium-emoji capture foundation. Any future text-input
@@ -1114,7 +1149,7 @@ def main():
 
     # ── Conversations ──
     # 1. Add Category
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(add_category_callback, pattern="^add_category$")],
         states={
             CAT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, cat_name_received)],
@@ -1126,7 +1161,7 @@ def main():
     ))
 
     # 2. Add Product (10 steps including photo, warranty, quantity)
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(add_product_callback, pattern="^add_product$")],
         states={
             PROD_CAT: [CallbackQueryHandler(select_category_for_product, pattern="^selcat_")],
@@ -1167,7 +1202,7 @@ def main():
     ))
 
     # 3. Settings Edit
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(set_setting_callback, pattern="^set_")],
         states={SET_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, setting_value_received)]},
         fallbacks=[CommandHandler("cancel", cancel_conversation),
@@ -1175,7 +1210,7 @@ def main():
     ))
 
     # 4. Edit Responses
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(edit_response_callback, pattern="^editresp_")],
         states={EDIT_RESP_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, response_value_received)]},
         fallbacks=[CommandHandler("cancel", cancel_conversation),
@@ -1183,7 +1218,7 @@ def main():
     ))
 
     # 5. 🆕 Rename Button (Manage Buttons)
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(rename_button_callback, pattern="^mbrenm_")],
         states={MB_RENAME_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, rename_button_value_received)]},
         fallbacks=[CommandHandler("cancel", cancel_conversation),
@@ -1191,7 +1226,7 @@ def main():
     ))
 
     # 5b. 🆕 Custom whole-screen padding number
-    app.add_handler(ConversationHandler(allow_reentry=True,
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900,
         entry_points=[CallbackQueryHandler(group_screen_pad_custom_start_callback, pattern="^mbscrpadcustom_")],
         states={MB_SCREEN_PAD_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, group_screen_pad_custom_received)]},
         fallbacks=[CommandHandler("cancel", cancel_conversation),
@@ -1200,7 +1235,7 @@ def main():
 
     # 6. 🆕 v38: New Custom Button (type → label → action → location)
     # Now supports 17+ action types including file uploads (photo, video, doc, audio)
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(cb_type_callback, pattern="^cbtype_")],
         states={
             CB_NEW_LABEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, cb_new_label_received)],
@@ -1217,7 +1252,7 @@ def main():
     ))
 
     # 7. 🆕 v38: Edit existing custom button (label or action) — supports file uploads
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[
             CallbackQueryHandler(cb_edit_label_callback, pattern="^cbedit_label_"),
             CallbackQueryHandler(cb_edit_action_callback, pattern="^cbedit_action_"),
@@ -1234,7 +1269,7 @@ def main():
     ))
 
     # 8. 🆕 Phase D: New Custom Page (title → content → photo)
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(cp_new_callback, pattern="^cpnew$")],
         states={
             CP_NEW_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, cp_new_title_received)],
@@ -1246,7 +1281,7 @@ def main():
     ))
 
     # 9. 🆕 Phase D: Edit page title/content
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[
             CallbackQueryHandler(cp_edit_title_callback, pattern="^cpedit_title_"),
             CallbackQueryHandler(cp_edit_content_callback, pattern="^cpedit_content_"),
@@ -1257,14 +1292,14 @@ def main():
     ))
 
     # 10. 🆕 Phase D: Edit page photo
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(cp_edit_photo_callback, pattern="^cpedit_photo_")],
         states={CP_EDIT_PHOTO: [MessageHandler(filters.PHOTO | filters.Document.ALL | (filters.TEXT & ~filters.COMMAND), cp_edit_photo_received)]},
         fallbacks=[CommandHandler("cancel", cancel_conversation),
                    CallbackQueryHandler(conv_cancel_callback, pattern="^conv_cancel$")],
     ))
 
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(adm_manage_pts_callback, pattern="^adm_manage_pts$")],
         states={
             901: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_pts_uid_received)],
@@ -1328,7 +1363,7 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", maint_custom_cancel)],
-        per_message=False, allow_reentry=True,
+        per_message=False, allow_reentry=True, conversation_timeout=900,
     ), group=0)
 
     # 🆕 v84: Conversation — admin searches users on Completed Orders v2
@@ -1341,7 +1376,7 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", ac2_search_cancel)],
-        per_message=False, allow_reentry=True,
+        per_message=False, allow_reentry=True, conversation_timeout=900,
     ), group=0)
 
     # 🆕 v85: Conversation — admin edits low-bal threshold per supplier
@@ -1355,7 +1390,7 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", ext_sup_lowbal_cancel)],
-        per_message=False, allow_reentry=True,
+        per_message=False, allow_reentry=True, conversation_timeout=900,
     ), group=0)
 
     # 🆕 v96: Conversation — admin renames a supplier (admin dashboard only)
@@ -1369,7 +1404,7 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", ext_sup_rename_cancel)],
-        per_message=False, allow_reentry=True,
+        per_message=False, allow_reentry=True, conversation_timeout=900,
     ), group=0)
 
     # 🆕 v86: Conversation — admin adds InstaAPI supplier via connection string
@@ -1383,7 +1418,7 @@ def main():
             ],
         },
         fallbacks=[CommandHandler("cancel", ext_sup_add_conn_cancel)],
-        per_message=False, allow_reentry=True,
+        per_message=False, allow_reentry=True, conversation_timeout=900,
     ), group=0)
 
     # 🆕 v95: Conversation — admin adds new custom Location (auto-syncs everywhere)
@@ -1399,7 +1434,7 @@ def main():
                                               lc_add_header_received)],
         },
         fallbacks=[CommandHandler("cancel", lc_add_cancel)],
-        per_message=False, allow_reentry=True,
+        per_message=False, allow_reentry=True, conversation_timeout=900,
     ), group=0)
 
     app.add_handler(CommandHandler("start", start_command), group=-49)
@@ -2112,7 +2147,7 @@ def main():
     # 🆕 v73: ALL supplier ConversationHandlers REMOVED (Supplier panel deprecated).
     # ── 📤 Destination Chat Link Input ──
     # MUST be before dest_set_ prefix handler so ConversationHandler catches it first
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(dest_set_chat_callback, pattern="^dest_set_chat$")],
         states={DEST_CHAT: [MessageHandler(filters.TEXT & ~filters.COMMAND, dest_chat_received)]},
         fallbacks=[CommandHandler("cancel", cancel_conversation),
@@ -2120,19 +2155,19 @@ def main():
     ))
     # ── 🔗 Force Join Conversations ──
     # MUST be registered early — exact patterns, no prefix conflict
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(fj_set_channel_callback, pattern="^fj_set_channel$")],
         states={FJ_CHANNEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, fj_channel_received)]},
         fallbacks=[CommandHandler("cancel", cancel_conversation),
                    CallbackQueryHandler(conv_cancel_callback, pattern="^conv_cancel$")],
     ))
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(fj_set_group_callback, pattern="^fj_set_group$")],
         states={FJ_GROUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, fj_group_received)]},
         fallbacks=[CommandHandler("cancel", cancel_conversation),
                    CallbackQueryHandler(conv_cancel_callback, pattern="^conv_cancel$")],
     ))
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(fj_set_msg_callback, pattern="^fj_set_msg$")],
         states={FJ_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, fj_msg_received)]},
         fallbacks=[CommandHandler("cancel", cancel_conversation),
@@ -2153,7 +2188,7 @@ def main():
     app.add_handler(CallbackQueryHandler(sb_test_callback,             pattern="^sbtest_"))
     app.add_handler(CallbackQueryHandler(sb_template_panel_callback,   pattern="^sbtpl_"))
     # 🆕 Custom Flash/New-Product template input conversation
-    app.add_handler(ConversationHandler(allow_reentry=True,
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900,
         entry_points=[CallbackQueryHandler(sb_custom_start_callback, pattern="^sbcustom_")],
         states={SB_CUSTOM_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, sb_custom_received)]},
         fallbacks=[CommandHandler("cancel", cancel_conversation),
@@ -2172,21 +2207,21 @@ def main():
 
     # [conv handlers moved above prefix section]
     # ── 🎭 Fake Activity Speed ──
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(act_set_speed_callback, pattern="^act_set_speed$")],
         states={ACT_SPEED: [MessageHandler(filters.TEXT & ~filters.COMMAND, act_speed_received)]},
         fallbacks=[CommandHandler("cancel", cancel_conversation),
                    CallbackQueryHandler(conv_cancel_callback, pattern="^conv_cancel$"),
                    CallbackQueryHandler(activity_panel_callback, pattern="^act_panel$")],
     ))
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(act_set_delay_callback, pattern="^act_set_delay$")],
         states={ACT_DELAY: [MessageHandler(filters.TEXT & ~filters.COMMAND, act_delay_received)]},
         fallbacks=[CommandHandler("cancel", cancel_conversation),
                    CallbackQueryHandler(conv_cancel_callback, pattern="^conv_cancel$"),
                    CallbackQueryHandler(activity_panel_callback, pattern="^act_panel$")],
     ))
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(act_set_offset_callback, pattern="^act_set_offset$")],
         states={ACT_OFFSET: [MessageHandler(filters.TEXT & ~filters.COMMAND, act_offset_received)]},
         fallbacks=[CommandHandler("cancel", cancel_conversation),
@@ -2202,14 +2237,14 @@ def main():
     # The standalone handlers already set user_data['edit_pid'] / user_data['edit_field']
     # and manage their own edit flow — no ConversationHandler needed.
     # ── 📍 Location Header Editor ──
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(lc_set_header_callback, pattern="^lc_header_")],
         states={LC_HEADER: [MessageHandler(filters.TEXT & ~filters.COMMAND, lc_header_received)]},
         fallbacks=[CommandHandler("cancel", cancel_conversation),
                    CallbackQueryHandler(conv_cancel_callback, pattern="^conv_cancel$")],
     ))
     # ── 📝 Template Text Editor ──
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(tpl_edit_callback, pattern="^tpl_edit_")],
         states={TPL_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, tpl_text_received)]},
         fallbacks=[CommandHandler("cancel", cancel_conversation),
@@ -2223,7 +2258,7 @@ def main():
             edit_product_emoji_callback as _edit_emoji_cb,
             edit_product_emoji_received as _edit_emoji_recv,
         )
-        app.add_handler(ConversationHandler(allow_reentry=True,
+        app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900,
             entry_points=[CallbackQueryHandler(_edit_emoji_cb, pattern=r"^edit_product_emoji$")],
             states={_EDIT_EMOJI_STATE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, _edit_emoji_recv),
@@ -2252,7 +2287,7 @@ def main():
             btxt_resetall_callback as _btxt_resetall_cb,
             btxt_resetall_yes_callback as _btxt_resetall_yes_cb,
         )
-        app.add_handler(ConversationHandler(allow_reentry=True,
+        app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900,
             entry_points=[CallbackQueryHandler(_btxt_edit_cb, pattern=r"^btxt_edit_")],
             states={BTXT_INPUT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, _btxt_input_received),
@@ -2279,7 +2314,7 @@ def main():
             tplbtn_input_cancel as _tplbtn_input_cancel,
             tplbtn_reset_callback as _tplbtn_reset_cb,
         )
-        app.add_handler(ConversationHandler(allow_reentry=True,
+        app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900,
             entry_points=[CallbackQueryHandler(_tplbtn_edit_cb, pattern=r"^tplbtn_edit_")],
             states={TPL_BTN_INPUT: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, _tplbtn_input_received),
@@ -2304,7 +2339,7 @@ def main():
     app.add_handler(CallbackQueryHandler(profit_product_callback, pattern=r"^profit_\d+$"))
 
     # 🆕 v37: Review writing conversation (star rating → text)
-    app.add_handler(ConversationHandler(allow_reentry=True, 
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(rev_rate_callback, pattern=r"^revrate_\d+_\d+$")],
         states={REV_TEXT: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, rev_text_received),
@@ -2318,20 +2353,20 @@ def main():
     ))
     # ── Support/Warranty/Delivery Conversations ──
     from telegram.ext import ConversationHandler as _CH
-    app.add_handler(_CH(allow_reentry=True, 
+    app.add_handler(_CH(allow_reentry=True, conversation_timeout=600,
         entry_points=[CallbackQueryHandler(st_new_callback, pattern="^st_new$")],
         states={400: [MessageHandler(filters.TEXT & ~filters.COMMAND, st_subject_received)],
                 401: [MessageHandler(filters.TEXT & ~filters.COMMAND, st_desc_received)]},
         fallbacks=[CommandHandler("cancel", cancel_conversation)],
     ))
-    app.add_handler(_CH(allow_reentry=True, 
+    app.add_handler(_CH(allow_reentry=True, conversation_timeout=600,
         entry_points=[CallbackQueryHandler(wr_type_callback, pattern="^wr_type_")],
         states={402: [MessageHandler(filters.TEXT & ~filters.COMMAND, wr_reason_received)]},
         fallbacks=[CommandHandler("cancel", cancel_conversation)],
     ))
 
     # 🆕 v137: Admin initiated direct user chat — user ID → first message/media
-    app.add_handler(_CH(allow_reentry=True,
+    app.add_handler(_CH(allow_reentry=True, conversation_timeout=900,
         entry_points=[CallbackQueryHandler(admin_direct_chat_start_callback, pattern="^admin_direct_chat$")],
         states={
             ADMIN_DIRECT_CHAT_UID: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_direct_chat_uid_received)],
@@ -2344,7 +2379,7 @@ def main():
     ))
 
     # 🆕 v73: admin reply now accepts text/photo/video/document
-    app.add_handler(_CH(allow_reentry=True, 
+    app.add_handler(_CH(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(adm_st_reply_callback, pattern="^adm_st_reply_")],
         states={450: [
             MessageHandler(
@@ -2359,7 +2394,7 @@ def main():
         st_user_reply_callback, st_user_reply_received,
         adm_st_chat_callback, st_user_chat_callback,
     )
-    app.add_handler(_CH(allow_reentry=True,
+    app.add_handler(_CH(allow_reentry=True, conversation_timeout=900,
         entry_points=[CallbackQueryHandler(st_user_reply_callback, pattern=r"^st_user_reply_\d+$")],
         states={460: [
             MessageHandler(
@@ -2372,12 +2407,15 @@ def main():
     # 🆕 v73: Chat history viewers (both sides)
     app.add_handler(CallbackQueryHandler(adm_st_chat_callback,    pattern=r"^adm_st_chat_\d+$"))
     app.add_handler(CallbackQueryHandler(st_user_chat_callback,   pattern=r"^st_user_chat_\d+$"))
-    app.add_handler(_CH(allow_reentry=True, 
+    app.add_handler(_CH(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(adm_deliver_callback, pattern="^adm_deliver_")],
         states={403: [MessageHandler(filters.TEXT & ~filters.COMMAND, adm_delivery_text_received)]},
         fallbacks=[CommandHandler("cancel", _cancel_adm_deliver)],
     ))
 
+    # 🔧 v124: payment-flow text runs BEFORE all ConversationHandlers so stale
+    # conversation states can never swallow amounts/TXIDs/TIDs.
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, payment_flow_text_handler), group=-80)
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.VOICE | filters.Document.ALL, handle_media_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 

@@ -8,6 +8,49 @@
 
 ---
 
+# 🚀 v124 (2026-08-01) — CRITICAL: bot "stuck when user types amount" — stale-conversation fix
+
+**User bug report:** after restoring the DB, the bot gets stuck as soon as a user types
+the Bybit Pay / Bybit USDT deposit amount. Reproduced both flows.
+
+## 🕵️ Root cause (detective work)
+`handle_text` was registered as the LAST MessageHandler (group 0), but customer-facing
+**ConversationHandlers** (support ticket `st_new` → states 400/401, warranty `wr_type` → 402,
+user-chat reply → 460, plus every admin conversation) were registered BEFORE it with
+`allow_reentry=True` and **no `conversation_timeout`**. In PTB, once a chat enters a
+conversation state it stays there until the conversation ends — so a user who ever started
+(and abandoned) a support ticket / warranty / review flow remains "in conversation" forever.
+Every subsequent text message (e.g. a Bybit amount) is then **claimed by that conversation**
+and never reaches `handle_text` → the bot appeared **stuck**. Restoring the DB did not cause
+this — it just made the fresh deploy hit the same latent bug (the old DB probably had users
+with stale states too).
+
+## ✅ Fixes
+1. **New `payment_flow_text_handler`** (bot.py) — registered in **group −80**, i.e. it runs
+   BEFORE all ConversationHandlers. It consumes text ONLY when a payment-flow step is active
+   (Bybit Pay UID/amount, Bybit USDT amount, USDT/Binance TXID, EasyPaisa/JazzCash TID,
+   Buy-Points custom amount) and returns **True** when handled, **None** otherwise so normal
+   flow continues. Verified: returning None (bare `return`) is treated by PTB as "not
+   handled" — so success paths return True explicitly.
+2. **`conversation_timeout=900`** (15 min) added to **every** ConversationHandler (26 admin +
+   support/warranty/reply + per_message=False supplier flows = 38 total). Stale conversations
+   now auto-expire, so no user's chat can be trapped indefinitely.
+
+## Tests (v124)
+`_test_v124_stuck_fix.py` — **4/4 PASS**: bybit_usdt amount consumed by priority handler
+(order created + deposit screen sent + step cleared) ✅ · bybit_pay UID amount consumed ✅ ·
+normal text returns None (not swallowed) ✅ · all conversations carry a timeout ✅.
+
+Regression: v123 12 + v122 13 + v120 7 + v119 14 + v118 8 + v117 4 + v116 6 + v114 9 + v112 15
++ v111 17 = **109/109 PASS**. Boot clean with the restore-ready DB; no undefined names.
+
+## 🔧 Files changed
+- `bot.py` — `payment_flow_text_handler` (group −80, returns True on handled),
+  `conversation_timeout` on all ConversationHandlers.
+- `CHANGELOG.md` — this section.
+
+---
+
 # 🚀 v123 (2026-08-01) — FLOOD FIX (bot stuck after restore) + Bybit USDT deposit flow (TRC-20/BEP-20)
 
 ## 🐛 CRITICAL FIX — bot stuck in a loop after DB restore
