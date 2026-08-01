@@ -90,12 +90,19 @@ def _heal_missing_tables():
         # They could wipe restored shop products on startup, causing the exact
         # Render restore/reset issue the owner reported.
         try:
-            from ext_suppliers import ensure_ext_supplier_tables, ensure_env_supplier_presets
+            from ext_suppliers import (ensure_ext_supplier_tables, ensure_env_supplier_presets,
+                                       ensure_env_sinhle_supplier)
             ensure_ext_supplier_tables()
             healed.append("ext_supplier_tables")
             sid, status = ensure_env_supplier_presets()
             if sid:
                 _log(f"env supplier preset Shop Cron {status} (#{sid})")
+            try:
+                sid2, status2 = ensure_env_sinhle_supplier()
+                if sid2:
+                    _log(f"env supplier preset sinhle store bot {status2} (#{sid2})")
+            except Exception as _sh2:
+                _log(f"sinhle preset: {_sh2}", "WARN")
             _log("v81/v83 destructive product-wipe migrations skipped safely")
         except Exception as e:
             _log(f"v81 ext_suppliers table setup: {e}", "WARN")

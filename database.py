@@ -413,12 +413,16 @@ def migrate_all():
     except Exception as e:
         stats["errors"].append(f"setup_supplier_advanced_tables: {e}")
     try:
-        from ext_suppliers import ensure_ext_supplier_tables, ensure_env_supplier_presets
+        from ext_suppliers import ensure_ext_supplier_tables, ensure_env_supplier_presets, ensure_env_sinhle_supplier
         ensure_ext_supplier_tables(); stats["tables_checked"] += 1
         try:
             ensure_env_supplier_presets()
         except Exception as _preset_err:
             stats["errors"].append(f"ensure_env_supplier_presets: {_preset_err}")
+        try:
+            ensure_env_sinhle_supplier()
+        except Exception as _sinhle_err:
+            stats["errors"].append(f"ensure_env_sinhle_supplier: {_sinhle_err}")
     except Exception as e:
         stats["errors"].append(f"ensure_ext_supplier_tables: {e}")
 

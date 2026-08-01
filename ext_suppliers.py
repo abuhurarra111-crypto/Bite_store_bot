@@ -232,6 +232,42 @@ def ensure_env_supplier_presets():
         raise
 
 
+def ensure_env_sinhle_supplier():
+    """🔧 v131: auto-register/update the 'sinh le store bot' supplier (Canboso
+    Buyer API v2). Key lives in Render env: SUPPLIER_SINHLE_API_KEY.
+    Returns (sid, status)."""
+    import os
+    key = (os.getenv("SUPPLIER_SINHLE_API_KEY", "") or "").strip()
+    if not key:
+        return 0, "missing_env"
+    ensure_ext_supplier_tables()
+    name = "sinh le store bot"
+    adapter = "canboso"
+    base_url = "https://canboso.com"
+    docs_url = "https://canboso.com/api/swagger"
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("SELECT id FROM ext_suppliers WHERE lower(name)=lower(?) OR (adapter=? AND base_url=? AND api_key=?) LIMIT 1",
+                  (name, adapter, base_url, key))
+        row = c.fetchone()
+        if row:
+            sid = int(row["id"] if hasattr(row, "keys") else row[0])
+            c.execute("""UPDATE ext_suppliers
+                         SET name=?, adapter=?, base_url=?, api_key=?, docs_url=?, enabled=1
+                         WHERE id=?""", (name, adapter, base_url, key, docs_url, sid))
+            conn.commit(); conn.close(); return sid, "updated"
+        c.execute("""INSERT INTO ext_suppliers (name, adapter, base_url, api_key, docs_url, enabled)
+                     VALUES (?, ?, ?, ?, ?, 1)""", (name, adapter, base_url, key, docs_url))
+        sid = c.lastrowid
+        conn.commit(); conn.close(); return sid, "created"
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
+        raise
+
+
 def delete_supplier(sid):
     """Delete supplier and every synced shop product linked to it.
 

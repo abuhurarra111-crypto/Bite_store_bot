@@ -36,33 +36,38 @@ MAINT_TEMPLATES = {
     1: (
         "🛠️ *BITE STORE — Under Maintenance*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "Bot ko thoda upgrade dia ja raha hai 🚀\n"
-        "Please thodi der baad wapas try karein.\n\n"
-        "🙏 Sabar ka shukriya!\n"
+        "We're upgrading the bot for a better experience 🚀\n"
+        "Please try again in a few minutes.\n\n"
+        "🙏 Thank you for your patience!\n"
         "💬 Support: @bite_storee_bot"
     ),
     2: (
         "⚙️ *Quick Maintenance in Progress*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "New features add ho rahe hain — bot 5-15 min mein wapas online.\n"
-        "Aap ke pending orders safe hain ✅\n\n"
+        "New features are being added — the bot will be back online "
+        "within 5-15 minutes.\n"
+        "Your pending orders are safe ✅\n\n"
         "Meanwhile, follow @bite_alerts for updates 📢"
     ),
     3: (
-        "🚧 Yaar, thora sa kaam chal raha hai bot pe 🛠️\n\n"
-        "5-10 min ruk jao, sab kuch behtar ho ke wapas ayega 💪\n"
-        "Order karne ki fikar mat karo — jaise hi ready hoga, bata denge 🔔"
+        "🚧 *Maintenance in Progress* 🛠️\n\n"
+        "Please wait 5-10 minutes — everything will be back and "
+        "better than before 💪\n"
+        "Don't worry about your orders — we'll notify you as soon "
+        "as we're ready 🔔"
     ),
     4: (
         "😔 *Sorry for the inconvenience!*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "Hum abhi kuch important updates lagane mein busy hain.\n"
-        "Ye maintenance zaroori thi taake aap ko behtar service mile.\n\n"
-        "⏱️ Bot jald hi wapas active hoga.\n"
-        "❤️ Aap ki wafadari ka shukriya!"
+        "We're currently applying some important updates to serve "
+        "you better.\n"
+        "This maintenance was necessary for a smoother experience.\n\n"
+        "⏱️ The bot will be back online soon.\n"
+        "❤️ Thank you for your loyalty!"
     ),
     5: (
-        "⏳ *Maintenance…* Bot busy hai, thori der baad try karein 🙏"
+        "⏳ *Maintenance…* The bot is busy. Please try again in a "
+        "few minutes 🙏"
     ),
 }
 

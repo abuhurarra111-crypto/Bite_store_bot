@@ -236,7 +236,7 @@ from ui_extras import (
     FJ_CHANNEL, FJ_GROUP, FJ_MSG, DEST_CHAT,
 )
 # 🆕 Per-User Lifetime Fake Activity
-from per_user_activity import restore_all_jobs, setup_activity_table
+from per_user_activity import restore_all_jobs, setup_activity_table, activity_watchdog_job, fake_activity_status_message
 from ui_extras import (
     activity_panel_callback,
     act_toggle_global_callback, act_toggle_unit_callback, act_toggle_type_callback,
@@ -734,10 +734,12 @@ async def _payment_risk_alert_job(context):
 
 
 async def _delayed_live_notify_job(context):
-    """Send BOSS BOT IS LIVE only after DB looks stable for restore workflow."""
+    """Send BOSS BOT IS LIVE only after DB looks stable for restore workflow.
+    🔧 v131: includes maintenance status + 2 buttons: turn OFF maintenance now,
+    or keep the bot under maintenance (for manual control after deploy)."""
     try:
         from config import ADMIN_ID as _LIVE_ADMIN_ID
-        from database import get_connection
+        from database import get_connection, get_setting
         if not _LIVE_ADMIN_ID:
             return
         conn = get_connection(); c = conn.cursor()
@@ -748,12 +750,83 @@ async def _delayed_live_notify_job(context):
             orders = int(c.fetchone()[0] or 0)
         finally:
             conn.close()
-        await context.bot.send_message(
-            _LIVE_ADMIN_ID,
-            f"BOSS BOT IS LIVE\nDB stable ✅ Products: {products} | Orders: {orders}"
+        from maintenance_mode import is_maintenance_on
+        maint = is_maintenance_on()
+        status = "🛠️ *UNDER MAINTENANCE*" if maint else "✅ *LIVE*"
+        text = (
+            f"BOSS BOT IS LIVE\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"{status}\n"
+            f"DB stable ✅ Products: {products} | Orders: {orders}\n\n"
+            f"{'The bot is in maintenance — customers are blocked until you turn it OFF.' if maint else 'The bot is live and serving customers.'}"
         )
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Turn OFF Maintenance", callback_data="maint_live_off")],
+            [InlineKeyboardButton("🛠️ Under Maintenance (keep ON)", callback_data="maint_live_keep")],
+        ])
+        await context.bot.send_message(_LIVE_ADMIN_ID, text, parse_mode="Markdown", reply_markup=kb)
     except Exception as e:
         print(f'[LiveNotify] delayed send failed: {e}')
+
+
+async def maint_live_off_callback(update, context):
+    """Admin taps 'Turn OFF Maintenance' on the live message → bot goes live."""
+    q = update.callback_query
+    try:
+        if q.from_user.id != int(os.getenv("ADMIN_ID", "0") or 0):
+            await q.answer("❌", show_alert=True); return
+    except Exception:
+        pass
+    try:
+        from maintenance_mode import set_maintenance
+        set_maintenance(False)
+        await q.answer("✅ Maintenance OFF — bot is LIVE", show_alert=True)
+        try:
+            await q.edit_message_text(
+                "✅ *Maintenance turned OFF*\n━━━━━━━━━━━━━━━━━━━━\n"
+                "The bot is now LIVE and serving customers.",
+                parse_mode="Markdown")
+        except Exception:
+            pass
+    except Exception as e:
+        await q.answer(f"Error: {e}", show_alert=True)
+
+
+async def maint_live_keep_callback(update, context):
+    """Admin taps 'Under Maintenance (keep ON)' → stays in maintenance."""
+    q = update.callback_query
+    try:
+        if q.from_user.id != int(os.getenv("ADMIN_ID", "0") or 0):
+            await q.answer("❌", show_alert=True); return
+    except Exception:
+        pass
+    try:
+        from maintenance_mode import set_maintenance
+        set_maintenance(True)
+        await q.answer("🛠️ Bot stays under maintenance", show_alert=True)
+        try:
+            await q.edit_message_text(
+                "🛠️ *Bot stays UNDER MAINTENANCE*\n━━━━━━━━━━━━━━━━━━━━\n"
+                "Customers are blocked. Turn it OFF from Settings or the "
+                "Admin → Maintenance panel when you're ready.",
+                parse_mode="Markdown")
+        except Exception:
+            pass
+    except Exception as e:
+        await q.answer(f"Error: {e}", show_alert=True)
+
+
+def _apply_startup_maintenance():
+    """🔧 v131: on Render deploy, start in maintenance when MAINT_ON_START=1
+    (set in render.yaml). Admin turns it OFF via the live message button or
+    the Maintenance panel."""
+    try:
+        if os.getenv("MAINT_ON_START", "0") == "1":
+            from maintenance_mode import set_maintenance
+            set_maintenance(True)
+            print("🛠️ MAINT_ON_START=1 → bot started in maintenance mode (admin controls OFF)")
+    except Exception as e:
+        print(f"⚠️ startup maintenance failed: {e}")
 
 
 async def post_init(app):
@@ -885,6 +958,13 @@ async def post_init(app):
     try:
         setup_activity_table()
         restore_all_jobs(app)
+        # 🔧 v131: self-healing watchdog so fake activity never silently dies
+        if app.job_queue:
+            app.job_queue.run_repeating(activity_watchdog_job, interval=60, first=90,
+                                        name="activity_watchdog")
+            app.job_queue.run_once(fake_activity_status_message, when=120,
+                                   name="fake_activity_status")
+            print("[Activity] Watchdog + status DM scheduled")
     except Exception as e:
         print(f'[Activity] Restore error: {e}')
 
@@ -1116,6 +1196,7 @@ def main():
     print("=" * 50)
     # Fail fast with a clear message instead of silently using leaked/default secrets.
     validate_required_config()
+    _apply_startup_maintenance()
     setup_database()
     # 🛡️ v51: Install GLOBAL premium-emoji rendering guard BEFORE any Bot
     # instance is created. Patches telegram.Bot / Message / CallbackQuery so
@@ -1976,6 +2057,8 @@ def main():
         # 🆕 v84: Maintenance Mode admin panel
         ("^maint_panel$",                maint_panel_callback),
         ("^maint_toggle$",               maint_toggle_callback),
+        ("^maint_live_off$",             maint_live_off_callback),
+        ("^maint_live_keep$",            maint_live_keep_callback),
         ("^maint_preview$",              maint_preview_callback),
         ("^maint_pick_",                 maint_pick_callback),
         ("^maint_noop$",                 maint_noop_callback),

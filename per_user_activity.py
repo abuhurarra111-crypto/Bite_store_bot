@@ -1153,6 +1153,19 @@ def schedule_group_activity_job(app):
                         logger.info(f"[Activity] Central group job sent message (fallback) to {dest_chat}")
                     except Exception as e2:
                         logger.warning(f"[Activity] Central group job send failed: {e2}")
+                        # 🔧 v131: notify admin so the problem is VISIBLE, not silent
+                        try:
+                            from config import ADMIN_ID
+                            if ADMIN_ID:
+                                await context.bot.send_message(
+                                    ADMIN_ID,
+                                    f"⚠️ *Fake Activity — destination failed*\n"
+                                    f"Dest: `{dest_chat}` (resolved `{resolved_chat}`)\n"
+                                    f"Error: `{str(e2)[:150]}`\n\n"
+                                    f"_Check the bot is ADMIN in that chat, or fix dest_chat_id._",
+                                    parse_mode="Markdown")
+                        except Exception:
+                            pass
             except Exception as e:
                 logger.error(f"[Activity] Error in central group job send: {e}")
 
@@ -1197,3 +1210,66 @@ def restore_all_jobs(app):
             _schedule_next_for_user(app, uid, delay_seconds=delay)
 
     logger.info(f"[Activity] ✅ Restored {len(active_ids)} jobs")
+
+
+# ════════════════════════════════════════════════════════════
+# 🔧 v131 — FAKE ACTIVITY WATCHDOG (self-heal) + diagnostics
+# ════════════════════════════════════════════════════════════
+
+async def activity_watchdog_job(context):
+    """Runs every 60s. If fake activity is enabled but the group job or per-user
+    jobs are NOT scheduled (e.g. a deploy hiccup / silent exception), re-schedule
+    them. This makes fake activity self-healing — it can never silently die."""
+    try:
+        app = context.application
+        if app is None:
+            return
+        if not is_globally_enabled():
+            return
+        # 1) group job
+        try:
+            if not _group_job_scheduled:
+                mode = _g("dest_mode", "bot_only")
+                dest = _g("dest_chat_id", "").strip()
+                if mode in ("group_only", "both") and dest:
+                    schedule_group_activity_job(app)
+                    logger.info("[Activity][Watchdog] re-scheduled group job")
+        except Exception as e:
+            logger.warning(f"[Activity][Watchdog] group re-schedule failed: {e}")
+        # 2) per-user jobs
+        try:
+            active = set(get_active_user_ids())
+            missing = active - _scheduled_users
+            if missing:
+                for uid in list(missing)[:20]:  # stagger to avoid flood
+                    _schedule_next_for_user(app, uid, delay_seconds=random.randint(20, 120))
+                logger.info(f"[Activity][Watchdog] re-scheduled {len(missing)} user jobs")
+        except Exception as e:
+            logger.warning(f"[Activity][Watchdog] user re-schedule failed: {e}")
+    except Exception as e:
+        logger.warning(f"[Activity][Watchdog] outer error: {e}")
+
+
+async def fake_activity_status_message(context):
+    """Send the admin a status DM after boot: how many user jobs + group dest."""
+    try:
+        from config import ADMIN_ID
+        if not ADMIN_ID:
+            return
+        active = len(get_active_user_ids())
+        mode = _g("dest_mode", "bot_only")
+        dest = _g("dest_chat_id", "").strip()
+        lines = [
+            "🎭 *Fake Activity — running*",
+            "━━━━━━━━━━━━━━━━━━━━",
+            f"Global: {'🟢 ON' if is_globally_enabled() else '🔴 OFF'}",
+            f"User jobs: *{active}*",
+            f"Destination: `{dest or '—'}` ({mode})",
+            f"Interval: {_g('pua_min_interval','1')}-{_g('pua_max_interval','60')} {_g('pua_interval_unit','minutes')}",
+            "",
+            "_If you see no fake messages, check the bot is admin in the "
+            "destination chat and that dest_chat_id is correct._",
+        ]
+        await context.bot.send_message(ADMIN_ID, "\n".join(lines), parse_mode="Markdown")
+    except Exception as e:
+        logger.warning(f"[Activity] status DM failed: {e}")

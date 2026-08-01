@@ -8,6 +8,77 @@
 
 ---
 
+# 🚀 v131 (2026-08-01) — Fake-activity watchdog + English maintenance + deploy-maintenance + new supplier
+
+**User requests (combined):**
+1. Fake activity not running at the selected destination (minutes or seconds timer) and real
+   broadcasts also stopped — restart both (mixed like before).
+2. Screen-by-screen editor: sub menu missing for some screens, button editor blank — every
+   button must be editable (rename / color / premium emoji).
+3. Maintenance templates in English with emojis (no roman urdu).
+4. After every Render deploy, the bot should start UNDER MAINTENANCE; the "BOSS BOT IS LIVE"
+   message must include 2 buttons: ✅ Turn OFF Maintenance / 🛠️ Under Maintenance (keep ON).
+5. Add a new supplier "sinh le store bot" (Canboso Buyer API v2) with the provided API key so
+   products can be synced and auto-delivered.
+6. Use the NEW current DB (257 users / 152 orders) — modify per all updates.
+
+## ✅ 1. Fake activity — self-healing + diagnostics
+- **`activity_watchdog_job`** (every 60s): if global ON but the group job or per-user jobs are
+  not scheduled, it re-schedules them → fake activity can never silently die after a deploy.
+- **`fake_activity_status_message`** (120s after boot): admin DM with global/user-jobs/
+  destination/interval — the owner can SEE it's running.
+- Group job now sends the admin the EXACT Telegram error when posting to the destination chat
+  fails (bot not admin in chat / wrong dest), plus a plain-text fallback.
+- Per-user + group + real broadcasts all restart together on boot (mixed, as before).
+
+## ✅ 2. Screen editor — no more blank
+- `se_btns_callback`: screens with 0 dedicated buttons now show a clear message +
+  "🎛️ Manage All Buttons" (never blank).
+- `se_sub_callback`: screens with no buttons show the real screen body + a note (not blank).
+- Buttons that exist → tap → full panel (rename per size with premium emoji, background color
+  blue/green/red, hide/show, reset) — exactly as requested.
+
+## ✅ 3. Maintenance templates → English with emojis
+All 5 `MAINT_TEMPLATES` rewritten in clean English with emojis (no roman urdu). `maint_custom`
+updated in the DB too (English).
+
+## ✅ 4. Deploy maintenance + live-message buttons
+- `MAINT_ON_START=1` in render.yaml → bot starts in maintenance after every deploy.
+- `_delayed_live_notify_job` shows maintenance status + 2 buttons:
+  - ✅ **Turn OFF Maintenance** (`maint_live_off`) → bot goes live instantly
+  - 🛠️ **Under Maintenance (keep ON)** (`maint_live_keep`) → stays in maintenance
+- Admin-only callbacks; customer gate unchanged.
+
+## ✅ 5. New supplier — sinh le store bot
+- New `ensure_env_sinhle_supplier()` preset (env `SUPPLIER_SINHLE_API_KEY`) + startup wiring
+  in `database.migrate_all` and `self_heal`.
+- Supplier **live-verified**: `GET /api/v2/telegram-buyer/products?key=…` → 200, **19 products**
+  (owner "sinhledev") — sync + auto-delivery will work.
+- Added to the DB (id 10, canboso, enabled). render.yaml + .env.example updated.
+
+## Tests (v131)
+`_test_v131_features.py` — **9/9 PASS**: watchdog exists + registered in bot ✅ · status message
+uses destination ✅ · maintenance templates English + emojis ✅ · MAINT_ON_START + live
+callbacks ✅ · live buttons registered ✅ · sinhle preset function + creates supplier +
+render.yaml env ✅.
+
+Regression: v130 8 + v129 4 + v127 3 + v126 3 + v125 8 + v124 4 + v123 12 + v122 13 + v120 7
++ v119 14 + v118 8 + v117 4 + v116 6 + v114 9 + v112 15 + v111 17 = **144/144 PASS**. Boot
+clean with the new DB (integrity ok, 108 responses, 5 suppliers).
+
+## 🔧 Files changed
+- `per_user_activity.py` — watchdog + status DM + dest-fail admin notify.
+- `bot.py` — watchdog/status registration; live-notify buttons; `_apply_startup_maintenance`;
+  `maint_live_off/keep` callbacks.
+- `maintenance_mode.py` — English templates.
+- `customization.py` — blank fallbacks in button editor + sub menu.
+- `ext_suppliers.py` — `ensure_env_sinhle_supplier()`.
+- `database.py`, `self_heal.py` — sinhle preset startup wiring.
+- `render.yaml`, `.env.example` — `MAINT_ON_START`, `SUPPLIER_SINHLE_API_KEY`.
+- `CHANGELOG.md` — this section.
+
+---
+
 # 🚀 v130 (2026-08-01) — Animations REMOVED + new recursive screen-by-screen editor
 
 **User request:** remove the animation feature; rework the screen editor to:

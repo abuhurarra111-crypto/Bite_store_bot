@@ -3909,9 +3909,30 @@ async def se_btns_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons = node.get("buttons", []) or []
     title = node.get("title", sid)
     if not buttons:
-        await _safe_edit(q, f"🎛️ *Button Editor — {escape_md(title)}*\n━━━━━━━━━━━━━━━━━━━━\n\n_No buttons on this screen._",
-                         parse_mode="Markdown",
-                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"se_open_{sid}")]]))
+        # 🔧 v131: never a blank screen — show the real registry buttons for this
+        # screen's group (or a clear note + link to the full Manage Buttons panel).
+        try:
+            from button_system import BUTTONS, GROUP_NAMES
+            group_btns = [bid for bid, info in BUTTONS.items()
+                          if info.get("group") in (node.get("button_group", ""),) or
+                          (str(sid).startswith(str(info.get("group", ""))))]
+            # fallback group inference from sid prefix
+            if not group_btns:
+                g = sid.split("_")[0]
+                group_btns = [bid for bid, info in BUTTONS.items()
+                              if info.get("group") == g]
+        except Exception:
+            group_btns = []
+        text = (
+            f"🎛️ *Button Editor — {escape_md(title)}*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"_This screen has no dedicated buttons here._\n"
+            f"Use the full *Manage Buttons* panel below to edit any button "
+            f"(rename + premium emoji · color · hide/show · reset)."
+        )
+        kb = [[InlineKeyboardButton("🎛️ Manage All Buttons", callback_data="admin_buttons")],
+              [InlineKeyboardButton("🔙 Back to Screen", callback_data=f"se_open_{sid}")]]
+        await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         return
     text = (
         f"🎛️ *Button Editor — {escape_md(title)}*\n"
@@ -3958,7 +3979,11 @@ async def se_sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     kb = []
     if not buttons:
-        kb.append([InlineKeyboardButton("(no buttons)", callback_data="se_noop")])
+        kb.append([InlineKeyboardButton("🔙 Back to Screen", callback_data=f"se_open_{sid}")])
+        await _safe_edit(q, body + "\n\n_This screen has no dedicated buttons — "
+                         "its navigation uses shared buttons (Manage Buttons)._",
+                         parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        return
     for b in buttons:
         bid = b.get("id")
         kind = b.get("kind", "registry")

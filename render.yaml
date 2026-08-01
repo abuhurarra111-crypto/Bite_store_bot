@@ -58,8 +58,14 @@ services:
         sync: false             # optional override (api.binance.com / api1 / api2 / api3)
       - key: SUPPLIER_SHOP_CRON_API_KEY
         sync: false             # optional: auto-register/update Shop Cron supplier
+      - key: SUPPLIER_SINHLE_API_KEY
+        sync: false             # v131: sinh le store bot (Canboso Buyer API v2)
       - key: BYBIT_API_KEY
         sync: false
+      # 🔧 v131: start in maintenance mode after every deploy; admin turns it
+      # OFF via the live-notify buttons or the Maintenance panel.
+      - key: MAINT_ON_START
+        value: "1"
       - key: BYBIT_API_SECRET
         sync: false
       - key: BYBIT_PROXY_URL
