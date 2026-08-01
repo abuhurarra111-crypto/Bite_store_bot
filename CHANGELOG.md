@@ -8,6 +8,48 @@
 
 ---
 
+# 🚀 v128 (2026-08-01) — CRITICAL: copy_text must be CopyTextButton object (BadRequest fix)
+
+**User bug report (Render logs screenshot):**
+```
+BadRequest: Can't parse ... inlinekeyboardbutton: field "copy_text" must be of type object
+send failed (1st):
+send failed (no-md):
+```
+The deposit screen (with Copy amount / Copy UID / Copy address buttons) failed to send —
+customer typed the amount and got NO deposit screen (the exact "no response" symptom).
+
+## 🕵️ Root cause
+`make_premium_button()` passed `copy_text` through as a **plain string**:
+```python
+kw["copy_text"] = "1.9700"   # ❌ string
+```
+Telegram requires the inline-keyboard `copy_text` field to be a **`CopyTextButton` OBJECT**.
+Every copy-text button built via `make_copy_text_button()` / `_make_flow_btn()` (used by the
+Bybit flow: Copy amount, Copy UID, Copy address) therefore failed at the Telegram API layer →
+`BadRequest` → the whole deposit message never sent. v127's retry logic kept retrying without
+parse_mode, but the copy_text type error persisted → silent-ish failure (only logs).
+
+## ✅ Fix
+`button_system.make_premium_button()` — when `copy_text` is not already a `CopyTextButton`,
+wrap it: `copy_text = CopyTextButton(str(copy_text))`. This single fix covers every caller
+(`make_copy_text_button`, `_make_flow_btn`, and any future one). All other direct
+`InlineKeyboardButton(copy_text=...)` call sites already used `CopyTextButton` (audited).
+
+## Tests (v128)
+- Verified live: `make_copy_text_button` / `_make_flow_btn` / premium+copy all produce
+  `CopyTextButton` objects with the right `.text`.
+- `_test_v119_screens.py` updated: asserts `isinstance(copy_text, CopyTextButton)`.
+- Full regression: v127 3 + v126 3 + v125 8 + v124 4 + v123 12 + v122 13 + v120 7 + v119 14
+  + v118 8 + v117 4 + v116 6 + v114 9 + v112 15 + v111 17 = **124/124 PASS**. Boot clean.
+
+## 🔧 Files changed
+- `button_system.py` — `make_premium_button()` wraps string copy_text → `CopyTextButton`.
+- `_test_v119_screens.py` (backup) — CopyTextButton-object assertion.
+- `CHANGELOG.md` — this section.
+
+---
+
 # 🚀 v127 (2026-08-01) — NO-SILENCE fix: amount typed → no response was a swallowed send error
 
 **User bug report (screenshot):** user reached the Bybit Pay amount prompt

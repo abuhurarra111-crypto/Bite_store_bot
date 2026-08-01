@@ -2690,7 +2690,18 @@ def make_premium_button(label, *, emoji_id=None, style=None,
     if switch_inline_query is not None: kw["switch_inline_query"] = switch_inline_query
     if switch_inline_query_current_chat is not None:
         kw["switch_inline_query_current_chat"] = switch_inline_query_current_chat
-    if copy_text is not None: kw["copy_text"] = copy_text
+    # 🔧 v128 FIX: Telegram's inline button "copy_text" field requires a
+    # CopyTextButton OBJECT, not a plain string. Passing a string raises
+    # BadRequest: inlinekeyboardbutton: field "copy_text" must be of type
+    # object → the whole message failed to send (deposit screen never shown).
+    if copy_text is not None:
+        try:
+            from telegram import CopyTextButton
+            if not isinstance(copy_text, CopyTextButton):
+                copy_text = CopyTextButton(str(copy_text))
+        except Exception:
+            copy_text = str(copy_text)
+        kw["copy_text"] = copy_text
     if pay is not None: kw["pay"] = pay
 
     # 🎨 Button background color (Bot API 9.4): primary/success/danger
