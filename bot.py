@@ -356,14 +356,12 @@ async def payment_flow_text_handler(update, context):
     it returns None and the update flows on to normal handlers.
     """
     ud = context.user_data
-    # Bybit Pay UID flow
-    if ud.get('bybit_flow_step') == 'waiting_uid':
-        if await bybit_uid_received(update, context): return True
-    if ud.get('bybit_flow_step') == 'waiting_amount':
-        if await bybit_amount_received(update, context): return True
-    # Bybit USDT flow
-    if ud.get('bybit_usdt_step') == 'waiting_amount':
-        if await bybit_usdt_amount_received(update, context): return True
+    # 🟡 v125: unified Bybit flow (warning → UID → amount → deposit)
+    _bf = ud.get('bybit_flow') or {}
+    if _bf.get('step') == 'waiting_uid':
+        if await bybit_flow_uid_received(update, context): return True
+    if _bf.get('step') == 'waiting_amount':
+        if await bybit_flow_amount_received(update, context): return True
     # TXID / TID pastes (crypto + EP/JC + points custom)
     if ud.get('usdt_step') == 'waiting_txid':
         if await usdt_txid_received(update, context): return True
@@ -457,14 +455,7 @@ async def handle_text(update, context):
         if await usdt_txid_received(update, context): return
     if context.user_data.get('bybit_step') == 'waiting_txid':
         if await bybit_txid_received(update, context): return
-    # 🔧 v122: Bybit Pay UID flow text steps
-    if context.user_data.get('bybit_flow_step') == 'waiting_uid':
-        if await bybit_uid_received(update, context): return
-    if context.user_data.get('bybit_flow_step') == 'waiting_amount':
-        if await bybit_amount_received(update, context): return
-    # 🔧 v123: Bybit USDT flow amount step
-    if context.user_data.get('bybit_usdt_step') == 'waiting_amount':
-        if await bybit_usdt_amount_received(update, context): return
+    # 🟡 v125: Bybit UID/amount text is handled by payment_flow_text_handler (group -80).
     if context.user_data.get('ownmail_step') == 'email':
         from handlers_order import ownmail_email_received
         if await ownmail_email_received(update, context): return
@@ -1608,10 +1599,8 @@ def main():
         ("^usdtv_", usdt_verify_callback),
         ("^bybitv_", bybit_verify_callback),
         ("^bybit_manual_confirm_", bybit_manual_confirm_callback),
-        ("^bybit_warn_ok$", bybit_warn_ok_callback),
-        ("^bybit_warn_cancel$", bybit_warn_cancel_callback),
-        ("^bybit_usdt_warn_ok$", bybit_usdt_warn_ok_callback),
-        ("^bybit_usdt_warn_cancel$", bybit_usdt_warn_cancel_callback),
+        ("^bybit_flow_continue$", bybit_flow_continue_callback),
+        ("^bybit_flow_cancel$", bybit_flow_cancel_callback),
         ("^buy_", buy_callback), ("^pay_binance_", payment_binance_callback),
         ("^pay_easy_", payment_easypaisa_callback), ("^pay_jazz_", payment_jazzcash_callback),
         # 🆕 Buy Multiple (bulk)
@@ -1731,10 +1720,8 @@ def main():
         ("^pay_bybit_", payment_bybit_callback),
         ("^bybitv_", bybit_verify_callback),
         ("^bybit_manual_confirm_", bybit_manual_confirm_callback),
-        ("^bybit_warn_ok$", bybit_warn_ok_callback),
-        ("^bybit_warn_cancel$", bybit_warn_cancel_callback),
-        ("^bybit_usdt_warn_ok$", bybit_usdt_warn_ok_callback),
-        ("^bybit_usdt_warn_cancel$", bybit_usdt_warn_cancel_callback),
+        ("^bybit_flow_continue$", bybit_flow_continue_callback),
+        ("^bybit_flow_cancel$", bybit_flow_cancel_callback),
         ("^pay_pts_", pay_pts_callback),
         ("^admin_panel$", admin_panel_callback),
         ("^admin_categories$", admin_categories_callback), ("^delcat_", delete_category_callback),

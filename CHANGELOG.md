@@ -8,6 +8,67 @@
 
 ---
 
+# 🚀 v125 (2026-08-01) — Bybit flow CLEAN REBUILD (deleted + rebuilt unified, bug-free)
+
+**User request:** "Bybit par click karne ke baad ka sara workflow delete karo aur dubara banao,
+khud ke brain se, bug-free."
+
+## ✅ What was done
+The ENTIRE old Bybit user-facing flow (v122 UID flow + v123 USDT flow, ~290 lines scattered
+across `_bybit_show_warning`, `bybit_warn_*`, `bybit_uid_received`, `bybit_amount_received`,
+`_bybit_show_deposit_screen`, `_bybit_usdt_show_warning`, `bybit_usdt_warn_*`,
+`bybit_usdt_amount_received`, `_bybit_usdt_create_and_show`) was **deleted** and replaced by
+one clean, unified state machine driven by a single `context.user_data['bybit_flow']` dict.
+
+## The new unified flow (all 3 Bybit methods)
+```
+bybit_pay:        warning → Continue → UID → (amount if points) → deposit → Check
+bybit_usdt_trc20: warning → Continue → (amount if points) → deposit → Check
+bybit_usdt_bep20: warning → Continue → (amount if points) → deposit → Check
+```
+- **bybit_start_flow(q, context, method, mode, base_amount, product, qty)** — entry (both
+  Buy-Points and Product). Shows the decimals/fee warning with editable Continue/Cancel.
+- **bybit_flow_continue_callback** — bybit_pay → UID prompt; usdt product → straight to
+  deposit; usdt points → amount prompt (network label shown).
+- **bybit_flow_cancel_callback** — clears `bybit_flow` + `pending_order_id`, returns to
+  Buy Points. One cancel path for everything.
+- **bybit_flow_uid_received** — validates digits (6–12); product mode creates order directly
+  after UID, points mode asks amount.
+- **bybit_flow_amount_received** — unified for pay & usdt (right invalid-msg per method),
+  min $1. Creates the order (unique 4-decimal amount for points / exact price for product),
+  8-digit reference, stores customer_bybit_uid for pay, status bybit_waiting/usdt_waiting.
+- **_bybit_create_and_show** — deposit screen with editable buttons:
+  Copy amount / Copy UID (pay) or Copy address / Copy amount (usdt) + Check payment +
+  Cancel payment. Uses a single `_bybit_flow_target()` to handle CallbackQuery vs Message.
+- **Verification engine unchanged (proven):** `bybitv_<oid>` → API match by
+  sender-UID+amount (pay) or network+address+amount (usdt) → credit points / deliver
+  product. Background job auto-checks every 45s. Admin "Mark Received & Credit" fallback.
+
+## Bot wiring (bug-free guarantees)
+- `payment_flow_text_handler` (group −80, before all conversations) reads the unified
+  `bybit_flow` dict for UID/amount steps and returns True when consumed (never swallowed by
+  stale conversations; never double-handled).
+- Old per-flow user_data keys removed (`bybit_flow_step`, `bybit_usdt_step`, …) — one dict.
+- Old callback patterns removed; new `^bybit_flow_continue$` / `^bybit_flow_cancel$`.
+
+## Tests (v125)
+`_test_v125_bybit_flow.py` — **8/8 PASS**: full points bybit_pay flow (warning → continue →
+UID → amount → order with UID+ref+status → deposit screen) ✅ · full points usdt_trc20 flow
+(no UID asked, order usdt_waiting, address+network shown) ✅ · bad UID/amount rejected ✅ ·
+cancel clears flow ✅ · wrong-step returns False ✅ · responses/buttons/screens present ✅.
+
+Regression: v124 4 + v123 12 + v122 13 + v120 7 + v119 14 + v118 8 + v117 4 + v116 6 + v114 9
++ v112 15 + v111 17 = **117/117 PASS**. Boot clean; restore-ready DB verified (integrity ok,
+108 responses, both new columns).
+
+## 🔧 Files changed
+- `handlers_order.py` — deleted ~290 lines of old flow; added unified flow (6 functions) +
+  rewritten entry points.
+- `bot.py` — routing via `bybit_flow` dict; callbacks `^bybit_flow_continue/cancel$`.
+- `CHANGELOG.md` — this section.
+
+---
+
 # 🚀 v124 (2026-08-01) — CRITICAL: bot "stuck when user types amount" — stale-conversation fix
 
 **User bug report:** after restoring the DB, the bot gets stuck as soon as a user types
