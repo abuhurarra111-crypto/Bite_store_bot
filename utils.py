@@ -236,6 +236,72 @@ def markdownish_to_html(text):
     return s
 
 
+def sanitize_html_tags(text):
+    """🐛 v143 FIX: make arbitrary admin text SAFE for Telegram HTML parsing.
+
+    Telegram's HTML parser is strict: an unmatched closing tag (e.g. </b> with
+    no open) or wrong nesting (<b><i>x</b></i>) raises
+    'Can't parse entities: unmatched end tag...' — which made bot panels
+    fail to update and look 'stuck' (the exact log error in the screenshot).
+
+    This helper scans block tags (b/i/u/s/code/pre/a/blockquote/strong/em/
+    tg-emoji) and:
+      - drops orphan closing tags,
+      - auto-closes unclosed tags at the end,
+      - forces correct nesting by popping mismatched opens.
+    It never raises and leaves plain text untouched.
+    """
+    import re as _re
+    if not text or not isinstance(text, str):
+        return text or ""
+    s = str(text)
+    if '<' not in s:
+        return s
+    tag_re = _re.compile(r'<(/?)(b|i|u|s|code|pre|a|blockquote|strong|em|tg-emoji)\b[^>]*>', _re.I)
+    # collect tag positions
+    ops = []
+    for m in tag_re.finditer(s):
+        closing = bool(m.group(1))
+        name = m.group(2).lower()
+        # self-closing tg-emoji has no explicit close
+        if '/>' in m.group(0):
+            continue
+        ops.append((m.start(), m.end(), name, closing))
+    if not ops:
+        return s
+    stack = []
+    out = list(s)
+    drops = []
+    for i, (st, en, name, closing) in enumerate(ops):
+        if not closing:
+            # skip if already inside same tag (avoid double-open)
+            if stack and stack[-1] == name:
+                continue
+            stack.append(name)
+        else:
+            if not stack:
+                drops.append((st, en))  # orphan close → drop
+            elif stack[-1] == name:
+                stack.pop()
+            elif name in stack:
+                # wrong nesting (<b><i>x</b>) → drop this close entirely; the
+                # final pass auto-closes the still-open <i> and <b> correctly.
+                drops.append((st, en))
+            else:
+                drops.append((st, en))  # close for tag not open → drop
+    # drop orphan closes (from end to start)
+    for st, en in reversed(drops):
+        del out[st:en]
+    result = ''.join(out)
+    # auto-close any remaining open tags (in reverse order)
+    for name in reversed(stack):
+        if name == 'tg-emoji':
+            continue
+        # find if there's a dangling close after all — just append close at end
+        result += f"</{name}>"
+    return result
+
+
 def smart_text_and_mode(text, preferred_mode="Markdown"):
     """Return (text, parse_mode) with premium/custom emoji support.
 
@@ -248,7 +314,9 @@ def smart_text_and_mode(text, preferred_mode="Markdown"):
     s = str(text)
     if not contains_premium_markup(s) and not re.search(r'</?(?:b|i|u|s|code|pre|a|blockquote)\b', s, flags=re.I):
         return s, preferred_mode
-    return markdownish_to_html(s), "HTML"
+    html_out = markdownish_to_html(s)
+    html_out = sanitize_html_tags(html_out)
+    return html_out, "HTML"
 
 
 # ════════════════════════════════════════════════════════════════

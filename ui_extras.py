@@ -12,6 +12,7 @@
 # below in its own section. Imports and behavior are byte-identical to the
 # pre-merge codebase — only file count is reduced.
 # ============================================================
+import re
 import asyncio
 
 
@@ -906,9 +907,14 @@ async def _edit(q, text, kb):
     log = logging.getLogger(__name__)
     rm = InlineKeyboardMarkup(kb)
 
-    # Attempt 1: normal Markdown edit
+    # 🐛 v143: pick the correct parse mode (HTML when text has HTML/premium tags)
+    from utils import smart_text_and_mode, sanitize_html_tags
+    send_text, send_mode = smart_text_and_mode(text, "Markdown")
+    send_text = sanitize_html_tags(send_text)
+
+    # Attempt 1: correct-mode edit
     try:
-        await q.edit_message_text(text, parse_mode="Markdown", reply_markup=rm)
+        await q.edit_message_text(send_text, parse_mode=send_mode, reply_markup=rm)
         return
     except Exception as e:
         emsg = str(e).lower()
@@ -917,16 +923,18 @@ async def _edit(q, text, kb):
         if "not modified" in emsg or "message is not modified" in emsg:
             try:
                 # Zero-width space (U+200B) — invisible, forces Telegram to see diff
-                await q.edit_message_text(text + "\u200b",
-                                          parse_mode="Markdown", reply_markup=rm)
+                await q.edit_message_text(send_text + "\u200b",
+                                          parse_mode=send_mode, reply_markup=rm)
                 return
             except Exception as e2:
                 log.warning(f"[_edit] zwsp retry failed: {e2}")
 
-        # ── Case B: parse error → strip Markdown ──
+        # ── Case B: parse error → sanitize + strip mode (🐛 v143: also strip ALL
+        # remaining HTML tags so Telegram's parser can never reject the message) ──
         if "parse" in emsg or "entity" in emsg or "entities" in emsg:
             try:
-                await q.edit_message_text(text, reply_markup=rm)
+                plain = re.sub(r'<[^>]+>', '', send_text)
+                await q.edit_message_text(plain, reply_markup=rm)
                 return
             except Exception as e2:
                 log.warning(f"[_edit] plain-text retry failed: {e2}")

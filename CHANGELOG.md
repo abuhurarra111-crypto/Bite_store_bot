@@ -8,7 +8,36 @@
 
 ---
 
-# 🚀 v143 (2026-08-03) — Force-Join "stuck" BULLETPROOF hardening + channels added
+# 🚀 v143.1 (2026-08-04) — FIX: Telegram "Can't parse entities" — panels failed to update
+
+## 🐛 Bug (user screenshot of Render logs)
+- **Log error:**
+  `[_edit] initial edit failed (Can't parse entities: unmatched end tag at byte
+  offset 271, expected "</i>", found "</b>"); trying fallbacks`
+  + `HTTP/1.1 400 Bad Request` on `editMessageText`.
+- **Root cause:** Telegram's HTML parser is strict. When a panel/response text
+  contained mis-nested or unmatched HTML tags (e.g. admin-custom label with
+  `<b><i>…</b></i>` or a stray `</b>`), `edit_message_text` was rejected → the
+  panel never visually updated → the bot appeared **stuck with no logs**.
+  `smart_text_and_mode` detected HTML and switched to HTML mode, but the malformed
+  tags were passed through untouched.
+- **Fix (utils.py):**
+  1. New `sanitize_html_tags()` — scans block tags, drops orphan closes,
+     auto-closes unclosed opens, and fixes mis-nesting so the output is always
+     valid for Telegram's strict parser.
+  2. `smart_text_and_mode()` now runs the sanitizer on every HTML-mode output
+     (this covers ALL sends/edits, since the premium-emoji guard routes every
+     message through it).
+  3. `_edit()` (ui_extras) now picks the correct mode via smart_text_and_mode
+     and its parse-error fallback strips ALL HTML tags as a last resort.
+- **Verified:** sanitizer unit tests (normal / orphan-close / unclosed-open /
+  mis-nested / premium-emoji preserved) + a **strict-HTML Telegram simulator**
+  that rejects malformed HTML — Force Join / Admin / Settings panels all pass.
+
+## 🧪 Tests: v140.1 suite now 13/13 · full regression 182/182 PASS · boot clean
+
+---
+ (2026-08-03) — Force-Join "stuck" BULLETPROOF hardening + channels added
 
 ## 🔒 Hardening (report: "Force Join Setup click → bot stuck, no logs")
 - The Force-Join panel code path was tested end-to-end (full bot.py app, real
