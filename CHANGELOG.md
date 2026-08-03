@@ -8,7 +8,28 @@
 
 ---
 
-# 🚀 v139 (2026-08-03) — Restore-safety fix: pending-referral columns now auto-added
+# 🚀 v139.1 (2026-08-03) — Live-test bugfix: Fake Activity 🛰️ Test Broadcast button crashed
+
+## 🐛 Bug (found during live test session)
+- **Bug:** Fake Activity panel ka **🛰️ Test Broadcast** button `admin_bcast_test_callback`
+  used `ADMIN_ID` without importing it → tapping the button raised
+  `NameError: name 'ADMIN_ID' is not defined` → button silently failed.
+- **Fix:** added `from config import ADMIN_ID` inside the callback.
+- **Push:** committed to GitHub (`3b495eb`), Render deploy triggered via API → **LIVE**.
+
+## ✅ Live connectivity verified (this session)
+- Telegram: bot alive (getMe OK), polling mode (no webhook conflict) ✅
+- Render: service resumed + deployed clean ✅
+- ProdSeller: 15 products, balance **$0** ⚠️ (top-up needed before selling)
+- Canboso sinhle: 21 products ✅ · Shop Cron: balance **$10** ✅
+- Binance API: connected via proxy pool ✅ (env socks5 fails → pool fallback works)
+- Bybit: Bybit-Pay/UID (internal deposits) path OK ✅; on-chain endpoint had
+  sandbox timestamp skew (Render time is NTP-synced — expected OK there)
+
+## Tests: 168/168 PASS (v134 19 · v135 15 · v136 9 · v137 9 · regression 116)
+
+---
+ (2026-08-03) — Restore-safety fix: pending-referral columns now auto-added
 
 ## ✅ Bug found during full DB-restore test (real fix)
 - **Bug:** after restoring an older DB backup, the `pending_referrals` table was
