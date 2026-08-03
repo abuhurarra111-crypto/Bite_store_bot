@@ -8,7 +8,31 @@
 
 ---
 
-# 🚀 v139.2 (2026-08-03) — Live-flow simulation bugfix: Verify-Button editor crashed
+# 🚀 v139.3 (2026-08-03) — Edit-Response reaction emoji FIX (handler ordering)
+
+## 🐛 Bug #3 (reported: "edit response ma b emoji ni lg rha")
+- **Kahan:** Edit Responses → ⚡ Set/Change Reaction (v133 feature)
+- **Root cause:** In bot.py's callback table the GENERIC pattern
+  `("^resp_react_", resp_react_callback)` was registered BEFORE the specific
+  ones (`set_`, `clear_`, `prem_`, `custom_`). python-telegram-bot fires ONLY
+  the FIRST matching handler, so:
+  - `resp_react_set_welcome|👍` → generic fired → picker reopened with wrong
+    key `set_welcome|👍` → **emoji was NEVER set**
+  - `resp_react_clear_...` → same → **clear never happened**
+  - `resp_react_prem_/custom_...` → same → **premium/custom input never started**
+  - Only the plain picker opened (looked like it worked, but nothing saved)
+- **Fix (bot.py):**
+  1. `set_`/`clear_` registered BEFORE the generic pattern.
+  2. Generic now uses negative lookahead: `^resp_react_(?!set_|clear_|prem_|custom_)`.
+  3. `prem_`/`custom_` removed from the plain table so the dedicated
+     ConversationHandler (state 99, emoji text input) actually receives them.
+- **Verified with a real PTB router test:** picker ✅ · set ✅ · clear ✅ ·
+  premium-enter ✅ · premium emoji text captured ✅ · custom ✅ (all 6 correct).
+
+## 🧪 Tests: v139.3 suite 9/9 PASS · full regression 177/177 PASS
+
+---
+ (2026-08-03) — Live-flow simulation bugfix: Verify-Button editor crashed
 
 ## 🐛 Bug #2 (found via in-process live-flow simulation with real DB copy)
 - **Bug:** Force Join → ✅ **Verify Button Editor** (`fj_vbtn_callback`) crashed with

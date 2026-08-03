@@ -1887,11 +1887,15 @@ def main():
         ("^pm_jazzcash$", admin_pm_jazzcash_callback),
         ("^pm_crypto$", admin_pm_crypto_callback),
         ("^bybit_test$", bybit_test_callback),
-        ("^resp_react_",   resp_react_callback),
-        ("^resp_react_set_",   resp_react_set_callback),
-        ("^resp_react_clear_", resp_react_clear_callback),
-        ("^resp_react_prem_",  resp_react_prem_callback),
-        ("^resp_react_custom_", resp_react_custom_callback),
+        # ⚡ v133 reaction emoji — ORDER MATTERS (specific first, generic last
+        # with negative lookahead). 🐛 v139.3: generic ^resp_react_ used to be
+        # first → PTB fires ONLY the first matching handler → set/clear/prem/
+        # custom NEVER ran → "emoji not being applied in Edit Response".
+        ("^resp_react_set_",    resp_react_set_callback),
+        ("^resp_react_clear_",  resp_react_clear_callback),
+        ("^resp_react_(?!set_|clear_|prem_|custom_)", resp_react_callback),
+        # NOTE: prem_/custom_ are intentionally NOT in this table — they are
+        # entry_points of the ConversationHandler below (state 99).
         # 🆕 v30: Binance proxy removed (screenshot verifier doesn't need it)
         # 🆕 v23: Product Color Indicators
         ("^admin_colors$", admin_colors_callback),
