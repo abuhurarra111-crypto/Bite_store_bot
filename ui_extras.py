@@ -2276,6 +2276,40 @@ async def fj_panel_callback(update, context):
             pass
 
 
+def _fj_label_plain(label, maxlen=22):
+    """🐛 v143.2: clean a force-join target label for DISPLAY.
+    Labels saved from the rename flow may contain
+    `[[HTML]]<tg-emoji emoji-id="X">🔥</tg-emoji> Name` — raw markup must NEVER
+    show in the admin panel. Returns plain text with the premium emoji's
+    fallback char kept and all tags/sentinel stripped.
+    """
+    try:
+        from utils import html_strip_tags, strip_html_prefix
+    except Exception:
+        def html_strip_tags(x):
+            import re as _r
+            return _r.sub(r'<[^>]+>', '', x or '')
+        def strip_html_prefix(x):
+            return (x or '').replace('[[HTML]]', '')
+    try:
+        clean = strip_html_prefix(label or '')
+        # keep the <tg-emoji> fallback char: replace the whole tag with its inner text
+        import re as _re
+        clean = _re.sub(r'<tg-emoji\s+emoji-id=["\'][^"\']+["\']\s*>(.*?)</tg-emoji>',
+                        lambda m: m.group(1), clean, flags=_re.S)
+        clean = html_strip_tags(clean)
+        clean = clean.strip()
+        # collapse whitespace
+        clean = _re.sub(r'\s+', ' ', clean)
+        if not clean:
+            clean = (label or 'Join').strip()
+        if maxlen and len(clean) > maxlen:
+            clean = clean[:maxlen-1] + '…'
+        return clean
+    except Exception:
+        return (label or 'Join')[:maxlen] or 'Join'
+
+
 async def _show_fj_panel_safe(q, bot):
     """🐛 v143: bulletproof fallback panel — never raises, never hangs.
     Used if the normal panel render times out or errors."""
@@ -2294,7 +2328,7 @@ async def _show_fj_panel_safe(q, bot):
     kb = [[InlineKeyboardButton("➕ Add Channel / Group", callback_data="fj_add")]]
     for t in targets:
         try:
-            label = (t.get('label') or 'Join')[:28]
+            label = _fj_label_plain(t.get('label'), 28)
         except Exception:
             label = 'Join'
         kb.append([InlineKeyboardButton(f"{label}", callback_data=f"fjm_{t['id']}")])
@@ -2364,7 +2398,8 @@ async def _show_fj_panel(q, bot):
         if len(short) > 34:
             short = short[:31] + "..."
         short = short.replace("_", "\\_").replace("*", "\\*")
-        lines.append(f"{idx}. {dot} *{(t.get('label') or 'Join')[:22]}* → `{short}`")
+        label_disp = _fj_label_plain(t.get('label'), 22).replace("_", "\\_").replace("*", "\\*")
+        lines.append(f"{idx}. {dot} *{label_disp}* → `{short}`")
     lines.append("")
     lines.append(f"✅ Verify Button: *{vlabel[:24]}* ({vstyle_lbl})")
     lines.append("")
@@ -2384,9 +2419,18 @@ async def _show_fj_panel(q, bot):
     for idx, t in enumerate(targets, 1):
         style = (t.get("style") or "").lower()
         dot = {"primary": "🔵", "success": "🟢", "danger": "🔴"}.get(style, "⬜")
-        kb.append([InlineKeyboardButton(
-            f"{dot} {idx}. {(t.get('label') or 'Join')[:28]}",
-            callback_data=f"fjm_{t['id']}")])
+        label_btn = _fj_label_plain(t.get('label'), 28)
+        try:
+            from button_system import make_premium_button
+            kb.append([make_premium_button(
+                f"{dot} {idx}. {label_btn}",
+                emoji_id=(t.get('emoji_id') or '') or None,
+                style=style or None,
+                callback_data=f"fjm_{t['id']}")])
+        except Exception:
+            kb.append([InlineKeyboardButton(
+                f"{dot} {idx}. {label_btn}",
+                callback_data=f"fjm_{t['id']}")])
     if targets:
         kb.append([InlineKeyboardButton("🗑️ Bulk Delete Targets", callback_data="fj_bulk")])
     kb.extend([
@@ -2494,7 +2538,7 @@ async def fjm_callback(update, context):
     text = (
         f"🔗 *Target #{tid}*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{dot} *Label:* {(t.get('label') or 'Join')}\n"
+        f"{dot} *Label:* {_fj_label_plain(t.get('label'), 40)}\n"
         f"🌐 Link: `{short}`\n"
         f"🎨 Color: {_style_label(style)}\n"
         f"✨ Premium emoji: {'✅ set' if (t.get('emoji_id') or '') else '❌ none'}\n\n"
@@ -2503,7 +2547,7 @@ async def fjm_callback(update, context):
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     try:
         from button_system import make_premium_button
-        prev = make_premium_button((t.get('label') or 'Join'),
+        prev = make_premium_button(_fj_label_plain(t.get('label'), 40),
                                    emoji_id=(t.get('emoji_id') or '') or None,
                                    style=style or None,
                                    url=_fj_join_url(link))
@@ -2759,8 +2803,8 @@ async def fj_bulk_callback(update, context):
     for t in targets:
         tid = t['id']
         mark = "✅" if tid in sel else "⬜"
-        lines.append(f"{mark} #{tid} • {(t.get('label') or 'Join')[:24]}")
-        kb.append([InlineKeyboardButton(f"{mark} #{tid} {(t.get('label') or 'Join')[:26]}",
+        lines.append(f"{mark} #{tid} • {_fj_label_plain(t.get('label'), 24)}")
+        kb.append([InlineKeyboardButton(f"{mark} #{tid} {_fj_label_plain(t.get('label'), 26)}",
                                         callback_data=f"fjb_t_{tid}")])
     if not targets:
         lines.append("_(No targets yet.)_")
@@ -3069,12 +3113,12 @@ async def fj_test_callback(update, context):
             me = await context.bot.get_me()
             member = await context.bot.get_chat_member(chat_id=resolved, user_id=me.id)
             if member.status in ("administrator", "creator"):
-                lines.append(f"✅ #{t['id']} *{(t.get('label') or 'Join')[:18]}* — admin OK")
+                lines.append(f"✅ #{t['id']} *{_fj_label_plain(t.get('label'), 18)}* — admin OK")
             else:
-                lines.append(f"⚠️ #{t['id']} *{(t.get('label') or 'Join')[:18]}* — member but NOT admin")
+                lines.append(f"⚠️ #{t['id']} *{_fj_label_plain(t.get('label'), 18)}* — member but NOT admin")
                 allok = False
         except Exception as e:
-            lines.append(f"❌ #{t['id']} *{(t.get('label') or 'Join')[:18]}* — {str(e)[:60]}")
+            lines.append(f"❌ #{t['id']} *{_fj_label_plain(t.get('label'), 18)}* — {str(e)[:60]}")
             allok = False
     lines.append("")
     lines.append("✅ *All targets OK* — users will be verified properly." if allok

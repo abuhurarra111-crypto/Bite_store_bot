@@ -8,7 +8,30 @@
 
 ---
 
-# 🚀 v143.1 (2026-08-04) — FIX: Telegram "Can't parse entities" — panels failed to update
+# 🚀 v143.2 (2026-08-04) — FIX: raw HTML markup showing in Force-Join panel labels
+
+## 🐛 Bug (user screenshot)
+- **Kahan:** Force Join Setup → target rename with premium emoji → back → panel
+  showed the raw label: `3. [[HTML]]<tg-emoji emoji-id="...` instead of the name.
+- **Root cause:** the rename flow saves premium-emoji labels in
+  `[[HTML]]<tg-emoji ...>🔥</tg-emoji> Name` form (that is how the renderer stores
+  them so buttons can show the animated icon). But `_show_fj_panel` printed the
+  raw label directly into Markdown text — the sentinel + tags were never stripped
+  for display.
+- **Fix (ui_extras.py):**
+  1. New `_fj_label_plain()` — strips the `[[HTML]]` sentinel and all tags, keeps
+     the premium emoji's fallback char + the text (clean display name).
+  2. Used in `_show_fj_panel` (text lines AND target buttons via
+     `make_premium_button` so the animated icon still shows), `_show_fj_panel_safe`,
+     `fjm_callback` (manage panel label + preview), bulk-delete list, and the
+     admin-status test panel.
+- **Verified:** helper returns `🔥 Premium Chan` (no sentinel/tags) + panel text
+  contains zero raw markup. Regression tests added (v135 suite 20).
+
+## 🧪 Tests: 186/186 PASS · boot clean
+
+---
+ (2026-08-04) — FIX: Telegram "Can't parse entities" — panels failed to update
 
 ## 🐛 Bug (user screenshot of Render logs)
 - **Log error:**
