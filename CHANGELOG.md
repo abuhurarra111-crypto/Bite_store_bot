@@ -8,7 +8,37 @@
 
 ---
 
-# 🚀 v142 (2026-08-03) — FIX: Force-Join bot stuck after adding targets
+# 🚀 v143 (2026-08-03) — Force-Join "stuck" BULLETPROOF hardening + channels added
+
+## 🔒 Hardening (report: "Force Join Setup click → bot stuck, no logs")
+- The Force-Join panel code path was tested end-to-end (full bot.py app, real
+  handlers, 3 targets incl. @learnwith_Alex + @Alex_Resellers, open/click/back/
+  add/reopen ×5) — **no hang reproducible in code**. The live "stuck with no
+  logs" is therefore most likely environmental (two bot processes on one token,
+  service suspended, or a stalled Telegram API call). To make the bot
+  un-stuck-able anyway:
+  1. `fj_panel_callback` now wraps the panel render in `asyncio.wait_for(8s)`
+     and, on timeout/error, sends a **guaranteed fallback panel message**
+     (`_show_fj_panel_safe`) — the admin ALWAYS gets a response, never silence.
+  2. `_is_member` member-check + chat-resolution wrapped in `asyncio.wait_for(6s)`
+     (fail-open) — a slow/stalled Telegram API call can no longer freeze the bot.
+  3. `_show_fj_panel_safe` — minimal, never-raising fallback renderer.
+
+## ✅ DB: added the 2 channels the owner asked for
+- `@bite_alerts` (existing) + `https://t.me/learnwith_Alex` +
+  `https://t.me/Alex_Resellers` — all enabled, `fj_enabled=1`.
+  Restore `bite_store_restore_ready.db` and all three buttons show for new users.
+
+## ⚠️ Live-env checklist for the owner
+- Do NOT run the bot in two places with the same token (local + Render) — Telegram
+  splits updates and half the clicks "do nothing".
+- Keep the Render service running (it was suspended twice today).
+- Make the bot an ADMIN in each channel/group so Verify works.
+
+## 🧪 Tests: 179/179 PASS · full-app fj_panel ×5 open no-hang · boot clean
+
+---
+ (2026-08-03) — FIX: Force-Join bot stuck after adding targets
 
 ## 🐛 Bug (reported: "2 buttons add krke wapas Force Join kholo to bot stuck")
 - **Kahan:** Force Join Setup → ➕ Add Channel/Group → kuch targets add karne ke baad

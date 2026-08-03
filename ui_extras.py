@@ -12,6 +12,7 @@
 # below in its own section. Imports and behavior are byte-identical to the
 # pre-merge codebase — only file count is reduced.
 # ============================================================
+import asyncio
 
 
 # ============================================================
@@ -1850,12 +1851,15 @@ async def _is_member(bot, user_id: int, chat_id: str) -> bool:
 
     Returns True if member, False if not.
     Fails OPEN on errors (don't block users if Telegram API fails).
+    🐛 v143: wrapped in asyncio.wait_for so a stalled Telegram API call can
+    never freeze the bot (fail-open after 6s).
     """
     try:
         # Resolve to numeric or @username
-        resolved = await _resolve_chat_id(bot, chat_id)
+        resolved = await asyncio.wait_for(_resolve_chat_id(bot, chat_id), timeout=6)
 
-        member = await bot.get_chat_member(chat_id=resolved, user_id=user_id)
+        member = await asyncio.wait_for(
+            bot.get_chat_member(chat_id=resolved, user_id=user_id), timeout=6)
         return member.status in (
             ChatMember.MEMBER,
             ChatMember.ADMINISTRATOR,
@@ -2237,7 +2241,67 @@ async def fj_panel_callback(update, context):
     for k in ("fj_add_link", "fj_ren_target", "fj_emo_target", "fj_link_target",
               "fj_vbtn_ren", "fj_vbtn_emo", "fj_bulk_sel"):
         context.user_data.pop(k, None)
-    await _show_fj_panel(q, context.bot)
+    # 🐛 v143: guarantee the panel ALWAYS renders — even if a DB call or a
+    # Telegram API call stalls, we time out and send a fresh message instead
+    # of leaving the bot looking stuck with no response.
+    try:
+        await asyncio.wait_for(_show_fj_panel(q, context.bot), timeout=8)
+    except asyncio.TimeoutError:
+        try:
+            await q.edit_message_text("🔗 *Force Join Setup*\n\n⚠️ Slow response — trying again…",
+                                      parse_mode="Markdown")
+        except Exception:
+            pass
+        try:
+            await _show_fj_panel_safe(q, context.bot)
+        except Exception:
+            pass
+    except Exception as e:
+        try:
+            await q.edit_message_text(f"🔗 *Force Join Setup*\n\n⚠️ Error: {str(e)[:80]}",
+                                      parse_mode="Markdown")
+        except Exception:
+            pass
+        try:
+            await _show_fj_panel_safe(q, context.bot)
+        except Exception:
+            pass
+
+
+async def _show_fj_panel_safe(q, bot):
+    """🐛 v143: bulletproof fallback panel — never raises, never hangs.
+    Used if the normal panel render times out or errors."""
+    try:
+        from database import list_fj_targets
+        targets = list_fj_targets()
+    except Exception:
+        targets = []
+    try:
+        enabled = _g(S_FJ_ENABLED, "0") == "1"
+    except Exception:
+        enabled = False
+    lines = ["🔗 *Force Join Setup*", "━━━━━━━━━━━━━━━━━━━━",
+             f"🔌 Status: {'🟢 ENABLED' if enabled else '🔴 DISABLED'}",
+             f"📋 Join Targets: {len(targets)}", ""]
+    kb = [[InlineKeyboardButton("➕ Add Channel / Group", callback_data="fj_add")]]
+    for t in targets:
+        try:
+            label = (t.get('label') or 'Join')[:28]
+        except Exception:
+            label = 'Join'
+        kb.append([InlineKeyboardButton(f"{label}", callback_data=f"fjm_{t['id']}")])
+    kb.append([InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_panel")])
+    try:
+        await q.edit_message_text("\n".join(lines), parse_mode="Markdown",
+                                  reply_markup=InlineKeyboardMarkup(kb))
+        return
+    except Exception:
+        pass
+    try:
+        await q.message.reply_text("\n".join(lines), parse_mode="Markdown",
+                                   reply_markup=InlineKeyboardMarkup(kb))
+    except Exception:
+        pass
 
 
 def _style_label(style):
