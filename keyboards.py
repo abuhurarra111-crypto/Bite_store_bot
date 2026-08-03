@@ -250,11 +250,19 @@ def _apply_screen_pad_markup(markup, location):
 # ════════════════════════════════════════════
 # 📋 PERSISTENT KEYBOARD
 # ════════════════════════════════════════════
-def persistent_menu():
+def persistent_menu(user_id=None):
     # 🆕 v78: 📚 How to Use button next to 🏠 Main Menu on the persistent
     # reply keyboard (always visible at the bottom of the chat).
+    # 🆕 v137: labels follow the user's selected language.
+    mm = "🏠 Main Menu"; hu = "📚 How to Use"
+    try:
+        from i18n import tr_user
+        mm = tr_user(mm, user_id=user_id) or mm
+        hu = tr_user(hu, user_id=user_id) or hu
+    except Exception:
+        pass
     return ReplyKeyboardMarkup(
-        [[KeyboardButton("🏠 Main Menu"), KeyboardButton("📚 How to Use")]],
+        [[KeyboardButton(mm), KeyboardButton(hu)]],
         resize_keyboard=True, is_persistent=True
     )
 

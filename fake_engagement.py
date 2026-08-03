@@ -3617,6 +3617,39 @@ async def _buy_now_keyboard(bot, pid, btn_key="sb_buy_generic"):
 # 📤 DESTINATION-AWARE BROADCAST
 # ════════════════════════════════════════════════════════════════
 
+async def _alert_broadcast_dest_failure(bot, dest_ref, chat_id, err, cooldown_min=20):
+    """🔧 v132: throttled admin alert when a broadcast cannot reach the
+    destination group/channel — so dead destinations are VISIBLE."""
+    import time as _t
+    try:
+        from database import get_setting, set_setting
+        key = f"bcast_dest_alerted_{chat_id}"
+        last = 0.0
+        try:
+            last = float(get_setting(key, "0") or 0)
+        except Exception:
+            last = 0.0
+        now = _t.time()
+        if now - last < cooldown_min * 60:
+            return
+        set_setting(key, f"{now}")
+        from config import ADMIN_ID
+        if not ADMIN_ID:
+            return
+        msg = (
+            "🚨 *Broadcast destination FAILED*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"Dest: `{dest_ref}` (chat `{chat_id}`)\n"
+            f"Error: `{type(err).__name__}: {str(err)[:160]}`\n\n"
+            f"_Fix: make sure the bot is an ADMIN in the group/channel, and "
+            f"that dest_chat_id is correct (Settings → Fake Activity)._\n\n"
+            f"_Real + fake broadcasts to this destination are being skipped._"
+        )
+        await bot.send_message(ADMIN_ID, msg, parse_mode="Markdown")
+    except Exception:
+        pass
+
+
 async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None, bypass_maintenance=False, reply_markup=None):
     """Send `text` to the destination configured for fake activity:
        bot_only  → all bot users (DM)
@@ -3775,7 +3808,7 @@ async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None
     # 🆕 Premium/custom emoji aware everywhere (even if [[HTML]] appears in the middle)
     _text, _pm = smart_text_and_mode(text, "Markdown")
 
-    async def _send(chat_id, kb):
+    async def _send(chat_id, kb, is_group=False):
         try:
             await bot.send_message(chat_id=chat_id, text=_text, parse_mode=_pm, reply_markup=kb)
             return True
@@ -3784,7 +3817,16 @@ async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None
             try:
                 await bot.send_message(chat_id=chat_id, text=_text, reply_markup=kb)
                 return True
-            except Exception:
+            except Exception as _e:
+                # 🔧 v132: NEVER silent — log + alert the admin (throttled) so a
+                # dead destination is visible, not invisible. This was why real
+                # purchase/join/stock broadcasts silently stopped reaching the group.
+                logger.warning(f"[StoreBroadcast] send failed chat={chat_id}: {type(_e).__name__}: {str(_e)[:150]}")
+                try:
+                    if is_group:
+                        await _alert_broadcast_dest_failure(bot, dest_chat_ref, chat_id, _e)
+                except Exception:
+                    pass
                 return False
 
     # ── Bot users ──
@@ -3802,15 +3844,73 @@ async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None
     # ── Group / channel ──
     if mode in ("group_only", "both"):
         dest_chat = _g("dest_chat_id", "").strip()
+        dest_chat_ref = dest_chat
         if dest_chat:
             try:
                 from ui_extras import _resolve_chat_id
                 resolved = await _resolve_chat_id(bot, dest_chat)
             except Exception:
                 resolved = dest_chat
-            if await _send(resolved, group_kb):
+            if await _send(resolved, group_kb, is_group=True):
                 sent += 1
 
     logger.info(f"[StoreBroadcast] Sent to {sent} destinations (mode={mode}, pid={pid})")
     return sent
 
+
+
+# ════════════════════════════════════════════════════════════
+# 🔧 v132 — BROADCAST DESTINATION SELF-TEST (admin panel)
+# ════════════════════════════════════════════════════════════
+
+async def admin_bcast_test_callback(u, c):
+    """Test: can the bot post to the fake-activity destination group/channel?
+    Checks bot's member status, resolves dest, sends a test message, and
+    reports the exact result to the admin."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer("Testing destination…")
+    from database import get_setting
+    dest = get_setting("dest_chat_id", "").strip()
+    mode = get_setting("dest_mode", "bot_only")
+    lines = ["🛰️ *Broadcast Destination Test*\n━━━━━━━━━━━━━━━━━━━━",
+             f"Dest: `{dest or '—'}`", f"Mode: `{mode}`", ""]
+    if not dest:
+        lines.append("❌ No destination set. Set dest_chat_id in Fake Activity settings.")
+        await q.edit_message_text("\n".join(lines), parse_mode="Markdown",
+                                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="admin_fake_activity")]]))
+        return
+    try:
+        from ui_extras import _resolve_chat_id
+        resolved = await _resolve_chat_id(c.bot, dest)
+        lines.append(f"✅ Resolved → `{resolved}`")
+    except Exception as e:
+        lines.append(f"❌ Resolve failed: `{str(e)[:120]}`")
+        lines.append("_Check dest_chat_id — the bot must be a member._")
+        await q.edit_message_text("\n".join(lines), parse_mode="Markdown",
+                                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="admin_fake_activity")]]))
+        return
+    # Check bot's member status in the group
+    try:
+        me = await c.bot.get_me()
+        mem = await c.bot.get_chat_member(chat_id=resolved, user_id=me.id)
+        status = getattr(mem, "status", "?")
+        lines.append(f"🤖 Bot status in chat: `{status}`")
+        if status in ("administrator", "creator", "member"):
+            lines.append("✅ Bot can post (member/admin)")
+        else:
+            lines.append(f"⚠️ Bot status `{status}` — may NOT be able to post. Make the bot an ADMIN.")
+    except Exception as e:
+        lines.append(f"⚠️ Could not check membership: `{str(e)[:100]}`")
+    # Send a test message
+    try:
+        await c.bot.send_message(chat_id=resolved,
+                                 text="✅ *Broadcast test OK*\nThe bot can post to this destination.",
+                                 parse_mode="Markdown")
+        lines.append("\n✅ *Test message sent successfully!*")
+    except Exception as e:
+        lines.append(f"\n❌ *Test send FAILED:* `{str(e)[:160]}`")
+        lines.append("_Fix: add the bot as ADMIN in the group/channel._")
+    await q.edit_message_text("\n".join(lines), parse_mode="Markdown",
+                              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="admin_fake_activity")]]))

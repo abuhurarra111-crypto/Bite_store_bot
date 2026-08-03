@@ -122,6 +122,14 @@ DEFAULT_RESPONSES = {
 
 ⚡ Pay via Binance Pay – Automatic Verification""",
 
+    # 🆕 v138: shown AFTER the user taps "I Joined — Verify" (editable,
+    # premium emoji allowed, auto-deletes after 5 seconds from user chat).
+    "fj_verified_done": """✅ *Verified!*
+
+Welcome to *{shop_name}*! 🛍️
+
+You're all set to use the bot.""",
+
     "my_account": """📊 *My Account*
 ━━━━━━━━━━━━━━━━━━━━
 
@@ -194,58 +202,6 @@ Select payment method:""",
 
 Select payment method:""",
 
-    "binance_pay_instructions": """🔶 *Binance Pay*
-━━━━━━━━━━━━━━━━━━━━
-📦 *{product}*{qty_text}
-💰 *Total: ${total}*
-
-📋 *Send to:*
-  Binance Pay ID: `{pay_id}`
-  Holder: {holder}
-
-━━━━━━━━━━━━━━━━━━━━
-💵 *Step 1/2:* Enter the *exact USD amount* you sent:
-*(e.g.* `{amount}` *or* `${amount}`*)*""",
-
-    "binance_order_created": """✅ *Order #{order_id} Created — Amount: ${amount}*
-━━━━━━━━━━━━━━━━━━━━
-📦 *{product}*
-
-📋 *Send ${amount} to:*
-  Binance Pay ID: `{pay_id}`
-  Holder: {holder}
-
-━━━━━━━━━━━━━━━━━━━━
-📸 *Step 2/2: Upload Payment Screenshot*
-
-After sending payment, take a screenshot of the
-*'Payment Successful'* page (with Order ID visible)
-and upload it here.
-
-🤖 Bot will read the screenshot automatically
-and verify amount + Order ID in 5-15 seconds.""",
-
-    "screenshot_received": """✅ *Screenshot Received!*
-━━━━━━━━━━━━━━━━━━━━
-
-Order #{order_id} | Amount: ${amount}
-
-📋 *Now tap 'Verify Payment' below.*
-
-🤖 Bot will:
-  • Read your screenshot with AI
-  • Verify amount + Order ID match
-  • Check it's real (not fake)
-  • Add points to your account
-
-*Takes 5-15 seconds*""",
-
-    "analyzing_screenshot": """🤖 *Analyzing screenshot...*
-
-Order #{order_id} | Amount: ${amount}
-
-*AI reading payment details... (5-15 sec)*""",
-
     "payment_verified_points": """🎉 *Payment Verified!* ✅
 ━━━━━━━━━━━━━━━━━━━━
 
@@ -270,174 +226,15 @@ Thank you! 🙏""",
 💎 +{points} points earned!
 Thank you! 🙏""",
 
-    "jazzcash_pay_instructions": """📱 *Order #{order_id} — JazzCash Payment*
-━━━━━━━━━━━━━━━━━━━━
-📦 *{product}*{qty_text}
-💰 Amount: *${amount}* ≈ *{pkr}*
-
-📲 *Send Rs.{rs_amount} to:*
-  Number: `{number}`
-  Name: {holder}
-
-━━━━━━━━━━━━━━━━━━━━
-📸 *INSTRUCTIONS:*
-
-1. Open JazzCash app
-2. Send *Rs.{rs_amount}* to number above
-3. Take screenshot of *'Transaction Successful'* page
-4. Upload that screenshot here
-
-🤖 Bot will read your screenshot,
-verify everything, and deliver your product automatically!
-
-⚠️ Make sure Transaction ID is visible.""",
-
-    "easypaisa_pay_instructions": """📱 *Order #{order_id} — EasyPaisa Payment*
-━━━━━━━━━━━━━━━━━━━━
-📦 *{product}*{qty_text}
-💰 Amount: *${amount}* ≈ *{pkr}*
-
-📲 *Send Rs.{rs_amount} to:*
-  Number: `{number}`
-  Name: {holder}
-
-━━━━━━━━━━━━━━━━━━━━
-📝 *Instructions:*
-1. Send the exact amount to Easypaisa account above 💳
-2. EasyPaisa will send you SMS with Trx ID
-3. Enter only the *Trx ID* below — bot will check itself!
-
-🔢 *Enter your Trx ID (11 digits):*
-*(From EasyPaisa SMS — example:* `50568603579`*)*""",
-
-    "jc_screenshot_received": """✅ *Screenshot Received!*
-━━━━━━━━━━━━━━━━━━━━
-
-Order #{order_id} | Expected: Rs.{amount}
-
-📋 *Now tap 'Verify Payment' below.*
-
-🤖 Bot will:
-  • Read your screenshot with AI
-  • Verify amount + Transaction ID
-  • Check it's real (not fake)
-  • Deliver product / add points
-
-*Takes 5-15 seconds*""",
-
     # ══════════════════════════════════════
     # ✅ VERIFICATION SUCCESS MESSAGES
     # ══════════════════════════════════════
-    "jc_payment_verified_points": """🎉 *Payment Verified!* ✅
-━━━━━━━━━━━━━━━━━━━━
-
-💎 *{pts} Points* added to your account!
-
-💰 Amount: Rs.{amount}
-🆔 TID: `{tid}`
-
-📊 Check 'My Account' for new balance.
-Thank you! 🙏""",
-
-    "jc_payment_verified_product": """🎉 *Order Delivered!* ✅
-━━━━━━━━━━━━━━━━━━━━
-
-📦 {product}
-
-📨 *Your Product:*
-━━━━━━━━━━━━━━━━━━
-{delivery}
-━━━━━━━━━━━━━━━━━━
-
-💎 +{pts} bonus points!
-Thank you! 🙏""",
-
-    "ep_payment_verified_points": """🎉 *Payment Verified!* ✅
-━━━━━━━━━━━━━━━━━━━━
-
-💎 *{pts} Points* added to your account!
-
-💰 Amount: Rs.{amount}
-👤 From: {name}
-🔢 TID: `{tid}`
-
-Thank you! 🙏""",
-
-    "ep_payment_verified_product": """🎉 *Order Delivered!* ✅
-━━━━━━━━━━━━━━━━━━━━
-
-📦 {product}
-
-📨 *Your Product:*
-━━━━━━━━━━━━━━━━━━
-{delivery}
-━━━━━━━━━━━━━━━━━━
-
-💎 +{pts} points!
-Thank you! 🙏""",
 
     # ══════════════════════════════════════
     # ❌ ERROR MESSAGES
     # ══════════════════════════════════════
-    "order_created": """✅ *Order #{order_id} Created!*
-━━━━━━━━━━━━━━━━━━━━
-📦 *{product}* — ${price}""",
 
     "order_rejected": "❌ Order #{order_id} was rejected.\nContact support for help.",
-
-    "order_cancelled": "❌ *Order #{order_id} Cancelled.*\n\nMarked as canceled in your transaction history.",
-
-    "error_duplicate_screenshot": """❌ Duplicate Screenshot!
-━━━━━━━━━━━━━━━━━━━━
-
-{reason}
-
-Each payment Order ID can be used only ONCE. Order rejected.""",
-
-    "error_suspicious_screenshot": """🚨 Suspicious Screenshot!
-━━━━━━━━━━━━━━━━━━━━
-
-{reason}
-
-Order rejected for security. Contact admin if genuine.""",
-
-    "error_not_screenshot": """❌ Not a Valid Screenshot
-━━━━━━━━━━━━━━━━━━━━
-
-{reason}
-
-📸 Upload a real payment 'Successful' screenshot.""",
-
-    "error_payment_not_successful": """❌ Payment Not Successful
-━━━━━━━━━━━━━━━━━━━━
-
-{reason}
-
-📸 Send screenshot of the SUCCESS page only.""",
-
-    "error_amount_mismatch": """❌ Amount Mismatch
-━━━━━━━━━━━━━━━━━━━━
-
-{reason}
-
-Make sure you sent the EXACT amount and uploaded right screenshot.""",
-
-    "error_no_order_id": """⚠️ Order ID Not Readable
-━━━━━━━━━━━━━━━━━━━━
-
-{reason}
-
-📸 Upload a CLEARER screenshot with Order ID visible.""",
-
-    "error_wrong_receiver": """❌ Wrong Receiver!
-━━━━━━━━━━━━━━━━━━━━
-
-{reason}""",
-
-    "error_verification": """⚠️ Verification Error
-━━━━━━━━━━━━━━━━━━━━
-
-{reason}""",
 
     # ══════════════════════════════════════
     # 💎 POINTS & REFERRALS
@@ -452,74 +249,6 @@ Make sure you sent the EXACT amount and uploaded right screenshot.""",
 💎 Points Earned: *{ref_points}*
 
 📋 Share → They join → You get *{points_per_ref} point*!""",
-
-    "buy_points_title": """💎 *Buy {pts} Points*
-━━━━━━━━━━━━━━━━━━━━
-💰 ${amt} = {pts} Points
-
-Select payment method:""",
-
-    "buy_points_custom": "💎 Enter amount ($):",
-
-    "buy_points_custom_confirmed": """💎 *{pts} Points* — ${amt}
-
-Select payment method:""",
-
-    "binance_points_instructions": """🔶 *Order #{order_id} — Buy {pts} Points (${amount})*
-━━━━━━━━━━━━━━━━━━━━
-
-📋 *Send ${amount} to:*
-  Binance Pay ID: `{pay_id}`
-  Holder: {holder}
-
-━━━━━━━━━━━━━━━━━━━━
-📸 *INSTRUCTIONS:*
-
-1. Open Binance app
-2. Pay *${amount}* to Pay ID above
-3. Take screenshot of *'Payment Successful'* page
-4. Upload that screenshot here
-
-🤖 Bot will read your screenshot,
-verify everything, and add *{pts} points* automatically!
-
-⚠️ Make sure Order ID is visible in screenshot.""",
-
-    "easypaisa_points_instructions": """📱 *Order #{order_id} — EasyPaisa Buy {pts} Points*
-━━━━━━━━━━━━━━━━━━━━
-💎 You will receive: *{pts} Points*
-💰 Pay: *Rs.{rs_amount}* (= ${amount})
-
-📲 *Send Rs.{rs_amount} to:*
-  Number: `{number}`
-  Name: {holder}
-
-━━━━━━━━━━━━━━━━━━━━
-📝 *Instructions:*
-1. Send Rs.{rs_amount} to Easypaisa account above 💳
-2. EasyPaisa will send SMS with Trx ID
-3. Enter only the *Trx ID* below — bot will check itself!
-
-🔢 *Enter Trx ID (11 digits):*
-*(From EasyPaisa SMS — example:* `50568603579`*)*""",
-
-    "jazzcash_points_instructions": """📱 *Order #{order_id} — JazzCash Buy {pts} Points*
-━━━━━━━━━━━━━━━━━━━━
-💎 You will receive: *{pts} Points*
-💰 Pay: *Rs.{rs_amount}* (= ${amount})
-
-📲 *Send Rs.{rs_amount} to:*
-  Number: `{number}`
-  Name: {holder}
-
-━━━━━━━━━━━━━━━━━━━━
-📸 *INSTRUCTIONS:*
-
-1. Send Rs.{rs_amount} via JazzCash to number above
-2. Take screenshot of *'Transaction Successful'* page
-3. Upload screenshot here
-
-🤖 Bot will read & verify automatically in 5-15 sec!""",
 
     # ══════════════════════════════════════
     # 📜 HISTORY & TRANSACTIONS
@@ -551,46 +280,10 @@ Choose your preferred method:""",
     # ══════════════════════════════════════
     # 📱 EASYPAISA TID FLOW
     # ══════════════════════════════════════
-    "ep_tid_received": """🔢 *Trx ID Received:* `{tid}` ✅
-━━━━━━━━━━━━━━━━━━━━
-📋 Order #{order_id}
-💰 Expected: *Rs.{expected_rs}*
-
-📲 *Make sure:*
-• Payment is sent to our EasyPaisa account
-• You have forwarded the SMS to bot's Gmail
-• Wait ~30 seconds for email to arrive
-
-🤖 *Now tap 'Verify Payment'*
-Bot will check Gmail, read amount + name automatically,
-and add points to your account!""",
-
-    "ep_tid_invalid": "❌ Trx ID must be *10-13 digits*!\nYou entered: {count} digits\n_Check EasyPaisa SMS._",
-
-    "ep_tid_already_used": """❌ *This Trx ID is already used!*
-
-Each transaction can be used ONCE.
-
-*Already used at: {date}*""",
 
     # ══════════════════════════════════════
     # 📸 SCREENSHOT UPLOAD
     # ══════════════════════════════════════
-    "upload_image_only": """❌ Please upload an *image* (photo).
-
-📸 Take screenshot of 'Payment Successful' page and send it.""",
-
-    "reupload_screenshot": """📸 *Please upload your new payment screenshot now.*
-
-Make sure it shows 'Payment Successful' with Order ID visible.""",
-
-    "jc_reupload_screenshot": """📸 *Please upload your new JazzCash screenshot now.*
-
-Make sure it shows 'Transaction Successful' with TID visible.""",
-
-    "screenshot_no_pending": "❓ No pending order. /start",
-
-    "screenshot_received_manual": "✅ Screenshot received! Order #{order_id} — verifying ⏳",
 
     "binance_instructions": """⚠️ *Important:*
 • Please enter your *exact Binance sender name*
@@ -605,8 +298,6 @@ Make sure it shows 'Transaction Successful' with TID visible.""",
 Name: {name}
 Username: @{username}
 ID: `{user_id}`""",
-
-    "referral_success_notification": "🎁 {name} joined via your link! +{points} point!",
 
     "cancelled_message": "❌ *Cancelled.*\n\nReturned to main menu.",
     # 🆕 v46: editable headers for previously-hardcoded feature screens.
@@ -623,15 +314,12 @@ ID: `{user_id}`""",
     # ══════════════════════════════════════
     "freeclaim_user_screen": "🎁 *Get this product FREE!*\n\n📦 *{product}*\n👥 Required Referrals: *{required}*\n✅ Your Available Referrals: *{available}*\n\n🎉 *You're eligible!* Tap *Claim Now* to receive your product instantly.",
     "freeclaim_not_enough":  "🎁 *Get this product FREE!*\n\n📦 *{product}*\n👥 Required Referrals: *{required}*\n📊 Your Available Referrals: *{available}*\n📉 Need *{missing}* more referrals.\n\n🔗 Share your referral link with friends — when they /start the bot, your referral count goes up!",
-    "freeclaim_already_claimed": "✅ *You already claimed this product for free.*\n\nEach user can claim a free product only once.",
-    "freeclaim_success": "🎉 *Claim Successful!*\n\n📦 *{product}*\n👥 Referrals spent: *{refs}*\n\n✅ Your product has been delivered above.\n💡 Keep referring to claim more free products!",
 
     # ══════════════════════════════════════
     # 🆕 v48 — Smart Share + Referral Points
     # ══════════════════════════════════════
     "freeclaim_share_message": "🎁 I'm getting {product} for FREE on {shop}!\n\nWant one too? Super easy:\n1️⃣ Click my link below\n2️⃣ Open it in Telegram\n3️⃣ Tap Start — and you're in!\n\n👇 My personal link:\n{link}",
     "freeclaim_share_screen": "🔗 *Your Personal Share Link*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 *{product}*\n🎁 Need: *{required}* referrals\n📊 You have: *{available}*\n\n🔗 *Long-press to copy your link:*\n`{link}`\n\n📲 *Or use the share buttons below* — pick any platform.\n_When anyone clicks your link & starts the bot, you instantly get *1 Referral Point*!_\n\n📝 *Preview of share message:*\n```\n{preview}\n```",
-    "referral_blocked_by_admin": "🚫 Your referral was blocked.\nReason: {reason}\n\n_If you think this is a mistake, contact support._",
 
     # ══════════════════════════════════════
     # 🆕 v59: Shop stock-based filter (All / Available / Unavailable)
@@ -646,11 +334,6 @@ ID: `{user_id}`""",
 
     # 🆕 v62: Binance Order-ID flow texts
     "binance_orderid_instructions": "🟡 *Binance Pay Checkout*\n━━━━━━━━━━━━━━━━━━━━\n\n{title}\n💵 Amount: *${amount}*\n\n📋 *Step 1 — Send the payment*\n  • Pay ID:  `{pay_id}`\n  • Name:    *{holder}*\n  • Amount:  *${amount}*\n\n📨 *Step 2 — Send your Order ID*\nAfter completing the payment, open the transaction in your Binance app, copy the *Order ID*, and paste it below.\n\n_Your order will be confirmed automatically within a few seconds._",
-    "binance_orderid_processing": "⏳ *Processing your payment…*\n━━━━━━━━━━━━━━━━━━━━\n\nOrder #{order_id}  •  ${amount}\nOrder ID: `{binance_order_id}`\n\n_Please wait a few seconds._",
-    "binance_orderid_not_confirmed": "⏳ *Payment not confirmed yet*\n━━━━━━━━━━━━━━━━━━━━\n\nOrder #{order_id}  •  ${amount}\nOrder ID: `{binance_order_id}`\n\n📌 Please make sure:\n  • You sent *exactly ${amount}* to Pay ID `{pay_id}`\n  • The Order ID above matches the one in your Binance app\n\nPayments can take up to 2 minutes to confirm. Tap *Check Again* to retry, or open a *Support Ticket* if you need help.",
-    "binance_orderid_already_confirmed": "✅ *Your payment is already confirmed!*\n\nCheck your account / order history.",
-    "binance_orderid_already_used": "❌ *This payment has already been used.*\n\nOrder #{order_id} has been rejected. If you think this is a mistake, please open a support ticket.",
-    "binance_orderid_invalid": "❌ That doesn't look like a valid Order ID.\n\nPlease copy the *Order ID* from your Binance app transaction screen and paste it here (it's usually a long string of letters and numbers).",
 
     # 🆕 v65: Refund + Cancel texts
     "refund_processed": "💸 *Refund Processed*\n━━━━━━━━━━━━━━━━━━━━\n\nThis product is currently unavailable, so your payment is being refunded.\n\n📦 Order: `#{order_id}`\n📌 Product: *{product}*\n💰 Amount: *${amount}*\n\n✅ *{points} Points have been credited* to your wallet as an instant refund.\n💎 New balance: *{new_balance} Points*\n\nYou can use these Points to buy other products in the store. We apologise for the inconvenience.",
@@ -658,10 +341,6 @@ ID: `{user_id}`""",
     "order_cancelled_no_reason":   "❌ *Order Cancelled*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 Order: `#{order_id}`\n📌 Product: *{product}*\n💰 Amount: `${amount}`\n\nYour order has been cancelled. If you have already paid, please contact support to arrange a refund.",
 
     # 🆕 v68: Default tier upgrade message (when admin hasn't set custom)
-    "tier_upgrade_default":   "🎉 *Congratulations!*\n━━━━━━━━━━━━━━━━━━━━\n\nYou've reached *{tier}* tier!\n\nKeep shopping to unlock more rewards.",
-    "tier_progress_hint":     "🏆 Tier: {tier} — *{hint}* for {next_tier}",
-    "tier_progress_max":      "🏆 Tier: {tier} (Max tier reached!)",
-    "tier_bonus_credited":    "💎 *Tier bonus: +{points} points*",
 }
 
 # 🆕 v148: Editable payment screen texts (auto-registered in bot_responses)

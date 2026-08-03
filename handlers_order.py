@@ -137,15 +137,25 @@ def _fmt_msg_name(value):
 
 
 async def _bot_send_smart(bot, chat_id, text, **kwargs):
-    """Send text with automatic Markdown→HTML conversion for premium emojis."""
+    """Send text with automatic Markdown→HTML conversion for premium emojis.
+    🔧 v133: accepts optional react_key to react to the sent message."""
     preferred = kwargs.pop("parse_mode", "Markdown")
+    react_key = kwargs.pop("react_key", "")
     send_text, send_mode = smart_text_and_mode(text, preferred)
     try:
-        return await bot.send_message(chat_id, send_text, parse_mode=send_mode, **kwargs)
+        sent = await bot.send_message(chat_id, send_text, parse_mode=send_mode, **kwargs)
     except Exception as e:
         if "parse" in str(e).lower():
-            return await bot.send_message(chat_id, send_text, **kwargs)
-        raise
+            sent = await bot.send_message(chat_id, send_text, **kwargs)
+        else:
+            raise
+    if react_key and getattr(sent, "message_id", None):
+        try:
+            from customization import react_to_message
+            await react_to_message(bot, chat_id, sent.message_id, react_key)
+        except Exception:
+            pass
+    return sent
 
 
 def _pay_resp(key):
@@ -195,7 +205,16 @@ async def _safe_send(q, context, text, **kwargs):
         if q.message.photo or q.message.video or q.message.document:
             await q.message.reply_text(send_text, **send_kwargs)
             return
-        await context.bot.send_message(chat_id=q.message.chat_id, text=send_text, **send_kwargs)
+        # 🔧 v133: optional reaction on the fresh message
+        _rk = kwargs.get("react_key") or ""
+        sent = await context.bot.send_message(chat_id=q.message.chat_id, text=send_text, **send_kwargs)
+        if _rk and getattr(sent, "message_id", None):
+            try:
+                from customization import react_to_message
+                await react_to_message(context.bot, q.message.chat_id, sent.message_id, _rk)
+            except Exception:
+                pass
+        return
     except Exception as e:
         if "parse entities" in str(e).lower() and "parse_mode" in send_kwargs:
             kwargs_no_md = dict(send_kwargs)

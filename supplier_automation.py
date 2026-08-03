@@ -1110,3 +1110,117 @@ async def autosync_toggle_callback(update, context):
     set_autosync(not is_autosync_enabled())
     await q.answer("Toggled ✅")
     await admin_autosync_callback(update, context)
+
+
+def _unsync_supplier_shop_products(sid):
+    """🆕 v136: remove a supplier's mirrored shop products (shop + Edit Items)
+    while keeping order history + ext_orders intact. Returns (n_shop, n_ext)."""
+    from database import get_connection
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        pids = set()
+        try:
+            c.execute("SELECT id FROM products WHERE COALESCE(ext_supplier_id,0)=?", (int(sid),))
+            pids.update(int(r[0]) for r in c.fetchall() if r[0])
+        except Exception:
+            pass
+        try:
+            c.execute("SELECT DISTINCT shop_product_id FROM ext_products WHERE supplier_id=? AND COALESCE(shop_product_id,0)>0", (int(sid),))
+            pids.update(int(r[0]) for r in c.fetchall() if r[0])
+        except Exception:
+            pass
+        n_shop = 0
+        if pids:
+            qmarks = ",".join("?" for _ in pids)
+            plist = list(pids)
+            for table in ("product_accounts", "product_free_claim", "product_ref_pool",
+                          "stock_alerts", "restock_requests", "product_reviews"):
+                try:
+                    c.execute(f"DELETE FROM {table} WHERE product_id IN ({qmarks})", plist)
+                except Exception:
+                    pass
+            c.execute(f"DELETE FROM products WHERE id IN ({qmarks})", plist)
+            n_shop = c.rowcount if c.rowcount is not None else len(plist)
+        c.execute("UPDATE ext_products SET synced_to_shop=0, shop_product_id=0, active=1 WHERE supplier_id=?", (int(sid),))
+        n_ext = c.rowcount if c.rowcount is not None else 0
+        conn.commit(); conn.close()
+        return n_shop, n_ext
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
+        raise
+
+
+async def ext_sup_bulk_unsync_callback(update, context):
+    """🆕 v136: BULK UNSYNC — removes ALL products of a supplier from the
+    shop (user shop + Edit Items) while KEEPING order history intact.
+
+    Callback: ext_sup_bulk_unsync_<sid>
+    What it does:
+      - Deletes the mirrored shop `products` rows (so they vanish from the
+        user shop AND from admin Edit Items).
+      - Deletes their local bonus/account pools (product_accounts etc.).
+      - Unlinks ext_products (synced_to_shop=0, shop_product_id=0) so a
+        later Bulk Sync can re-mirror everything cleanly.
+      - NEVER touches `orders` / `ext_orders` → old records stay.
+    """
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        sid = int(q.data.replace("ext_sup_bulk_unsync_", "", 1))
+    except Exception:
+        await q.answer("❌ bad id"); return
+    try:
+        from ext_suppliers import _safe_edit
+    except Exception:
+        _safe_edit = None
+    if _safe_edit is None:
+        async def _safe_edit(q, text, **kw):
+            try:
+                await q.edit_message_text(text, **kw)
+            except Exception:
+                pass
+
+    # First tap = confirm (safety), second = execute
+    if not context.user_data.get(f"ext_unsync_confirm_{sid}"):
+        context.user_data[f"ext_unsync_confirm_{sid}"] = True
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🗑️ Yes — Unsync ALL products", callback_data=f"ext_sup_bulk_unsync_{sid}")],
+            [InlineKeyboardButton("❌ No, cancel", callback_data=f"ext_sup_view_{sid}")],
+        ])
+        await q.answer()
+        await _safe_edit(q,
+            "🗑️ *Bulk Unsync — Confirm*\\n━━━━━━━━━━━━━━━━━━━━\\n\\n"
+            "This removes *ALL products* of this supplier from the shop and "
+            "from Edit Items.\\n\\n"
+            "✅ Order history (old records) is **kept**.\\n"
+            "🔁 A later *Bulk Sync* can re-add them anytime.\\n\\n"
+            "Tap again to confirm:",
+            parse_mode="Markdown", reply_markup=kb)
+        return
+
+    context.user_data.pop(f"ext_unsync_confirm_{sid}", None)
+    await q.answer("⏳ Unsyncing…")
+    try:
+        n_shop, n_ext = _unsync_supplier_shop_products(sid)
+    except Exception as e:
+        await context.bot.send_message(chat_id=ADMIN_ID,
+                                       text=f"❌ Bulk unsync failed: {e}")
+        return
+
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 Supplier Panel", callback_data=f"ext_sup_view_{sid}")],
+    ])
+    await _safe_edit(q,
+        f"🗑️ *Bulk Unsync complete*\\n━━━━━━━━━━━━━━━━━━━━\\n\\n"
+        f"• Removed from shop/Edit Items: *{n_shop}* product(s)\\n"
+        f"• Unlinked catalog rows: *{n_ext}*\\n"
+        f"• Order history: ✅ kept\\n\\n"
+        f"_Run Bulk Sync anytime to re-add them._",
+        parse_mode="Markdown", reply_markup=kb)

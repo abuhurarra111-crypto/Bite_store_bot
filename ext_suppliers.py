@@ -1540,12 +1540,181 @@ class TunVNMMOAdapter(SupplierAdapterBase):
                 "raw": j}
 
 
+# ────────────────────────────────────────────────────────────
+# 🆕 v136: ProdSeller adapter (http://51.77.244.194/v1)
+# Auth: X-API-Key header (psk_...). Balance-based orders, instant key
+# delivery. Docs: http://51.77.244.194/api-docs/
+# ────────────────────────────────────────────────────────────
+
+class ProdSellerAdapter(SupplierAdapterBase):
+    KEY_ID = "prodseller"
+    LABEL = "🛒 ProdSeller"
+    DEFAULT_BASE_URL = "http://51.77.244.194/v1"
+    DOCS_URL = "http://51.77.244.194/api-docs/"
+    AUTH_STYLE = "x_api_key"
+    PRODUCTS_PATH = "/products"
+    BALANCE_PATH = "/balance"
+    PURCHASE_PATH = "/orders"
+
+    def test_connection(self):
+        r = self._get(self.PRODUCTS_PATH)
+        if r is None:
+            return False, "no response (network / proxy)", {}
+        if r.status_code != 200:
+            detail = ""
+            try:
+                j = r.json()
+                detail = j.get("error") or ""
+            except Exception:
+                detail = (getattr(r, "text", "") or "")[:120]
+            return False, f"HTTP {r.status_code}" + (f": {detail}" if detail else ""), {}
+        try:
+            j = r.json()
+            products = j.get("products", [])
+            balance = None
+            try:
+                balance = self.fetch_balance()
+            except Exception:
+                balance = None
+            bal_txt = f"${balance:.2f}" if balance is not None else "not refreshed"
+            return True, f"Connected. {len(products)} products. Balance: {bal_txt}", {
+                "count": len(products), "balance": balance,
+            }
+        except Exception as e:
+            return False, f"Parse error: {e}", {}
+
+    def fetch_balance(self):
+        r = self._get(self.BALANCE_PATH)
+        if r is None or r.status_code != 200:
+            return None
+        try:
+            return float(r.json().get("balance"))
+        except Exception:
+            return None
+
+    def fetch_products(self):
+        r = self._get(self.PRODUCTS_PATH)
+        if r is None or r.status_code != 200:
+            raise RuntimeError(f"HTTP {getattr(r, 'status_code', 'no-response')}")
+        try:
+            j = r.json()
+        except Exception as e:
+            raise RuntimeError(f"bad JSON: {e}")
+        out = []
+        for p in j.get("products", []):
+            rid = str(p.get("id") or "").strip()
+            if not rid:
+                continue
+            try:
+                price = float(p.get("price"))
+            except Exception:
+                price = 0.0
+            in_stock = bool(p.get("inStock", True))
+            out.append({
+                "remote_id": rid,
+                "name": (p.get("name") or "Product")[:200],
+                "description": (p.get("description") or "")[:1500],
+                "cost_usd": price,
+                "stock": 999 if in_stock else 0,
+                "raw": p,
+            })
+        return out
+
+    def create_order(self, remote_id, quantity):
+        qty = max(1, min(100, int(quantity or 1)))
+        body = {"productId": str(remote_id), "quantity": qty}
+        import uuid as _uu
+        internal_oid = str(getattr(self, "_current_internal_order_id", "") or "").strip()
+        idem = (f"bite-store-{internal_oid}-{remote_id}-{qty}"
+                if internal_oid else f"bite-{remote_id}-{qty}-{_uu.uuid4().hex[:16]}")
+        url = self.base_url + self.PURCHASE_PATH
+        headers = self._headers()
+        headers["Idempotency-Key"] = idem
+        try:
+            r = requests.post(url, headers=headers, json=body, timeout=45)
+        except Exception as e:
+            logger.warning(f"[prodseller] create_order network err: {e}")
+            r = None
+        if r is None:
+            return {"ok": False, "error": "network_error", "items": [], "raw": None}
+        try:
+            j = r.json()
+        except Exception:
+            return {"ok": False, "error": f"bad_response_{r.status_code}",
+                    "items": [], "raw": r.text[:500]}
+        if r.status_code >= 400:
+            return {"ok": False,
+                    "error": j.get("error") if isinstance(j, dict) else f"HTTP {r.status_code}",
+                    "items": [], "raw": j}
+        keys = j.get("deliveredKeys") or []
+        single = j.get("deliveredKey")
+        items = []
+        if isinstance(keys, list):
+            items = [str(k).strip() for k in keys if str(k).strip()]
+        elif single:
+            items = [str(single).strip()]
+        if not items:
+            items = _extract_delivery_items(j)
+        return {"ok": True, "items": items, "order_id": j.get("orderId") or "",
+                "total_usd": j.get("amount"), "raw": j}
+
+
+# 🆕 v136: Known-supplier one-tap presets for the "Add Supplier" screen.
+# Each preset pre-fills adapter + name + base_url + docs; admin only sends
+# the API key. Covers every supplier the owner actually runs.
+SUPPLIER_PRESETS = {
+    "canboso":   {"adapter": "canboso",    "name": "Canboso",         "base_url": "https://canboso.com", "docs_url": "https://canboso.com/api/swagger"},
+    "shop_cron": {"adapter": "canboso",    "name": "Shop Cron",       "base_url": "https://canboso.com", "docs_url": "https://canboso.com/api/swagger"},
+    "sinhle":    {"adapter": "canboso",    "name": "sinh le store bot", "base_url": "https://canboso.com", "docs_url": "https://canboso.com/api/swagger"},
+    "akunding":  {"adapter": "akunding",   "name": "Akunding",        "base_url": "https://akunding.shop/api", "docs_url": "https://akunding.shop/swagger"},
+    "mmostore":  {"adapter": "mmostore",   "name": "MMOStore",        "base_url": "https://api.mmostore.qzz.io", "docs_url": "https://api.mmostore.qzz.io/apidocumentation"},
+    "tunvnmmo":  {"adapter": "tunvnmmo",   "name": "TunVNMMO",        "base_url": "https://api.tunvnmmo.store", "docs_url": "https://api.tunvnmmo.store/swagger"},
+    "prodseller":{"adapter": "prodseller", "name": "ProdSeller",      "base_url": "http://51.77.244.194/v1", "docs_url": "http://51.77.244.194/api-docs/"},
+}
+
+
+def ensure_env_prodseller_supplier():
+    """🔧 v136: auto-register/update the ProdSeller supplier.
+    Key lives in Render env: SUPPLIER_PRODSELLER_API_KEY."""
+    import os
+    key = (os.getenv("SUPPLIER_PRODSELLER_API_KEY", "") or "").strip()
+    if not key:
+        return 0, "missing_env"
+    ensure_ext_supplier_tables()
+    name = "ProdSeller"
+    adapter = "prodseller"
+    base_url = "http://51.77.244.194/v1"
+    docs_url = "http://51.77.244.194/api-docs/"
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("SELECT id FROM ext_suppliers WHERE lower(name)=lower(?) OR (adapter=? AND base_url=? AND api_key=?) LIMIT 1",
+                  (name, adapter, base_url, key))
+        row = c.fetchone()
+        if row:
+            sid = int(row["id"] if hasattr(row, "keys") else row[0])
+            c.execute("""UPDATE ext_suppliers
+                         SET name=?, adapter=?, base_url=?, api_key=?, docs_url=?, enabled=1
+                         WHERE id=?""", (name, adapter, base_url, key, docs_url, sid))
+            conn.commit(); conn.close(); return sid, "updated"
+        c.execute("""INSERT INTO ext_suppliers (name, adapter, base_url, api_key, docs_url, enabled)
+                     VALUES (?, ?, ?, ?, ?, 1)""", (name, adapter, base_url, key, docs_url))
+        sid = c.lastrowid
+        conn.commit(); conn.close(); return sid, "created"
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
+        raise
+
+
 # Registry: adapter_key → class
 ADAPTERS = {
     "akunding": AkundingAdapter,
     "canboso":  CanbosoAdapter,
     "mmostore": MMOStoreAdapter,
     "tunvnmmo": TunVNMMOAdapter,
+    "prodseller": ProdSellerAdapter,
 }
 
 # 🆕 v86: register InstaAPI adapter (connection-string style supplier).
@@ -1858,7 +2027,9 @@ async def admin_suppliers_callback(update, context):
 
 
 async def ext_sup_add_callback(update, context):
-    """Step 1: pick adapter type."""
+    """Step 1: pick supplier type — v136 shows EVERY known supplier as a
+    one-tap preset (the 4 base adapters + Shop Cron + sinh le store bot +
+    ProdSeller). Select one → paste API key → done."""
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
@@ -1866,22 +2037,75 @@ async def ext_sup_add_callback(update, context):
     text = (
         "➕ *Add New Supplier — Step 1/3*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "*Pick supplier type:*\n"
-        "(All 4 use REST API with different auth styles)"
+        "*Known suppliers (select → paste API key):*\n"
+        "_All your current suppliers are here, so you can re-add any of "
+        "them in one tap._"
     )
     kb = []
-    for k, cls in ADAPTERS.items():
-        # 🆕 v86: insta_api adapter has its own dedicated flow (connection string).
-        # Hide it from the manual "add supplier" dropdown to avoid double-add UX.
-        if k == "insta_api":
+    # One-tap presets first (the ones the owner actually runs)
+    preset_names = ["canboso", "shop_cron", "sinhle", "akunding", "mmostore", "tunvnmmo", "prodseller"]
+    for k in preset_names:
+        if k not in SUPPLIER_PRESETS:
             continue
-        kb.append([InlineKeyboardButton(cls.LABEL, callback_data=f"ext_sup_add_type_{k}")])
+        pr = SUPPLIER_PRESETS[k]
+        icon = {"canboso": "🛒", "shop_cron": "🏪", "sinhle": "😼",
+                "akunding": "⛏️", "mmostore": "🏬", "tunvnmmo": "🔄",
+                "prodseller": "🛒"}.get(k, "🔹")
+        kb.append([InlineKeyboardButton(f"{icon} {pr['name']}",
+                                        callback_data=f"ext_sup_preset_{k}")])
+    # Generic adapter list (advanced)
+    kb.append([InlineKeyboardButton("━━━ Advanced: pick API type ━━━",
+                                    callback_data="ext_sup_noop")])
+    for ak, cls in ADAPTERS.items():
+        if ak == "insta_api":
+            continue
+        kb.append([InlineKeyboardButton(f"⚙️ {cls.LABEL} (generic)",
+                                        callback_data=f"ext_sup_add_type_{ak}")])
     # 🆕 v86: shortcut to the connection-string flow (visible on this screen too)
     kb.append([InlineKeyboardButton("🔗 Or paste a Connection String",
                                      callback_data="ext_sup_add_conn")])
     kb.append([InlineKeyboardButton("❌ Cancel", callback_data="admin_suppliers")])
     await _safe_edit(q, text, parse_mode="Markdown",
                      reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def ext_sup_noop_callback(update, context):
+    q = update.callback_query
+    try:
+        await q.answer()
+    except Exception:
+        pass
+
+
+async def ext_sup_preset_callback(update, context):
+    """Step 2 (preset): pre-filled adapter/name/url → ask for API key."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    key = (q.data or "").replace("ext_sup_preset_", "", 1)
+    pr = SUPPLIER_PRESETS.get(key)
+    if not pr:
+        await q.answer("Unknown preset", show_alert=True); return
+    context.user_data["ext_sup_wizard"] = {
+        "step": "waiting_api_key",
+        "adapter": pr["adapter"],
+        "name": pr["name"],
+        "base_url": pr["base_url"],
+        "docs_url": pr["docs_url"],
+    }
+    text = (
+        f"➕ *Add {pr['name']} — Step 2/3*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📖 Docs: {pr['docs_url']}\n"
+        f"🌐 URL: `{pr['base_url']}`\n\n"
+        f"*Send the API key in your next message.*\n\n"
+        f"_Send /cancel to abort._"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Cancel", callback_data="admin_suppliers")]
+    ])
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
 
 
 async def ext_sup_add_type_callback(update, context):
@@ -2065,6 +2289,9 @@ async def ext_sup_view_callback(update, context):
         # 🆕 v85: Bulk sync (1 tap → refreshes cost+stock on all live products)
         [InlineKeyboardButton("🔁 Bulk Sync All Products",
                               callback_data=f"ext_sup_bulk_sync_{sid}")],
+        # 🆕 v136: Bulk unsync (removes ALL its products from shop, keeps history)
+        [InlineKeyboardButton("🗑️ Bulk Unsync (remove from shop)",
+                              callback_data=f"ext_sup_bulk_unsync_{sid}")],
         # 🆕 v85: Low-balance threshold editor
         [InlineKeyboardButton(f"⚠️ Low-Bal Alert (${s.get('low_bal_threshold', 3):.2f})",
                               callback_data=f"ext_sup_lowbal_{sid}")],

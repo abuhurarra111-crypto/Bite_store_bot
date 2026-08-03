@@ -116,6 +116,21 @@ _DEFAULT_REFERRER_REFERRAL_TEMPLATE = """🎉 *New Referral Joined!*\n━━━�
 
 _DEFAULT_ADMIN_REFERRAL_TEMPLATE = """🎁 *New Direct Referral*\n━━━━━━━━━━━━━━━━━━━━\n\n👑 Referrer:\n• Name: *{referrer_name}*\n• Username: @{referrer_username}\n• ID: `{referrer_id}`\n\n🆕 Referred User:\n• Name: *{referred_name}*\n• Username: @{referred_username}\n• ID: `{referred_id}`\n\n🎯 Reward: +{reward_points} referral point\n📊 Referrer's direct referrals: {total_referrals}"""
 
+# 🆕 v134: notification sent to the REFERRED user when their referral is
+# approved (after the bot observed their activity). Both users earn the
+# same admin-set points per direct referral.
+_DEFAULT_REFERRED_REWARD_TEMPLATE = """🎁 *Referral Reward Credited!*
+━━━━━━━━━━━━━━━━━━━━
+
+✅ You came from a friend's referral link and your activity was verified.
+
+💎 *+{reward_points} point(s)* added to your Referral Points balance!
+
+🆔 Your User ID: `{referred_id}`
+👤 Referred by: *{referrer_name}*
+
+You can spend Referral Points on free products or keep earning by sharing your own link. 🚀"""
+
 _DEFAULT_MILESTONE_TEMPLATE = """🏆 *Referral Milestone Unlocked!*\n━━━━━━━━━━━━━━━━━━━━\n\n🔥 You reached *{milestone_number} direct referrals*!\n🎁 Bonus reward: *+{milestone_bonus} wallet points* ($1)\n💎 Wallet bonus has been added to your balance.\n\nNext milestone: *{next_milestone} referrals* 🚀"""
 
 _DEFAULT_PRODUCT_REFERRER_TEMPLATE = """🎁 *Product Referral Counted!*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 Product: *{product_name}*\n👤 New user: *{referred_name}*\n🆔 User ID: `{referred_id}`\n\n📊 Your progress: *{product_referrals}/{product_required}*\n🎯 Need *{product_remaining}* more referral(s) to claim this product free.\n\nKeep sharing this product link! 🚀"""
@@ -203,6 +218,14 @@ async def _send_direct_referral_notifications(context, referrer_id, new_user, re
         await _send_referral_message(
             context.bot, referrer_id,
             _render_referral_template('ref_tpl_referrer', _DEFAULT_REFERRER_REFERRAL_TEMPLATE, values))
+    except Exception:
+        pass
+    # 🆕 v134: REFERRED USER also gets points + a notification (both earn the
+    # same admin-set per-ref reward, only after activity verification).
+    try:
+        await _send_referral_message(
+            context.bot, int(new['id']),
+            _render_referral_template('ref_tpl_referred', _DEFAULT_REFERRED_REWARD_TEMPLATE, values))
     except Exception:
         pass
     # Admin notification
@@ -315,6 +338,7 @@ async def _process_referral_attribution(context, new_user, referrer_id, is_new_u
         add_ref_points, is_referrer_banned, log_referral_attempt,
         count_referrals_by_referrer_recent, get_recent_referred_first_names,
         get_referral_count, add_pending_referral, mark_pending_referral_done,
+        get_ref_points_per_ref,
     )
 
     def _reject(reason):
@@ -453,15 +477,24 @@ async def _process_referral_attribution(context, new_user, referrer_id, is_new_u
                 context, referrer_id, new_user, int(product_id),
                 pname_display, current, required, unlocked=(current >= required))
     else:
-        # General direct referral: +1 spendable ref_point
-        add_ref_points(referrer_id, REFERRAL_POINTS)
+        # General direct referral: award configurable points (default 1).
+        # 🔧 v133: per-ref reward is admin-configurable (can be 0.1 / 2 / 5...).
+        # 🆕 v134: BOTH the referrer AND the referred user earn the same
+        # admin-set points (only after the bot verified real-human activity).
+        reward = get_ref_points_per_ref()
+        add_ref_points(referrer_id, reward)
+        if int(getattr(new_user, 'id', 0)) and int(new_user.id) != int(referrer_id):
+            try:
+                add_ref_points(new_user.id, reward)
+            except Exception:
+                pass
         log_referral_attempt(referrer_id, new_user.id, "counted", "ok")
         try:
             direct_total = get_direct_referral_count(referrer_id)
         except Exception:
             direct_total = get_referral_count(referrer_id)
         await _send_direct_referral_notifications(
-            context, referrer_id, new_user, REFERRAL_POINTS, direct_total)
+            context, referrer_id, new_user, reward, direct_total)
 
     # Broadcast (existing fake-activity destination)
     try:
@@ -518,17 +551,292 @@ async def approve_pending_referral_for_user(context, user_id, reason='activity')
 
 
 async def _pending_referral_job(context):
+    """🆕 v134: 30-second observation job. Only approves when the referred
+    user showed real activity (>=1 action). Otherwise keeps observing
+    (up to 5 more 30s rounds), so a silent bot never unlocks the reward."""
     try:
         uid = int((context.job.data or {}).get('uid') or 0)
     except Exception:
         uid = 0
-    if uid:
-        await approve_pending_referral_for_user(context, uid, reason='30s_active')
+    if not uid:
+        return
+    try:
+        from database import get_pending_referral_for_user, bump_pending_referral_activity
+        row = get_pending_referral_for_user(uid)
+        if not row:
+            return
+        if int(row['activity_count'] or 0) >= 1:
+            await approve_pending_referral_for_user(context, uid, reason='30s_active')
+            return
+        tries = int(row['observe_tries'] or 0)
+        # Mark + reschedule: still observing (max 5 rounds ≈ 2.5 min)
+        conn = None
+        try:
+            from database import get_connection, ensure_column
+            conn = get_connection(); c = conn.cursor(); ensure_column(c, "pending_referrals", "observe_tries", "INTEGER DEFAULT 0")
+            c.execute("UPDATE pending_referrals SET observe_tries=? WHERE referred_id=? AND status='pending'",
+                      (tries + 1, uid))
+            conn.commit()
+        except Exception:
+            pass
+        finally:
+            try:
+                if conn: conn.close()
+            except Exception:
+                pass
+        if tries + 1 < 5 and getattr(context, 'job_queue', None):
+            context.job_queue.run_once(_pending_referral_job, 30,
+                                       data={'uid': uid}, name=f'pending_ref_{uid}')
+    except Exception as e:
+        logging.getLogger(__name__).debug(f"[pending-ref] observe job: {e}")
+
+
+# ════════════════════════════════════════════════════════════════
+# 🧮 v134 — REFERRAL MATH VERIFICATION + ACTIVITY OBSERVATION
+# ════════════════════════════════════════════════════════════════
+# Flow (per user request):
+#   1. User arrives via a REFERRAL link → /start
+#   2. Force-join (if enabled) → joins → taps "I Joined — Verify"
+#   3. MATH QUESTION appears (random + or −, never repeated instantly)
+#   4. Correct answer → bot starts. (Normal users never see math.)
+#   5. Bot observes the referred user ~30s. Only a REAL human (taps/typing)
+#      unlocks the reward — then BOTH the referrer AND the referred user
+#      get the admin-set points, with notifications to each.
+# ════════════════════════════════════════════════════════════════
+
+def _parse_start_arg(arg):
+    """Parse deep-link payload → (referrer_id, open_pid)."""
+    rid, open_pid = 0, 0
+    try:
+        if not arg:
+            return 0, 0
+        if arg.startswith("ref_"):
+            rest = arg[4:]
+            if "_" in rest:
+                rid_s, pid_s = rest.split("_", 1)
+                rid = int(rid_s); open_pid = int(pid_s)
+            else:
+                rid = int(rest)
+        elif arg.startswith("buy_"):
+            open_pid = int(arg[4:])
+        else:
+            rid = int(arg)
+    except Exception:
+        rid, open_pid = 0, 0
+    return rid, open_pid
+
+
+def _referral_math_enabled():
+    try:
+        from database import get_referral_math_enabled
+        return get_referral_math_enabled()
+    except Exception:
+        return True
+
+
+def _new_math_question():
+    """Random addition/subtraction (result always >= 0)."""
+    import random
+    if random.random() < 0.5:
+        a = random.randint(2, 50); b = random.randint(2, 50)
+        op, ans = "+", a + b
+    else:
+        a = random.randint(12, 80); b = random.randint(1, min(11, a - 1))
+        op, ans = "-", a - b
+    return a, op, b, ans
+
+
+async def _ask_math_question(reply_to, context, user_id, first_name=""):
+    """Send the math verification question to a referral-origin user.
+    Returns True if asked (caller should stop and wait for the answer)."""
+    try:
+        if not _referral_math_enabled():
+            return False
+    except Exception:
+        return False
+    a, op, b, ans = _new_math_question()
+    context.user_data['fj_math'] = {'answer': ans, 'tries': 0,
+                                    'a': a, 'op': op, 'b': b}
+    name = escape_md(first_name or "Friend")
+    text = (
+        f"🧮 *Human Verification* 🔐\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Hi {name}! Since you joined through a referral link, "
+        f"please solve this quick math check to start the bot:\n\n"
+        f"🔢 *{a} {op} {b} = ?*\n\n"
+        f"Type the *number* below (e.g. `17`)."
+    )
+    send_text, send_mode = smart_text_and_mode(text, "Markdown")
+    try:
+        await reply_to.reply_text(send_text, parse_mode=send_mode)
+        return True
+    except Exception:
+        try:
+            await reply_to.reply_text(f"🧮 Human Verification\n\n{a} {op} {b} = ?\n\nType the number:")
+            return True
+        except Exception:
+            context.user_data.pop('fj_math', None)
+            return False
+
+
+async def handle_math_answer(update, context):
+    """Consumed from the main text handler. Returns True when the message
+    was a math answer (even wrong ones) so no other flow touches it."""
+    state = context.user_data.get('fj_math')
+    if not state:
+        return False
+    uid = update.effective_user.id
+    txt = (update.message.text or '').strip()
+    try:
+        val = int(txt)
+    except Exception:
+        val = None
+    if val is None:
+        await update.message.reply_text("❌ Please type the answer as a number, e.g. `17`.")
+        return True
+    if val == int(state.get('answer')):
+        context.user_data.pop('fj_math', None)
+        # Math passed → real human → approve the pending referral now.
+        try:
+            from database import get_pending_referral_for_user
+            if get_pending_referral_for_user(uid):
+                await approve_pending_referral_for_user(context, uid, reason='math_verified')
+        except Exception:
+            pass
+        await _complete_start_after_math(update, context)
+        return True
+    # Wrong answer → retry (3 wrongs → fresh question)
+    tries = int(state.get('tries', 0)) + 1
+    if tries >= 3:
+        a2, op2, b2, ans2 = _new_math_question()
+        context.user_data['fj_math'] = {'answer': ans2, 'tries': 0,
+                                        'a': a2, 'op': op2, 'b': b2}
+        await update.message.reply_text(
+            f"❌ Wrong answer. New question:\n\n🔢 *{a2} {op2} {b2} = ?*\n\nType the number:",
+            parse_mode="Markdown")
+    else:
+        state['tries'] = tries
+        await update.message.reply_text(
+            f"❌ Wrong. Try again — attempt *{tries}/3*:\n\n"
+            f"🔢 *{state.get('a')} {state.get('op')} {state.get('b')} = ?*",
+            parse_mode="Markdown")
+    return True
+
+
+async def _send_welcome_message(reply_to, context, u):
+    """🆕 v138: shared welcome renderer (fixed default-language welcome)."""
+    from database import get_setting
+    from keyboards import main_menu_keyboard, persistent_menu
+    from config import ADMIN_ID, SHOP_NAME
+    shop = get_setting("shop_name", SHOP_NAME)
+    # 🆕 v137: WELCOME stays default-language (never switches) per admin request.
+    text = _r("welcome").format(shop_name=shop, user_id=u.id)
+    send_text, send_mode = smart_text_and_mode(text, "Markdown")
+    await reply_to.reply_text("👋", reply_markup=persistent_menu(u.id))
+    await reply_to.reply_text(send_text, parse_mode=send_mode,
+        reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
+
+
+async def _complete_start_after_math(update, context):
+    """After math passes → open product (if deep link) or send welcome."""
+    u = update.effective_user
+    open_pid = context.user_data.pop('_start_pid', 0) or 0
+    context.user_data.pop('_start_ref', None)
+    if open_pid:
+        try:
+            from handlers_shop import show_product_detail_direct
+            await show_product_detail_direct(context.bot, u.id, open_pid)
+            return
+        except Exception:
+            pass
+    await _send_welcome_message(update.message, context, u)
+
+
+async def notify_user_activity(context, user_id):
+    """🆕 v134: called on ANY user action (button tap / text). Counts it as
+    observed activity; after 2+ real actions the pending referral is approved
+    immediately (strong real-human signal). Mid-math users are skipped so a
+    wrong math answer never unlocks the reward."""
+    try:
+        if not user_id or int(user_id) == int(ADMIN_ID):
+            return
+        if context.user_data.get('fj_math'):
+            return
+        from database import (get_pending_referral_for_user,
+                              bump_pending_referral_activity)
+        row = get_pending_referral_for_user(int(user_id))
+        if not row:
+            return
+        count = bump_pending_referral_activity(int(user_id))
+        if count >= 2:
+            await approve_pending_referral_for_user(context, int(user_id), reason='active_human')
+    except Exception:
+        pass
+
+
+async def continue_after_force_join_verified(update, context, u):
+    """🆕 v134: called from the 'I Joined — Verify' callback (ui_extras).
+    Runs the referral attribution + math gate that /start would have run,
+    because /start stopped early at the force-join wall. Returns True if
+    the flow was fully handled here (welcome/math/product shown)."""
+    rid = context.user_data.pop('_start_ref', 0) or 0
+    open_pid = context.user_data.pop('_start_pid', 0) or 0
+    try:
+        from database import get_user
+        is_new = get_user(u.id) is None
+        from database import save_user
+        save_user(u.id, u.username or "", u.first_name or "")
+    except Exception:
+        is_new = False
+    if rid and int(rid) != int(u.id):
+        try:
+            await _process_referral_attribution(context, u, int(rid), is_new,
+                                                 product_id=int(open_pid or 0))
+        except Exception:
+            pass
+        # Math gate (referral users only)
+        try:
+            if _referral_math_enabled():
+                asked = await _ask_math_question(update.effective_message, context,
+                                                 u.id, u.first_name)
+                if asked:
+                    # re-stash the product deep-link so it opens AFTER math passes
+                    if open_pid:
+                        context.user_data['_start_pid'] = int(open_pid)
+                    return True
+        except Exception:
+            pass
+        # Math done / disabled → finish the start (product or welcome)
+        if open_pid:
+            try:
+                from handlers_shop import show_product_detail_direct
+                await show_product_detail_direct(context.bot, u.id, open_pid)
+                return True
+            except Exception:
+                pass
+        await _send_welcome_message(update.effective_message, context, u)
+        return True
+    # No referral → normal welcome (or product deep-link)
+    if open_pid:
+        try:
+            from handlers_shop import show_product_detail_direct
+            await show_product_detail_direct(context.bot, u.id, open_pid)
+            return True
+        except Exception:
+            pass
+    return False
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _panic_reset_user_session(update, context)
     u = update.effective_user
+    # 🆕 v134: parse deep-link EARLY so the force-join continuation knows it
+    # came from a referral link (math verification happens after "I Joined").
+    arg = context.args[0] if context.args else ""
+    rid, open_pid = _parse_start_arg(arg)
+    if rid and int(rid) != int(u.id):
+        context.user_data['_start_ref'] = int(rid)
+        context.user_data['_start_pid'] = int(open_pid or 0)
     # 🔗 Force Join check — must be FIRST before any other logic
     try:
         from ui_extras import check_force_join
@@ -541,10 +849,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_new = get_user(u.id) is None
     save_user(u.id, u.username or "", u.first_name or "")
     if is_new and u.id != ADMIN_ID:
+        _nu = (u.username or '').strip()
         await notify_admin(context.bot,
             f"👤 *New User Joined!*\n"
             f"Name: {escape_md(u.first_name or 'N/A')}\n"
-            f"Username: @{escape_md(u.username or 'N/A')}\n"
+            f"Username: {('@' + escape_md(_nu)) if _nu else '_no username_'}\n"
             f"ID: `{u.id}`")
         # 📢 Broadcast new user join to all existing users (if enabled)
         try:
@@ -561,43 +870,27 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await start_personal_activity(context.bot, context.application, u.id)
         except Exception:
             pass
-            
-    # ──────────────────────────────────────────────────────────────
-    # 🆕 v48: Unified deep-link parser
-    #   buy_<pid>            → open product detail (existing)
-    #   ref_<rid>_<pid>      → referral + open product detail
-    #   <rid>                → legacy plain referral
-    # ──────────────────────────────────────────────────────────────
-    arg = context.args[0] if context.args else ""
-    rid = 0
-    open_pid = 0
-    if arg:
-        try:
-            if arg.startswith("ref_"):
-                rest = arg[4:]
-                if "_" in rest:
-                    rid_s, pid_s = rest.split("_", 1)
-                    rid = int(rid_s); open_pid = int(pid_s)
-                else:
-                    rid = int(rest)
-            elif arg.startswith("buy_"):
-                open_pid = int(arg[4:])
-            else:
-                rid = int(arg)
-        except Exception:
-            rid, open_pid = 0, 0
 
-    # ─── Referral attribution (instant, anti-fake but no delay) ───
-    # 🆕 v102: pass open_pid → if the link was ref_<uid>_<pid> (product-specific
-    # share link), route into the per-product referral pool (no ref_point
-    # reward, counts toward that product's requirement only).
-    if rid and rid != u.id:
+    # ─── Referral attribution + math gate + welcome ───
+    # 🆕 v134: referral is recorded as PENDING (reward locked). If math
+    # verification is enabled, the referral-origin user must answer a random
+    # +/− question before the bot starts. Reward only unlocks after the bot
+    # observes real-human activity (~30s) → BOTH users get the set points.
+    if rid and int(rid) != int(u.id):
         try:
-            await _process_referral_attribution(context, u, rid, is_new,
-                                                 product_id=open_pid)
+            await _process_referral_attribution(context, u, int(rid), is_new,
+                                                 product_id=int(open_pid or 0))
         except Exception as _e:
             import logging
             logging.getLogger(__name__).error(f"[referral] {_e}")
+        try:
+            if _referral_math_enabled():
+                asked = await _ask_math_question(update.message, context,
+                                                 u.id, u.first_name)
+                if asked:
+                    return  # wait for the math answer
+        except Exception:
+            pass
 
     # ─── Deep-link to product detail ───
     if open_pid:
@@ -609,10 +902,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
     shop = get_setting("shop_name", SHOP_NAME)
-    text = _r("welcome", user_id=u.id).format(shop_name=shop, user_id=u.id)
+    # 🆕 v137: WELCOME stays default-language (never switches) per admin request.
+    text = _r("welcome").format(shop_name=shop, user_id=u.id)
     # v133: Pinned announcements are real pinned messages only; do not prepend them to welcome.
     send_text, send_mode = smart_text_and_mode(text, "Markdown")
-    await update.message.reply_text("👋", reply_markup=persistent_menu())
+    await update.message.reply_text("👋", reply_markup=persistent_menu(u.id))
     await update.message.reply_text(send_text, parse_mode=send_mode,
         reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
 
@@ -639,7 +933,8 @@ async def handle_main_menu_button(update: Update, context: ContextTypes.DEFAULT_
     await _panic_reset_user_session(update, context)
 
     shop = get_setting("shop_name", SHOP_NAME)
-    text = _r("welcome", user_id=u.id).format(shop_name=shop, user_id=u.id)
+    # 🆕 v137: WELCOME stays default-language (never switches) per admin request.
+    text = _r("welcome").format(shop_name=shop, user_id=u.id)
     # v133: Pinned announcements are real pinned messages only; do not prepend them to welcome.
     send_text, send_mode = smart_text_and_mode(text, "Markdown")
     await update.message.reply_text(send_text, parse_mode=send_mode,
@@ -651,7 +946,8 @@ async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     q = update.callback_query; await q.answer(); u = q.from_user
     nav_push(context, 'main_menu')  # 🔙 Track navigation
     shop = get_setting("shop_name", SHOP_NAME)
-    text = _r("welcome", user_id=u.id).format(shop_name=shop, user_id=u.id)
+    # 🆕 v137: WELCOME stays default-language (never switches) per admin request.
+    text = _r("welcome").format(shop_name=shop, user_id=u.id)
     # v133: Pinned announcements are real pinned messages only; do not prepend them to welcome.
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
 
@@ -663,10 +959,14 @@ async def my_account_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     from database import get_ref_points  # 🆕 v48
     # 🔧 FIXED: escape markdown + format date nicely
     # 🆕 v48: extra placeholders {ref_points} {ref_points_label} for admin to use
+    # 🐛 v137 FIX: users without a username saw "@N/A" — now shows "—" instead
+    # of a fake @username. Template still keeps its "@" prefix for real ones.
+    _uname = (u.username or '').strip()
+    _uname_disp = escape_md(_uname) if _uname else '—'
     fmt_dict = dict(
         name=escape_md(u.first_name or 'N/A'),
         user_id=u.id,
-        username=escape_md(u.username or 'N/A'),
+        username=_uname_disp,
         points=get_user_points(u.id),
         referrals=get_referral_count(u.id),
         ref_points=get_ref_points(u.id),
@@ -675,6 +975,8 @@ async def my_account_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     tpl = _r("my_account", user_id=u.id)
     try:
         text = tpl.format(**fmt_dict)
+        # 🐛 v137: templates hardcode "@{username}" → "@—" for no-username users
+        text = text.replace('@—', '—').replace('@–', '–').replace('@-', '-')
     except KeyError:
         # Admin's custom my_account text may not include all placeholders
         try:
@@ -692,27 +994,32 @@ async def referral_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     q = update.callback_query; await q.answer(); u = q.from_user
     nav_push(context, 'referral')  # 🔙 Track navigation
-    from database import get_ref_points  # 🆕 v48
+    from database import get_ref_points, get_ref_points_per_ref  # 🆕 v48/v133
     bot_info = await context.bot.get_me()
     link = f"https://t.me/{bot_info.username}?start={u.id}"
     rp = get_ref_points(u.id)
     rc = get_referral_count(u.id)
+    pp_ref = get_ref_points_per_ref()
     fmt_dict = dict(
         ref_link=link, ref_count=rc,
-        ref_points=rp, points_per_ref=REFERRAL_POINTS,
+        ref_points=rp, points_per_ref=pp_ref,
     )
     tpl = _r("referral_text")
     try:
         text = tpl.format(**fmt_dict)
     except KeyError:
         text = tpl.format_map(_SafeDict(**fmt_dict))
+    # 🔧 v133: rewards line reflects the CURRENT per-ref value automatically.
+    # 🆕 v134: rules updated — math verification + 30s human check + BOTH earn.
     rules = (
         "\n\n📌 *How your referral counts:*\n"
         "1️⃣ Friend must open your link and press */start*.\n"
         "2️⃣ If Force Join is enabled, they must join/verify required channel or group.\n"
-        "3️⃣ Referral reward is approved when they open *Shop* or stay active for about 30 seconds.\n"
-        "4️⃣ Self-referrals, duplicate users, or suspicious activity are blocked.\n\n"
-        "🎁 *Rewards:* +1 referral point per approved direct referral. Every 20 direct referrals = +10 wallet points bonus."
+        "3️⃣ Referral users pass a quick *math verification* before the bot starts.\n"
+        "4️⃣ The bot *observes activity for ~30 seconds* — the reward unlocks only for a real human.\n"
+        "5️⃣ Self-referrals, duplicate users, or suspicious activity are blocked.\n\n"
+        f"🎁 *Rewards:* +{pp_ref:g} point(s) per approved direct referral to **BOTH you and your friend**. "
+        f"Every 20 direct referrals = +10 wallet points bonus."
     )
     text += rules
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=back_btn(location="referral"))
@@ -740,9 +1047,13 @@ async def buy_points_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception:
         pass
     from telegram import InlineKeyboardMarkup as _IKM
-    await _safe_edit(q,
-        f"💎 *Buy Points*\n━━━━━━━━━━━━━━━━━━━━\n\n💎 Your Points: *{pts}*\n💰 Rate: $1 = {POINTS_PER_DOLLAR} Points\n\nSelect payment method:",
-        parse_mode="Markdown", reply_markup=_IKM(rows))
+    _bp = (f"💎 *Buy Points*\n━━━━━━━━━━━━━━━━━━━━\n\n💎 Your Points: *{pts}*\n💰 Rate: $1 = {POINTS_PER_DOLLAR} Points\n\nSelect payment method:")
+    try:
+        from i18n import tr_user
+        _bp = tr_user(_bp, user_id=q.from_user.id) or _bp
+    except Exception:
+        pass
+    await _safe_edit(q, _bp, parse_mode="Markdown", reply_markup=_IKM(rows))
 
 async def transactions_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -752,7 +1063,13 @@ async def transactions_callback(update: Update, context: ContextTypes.DEFAULT_TY
     q = update.callback_query; await q.answer()
     txns = get_user_transactions(q.from_user.id)
     if not txns:
-        await _safe_edit(q, "🔄 *No deposits yet!*\n\nUse 💎 Buy Points to deposit funds.",
+        _em = "🔄 *No deposits yet!*\n\nUse 💎 Buy Points to deposit funds."
+        try:
+            from i18n import tr_user
+            _em = tr_user(_em, user_id=q.from_user.id) or _em
+        except Exception:
+            pass
+        await _safe_edit(q, _em,
                         parse_mode="Markdown", reply_markup=back_btn(location="transactions"))
         return
 

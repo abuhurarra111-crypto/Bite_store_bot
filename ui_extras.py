@@ -206,14 +206,21 @@ async def _safe_edit(q, text, **kwargs):
                 pass
 
 
-def _nav_kb(extra_rows=None):
-    """Common bottom nav for every guide screen."""
+def _nav_kb(extra_rows=None, user_id=None):
+    """Common bottom nav for every guide screen (v137: translated labels)."""
     rows = []
     if extra_rows:
         rows.extend(extra_rows)
+    back = "🔙 Back to Guides"; home = "🏠 Main Menu"
+    try:
+        from i18n import tr_user
+        back = tr_user(back, user_id=user_id) or back
+        home = tr_user(home, user_id=user_id) or home
+    except Exception:
+        pass
     rows.append([
-        InlineKeyboardButton("🔙 Back to Guides", callback_data="how_to_hub"),
-        InlineKeyboardButton("🏠 Main Menu",     callback_data="main_menu"),
+        InlineKeyboardButton(back, callback_data="how_to_hub"),
+        InlineKeyboardButton(home, callback_data="main_menu"),
     ])
     return InlineKeyboardMarkup(rows)
 
@@ -222,8 +229,9 @@ def _nav_kb(extra_rows=None):
 # Guide Hub (entry point)
 # ───────────────────────────────────────────
 
-def _build_how_to_hub_text_and_kb():
-    """🆕 v78: shared between callback + reply-keyboard entry."""
+def _build_how_to_hub_text_and_kb(user_id=None):
+    """🆕 v78: shared between callback + reply-keyboard entry.
+    🆕 v137: hub text + button labels translate to the user's language."""
     text = (
         "📚 *How to Use — Complete Guide*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -233,25 +241,32 @@ def _build_how_to_hub_text_and_kb():
         "and Points are calculated exactly from USD (no rounding down).\n\n"
         "🏠 *Main Menu* always resets the bot if you get stuck."
     )
+    try:
+        from i18n import tr_user
+        text = tr_user(text, user_id=user_id) or text
+        _tr = lambda s: tr_user(s, user_id=user_id) or s
+    except Exception:
+        _tr = lambda s: s
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛒 How to Buy a Product",      callback_data="guide_buy_product")],
-        [InlineKeyboardButton("💎 How to Buy Points / Deposit", callback_data="guide_deposit")],
-        [InlineKeyboardButton("💳 Payment Methods (Overview)",   callback_data="guide_pay_overview")],
-        [InlineKeyboardButton("🪙 Binance Pay — Step-by-Step",   callback_data="guide_pay_binance")],
-        [InlineKeyboardButton("📱 EasyPaisa — Step-by-Step",      callback_data="guide_pay_easypaisa")],
-        [InlineKeyboardButton("📞 JazzCash — Step-by-Step",       callback_data="guide_pay_jazzcash")],
-        [InlineKeyboardButton("💰 Pay with Points",                callback_data="guide_pay_points")],
-        [InlineKeyboardButton("🎫 How to Create a Support Ticket",callback_data="guide_ticket")],
-        [InlineKeyboardButton("🛡️ How to Claim Warranty",        callback_data="guide_warranty")],
-        [InlineKeyboardButton("🔁 How to Request Replacement",     callback_data="guide_replacement")],
-        [InlineKeyboardButton("⭐ How to Leave a Review",          callback_data="guide_review")],
-        [InlineKeyboardButton("🎁 Free Account / Referrals",       callback_data="guide_referral")],
-        [InlineKeyboardButton("🏆 Tier System & Loyalty",          callback_data="guide_tier")],
-        [InlineKeyboardButton("📜 Order History & Tracking",       callback_data="guide_orders")],
-        [InlineKeyboardButton("📊 Price List & Filters",            callback_data="guide_price_list")],
-        [InlineKeyboardButton("🌐 Language Settings",               callback_data="guide_language")],
-        [InlineKeyboardButton("❓ Common Issues / FAQ",            callback_data="guide_faq")],
-        [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")],
+        [InlineKeyboardButton(_tr("🛒 How to Buy a Product"),      callback_data="guide_buy_product")],
+        [InlineKeyboardButton(_tr("💎 How to Buy Points / Deposit"), callback_data="guide_deposit")],
+        [InlineKeyboardButton(_tr("💳 Payment Methods (Overview)"),   callback_data="guide_pay_overview")],
+        [InlineKeyboardButton(_tr("🪙 Binance USDT — Step-by-Step"),   callback_data="guide_pay_binance")],
+        [InlineKeyboardButton(_tr("💳 Bybit Pay / USDT — Step-by-Step"), callback_data="guide_pay_bybit")],
+        [InlineKeyboardButton(_tr("📱 EasyPaisa — Step-by-Step"),      callback_data="guide_pay_easypaisa")],
+        [InlineKeyboardButton(_tr("📞 JazzCash — Step-by-Step"),       callback_data="guide_pay_jazzcash")],
+        [InlineKeyboardButton(_tr("💰 Pay with Points"),                callback_data="guide_pay_points")],
+        [InlineKeyboardButton(_tr("🎫 How to Create a Support Ticket"),callback_data="guide_ticket")],
+        [InlineKeyboardButton(_tr("🛡️ How to Claim Warranty"),        callback_data="guide_warranty")],
+        [InlineKeyboardButton(_tr("🔁 How to Request Replacement"),     callback_data="guide_replacement")],
+        [InlineKeyboardButton(_tr("⭐ How to Leave a Review"),          callback_data="guide_review")],
+        [InlineKeyboardButton(_tr("🎁 Free Account / Referrals"),       callback_data="guide_referral")],
+        [InlineKeyboardButton(_tr("🏆 Tier System & Loyalty"),          callback_data="guide_tier")],
+        [InlineKeyboardButton(_tr("📜 Order History & Tracking"),       callback_data="guide_orders")],
+        [InlineKeyboardButton(_tr("📊 Price List & Filters"),            callback_data="guide_price_list")],
+        [InlineKeyboardButton(_tr("🌐 Language Settings"),               callback_data="guide_language")],
+        [InlineKeyboardButton(_tr("❓ Common Issues / FAQ"),            callback_data="guide_faq")],
+        [InlineKeyboardButton(_tr("🏠 Main Menu"), callback_data="main_menu")],
     ])
     return text, kb
 
@@ -260,13 +275,14 @@ async def how_to_hub_callback(update, context):
     """📚 How to Use — main hub with all topic buttons (callback entry)."""
     q = update.callback_query
     await q.answer()
-    text, kb = _build_how_to_hub_text_and_kb()
+    text, kb = _build_how_to_hub_text_and_kb(q.from_user.id)
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
 
 
 async def how_to_hub_from_text(update, context):
     """🆕 v78: Entry from persistent reply-keyboard 📚 How to Use button."""
-    text, kb = _build_how_to_hub_text_and_kb()
+    uid = update.effective_user.id if update.effective_user else None
+    text, kb = _build_how_to_hub_text_and_kb(uid)
     await update.message.reply_text(text, parse_mode="Markdown", reply_markup=kb)
 
 
@@ -287,13 +303,14 @@ _GUIDES = {
         '  • *Buy Now* → buys exactly *1 item/account*\n'
         '  • *Buy Multiple* → bot asks quantity; it buys exactly the number you type\n'
         '\n'
-        '*Step 4:* Choose payment method:\n'
-        '  • 🪙 Binance Pay\n'
-        '  • 📱 EasyPaisa\n'
-        '  • 📞 JazzCash\n'
+        '*Step 4:* Choose payment method (whatever is enabled):\n'
+        '  • 💳 Bybit Pay (send USDT to UID)\n'
+        '  • 💎 Bybit USDT (TRC20 / BEP20 network)\n'
+        '  • 🪙 Binance USDT (paste TXID — auto-verified)\n'
         '  • 💰 Points Wallet\n'
         '\n'
-        '*Step 5:* Pay the exact amount shown by the bot and follow verify steps.\n'
+        '*Step 5:* Pay the *exact* amount shown by the bot and follow the on-screen '
+        'verify steps (copy UID/address → send → tap Check Payment).\n'
         '\n'
         '*Delivery rules:*\n'
         '  • 1-9 items: details are sent in chat text\n'
@@ -317,9 +334,11 @@ _GUIDES = {
         '  • `$1.05` → `10.5 points`\n'
         '  • `$1.000507` → `10.00507 points`\n'
         '\n'
-        '*Step 3:* Pick Binance / EasyPaisa / JazzCash.\n'
+        '*Step 3:* Pick a payment method — Bybit Pay, Bybit USDT, or Binance USDT '
+        '(whatever is enabled).\n'
         '\n'
-        '*Step 4:* Pay and verify.\n'
+        '*Step 4:* Send the exact USDT amount to the UID/address shown, then tap '
+        '*Check Payment* (or paste your TXID for Binance).\n'
         '\n'
         '*Step 5:* Once verified, exact points are added to your wallet.\n'
         '\n'
@@ -328,32 +347,52 @@ _GUIDES = {
     "pay_overview": (
         "💳 *Payment Methods — Overview*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Bite Store accepts 4 ways to pay:\n\n"
-        "*1. 🪙 Binance Pay (USDT)*\n"
-        "  Fastest. Auto-verified by API in seconds.\n\n"
-        "*2. 📱 EasyPaisa*\n"
-        "  Pakistani users. Send PKR → upload screenshot OR enter TID.\n\n"
-        "*3. 📞 JazzCash*\n"
-        "  Same as EasyPaisa, different wallet.\n\n"
+        "Bite Store accepts these ways to pay (whatever is enabled at checkout):\n\n"
+        "*1. 💳 Bybit Pay*\n"
+        "  Send USDT to the bot's Bybit UID. Simple, click-to-verify.\n\n"
+        "*2. 💎 Bybit USDT (TRC20 / BEP20)*\n"
+        "  Send USDT on your chosen network to the shown address.\n\n"
+        "*3. 🪙 Binance USDT*\n"
+        "  Send USDT from Binance, then paste the TXID — auto-verified by API.\n\n"
         "*4. 💰 Points Wallet*\n"
         "  Use balance you already deposited. No external payment needed.\n\n"
         "_Tap any specific method button on the previous screen for step-by-step._"
     ),
     "pay_binance": (
-        "🪙 *Binance Pay — Step-by-Step*\n"
+        "🪙 *Binance USDT — Step-by-Step*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Binance is the *fastest* method — auto-verified in seconds via Binance Pay API.\n\n"
-        "*Step 1:* At checkout, pick *🪙 Binance*\n\n"
-        "*Step 2:* Bot shows you:\n"
-        "  • Bot's Binance ID / Pay ID\n"
-        "  • Exact amount in USDT\n\n"
-        "*Step 3:* Open Binance app → *Send* (or *Pay*) → enter the Bot's ID\n\n"
-        "*Step 4:* Send the exact USDT amount\n\n"
-        "*Step 5:* In Binance, copy the *Order ID* (or Transfer ID)\n"
-        "   _It looks like:_ `2032xxxxxxxxxxxxx`\n\n"
-        "*Step 6:* Back in the bot, paste the Order ID and tap *Submit*\n\n"
-        "*Step 7:* Bot verifies via Binance API → ✅ payment confirmed → product delivered.\n\n"
-        "🛡️ *Anti-fraud:* Each Order ID can only be used once."
+        "Binance is auto-verified in seconds via the Binance API (TXID-only flow).\n\n"
+        "*Step 1:* At checkout, pick *🪙 Binance USDT*\n\n"
+        "*Step 2:* Bot shows the amount in USDT + which network to use.\n\n"
+        "*Step 3:* Open Binance app → *Withdraw/Send USDT* → send to the shown "
+        "address (same network).\n\n"
+        "*Step 4:* Copy the *TXID* (transaction hash) — a long string starting "
+        "with `0x` or letters/numbers.\n\n"
+        "*Step 5:* Back in the bot, *paste the TXID* as a message.\n\n"
+        "*Step 6:* Bot verifies via Binance API → ✅ confirmed → delivered.\n\n"
+        "🛡️ *Anti-fraud:* Each TXID can only be used once. Never reuse a TXID."
+    ),
+    "pay_bybit": (
+        "💳 *Bybit Pay / USDT — Step-by-Step*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "*A) Bybit Pay (send to UID):*\n"
+        "*Step 1:* At checkout pick *💳 Bybit Pay*.\n"
+        "*Step 2:* Bot shows a warning → tap *Continue*.\n"
+        "*Step 3:* Enter your Bybit UID (6-12 digits) — or it is pre-filled for "
+        "a product purchase.\n"
+        "*Step 4:* Bot gives a *unique amount* + a *Reference ID*.\n"
+        "*Step 5:* In Bybit app → Pay → send the exact amount to the shown UID, "
+        "add the Reference note.\n"
+        "*Step 6:* Back in the bot: *Copy Amount* / *Copy UID*, then tap "
+        "*Check Payment* → verified → delivered.\n\n"
+        "*B) Bybit USDT (TRC20 / BEP20):*\n"
+        "*Step 1:* Pick *💎 Bybit USDT* and choose network (TRC20 or BEP20).\n"
+        "*Step 2:* Bot shows the deposit *address* + exact amount.\n"
+        "*Step 3:* Send USDT from your Bybit spot wallet to that address (same "
+        "network, include the note if asked).\n"
+        "*Step 4:* Tap *Copy Address* / *Copy Amount*, then *Check Payment*.\n"
+        "*Step 5:* Verified → product delivered.\n\n"
+        "⚠️ Send the *exact* amount shown — unique amounts make verification instant."
     ),
     "pay_easypaisa": (
         "📱 *EasyPaisa — Step-by-Step*\n"
@@ -484,11 +523,18 @@ _GUIDES = {
         '*1) Direct Referral Link*\n'
         'Use your general referral link from *🎁 Refer & Earn*.\n'
         '\n'
-        'When someone starts the bot with your link:\n'
-        '  • You get a notification\n'
-        '  • You earn *+1 referral point*\n'
-        "  • The message shows the referred user's ID\n"
+        'When someone starts the bot with your link (and their activity is '
+        'verified as a real human):\n'
+        '  • *You* get the admin-set points\n'
+        '  • *Your friend* also gets the same points\n'
         '  • Every *20 direct referrals* = *+10 wallet points* ($1 bonus)\n'
+        '\n'
+        '*How a referral is approved:*\n'
+        '  • Friend opens your link and presses */start*.\n'
+        '  • They join any Force-Join channels/groups and tap *I Joined — Verify*.\n'
+        '  • If math verification is ON, they answer one quick +/− question.\n'
+        '  • The bot *observes their activity ~30 seconds* — only a real human '
+        'unlocks the reward (both get the notification + points).\n'
         '\n'
         '*2) Product Referral Link*\n'
         'Some products may have *Free via Referrals* enabled.\n'
@@ -552,10 +598,10 @@ _GUIDES = {
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "Quick way to see all prices in one screen.\n\n"
         "*Step 1:* From Main Menu, tap *📊 Price List*\n\n"
-        "*Step 2:* Use filter buttons at top:\n"
-        "  • 💰 By Price (low → high or high → low)\n"
-        "  • 📦 By Category\n"
-        "  • ⚡ In-Stock Only\n\n"
+        "*Step 2:* Use the filter buttons:\n"
+        "  • 📋 All Products\n"
+        "  • ✅ Available Only (in stock)\n"
+        "  • ❌ Out of Stock Only\n\n"
         "*Step 3:* Tap any product to open its full page (description, photo, buy button)\n\n"
         "💡 Bookmark this — fastest way to find the cheapest option for any product type."
     ),
@@ -576,13 +622,23 @@ _GUIDES = {
         '→ Buy Now always means *1 item/account*. Use Buy Multiple for quantity.\n'
         '\n'
         '*Q: I paid but not confirmed yet.*\n'
-        '→ Tap *🔄 Check Again*. If still pending after a few minutes, create a support ticket with your TID / Binance Order ID.\n'
+        '→ For Bybit: tap *Check Payment* again (make sure UID + exact amount). '
+        'For Binance: the TXID is verified automatically. If still pending after '
+        'a few minutes, open a support ticket.\n'
         '\n'
         '*Q: How are points calculated?*\n'
         '→ Exact formula: USD × 10. `$1.05 = 10.5 points`; no rounding down.\n'
         '\n'
         '*Q: Do product purchases give extra points?*\n'
         '→ No. Extra points on payment success are disabled. Points only come from deposits, refunds, admin updates, or referral/free-claim rules.\n'
+        '\n'
+        '*Q: Why do I see a math question after joining via a referral link?*\n'
+        '→ It is a quick human check (random +/−). Answer correctly and the bot '
+        'starts. Normal users (no referral link) never see it.\n'
+        '\n'
+        '*Q: My username shows as — in My Account.*\n'
+        '→ You have no Telegram username set. Add one in Telegram Settings → '
+        'Username, or keep it private — it does not affect anything.\n'
         '\n'
         "*Q: Account doesn't work after delivery.*\n"
         '→ Open *📜 Order History* → order → *🔁 Replacement* or *🛡️ Warranty* if available.\n'
@@ -597,15 +653,21 @@ _GUIDES = {
 
 
 async def guide_screen_callback(update, context):
-    """Generic handler for any guide_<key> callback."""
+    """Generic handler for any guide_<key> callback (v137: translated)."""
     q = update.callback_query
     await q.answer()
     key = (q.data or "").replace("guide_", "", 1)
     text = _GUIDES.get(key)
     if not text:
         text = "❓ Guide not found.\n\nTap 🔙 to return to the guides list."
+    else:
+        try:
+            from i18n import tr_user
+            text = tr_user(text, user_id=q.from_user.id) or text
+        except Exception:
+            pass
     await _safe_edit(q, text, parse_mode="Markdown",
-                     reply_markup=_nav_kb())
+                     reply_markup=_nav_kb(user_id=q.from_user.id))
 
 
 # ============================================================
@@ -1116,6 +1178,7 @@ async def _show_panel(q):
         [InlineKeyboardButton("📤 Custom One-Time Broadcast", callback_data="fake_custom_broadcast")],
         [InlineKeyboardButton("📝 Edit Templates",    callback_data="tpl_panel")],
         [InlineKeyboardButton("📤 Where to Send? (Bot / Group / Both)", callback_data="dest_panel")],
+        [InlineKeyboardButton("🛰️ Test Broadcast (check destination)", callback_data="admin_bcast_test")],
         [InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_panel")],
     ]
     await _edit(q, text, kb)
@@ -1820,11 +1883,16 @@ async def check_force_join(update, context) -> bool:
     Returns True  → user is a member (or force join disabled) → proceed normally
     Returns False → user is NOT a member → join message sent → stop bot
 
-    Usage in handlers_start.py:
-        # [v77-merge] self-bundle import removed: from handlers_force_join import check_force_join
-        if not await check_force_join(update, context):
-            return
+    🆕 v135: supports UNLIMITED channels/groups — each one is its own button
+    (editable label / premium emoji / 🔴🔵🟢 color / link / delete / bulk-delete).
+    Legacy single fj_channel / fj_group settings are auto-migrated into the
+    new force_join_targets table on first use.
     """
+    try:
+        from database import migrate_legacy_force_join
+        migrate_legacy_force_join()
+    except Exception:
+        pass
     if _g(S_FJ_ENABLED, "0") != "1":
         return True  # Force join disabled → proceed
 
@@ -1833,18 +1901,32 @@ async def check_force_join(update, context) -> bool:
         return True  # Admin always bypasses
 
     bot  = context.bot
-    channel = _g(S_FJ_CHANNEL, "").strip()
-    group   = _g(S_FJ_GROUP,   "").strip()
+    targets = []
+    try:
+        from database import list_fj_targets
+        targets = list_fj_targets(enabled_only=True)
+    except Exception:
+        targets = []
+
+    # Legacy fallback (only if table has no rows yet)
+    if not targets:
+        channel = _g(S_FJ_CHANNEL, "").strip()
+        group   = _g(S_FJ_GROUP,   "").strip()
+        if channel:
+            targets.append({"label": "📢 Channel", "link": channel, "style": "", "emoji_id": ""})
+        if group:
+            targets.append({"label": "👥 Group", "link": group, "style": "", "emoji_id": ""})
+
+    if not targets:
+        return True
 
     missing = []
-
-    if channel:
-        if not await _is_member(bot, user.id, channel):
-            missing.append(("📢 Channel", channel))
-
-    if group:
-        if not await _is_member(bot, user.id, group):
-            missing.append(("👥 Group", group))
+    for t in targets:
+        link = (t.get("link") or "").strip()
+        if not link:
+            continue
+        if not await _is_member(bot, user.id, link):
+            missing.append(t)
 
     if not missing:
         return True  # All joined → proceed
@@ -1860,27 +1942,45 @@ async def check_force_join(update, context) -> bool:
             "After joining, tap the button below ✅"
         )
 
-    # Build join buttons — create proper join URLs from saved links
+    # Build join buttons — one per target (label + premium emoji + color),
+    # plus the single editable Verify button.
     link_lines = []
     kb_links   = []
-    for label, chat in missing:
-        # Build a joinable URL
+    for t in missing:
+        chat = (t.get("link") or "").strip()
+        label = (t.get("label") or "Join").strip() or "Join"
         if chat.startswith("https://t.me/"):
             join_url = chat  # already a full link
         elif chat.startswith("@"):
             join_url = f"https://t.me/{chat.lstrip('@')}"
         else:
             join_url = f"https://t.me/{chat}"
-
         link_lines.append(f"➤ {label}: {join_url}")
-        kb_links.append([InlineKeyboardButton(
-            f"🔗 Join {label}", url=join_url)])
+        try:
+            from button_system import make_premium_button
+            kb_links.append([make_premium_button(
+                label, emoji_id=(t.get('emoji_id') or '') or None,
+                style=(t.get('style') or '').lower() or None,
+                url=join_url)])
+        except Exception:
+            kb_links.append([InlineKeyboardButton(label, url=join_url)])
 
     links_str = "\n".join(link_lines)
     msg = custom_msg.replace("{links}", links_str)
 
-    kb_links.append([InlineKeyboardButton(
-        "✅ I Joined — Verify", callback_data="fj_verified")])
+    # Editable Verify button (shared for new + existing users)
+    try:
+        from database import get_fj_verify_button
+        vb = get_fj_verify_button()
+        vlabel = vb.get("label") or "✅ I Joined — Verify"
+        vstyle = (vb.get("style") or "").lower() or None
+        vemoji  = vb.get("emoji_id") or ""
+        from button_system import make_premium_button
+        kb_links.append([make_premium_button(vlabel, emoji_id=vemoji or None,
+                                             style=vstyle, callback_data="fj_verified")])
+    except Exception:
+        kb_links.append([InlineKeyboardButton(
+            "✅ I Joined — Verify", callback_data="fj_verified")])
 
     try:
         await update.message.reply_text(
@@ -1907,6 +2007,108 @@ async def check_force_join(update, context) -> bool:
     return False  # Block user
 
 
+async def force_join_action_gate(update, context) -> bool:
+    """🆕 v135: GLOBAL gate for EXISTING users. Called at the top of every
+    user action (text + callback). If force join is enabled and the user
+    is not a member of all targets anymore (e.g. they left a channel), it
+    shows the join message and BLOCKS the action until they rejoin + verify.
+
+    Returns True when the action was blocked (caller must stop).
+    Returns False when the user may proceed.
+    """
+    try:
+        from database import migrate_legacy_force_join
+        migrate_legacy_force_join()
+    except Exception:
+        pass
+    if _g(S_FJ_ENABLED, "0") != "1":
+        return False
+    user = update.effective_user
+    if not user or _is_admin(user.id):
+        return False
+    # Never block the verify button itself or math answers
+    try:
+        if update.callback_query and update.callback_query.data == "fj_verified":
+            return False
+    except Exception:
+        pass
+    try:
+        if update.callback_query and str(update.callback_query.data or "").startswith("fj_"):
+            return False  # force-join admin/panel buttons always pass
+    except Exception:
+        pass
+    try:
+        if context.user_data.get('fj_math'):
+            return False  # mid math-verification
+    except Exception:
+        pass
+    bot = context.bot
+    targets = []
+    try:
+        from database import list_fj_targets
+        targets = list_fj_targets(enabled_only=True)
+    except Exception:
+        targets = []
+    if not targets:
+        channel = _g(S_FJ_CHANNEL, "").strip()
+        group   = _g(S_FJ_GROUP,   "").strip()
+        if channel:
+            targets.append({"label": "📢 Channel", "link": channel, "style": "", "emoji_id": ""})
+        if group:
+            targets.append({"label": "👥 Group", "link": group, "style": "", "emoji_id": ""})
+    if not targets:
+        return False
+    missing = [t for t in targets if (t.get("link") or "").strip()
+               and not await _is_member(bot, user.id, (t.get("link") or "").strip())]
+    if not missing:
+        return False
+    # User must (re)join → send the same join screen
+    link_lines, kb_links = [], []
+    for t in missing:
+        chat = (t.get("link") or "").strip()
+        label = (t.get("label") or "Join").strip() or "Join"
+        if chat.startswith("https://t.me/"):
+            join_url = chat
+        elif chat.startswith("@"):
+            join_url = f"https://t.me/{chat.lstrip('@')}"
+        else:
+            join_url = f"https://t.me/{chat}"
+        link_lines.append(f"➤ {label}: {join_url}")
+        try:
+            from button_system import make_premium_button
+            kb_links.append([make_premium_button(
+                label, emoji_id=(t.get('emoji_id') or '') or None,
+                style=(t.get('style') or '').lower() or None, url=join_url)])
+        except Exception:
+            kb_links.append([InlineKeyboardButton(label, url=join_url)])
+    try:
+        from database import get_fj_verify_button
+        vb = get_fj_verify_button()
+        vlabel = vb.get("label") or "✅ I Joined — Verify"
+        vstyle = (vb.get("style") or "").lower() or None
+        vemoji = vb.get("emoji_id") or ""
+        from button_system import make_premium_button
+        kb_links.append([make_premium_button(vlabel, emoji_id=vemoji or None,
+                                             style=vstyle, callback_data="fj_verified")])
+    except Exception:
+        kb_links.append([InlineKeyboardButton("✅ I Joined — Verify",
+                                              callback_data="fj_verified")])
+    custom_msg = _g(S_FJ_MSG, "").strip()
+    if not custom_msg:
+        custom_msg = ("⚠️ *Access Restricted!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                      "To use *Bite Store Bot*, you must join:\n\n{links}\n\n"
+                      "After joining, tap the button below ✅")
+    msg = custom_msg.replace("{links}", "\n".join(link_lines))
+    try:
+        target = (update.effective_message or update.message)
+        if target is not None:
+            await target.reply_text(msg, parse_mode="Markdown",
+                                    reply_markup=InlineKeyboardMarkup(kb_links))
+    except Exception:
+        pass
+    return True
+
+
 async def fj_verified_callback(update, context):
     """
     User taps '✅ I Joined — Verify' button.
@@ -1917,14 +2119,33 @@ async def fj_verified_callback(update, context):
     user = q.from_user
     bot  = context.bot
 
-    channel = _g(S_FJ_CHANNEL, "").strip()
-    group   = _g(S_FJ_GROUP,   "").strip()
+    # 🆕 v135: verify against ALL configured targets (unlimited).
+    try:
+        from database import migrate_legacy_force_join
+        migrate_legacy_force_join()
+    except Exception:
+        pass
+    targets = []
+    try:
+        from database import list_fj_targets
+        targets = list_fj_targets(enabled_only=True)
+    except Exception:
+        targets = []
+    if not targets:
+        channel = _g(S_FJ_CHANNEL, "").strip()
+        group   = _g(S_FJ_GROUP,   "").strip()
+        if channel:
+            targets.append({"label": "📢 Channel", "link": channel, "style": "", "emoji_id": ""})
+        if group:
+            targets.append({"label": "👥 Group", "link": group, "style": "", "emoji_id": ""})
 
     missing = []
-    if channel and not await _is_member(bot, user.id, channel):
-        missing.append("📢 Channel")
-    if group and not await _is_member(bot, user.id, group):
-        missing.append("👥 Group")
+    for t in targets:
+        link = (t.get("link") or "").strip()
+        if not link:
+            continue
+        if not await _is_member(bot, user.id, link):
+            missing.append(t.get("label") or "Target")
 
     if missing:
         await q.answer(
@@ -1939,18 +2160,45 @@ async def fj_verified_callback(update, context):
     except Exception:
         pass
 
-    # Now start the bot for this user
+    # 🆕 v134: referral-origin users continue the /start flow that stopped at
+    # the force-join wall — referral recorded as PENDING, then MATH question.
     try:
-        from database import save_user, get_user
+        from handlers_start import continue_after_force_join_verified
+        handled = await continue_after_force_join_verified(update, context, user)
+        if handled:
+            return
+    except Exception:
+        pass
+
+    # 🆕 v138: verified-response is now editable (Edit Responses) with
+    # premium emoji + auto-deletes from the user's chat after 5 seconds.
+    try:
+        from database import save_user, get_user, get_response
         save_user(user.id, user.username or "", user.first_name or "")
         from keyboards import main_menu_keyboard
-        from config import ADMIN_ID, SHOP_NAME
-        from database import get_setting
-        shop = get_setting("shop_name", SHOP_NAME)
-        text = f"✅ *Verified!*\n\nWelcome to *{shop}*! 🛍️\n\nYou're all set to use the bot."
-        await q.message.reply_text(
-            text, parse_mode="Markdown",
+        from config import ADMIN_ID
+        tpl = get_response("fj_verified_done", "")
+        if not tpl:
+            from database import get_setting
+            from config import SHOP_NAME
+            shop = get_setting("shop_name", SHOP_NAME)
+            tpl = f"✅ *Verified!*\n\nWelcome to *{shop}*! 🛍️\n\nYou're all set to use the bot."
+        send_text, send_mode = smart_text_and_mode(tpl, "Markdown")
+        sent = await q.message.reply_text(
+            send_text, parse_mode=send_mode,
             reply_markup=main_menu_keyboard(user.id == ADMIN_ID, user_id=user.id))
+        # Auto-delete the verified message after 5 seconds (per user request)
+        try:
+            if sent and getattr(context, 'job_queue', None):
+                mid = sent.message_id; chat_id = sent.chat_id
+                async def _del(_c):
+                    try:
+                        await _c.bot.delete_message(chat_id, mid)
+                    except Exception:
+                        pass
+                context.job_queue.run_once(_del, 5, name=f"fj_del_{chat_id}_{mid}")
+        except Exception:
+            pass
         # Start personal fake activity
         try:
             from per_user_activity import start_personal_activity
@@ -1969,7 +2217,7 @@ async def fj_verified_callback(update, context):
 
 async def fj_panel_callback(update, context):
     """
-    Force Join settings panel.
+    Force Join settings panel (v135 — unlimited channels/groups).
     Admin Panel → 🔗 Force Join Setup
     """
     q = update.callback_query
@@ -1980,59 +2228,91 @@ async def fj_panel_callback(update, context):
     await _show_fj_panel(q, context.bot)
 
 
+def _style_label(style):
+    return {
+        "primary": "🔵 Blue",
+        "success": "🟢 Green",
+        "danger":  "🔴 Red",
+    }.get(style, "⚪ Default")
+
+
+def _fj_join_url(link):
+    link = (link or "").strip()
+    if link.startswith("https://t.me/"):
+        return link
+    if link.startswith("@"):
+        return f"https://t.me/{link.lstrip('@')}"
+    return f"https://t.me/{link}"
+
+
 async def _show_fj_panel(q, bot):
     enabled = _g(S_FJ_ENABLED, "0") == "1"
-    channel     = _g(S_FJ_CHANNEL, "").strip()
-    group       = _g(S_FJ_GROUP,   "").strip()
-    has_msg     = bool(_g(S_FJ_MSG, "").strip())
-
-    # Display short version of links
-    def _short(val):
-        if not val: return "Not set"
-        if val.startswith("https://t.me/+"):
-            return val[:30] + "..." if len(val) > 30 else val  # private link
-        return val
-
-    channel_disp = _short(channel).replace("_", "\\_").replace("*", "\\*")
-    group_disp   = _short(group).replace("_", "\\_").replace("*", "\\*")
+    has_msg = bool(_g(S_FJ_MSG, "").strip())
+    try:
+        from database import list_fj_targets, get_fj_verify_button, migrate_legacy_force_join
+        migrate_legacy_force_join()
+        targets = list_fj_targets()
+    except Exception:
+        targets = []
+    vb = {}
+    try:
+        from database import get_fj_verify_button
+        vb = get_fj_verify_button()
+    except Exception:
+        pass
+    vlabel = (vb.get("label") or "✅ I Joined — Verify")
+    vstyle_lbl = _style_label(vb.get("style") or "")
 
     status = "🟢 *ENABLED*" if enabled else "🔴 *DISABLED*"
-
-    text = (
-        f"🔗 *Force Join Setup*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🔌 Status: {status}\n\n"
-        f"*Current Settings:*\n"
-        f"  📢 Channel: `{channel_disp}`\n"
-        f"  👥 Group: `{group_disp}`\n"
-        f"  ✉️ Custom Message: {'✅ Set' if has_msg else '❌ Using default'}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"*How it works:*\n"
-        f"• User sends /start → bot checks membership\n"
-        f"• Not a member → bot sends join link + stops\n"
-        f"• User joins → taps '✅ I Joined' → verified\n"
-        f"• User leaves later → bot stops again\n\n"
-        f"*⚠️ Important:*\n"
-        f"• Bot must be ADMIN in channel/group\n"
-        f"• Give bot 'Add Members' permission\n"
-        f"• Use @username format (e.g. @mychannel)"
-    )
+    lines = [
+        f"🔗 *Force Join Setup*",
+        f"━━━━━━━━━━━━━━━━━━━━",
+        f"🔌 Status: {status}",
+        f"✉️ Join Message: {'✅ Set' if has_msg else '❌ Default'}",
+        "",
+        f"*Join Targets: {len(targets)}*",
+    ]
+    for idx, t in enumerate(targets, 1):
+        link = (t.get("link") or "").strip()
+        style = (t.get("style") or "").lower()
+        dot = {"primary": "🔵", "success": "🟢", "danger": "🔴"}.get(style, "⬜")
+        short = link
+        if len(short) > 34:
+            short = short[:31] + "..."
+        short = short.replace("_", "\\_").replace("*", "\\*")
+        lines.append(f"{idx}. {dot} *{(t.get('label') or 'Join')[:22]}* → `{short}`")
+    lines.append("")
+    lines.append(f"✅ Verify Button: *{vlabel[:24]}* ({vstyle_lbl})")
+    lines.append("")
+    lines.append("*How it works:*")
+    lines.append("• Every target = one Join button (rename / color / premium emoji / link).")
+    lines.append("• New users + existing users must join ALL targets, then tap Verify.")
+    lines.append("• If a user leaves any channel/group, their next action is blocked until they rejoin.")
+    lines.append("")
+    lines.append("⚠️ Bot must be ADMIN in every channel/group (permissions: member list).")
+    text = "\n".join(lines)
 
     toggle_lbl = "🔴 Disable Force Join" if enabled else "🟢 Enable Force Join"
     kb = [
         [InlineKeyboardButton(toggle_lbl, callback_data="fj_toggle")],
-        [InlineKeyboardButton("━━━ Channel/Group Setup ━━━", callback_data="fj_noop")],
-        [InlineKeyboardButton("📢 Set Channel", callback_data="fj_set_channel"),
-         InlineKeyboardButton("🗑️ Clear Channel", callback_data="fj_clear_channel")],
-        [InlineKeyboardButton("👥 Set Group", callback_data="fj_set_group"),
-         InlineKeyboardButton("🗑️ Clear Group", callback_data="fj_clear_group")],
+        [InlineKeyboardButton("➕ Add Channel / Group", callback_data="fj_add")],
+    ]
+    for idx, t in enumerate(targets, 1):
+        style = (t.get("style") or "").lower()
+        dot = {"primary": "🔵", "success": "🟢", "danger": "🔴"}.get(style, "⬜")
+        kb.append([InlineKeyboardButton(
+            f"{dot} {idx}. {(t.get('label') or 'Join')[:28]}",
+            callback_data=f"fjm_{t['id']}")])
+    if targets:
+        kb.append([InlineKeyboardButton("🗑️ Bulk Delete Targets", callback_data="fj_bulk")])
+    kb.extend([
+        [InlineKeyboardButton("✅ Verify Button (rename/color/emoji)", callback_data="fj_vbtn")],
         [InlineKeyboardButton("━━━ Join Message ━━━", callback_data="fj_noop")],
-        [InlineKeyboardButton("✏️ Edit Join Message", callback_data="fj_set_msg")],
-        [InlineKeyboardButton("🔄 Reset to Default Msg", callback_data="fj_reset_msg")],
-        [InlineKeyboardButton("━━━ Tools ━━━", callback_data="fj_noop")],
+        [InlineKeyboardButton("✏️ Edit Join Message", callback_data="fj_set_msg"),
+         InlineKeyboardButton("🔄 Reset Msg", callback_data="fj_reset_msg")],
         [InlineKeyboardButton("🧪 Test Bot Admin Status", callback_data="fj_test")],
         [InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_panel")],
-    ]
+    ])
     await _edit(q, text, kb)
 
 
@@ -2049,414 +2329,661 @@ async def fj_toggle_callback(update, context):
     await _show_fj_panel(q, context.bot)
 
 
-async def fj_set_channel_callback(update, context):
-    """Ask admin for channel link."""
+# ── Add target (link first, rename later) ────────────────────
+async def fj_add_callback(update, context):
     q = update.callback_query
     if not _is_admin(q.from_user.id):
-        await q.answer("❌ Admin only!", show_alert=True)
-        return ConversationHandler.END
+        await q.answer("❌ Admin only!", show_alert=True); return
     await q.answer()
-    current = _g(S_FJ_CHANNEL, "") or "Not set"
+    context.user_data["fj_add_link"] = True
     kb = [[InlineKeyboardButton("❌ Cancel", callback_data="fj_panel")]]
     text = (
-        f"📢 *Set Force Join Channel*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Current: `{current}`\n\n"
-        f"*⚠️ IMPORTANT — Do this FIRST:*\n"
-        f"1. Open your channel\n"
-        f"2. Administrators → Add Admin\n"
-        f"3. Search & add your bot\n"
-        f"4. Give ANY permission → Save\n\n"
-        f"*THEN paste the link here:*\n\n"
-        f"*Accepted formats:*\n"
-        f"  `https://t.me/mychannel`  (public)\n"
-        f"  `https://t.me/+InviteCode`  (private)\n"
-        f"  `@mychannel`\n\n"
-        f"*For private channels:*\n"
-        f"  Channel → ⋮ → Invite via Link → Copy\n\n"
-        f"Send the link now:"
+        "➕ *Add Channel / Group*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "*Send the link now* (public or private invite link):\n\n"
+        "  `https://t.me/mychannel`\n"
+        "  `https://t.me/+InviteCode`\n"
+        "  `@mychannel`\n\n"
+        "⚠️ Bot must be ADMIN in the target (so it can check members).\n"
+        "_After adding, you can rename it, give it a color / premium emoji and change the link._"
     )
     try:
-        await q.edit_message_text(text, parse_mode="Markdown",
-                                  reply_markup=InlineKeyboardMarkup(kb))
+        await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
     except Exception:
         pass
-    return FJ_CHANNEL
 
 
-async def fj_channel_received(update, context):
-    """Save channel link — accepts t.me links, @username, or bare username.
-
-    🐛 v95 FIX: NOW ACTUALLY VERIFIES bot has access + admin permissions in
-    the channel BEFORE saving. Previously admin would enter a link, bot would
-    save it, but silently fail when checking members later — admin thought
-    force-join was working but it wasn't. Now the save operation itself
-    validates and gives clear error message with the exact fix needed.
-    """
+async def fj_add_link_received(update, context):
     if not _is_admin(update.effective_user.id):
-        return ConversationHandler.END
-    raw = update.message.text.strip()
+        context.user_data.pop("fj_add_link", None); return False
+    if not context.user_data.get("fj_add_link"):
+        return False
+    raw = (update.message.text or "").strip()
+    context.user_data.pop("fj_add_link", None)
+    if raw.lower() == "/cancel":
+        await update.message.reply_text("❌ Cancelled.")
+        return True
     val = _parse_chat_link(raw)
-    kb = [[InlineKeyboardButton("🔙 Back to Force Join", callback_data="fj_panel")]]
     if not val:
         await update.message.reply_text(
-            "❌ *Invalid link!*\n\nSend a valid channel link:\n"
-            "`https://t.me/mychannel`\n`@mychannel`\n`https://t.me/+abc123`",
-            parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-        return ConversationHandler.END
-
-    # 🐛 v95: pre-flight check — verify bot can reach the channel
-    ok, err_msg = await _verify_bot_access(context.bot, val, "channel")
-    if not ok:
-        await update.message.reply_text(err_msg, parse_mode="Markdown",
-                                          reply_markup=InlineKeyboardMarkup(kb),
-                                          disable_web_page_preview=True)
-        return ConversationHandler.END
-
-    _s(S_FJ_CHANNEL, val)
-    await update.message.reply_text(
-        f"✅ *Channel Set & Verified!*\n\n"
-        f"Force join channel: `{val}`\n\n"
-        f"✅ Bot has access to this channel.\n"
-        f"✅ Force join will work when users /start the bot.",
-        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-    return ConversationHandler.END
-
-
-async def _verify_bot_access(bot, chat_ref: str, kind: str = "channel"):
-    """🐛 v95: verify bot can actually reach the given chat.
-
-    Returns (ok, error_message). If ok=True, error_message is empty.
-    If ok=False, error_message is a user-friendly explanation with fix steps.
-    """
+            "❌ That doesn't look like a valid channel/group link. Try again or send /cancel.")
+        context.user_data["fj_add_link"] = True
+        return True
+    # default label from link
+    base = val.lstrip("@").split("/")[-1] if "/" in val else val.lstrip("@")
+    label = "📢 " + base[:20] if base else "Join"
     try:
-        # First: try to resolve + get chat
-        resolved = await _resolve_chat_id(bot, chat_ref)
-        chat_obj = await bot.get_chat(resolved)
-        # Second: verify bot itself is a member (admin ideally)
-        me = await bot.get_me()
-        try:
-            member = await bot.get_chat_member(chat_id=resolved, user_id=me.id)
-            status = str(member.status).lower()
-            if "left" in status or "kicked" in status or "banned" in status:
-                return False, (
-                    f"❌ *Bot is NOT a member of {chat_ref}*\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"Bot ne is {kind} ko join hi nahi kiya.\n\n"
-                    f"*Fix karein:*\n"
-                    f"1. Apna {kind} khole\n"
-                    f"2. Bot ko add karein\n"
-                    f"3. Bot ko *administrator* banayen (any permission)\n"
-                    f"4. Phir dobara ye link paste karein"
-                )
-            # Ideal: bot should be admin (needed to see member list)
-            if "admin" not in status and "creator" not in status:
-                return False, (
-                    f"⚠️ *Bot is a member but NOT admin of {chat_ref}*\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"Force join ke liye bot ko *admin* banana zaroori hai\n"
-                    f"warna bot users ki membership check nahi kar sakta.\n\n"
-                    f"*Fix karein:*\n"
-                    f"1. {kind.capitalize()} → Administrators\n"
-                    f"2. Add Admin → search bot\n"
-                    f"3. Koi bhi 1 permission de dein → Save\n"
-                    f"4. Phir dobara link paste karein"
-                )
-            return True, ""
-        except Exception as _sub:
-            # get_chat succeeded but get_chat_member failed = bot not in chat
-            return False, (
-                f"❌ *Cannot verify bot membership in {chat_ref}*\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"Bot us {kind} tak pahoch nahi sakta.\n"
-                f"Error: `{str(_sub)[:100]}`\n\n"
-                f"*Fix:*\n"
-                f"1. Bot ko {kind} mein add karein\n"
-                f"2. Admin permission dein\n"
-                f"3. Phir dobara link paste karein"
-            )
+        from database import add_fj_target
+        add_fj_target(val, label=label, style="primary", emoji_id="")
     except Exception as e:
-        # Common: "Chat not found" = bot never added
-        err = str(e)
-        if "chat not found" in err.lower():
-            return False, (
-                f"❌ *Chat not found: `{chat_ref}`*\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"Ye 3 reasons ho sakty hain:\n"
-                f"1. {kind.capitalize()} exist nahi karta (link galat hai)\n"
-                f"2. Bot us {kind} mein add nahi hai\n"
-                f"3. Private {kind} hai to numeric ID chahiye (-100xxxxxxxxxx)\n\n"
-                f"*Fix:*\n"
-                f"• Public {kind}: link double-check karein, bot ko add + admin banayen\n"
-                f"• Private {kind}: pehle bot ko admin banayen, phir link paste karein"
-            )
-        return False, (
-            f"❌ *Error checking {chat_ref}:*\n"
-            f"`{err[:200]}`\n\n"
-            f"Yeh unusual error hai. Try:\n"
-            f"1. Bot ko {kind} mein admin banayen\n"
-            f"2. Correct link paste karein\n"
-            f"3. Support se contact karein agar phir bhi issue"
-        )
+        await update.message.reply_text(f"❌ Save failed: {e}")
+        return True
+    await update.message.reply_text(
+        f"✅ *Added:* `{val}`\n\nTap the target in Force Join Setup to rename / color / add premium emoji.",
+        parse_mode="Markdown")
+    return True
 
 
-async def fj_set_group_callback(update, context):
-    """Ask admin for group link."""
+# ── Per-target manage panel ──────────────────────────────────
+async def fjm_callback(update, context):
     q = update.callback_query
     if not _is_admin(q.from_user.id):
-        await q.answer("❌ Admin only!", show_alert=True)
-        return ConversationHandler.END
+        await q.answer("❌ Admin only!", show_alert=True); return
     await q.answer()
-    current = _g(S_FJ_GROUP, "") or "Not set"
-    kb = [[InlineKeyboardButton("❌ Cancel", callback_data="fj_panel")]]
-    text = (
-        f"👥 *Set Force Join Group*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Current: `{current}`\n\n"
-        f"*⚠️ IMPORTANT — Do this FIRST:*\n"
-        f"1. Open your group\n"
-        f"2. Group settings → Administrators\n"
-        f"3. Add Admin → Search your bot\n"
-        f"4. Give ANY permission → Save\n\n"
-        f"*THEN paste the group link:*\n\n"
-        f"*For public groups:*\n"
-        f"  `https://t.me/mygroup` or `@mygroup`\n\n"
-        f"*For private groups:*\n"
-        f"  Group → ⋮ → Invite via Link → Copy link\n"
-        f"  Paste the `https://t.me/+...` link\n\n"
-        f"*Tip:* You can set BOTH channel AND group.\n"
-        f"User must join BOTH to access the bot.\n\n"
-        f"Send the link now:"
-    )
     try:
-        await q.edit_message_text(text, parse_mode="Markdown",
-                                  reply_markup=InlineKeyboardMarkup(kb))
+        tid = int((q.data or "").replace("fjm_", "").split("_")[0])
+        from database import get_fj_target
+        t = get_fj_target(tid)
+    except Exception:
+        t = None
+    if not t:
+        await _edit(q, "❌ Target not found.", [[InlineKeyboardButton("🔙 Force Join", callback_data="fj_panel")]])
+        return
+    style = (t.get("style") or "").lower()
+    dot = {"primary": "🔵", "success": "🟢", "danger": "🔴"}.get(style, "⬜")
+    link = (t.get("link") or "").strip()
+    short = link if len(link) <= 36 else link[:33] + "..."
+    text = (
+        f"🔗 *Target #{tid}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{dot} *Label:* {(t.get('label') or 'Join')}\n"
+        f"🌐 Link: `{short}`\n"
+        f"🎨 Color: {_style_label(style)}\n"
+        f"✨ Premium emoji: {'✅ set' if (t.get('emoji_id') or '') else '❌ none'}\n\n"
+        f"*Preview:* the Join button users see 👇"
+    )
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    try:
+        from button_system import make_premium_button
+        prev = make_premium_button((t.get('label') or 'Join'),
+                                   emoji_id=(t.get('emoji_id') or '') or None,
+                                   style=style or None,
+                                   url=_fj_join_url(link))
+    except Exception:
+        prev = InlineKeyboardButton((t.get('label') or 'Join'), url=_fj_join_url(link))
+    kb = [
+        [prev],
+        [InlineKeyboardButton("✏️ Rename", callback_data=f"fjm_ren_{tid}"),
+         InlineKeyboardButton("✨ Premium Emoji", callback_data=f"fjm_emo_{tid}")],
+        [InlineKeyboardButton("🎨 Color: 🔵", callback_data=f"fjm_col_{tid}_primary"),
+         InlineKeyboardButton("🟢", callback_data=f"fjm_col_{tid}_success"),
+         InlineKeyboardButton("🔴", callback_data=f"fjm_col_{tid}_danger"),
+         InlineKeyboardButton("⚪", callback_data=f"fjm_col_{tid}_none")],
+        [InlineKeyboardButton("🔗 Change Link", callback_data=f"fjm_link_{tid}")],
+        [InlineKeyboardButton("⬆️", callback_data=f"fjm_up_{tid}"),
+         InlineKeyboardButton("⬇️", callback_data=f"fjm_down_{tid}"),
+         InlineKeyboardButton("🗑️ Delete", callback_data=f"fjm_del_{tid}")],
+        [InlineKeyboardButton("🔙 Force Join Setup", callback_data="fj_panel")],
+    ]
+    await _edit(q, text, kb)
+
+
+async def fjm_col_callback(update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    parts = (q.data or "").split("_")
+    # fjm_col_<tid>_<style>
+    try:
+        tid = int(parts[2])
+        style = parts[3] if len(parts) > 3 else "none"
+        style = "" if style == "none" else style
+        from database import update_fj_target
+        update_fj_target(tid, style=style)
     except Exception:
         pass
-    return FJ_GROUP
+    await _show_fj_panel(q, context.bot)
 
 
-async def fj_group_received(update, context):
-    """Save group link — accepts t.me links, @username, or bare username.
-
-    🐛 v95 FIX: Now pre-verifies bot access before saving (same as channel).
-    Also fixes root cause: FJ_GROUP state ID was 921 which collided with
-    handlers_admin.EDIT_PRODUCT_EMOJI=921 — user's link was routed to
-    emoji editor and silently discarded. Now FJ_GROUP=9201.
-    """
-    if not _is_admin(update.effective_user.id):
-        return ConversationHandler.END
-    raw = update.message.text.strip()
-    val = _parse_chat_link(raw)
-    kb = [[InlineKeyboardButton("🔙 Back to Force Join", callback_data="fj_panel")]]
-    if not val:
-        await update.message.reply_text(
-            "❌ *Invalid link!*\n\nSend a valid group link:\n"
-            "`https://t.me/mygroup`\n`https://t.me/+InviteCode`\n`@mygroup`",
-            parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-        return ConversationHandler.END
-
-    # 🐛 v95: pre-flight verify bot access + admin status
-    ok, err_msg = await _verify_bot_access(context.bot, val, "group")
-    if not ok:
-        await update.message.reply_text(err_msg, parse_mode="Markdown",
-                                          reply_markup=InlineKeyboardMarkup(kb),
-                                          disable_web_page_preview=True)
-        return ConversationHandler.END
-
-    _s(S_FJ_GROUP, val)
-    await update.message.reply_text(
-        f"✅ *Group Set & Verified!*\n\n"
-        f"Force join group: `{val}`\n\n"
-        f"✅ Bot has access to this group.\n"
-        f"✅ Force join will work when users /start the bot.",
-        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-    return ConversationHandler.END
-
-
-async def fj_set_msg_callback(update, context):
-    """Ask admin to write custom join message."""
+async def fjm_ren_callback(update, context):
     q = update.callback_query
     if not _is_admin(q.from_user.id):
-        await q.answer("❌ Admin only!", show_alert=True)
-        return ConversationHandler.END
+        await q.answer("❌", show_alert=True); return
     await q.answer()
+    try:
+        tid = int((q.data or "").replace("fjm_ren_", "").split("_")[0])
+    except Exception:
+        return
+    context.user_data["fj_ren_target"] = tid
+    kb = [[InlineKeyboardButton("❌ Cancel", callback_data="fj_panel")]]
+    try:
+        await q.edit_message_text(
+            "✏️ *Rename target*\n\nSend the new button name (premium emoji allowed in the name):",
+            parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    except Exception:
+        pass
+
+
+async def fjm_ren_received(update, context):
+    if not _is_admin(update.effective_user.id):
+        context.user_data.pop("fj_ren_target", None); return False
+    tid = context.user_data.get("fj_ren_target")
+    if not tid:
+        return False
+    context.user_data.pop("fj_ren_target", None)
+    txt = (update.message.text or "").strip()
+    if not txt or txt.lower() == "/cancel":
+        await update.message.reply_text("❌ Cancelled.")
+        return True
+    try:
+        from utils import capture_user_text
+        txt = capture_user_text(update.message) or txt
+    except Exception:
+        pass
+    from database import update_fj_target
+    update_fj_target(int(tid), label=txt[:80])
+    await update.message.reply_text("✅ *Renamed.*", parse_mode="Markdown")
+    return True
+
+
+async def fjm_emo_callback(update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        tid = int((q.data or "").replace("fjm_emo_", "").split("_")[0])
+    except Exception:
+        return
+    context.user_data["fj_emo_target"] = tid
+    kb = [[InlineKeyboardButton("🚫 Clear Emoji", callback_data=f"fjm_emo_clear_{tid}"),
+           InlineKeyboardButton("❌ Cancel", callback_data="fj_panel")]]
+    try:
+        await q.edit_message_text(
+            "✨ *Premium Emoji*\n\nSend the premium emoji (or any emoji) as a message. "
+            "It will appear as the button icon.\n\n_Or tap 🚫 Clear to remove it._",
+            reply_markup=InlineKeyboardMarkup(kb))
+    except Exception:
+        pass
+
+
+async def fjm_emo_received(update, context):
+    if not _is_admin(update.effective_user.id):
+        context.user_data.pop("fj_emo_target", None); return False
+    tid = context.user_data.get("fj_emo_target")
+    if not tid:
+        return False
+    context.user_data.pop("fj_emo_target", None)
+    try:
+        from utils import capture_user_text
+        raw = capture_user_text(update.message) or (update.message.text or "").strip()
+    except Exception:
+        raw = (update.message.text or "").strip()
+    emoji_id = ""
+    try:
+        from button_system import extract_emoji_from_html
+        emoji_id, _plain = extract_emoji_from_html(raw)
+    except Exception:
+        emoji_id = ""
+    if not emoji_id:
+        # plain emoji char — store the char itself so make_premium_button shows it as icon
+        import re as _re
+        m = _re.search(r'[\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F]', raw, _re.UNICODE)
+        if m:
+            emoji_id = m.group(0)
+    from database import update_fj_target
+    update_fj_target(int(tid), emoji_id=emoji_id or "")
+    await update.message.reply_text("✅ *Emoji set.*", parse_mode="Markdown")
+    return True
+
+
+async def fjm_emo_clear_callback(update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        tid = int((q.data or "").replace("fjm_emo_clear_", "").split("_")[0])
+        from database import update_fj_target
+        update_fj_target(int(tid), emoji_id="")
+    except Exception:
+        pass
+    await _show_fj_panel(q, context.bot)
+
+
+async def fjm_link_callback(update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        tid = int((q.data or "").replace("fjm_link_", "").split("_")[0])
+    except Exception:
+        return
+    context.user_data["fj_link_target"] = tid
+    kb = [[InlineKeyboardButton("❌ Cancel", callback_data="fj_panel")]]
+    try:
+        await q.edit_message_text(
+            "🔗 *Change link*\n\nSend the new channel/group link:",
+            parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    except Exception:
+        pass
+
+
+async def fjm_link_received(update, context):
+    if not _is_admin(update.effective_user.id):
+        context.user_data.pop("fj_link_target", None); return False
+    tid = context.user_data.get("fj_link_target")
+    if not tid:
+        return False
+    context.user_data.pop("fj_link_target", None)
+    raw = (update.message.text or "").strip()
+    val = _parse_chat_link(raw)
+    if not val:
+        await update.message.reply_text("❌ Invalid link. Try again or send /cancel.")
+        context.user_data["fj_link_target"] = tid
+        return True
+    from database import update_fj_target
+    update_fj_target(int(tid), link=val)
+    await update.message.reply_text("✅ *Link updated.*", parse_mode="Markdown")
+    return True
+
+
+async def fjm_del_callback(update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        tid = int((q.data or "").replace("fjm_del_", "").split("_")[0])
+    except Exception:
+        return
+    kb = [[InlineKeyboardButton(f"🗑️ Yes, Delete #{tid}", callback_data=f"fjm_del_yes_{tid}"),
+           InlineKeyboardButton("❌ No", callback_data=f"fjm_{tid}")]]
+    await _edit(q, f"🗑️ *Delete target #{tid}?*\nThis removes the Join button. Users will no longer be forced to join it.",
+                kb)
+
+
+async def fjm_del_yes_callback(update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        tid = int((q.data or "").replace("fjm_del_yes_", "").split("_")[0])
+        from database import delete_fj_target
+        delete_fj_target(int(tid))
+    except Exception:
+        pass
+    await _show_fj_panel(q, context.bot)
+
+
+async def fjm_move_callback(update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    parts = (q.data or "").split("_")
+    try:
+        tid = int(parts[2]); direction = parts[1]
+        from database import list_fj_targets, update_fj_target
+        targets = list_fj_targets()
+        idx = next((i for i, t in enumerate(targets) if t['id'] == tid), None)
+        if idx is None:
+            return
+        swap = idx - 1 if direction == "up" else idx + 1
+        if swap < 0 or swap >= len(targets):
+            return
+        a, b = targets[idx], targets[swap]
+        update_fj_target(a['id'], sort_order=swap)
+        update_fj_target(b['id'], sort_order=idx)
+    except Exception:
+        pass
+    await _show_fj_panel(q, context.bot)
+
+
+# ── Bulk delete ───────────────────────────────────────────────
+async def fj_bulk_callback(update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌ Admin only!", show_alert=True); return
+    await q.answer()
+    sel = set(context.user_data.get("fj_bulk_sel", []))
+    try:
+        from database import list_fj_targets
+        targets = list_fj_targets()
+    except Exception:
+        targets = []
+    lines = ["🗑️ *Bulk Delete Targets*\n━━━━━━━━━━━━━━━━━━━━",
+             "_Tap to toggle selection, then Delete Selected._", ""]
+    kb = []
+    for t in targets:
+        tid = t['id']
+        mark = "✅" if tid in sel else "⬜"
+        lines.append(f"{mark} #{tid} • {(t.get('label') or 'Join')[:24]}")
+        kb.append([InlineKeyboardButton(f"{mark} #{tid} {(t.get('label') or 'Join')[:26]}",
+                                        callback_data=f"fjb_t_{tid}")])
+    if not targets:
+        lines.append("_(No targets yet.)_")
+    kb.append([InlineKeyboardButton("✅ Select All", callback_data="fjb_all"),
+               InlineKeyboardButton("⬜ Clear", callback_data="fjb_none")])
+    if sel:
+        kb.append([InlineKeyboardButton(f"🗑️ Delete Selected ({len(sel)})", callback_data="fjb_del")])
+    kb.append([InlineKeyboardButton("🔙 Force Join Setup", callback_data="fj_panel")])
+    await _edit(q, "\n".join(lines), kb)
+
+
+async def fjb_t_callback(update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        tid = int((q.data or "").replace("fjb_t_", ""))
+    except Exception:
+        return
+    sel = set(context.user_data.get("fj_bulk_sel", []))
+    if tid in sel:
+        sel.discard(tid)
+    else:
+        sel.add(tid)
+    context.user_data["fj_bulk_sel"] = list(sel)
+    await fj_bulk_callback(update, context)
+
+
+async def fjb_all_callback(update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        from database import list_fj_targets
+        context.user_data["fj_bulk_sel"] = [t['id'] for t in list_fj_targets()]
+    except Exception:
+        pass
+    await fj_bulk_callback(update, context)
+
+
+async def fjb_none_callback(update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    context.user_data["fj_bulk_sel"] = []
+    await fj_bulk_callback(update, context)
+
+
+async def fjb_del_callback(update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    sel = set(context.user_data.get("fj_bulk_sel", []))
+    if not sel:
+        await q.answer("Nothing selected", show_alert=True)
+        return
+    try:
+        from database import delete_fj_target
+        for tid in sel:
+            delete_fj_target(int(tid))
+    except Exception:
+        pass
+    context.user_data["fj_bulk_sel"] = []
+    await q.answer(f"🗑️ Deleted {len(sel)} target(s)")
+    await _show_fj_panel(q, context.bot)
+
+
+# ── Verify button editor ──────────────────────────────────────
+async def fj_vbtn_callback(update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌ Admin only!", show_alert=True); return
+    await q.answer()
+    try:
+        from database import get_fj_verify_button
+        vb = get_fj_verify_button()
+    except Exception:
+        vb = {}
+    vlabel = (vb.get("label") or "✅ I Joined — Verify")
+    vstyle = (vb.get("style") or "").lower() or None
+    vemoji  = vb.get("emoji_id") or ""
+    try:
+        from button_system import make_premium_button
+        prev = make_premium_button(vlabel, emoji_id=vemoji or None, style=vstyle,
+                                   callback_data="fj_verified")
+    except Exception:
+        from telegram import InlineKeyboardButton
+        prev = InlineKeyboardButton(vlabel, callback_data="fj_verified")
+    text = (
+        f"✅ *Verify Button Editor*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"*Label:* {vlabel}\n"
+        f"🎨 Color: {_style_label(vb.get('style') or '')}\n"
+        f"✨ Premium emoji: {'✅ set' if vemoji else '❌ none'}\n\n"
+        f"*Preview:*"
+    )
+    kb = [
+        [prev],
+        [InlineKeyboardButton("✏️ Rename", callback_data="fj_vbtn_ren"),
+         InlineKeyboardButton("✨ Premium Emoji", callback_data="fj_vbtn_emo")],
+        [InlineKeyboardButton("🎨 🔵", callback_data="fj_vbtn_col_primary"),
+         InlineKeyboardButton("🟢", callback_data="fj_vbtn_col_success"),
+         InlineKeyboardButton("🔴", callback_data="fj_vbtn_col_danger"),
+         InlineKeyboardButton("⚪", callback_data="fj_vbtn_col_none")],
+        [InlineKeyboardButton("🚫 Clear Emoji", callback_data="fj_vbtn_emo_clear")],
+        [InlineKeyboardButton("🔙 Force Join Setup", callback_data="fj_panel")],
+    ]
+    await _edit(q, text, kb)
+
+
+async def fj_vbtn_col_callback(update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    parts = (q.data or "").split("_")
+    style = parts[3] if len(parts) > 3 else "none"
+    style = "" if style == "none" else style
+    try:
+        from database import set_fj_verify_style
+        set_fj_verify_style(style)
+    except Exception:
+        pass
+    await fj_vbtn_callback(update, context)
+
+
+async def fj_vbtn_ren_callback(update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    context.user_data["fj_vbtn_ren"] = True
+    kb = [[InlineKeyboardButton("❌ Cancel", callback_data="fj_vbtn")]]
+    try:
+        await q.edit_message_text(
+            "✏️ *Rename Verify Button*\n\nSend the new name (premium emoji allowed):",
+            parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    except Exception:
+        pass
+
+
+async def fj_vbtn_ren_received(update, context):
+    if not _is_admin(update.effective_user.id):
+        context.user_data.pop("fj_vbtn_ren", None); return False
+    if not context.user_data.get("fj_vbtn_ren"):
+        return False
+    context.user_data.pop("fj_vbtn_ren", None)
+    txt = (update.message.text or "").strip()
+    if not txt or txt.lower() == "/cancel":
+        await update.message.reply_text("❌ Cancelled.")
+        return True
+    try:
+        from utils import capture_user_text
+        txt = capture_user_text(update.message) or txt
+    except Exception:
+        pass
+    from database import set_fj_verify_label
+    set_fj_verify_label(txt)
+    await update.message.reply_text("✅ *Verify button renamed.*", parse_mode="Markdown")
+    return True
+
+
+async def fj_vbtn_emo_callback(update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    context.user_data["fj_vbtn_emo"] = True
+    kb = [[InlineKeyboardButton("🚫 Clear Emoji", callback_data="fj_vbtn_emo_clear"),
+           InlineKeyboardButton("❌ Cancel", callback_data="fj_vbtn")]]
+    try:
+        await q.edit_message_text(
+            "✨ *Verify Button — Premium Emoji*\n\nSend the premium emoji (or any emoji) as a message:",
+            reply_markup=InlineKeyboardMarkup(kb))
+    except Exception:
+        pass
+
+
+async def fj_vbtn_emo_received(update, context):
+    if not _is_admin(update.effective_user.id):
+        context.user_data.pop("fj_vbtn_emo", None); return False
+    if not context.user_data.get("fj_vbtn_emo"):
+        return False
+    context.user_data.pop("fj_vbtn_emo", None)
+    try:
+        from utils import capture_user_text
+        raw = capture_user_text(update.message) or (update.message.text or "").strip()
+    except Exception:
+        raw = (update.message.text or "").strip()
+    emoji_id = ""
+    try:
+        from button_system import extract_emoji_from_html
+        emoji_id, _p = extract_emoji_from_html(raw)
+    except Exception:
+        emoji_id = ""
+    if not emoji_id:
+        import re as _re
+        m = _re.search(r'[\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F]', raw, _re.UNICODE)
+        if m:
+            emoji_id = m.group(0)
+    from database import set_fj_verify_emoji
+    set_fj_verify_emoji(emoji_id or "")
+    await update.message.reply_text("✅ *Verify button emoji set.*", parse_mode="Markdown")
+    return True
+
+
+async def fj_vbtn_emo_clear_callback(update, context):
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    from database import set_fj_verify_emoji
+    set_fj_verify_emoji("")
+    await fj_vbtn_callback(update, context)
+
+
+# ── Legacy-ish helpers kept for the panel ─────────────────────
+async def fj_set_msg_callback(update, context):
+    """Edit the join message text (uses the existing FJ_MSG conversation)."""
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌ Admin only!", show_alert=True); return
+    await q.answer()
+    current = _g(S_FJ_MSG, "") or "Using default"
     kb = [[InlineKeyboardButton("❌ Cancel", callback_data="fj_panel")]]
     text = (
-        f"✏️ *Edit Join Message*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Write the message shown to users who haven't joined yet.\n\n"
-        f"*Available variable:*\n"
-        f"  `{{links}}` → replaced with join links\n\n"
-        f"*Example:*\n"
-        f"`🛍️ Welcome to Bite Store!`\n"
-        f"`━━━━━━━━━━━━━━`\n"
-        f"`To use our bot, please join:`\n"
-        f"`{{links}}`\n"
-        f"`Then tap ✅ I Joined below.`\n\n"
-        f"*Formatting:* Markdown supported\n"
-        f"  `*bold*` `_italic_` `` `code` ``\n\n"
-        f"Send your message now:"
+        f"✏️ *Edit Join Message*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Current:\n`{current[:120]}`\n\n"
+        f"Use `{{links}}` where the join links should appear. Premium emoji allowed."
     )
     try:
-        await q.edit_message_text(text, parse_mode="Markdown",
-                                  reply_markup=InlineKeyboardMarkup(kb))
+        await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
     except Exception:
         pass
     return FJ_MSG
 
 
 async def fj_msg_received(update, context):
-    """Save custom join message."""
     if not _is_admin(update.effective_user.id):
         return ConversationHandler.END
-    text = update.message.text.strip()
-    _s(S_FJ_MSG, text)
-    kb = [[InlineKeyboardButton("🔙 Back to Force Join", callback_data="fj_panel")]]
+    txt = (update.message.text or "").strip()
+    if not txt or txt.lower() == "/cancel":
+        await update.message.reply_text("❌ Cancelled.")
+        return ConversationHandler.END
     try:
-        await update.message.reply_text(
-            f"✅ *Join Message Saved!*\n\nPreview:\n\n{text[:300]}",
-            parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        from utils import capture_user_text
+        txt = capture_user_text(update.message) or txt
     except Exception:
-        try:
-            await update.message.reply_text(
-                f"✅ Join Message Saved!\n\nPreview:\n\n{text[:300]}",
-                reply_markup=InlineKeyboardMarkup(kb))
-        except Exception:
-            pass
+        pass
+    _s(S_FJ_MSG, txt)
+    await update.message.reply_text("✅ *Join message updated.*", parse_mode="Markdown")
     return ConversationHandler.END
 
 
-async def fj_clear_channel_callback(update, context):
-    """Clear force join channel."""
-    q = update.callback_query
-    if not _is_admin(q.from_user.id):
-        await q.answer("❌ Admin only!", show_alert=True)
-        return
-    _s(S_FJ_CHANNEL, "")
-    await q.answer("✅ Channel cleared!")
-    await _show_fj_panel(q, context.bot)
-
-
-async def fj_clear_group_callback(update, context):
-    """Clear force join group."""
-    q = update.callback_query
-    if not _is_admin(q.from_user.id):
-        await q.answer("❌ Admin only!", show_alert=True)
-        return
-    _s(S_FJ_GROUP, "")
-    await q.answer("✅ Group cleared!")
-    await _show_fj_panel(q, context.bot)
-
-
 async def fj_reset_msg_callback(update, context):
-    """Reset join message to default."""
     q = update.callback_query
     if not _is_admin(q.from_user.id):
-        await q.answer("❌ Admin only!", show_alert=True)
-        return
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
     _s(S_FJ_MSG, "")
-    await q.answer("✅ Message reset to default!")
     await _show_fj_panel(q, context.bot)
 
 
 async def fj_noop_callback(update, context):
-    await update.callback_query.answer()
-
-
-async def fj_test_callback(update, context):
-    """
-    Test if bot is admin in the configured channel/group.
-    Tries to fetch chat info — if it works, bot has access.
-    """
     q = update.callback_query
-    if not _is_admin(q.from_user.id):
-        await q.answer("❌ Admin only!", show_alert=True)
-        return
-    await q.answer("⏳ Testing...")
-
-    channel = _g(S_FJ_CHANNEL, "").strip()
-    group   = _g(S_FJ_GROUP,   "").strip()
-    bot     = context.bot
-    results = []
-
-    me = await bot.get_me()
-
-    for label, chat in [("📢 Channel", channel), ("👥 Group", group)]:
-        if not chat:
-            results.append(f"{label}: Not configured")
-            continue
-        try:
-            # Use resolver — works for public, private, invite links
-            resolved = await _resolve_chat_id(bot, chat)
-            chat_obj = await bot.get_chat(resolved)
-            chat_name = chat_obj.title or resolved
-
-            # Check if bot is admin
-            bot_member = await bot.get_chat_member(resolved, me.id)
-            is_adm = bot_member.status in ("administrator", "creator")
-
-            # Determine group type
-            is_private = chat_obj.username is None
-            gtype = "🔒 Private" if is_private else "🌐 Public"
-
-            if is_adm:
-                results.append(
-                    f"{label}: ✅ *Connected!*\n"
-                    f"   📋 Name: `{chat_name}`\n"
-                    f"   🔑 Type: {gtype}\n"
-                    f"   🆔 Chat ID: `{resolved}`\n"
-                    f"   👑 Bot is admin ✅"
-                )
-            else:
-                results.append(
-                    f"{label}: ⚠️ *Bot is member but NOT admin!*\n"
-                    f"   📋 Name: `{chat_name}`\n"
-                    f"   Make bot admin for membership checking to work."
-                )
-        except Exception as e:
-            err = str(e)
-            if "Chat not found" in err:
-                results.append(
-                    f"{label}: ❌ *Bot is NOT in this group!*\n"
-                    f"   Link: `{chat}`\n"
-                    f"   Fix: Add bot as admin FIRST, then set the link."
-                )
-            elif "not enough rights" in err.lower():
-                results.append(
-                    f"{label}: ⚠️ *Insufficient permissions*\n"
-                    f"   Link: `{chat}`\n"
-                    f"   Give bot 'Add Members' permission."
-                )
-            else:
-                results.append(
-                    f"{label}: ❌ Error: `{err[:80]}`\n"
-                    f"   Link saved: `{chat}`"
-                )
-
-    text = (
-        f"🧪 *Bot Admin Test*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        + "\n".join(results) +
-        f"\n\n_Bot must be admin to check membership._"
-    )
-    kb = [[InlineKeyboardButton("🔙 Back", callback_data="fj_panel")]]
     try:
-        await q.edit_message_text(text, parse_mode="Markdown",
-                                  reply_markup=InlineKeyboardMarkup(kb))
+        await q.answer()
     except Exception:
         pass
 
 
-# ════════════════════════════════════════════════════════════════
-# 📤 ACTIVITY DESTINATIONS PANEL
-# ════════════════════════════════════════════════════════════════
-
-DEST_OPTIONS = {
-    "bot_only":   ("🤖 Bot Only",            "Messages go to each user's private chat"),
-    "group_only": ("👥 Group/Channel Only",   "Messages sent to a group or channel"),
-    "both":       ("🤖+👥 Bot AND Group",     "Messages go to both: user's chat + group"),
-}
+async def fj_test_callback(update, context):
+    """🧪 Test the bot's admin/member access in every configured target."""
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer("Testing...")
+    try:
+        from database import list_fj_targets, migrate_legacy_force_join
+        migrate_legacy_force_join()
+        targets = list_fj_targets()
+    except Exception:
+        targets = []
+    if not targets:
+        await _edit(q, "❌ No targets configured yet. Add one first.",
+                    [[InlineKeyboardButton("🔙 Force Join Setup", callback_data="fj_panel")]])
+        return
+    lines = ["🧪 *Bot Access Test*\n━━━━━━━━━━━━━━━━━━━━", ""]
+    allok = True
+    for t in targets:
+        link = (t.get("link") or "").strip()
+        try:
+            resolved = await _resolve_chat_id(context.bot, link)
+            me = await context.bot.get_me()
+            member = await context.bot.get_chat_member(chat_id=resolved, user_id=me.id)
+            if member.status in ("administrator", "creator"):
+                lines.append(f"✅ #{t['id']} *{(t.get('label') or 'Join')[:18]}* — admin OK")
+            else:
+                lines.append(f"⚠️ #{t['id']} *{(t.get('label') or 'Join')[:18]}* — member but NOT admin")
+                allok = False
+        except Exception as e:
+            lines.append(f"❌ #{t['id']} *{(t.get('label') or 'Join')[:18]}* — {str(e)[:60]}")
+            allok = False
+    lines.append("")
+    lines.append("✅ *All targets OK* — users will be verified properly." if allok
+                 else "⚠️ *Fix the failed ones:* add the bot as ADMIN (member-list permission).")
+    kb = [[InlineKeyboardButton("🔙 Force Join Setup", callback_data="fj_panel")]]
+    await _edit(q, "\n".join(lines), kb)
 
 
 async def dest_panel_callback(update, context):
@@ -2475,16 +3002,22 @@ async def dest_panel_callback(update, context):
 
 async def _show_dest_panel(q):
     current  = _g("dest_mode", "bot_only")
-    dest_chat= _g(S_DEST_CHAT, "").strip() or "Not set"
+    dest_raw = _g(S_DEST_CHAT, "").strip()
+    dest_chat = dest_raw or "Not set"
 
     name, desc = DEST_OPTIONS.get(current, ("Unknown", ""))
+    # 🆕 v138: show clearly whether a channel/group is ALREADY added
+    if dest_raw:
+        dest_status = f"✅ *Already added:* `{dest_raw}`\n_This is where activity messages go when mode = Group/Both._"
+    else:
+        dest_status = "❌ *Not set yet* — use the 📢 button below to add one."
 
     text = (
         f"📤 *Activity Destinations*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"*Current Mode:* {name}\n"
         f"_{desc}_\n\n"
-        f"*Group/Channel:* `{dest_chat}`\n\n"
+        f"{dest_status}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"*Available Modes:*\n\n"
         f"🤖 *Bot Only* — Each user gets messages in\n"
@@ -2510,7 +3043,8 @@ async def _show_dest_panel(q):
         [mk("both")],
         [InlineKeyboardButton("━━━ Group/Channel for Activity ━━━",
                                callback_data="fj_noop")],
-        [InlineKeyboardButton("📢 Set Group/Channel", callback_data="dest_set_chat")],
+        [InlineKeyboardButton(("✅ " + "Change" if dest_raw else "📢 Add") + " Group/Channel",
+                               callback_data="dest_set_chat")],
         [InlineKeyboardButton("🗑️ Clear Group/Channel",
                                callback_data="dest_clear_chat")],
         [InlineKeyboardButton("🔙 Back to Fake Activity", callback_data="act_panel")],

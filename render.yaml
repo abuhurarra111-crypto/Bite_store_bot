@@ -60,6 +60,8 @@ services:
         sync: false             # optional: auto-register/update Shop Cron supplier
       - key: SUPPLIER_SINHLE_API_KEY
         sync: false             # v131: sinh le store bot (Canboso Buyer API v2)
+      - key: SUPPLIER_PRODSELLER_API_KEY
+        sync: false             # v136: ProdSeller (http://51.77.244.194/v1)
       - key: BYBIT_API_KEY
         sync: false
       # 🔧 v131: start in maintenance mode after every deploy; admin turns it

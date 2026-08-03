@@ -395,6 +395,8 @@ def migrate_all():
         ("setup_api_tables",          setup_api_tables),  # 🔧 BUGFIX v46
         ("setup_free_claim_tables",   setup_free_claim_tables),  # 🆕 v47
         ("setup_ref_points_and_log",  setup_ref_points_and_log),  # 🆕 v48
+        ("ensure_pending_referrals_table", ensure_pending_referrals_table),  # 🆕 v134/v139
+        ("ensure_force_join_targets_table", ensure_force_join_targets_table),  # 🆕 v135/v139
     ):
         try:
             fn(); stats["tables_checked"] += 1
@@ -737,8 +739,174 @@ def ensure_pending_referrals_table(c=None):
         reason TEXT DEFAULT ''
     )""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_pending_ref_status ON pending_referrals(status, created_at)")
+    # 🆕 v134: activity observation — bot watches the referred user's actions
+    # for ~30s; only a REAL human (tap/text/shop-open) unlocks the reward.
+    try:
+        ensure_column(c, "pending_referrals", "activity_count", "INTEGER DEFAULT 0")
+        ensure_column(c, "pending_referrals", "observe_tries",   "INTEGER DEFAULT 0")
+    except Exception:
+        pass
     if own:
         conn.commit(); conn.close()
+
+
+def bump_pending_referral_activity(referred_id):
+    """🆕 v134: count one real action (callback/text) for the observed user.
+    Returns the updated activity_count (0 if no pending row)."""
+    ensure_pending_referrals_table()
+    conn = get_connection(); c = conn.cursor(); ensure_pending_referrals_table(c)
+    try:
+        c.execute("SELECT activity_count FROM pending_referrals WHERE referred_id=? AND status='pending'",
+                  (int(referred_id),))
+        r = c.fetchone()
+        if not r:
+            conn.close(); return 0
+        cur = int(r[0] or 0) + 1
+        c.execute("UPDATE pending_referrals SET activity_count=? WHERE referred_id=? AND status='pending'",
+                  (cur, int(referred_id)))
+        conn.commit(); conn.close(); return cur
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
+        return 0
+
+
+
+
+# ════════════════════════════════════════════════════════════════
+# 🔗 v135 — FORCE JOIN TARGETS (unlimited channels/groups, editable)
+# ════════════════════════════════════════════════════════════════
+# Each row = one join target (channel/group) rendered as its own button.
+# Admin can rename / recolor (primary/success/danger) / premium-emoji /
+# change link / delete / bulk-delete each target, plus customize the
+# single "I Joined — Verify" button (label/color/premium emoji).
+# ════════════════════════════════════════════════════════════════
+
+def ensure_force_join_targets_table(c=None):
+    own = False
+    if c is None:
+        conn = get_connection(); c = conn.cursor(); own = True
+    else:
+        conn = None
+    c.execute("""CREATE TABLE IF NOT EXISTS force_join_targets (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        label       TEXT DEFAULT 'Join',
+        link        TEXT NOT NULL,
+        style       TEXT DEFAULT '',
+        emoji_id    TEXT DEFAULT '',
+        sort_order  INTEGER DEFAULT 0,
+        enabled     INTEGER DEFAULT 1,
+        created_at  TEXT DEFAULT CURRENT_TIMESTAMP
+    )""")
+    if own:
+        conn.commit(); conn.close()
+
+
+def migrate_legacy_force_join():
+    """🆕 v135: copy legacy fj_channel/fj_group settings into the new table
+    (once) so existing deployments keep working after the upgrade."""
+    try:
+        ensure_force_join_targets_table()
+        conn = get_connection(); c = conn.cursor(); ensure_force_join_targets_table(c)
+        n = c.execute("SELECT COUNT(*) FROM force_join_targets").fetchone()[0]
+        if n > 0:
+            conn.close(); return 0
+        channel = (get_setting("fj_channel", "") or "").strip()
+        group   = (get_setting("fj_group", "") or "").strip()
+        added = 0
+        for link in (channel, group):
+            if link:
+                c.execute("""INSERT INTO force_join_targets (label, link, style, emoji_id, sort_order)
+                             VALUES (?, ?, ?, '', ?)""",
+                          ("📢 Join", link, "primary", added))
+                added += 1
+        conn.commit(); conn.close(); return added
+    except Exception:
+        try:
+            if conn: conn.close()
+        except Exception:
+            pass
+        return 0
+
+
+def list_fj_targets(enabled_only=False):
+    ensure_force_join_targets_table()
+    conn = get_connection(); c = conn.cursor(); ensure_force_join_targets_table(c)
+    if enabled_only:
+        c.execute("SELECT * FROM force_join_targets WHERE enabled=1 ORDER BY sort_order, id")
+    else:
+        c.execute("SELECT * FROM force_join_targets ORDER BY sort_order, id")
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close(); return rows
+
+
+def add_fj_target(link, label="Join", style="", emoji_id=""):
+    ensure_force_join_targets_table()
+    conn = get_connection(); c = conn.cursor(); ensure_force_join_targets_table(c)
+    mx = c.execute("SELECT COALESCE(MAX(sort_order),0) FROM force_join_targets").fetchone()[0]
+    c.execute("""INSERT INTO force_join_targets (label, link, style, emoji_id, sort_order)
+                 VALUES (?, ?, ?, ?, ?)""",
+              (label[:80], link.strip(), (style or "").lower(), emoji_id or "", int(mx) + 1))
+    tid = c.lastrowid; conn.commit(); conn.close(); return tid
+
+
+def get_fj_target(tid):
+    ensure_force_join_targets_table()
+    conn = get_connection(); c = conn.cursor(); ensure_force_join_targets_table(c)
+    c.execute("SELECT * FROM force_join_targets WHERE id=?", (int(tid),))
+    r = c.fetchone(); conn.close(); return dict(r) if r else None
+
+
+def update_fj_target(tid, **fields):
+    ensure_force_join_targets_table()
+    allowed = {"label", "link", "style", "emoji_id", "sort_order", "enabled"}
+    fields = {k: v for k, v in fields.items() if k in allowed}
+    if not fields: return
+    conn = get_connection(); c = conn.cursor(); ensure_force_join_targets_table(c)
+    sets = ", ".join(f"{k}=?" for k in fields)
+    c.execute(f"UPDATE force_join_targets SET {sets} WHERE id=?", list(fields.values()) + [int(tid)])
+    conn.commit(); conn.close()
+
+
+def delete_fj_target(tid):
+    ensure_force_join_targets_table()
+    conn = get_connection(); c = conn.cursor(); ensure_force_join_targets_table(c)
+    c.execute("DELETE FROM force_join_targets WHERE id=?", (int(tid),))
+    conn.commit(); conn.close()
+
+
+def delete_all_fj_targets():
+    ensure_force_join_targets_table()
+    conn = get_connection(); c = conn.cursor(); ensure_force_join_targets_table(c)
+    c.execute("DELETE FROM force_join_targets")
+    conn.commit(); conn.close()
+
+
+# Verify-button customization (one shared button for new + existing users)
+def get_fj_verify_button():
+    try:
+        label = get_setting("fj_verify_label", "") or "✅ I Joined — Verify"
+        style = (get_setting("fj_verify_style", "") or "").strip().lower()
+        emoji_id = get_setting("fj_verify_emoji_id", "") or ""
+    except Exception:
+        label, style, emoji_id = "✅ I Joined — Verify", "", ""
+    if style not in ("primary", "success", "danger"):
+        style = ""
+    return {"label": label, "style": style, "emoji_id": emoji_id}
+
+
+def set_fj_verify_label(label):
+    set_setting("fj_verify_label", (label or "")[:80])
+
+
+def set_fj_verify_style(style):
+    set_setting("fj_verify_style", (style or "").strip().lower())
+
+
+def set_fj_verify_emoji(emoji_id):
+    set_setting("fj_verify_emoji_id", emoji_id or "")
 
 
 def add_pending_referral(referrer_id, referred_id, product_id=0, reason='start'):
@@ -4679,30 +4847,39 @@ def setup_ref_points_and_log():
 
 
 def get_ref_points(uid):
-    """Return user's spendable ref_points balance."""
+    """Return user's spendable ref_points balance.
+    🔧 v133: returns float so decimal rewards (0.1) are read back correctly."""
     u = get_user(uid)
     if not u: return 0
     try:
-        return int(u["ref_points"]) if "ref_points" in u.keys() else 0
+        return float(u["ref_points"]) if "ref_points" in u.keys() else 0
     except Exception:
         return 0
 
 
 def add_ref_points(uid, amount):
     """Add ref_points to a user. amount can be negative to deduct
-    (but use deduct_ref_points for safety clamping)."""
+    (but use deduct_ref_points for safety clamping).
+
+    🔧 v133: supports DECIMAL amounts (e.g. 0.1). The old int(amount) made
+    int(0.1) = 0 — sub-1 referral rewards silently never added. SQLite stores
+    the decimal fine even in an INTEGER-affinity column (becomes REAL)."""
+    try:
+        amount = float(amount)
+    except Exception:
+        amount = 0.0
     if amount == 0: return
     conn = get_connection(); c = conn.cursor()
     ensure_column(c, "users", "ref_points", "INTEGER DEFAULT 0")
     c.execute("UPDATE users SET ref_points = COALESCE(ref_points,0) + ? WHERE user_id = ?",
-              (int(amount), int(uid)))
+              (amount, int(uid)))
     conn.commit(); conn.close()
 
 
 def deduct_ref_points(uid, amount):
     """Deduct ref_points safely (clamps at 0, never goes negative).
     Returns True if successful, False if balance insufficient."""
-    amount = int(amount)
+    amount = float(amount)
     if amount <= 0: return True
     bal = get_ref_points(uid)
     if bal < amount: return False
@@ -4898,6 +5075,22 @@ def count_product_refs(referrer_id, product_id):
               (int(referrer_id), int(product_id)))
     n = c.fetchone()[0]; conn.close()
     return int(n or 0)
+
+
+def get_product_ref_rows(product_id, limit=200):
+    """All product_ref_pool rows for a product (for the admin tracker panel)."""
+    setup_free_claim_tables()
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("""SELECT referrer_id, referred_id, created_at FROM product_ref_pool
+                     WHERE product_id=? ORDER BY id DESC LIMIT ?""",
+                  (int(product_id), int(limit)))
+        rows = c.fetchall()
+        conn.close()
+        return rows
+    except Exception:
+        conn.close()
+        return []
 
 
 def clear_product_refs(referrer_id, product_id):
@@ -5200,3 +5393,53 @@ def get_api_key_stats(owner_id: int) -> dict:
                  FROM api_keys WHERE owner_id=?""", (int(owner_id),))
     r = c.fetchone(); conn.close()
     return dict(r) if r else {"total": 0, "active": 0, "total_reqs": 0}
+
+
+# ════════════════════════════════════════════════════════════
+# 🔧 v133 — CONFIGURABLE REFERRAL REWARD (per direct referral)
+# ════════════════════════════════════════════════════════════
+
+def get_ref_points_per_ref():
+    """Points awarded per COUNTED direct referral (admin-configurable).
+    Default = config.REFERRAL_POINTS (1). Supports decimals (0.1, 2, 5...).
+    """
+    try:
+        from config import REFERRAL_POINTS
+        default = float(REFERRAL_POINTS or 1)
+    except Exception:
+        default = 1.0
+    try:
+        val = get_setting("referral_points_per_ref", "")
+        if val == "":
+            return default
+        return max(0.0, float(val))
+    except Exception:
+        return default
+
+
+def set_ref_points_per_ref(value):
+    """Set the per-direct-referral reward (decimal allowed, >= 0)."""
+    try:
+        v = max(0.0, float(value))
+        set_setting("referral_points_per_ref", f"{v:g}")
+        return True
+    except Exception:
+        return False
+
+
+# 🆕 v134: referral math-verification toggle (default ON).
+# When ON, any user arriving via a referral link must pass a simple
+# random +/- math question (after force-join verify) before the bot starts.
+def get_referral_math_enabled():
+    try:
+        return str(get_setting("referral_math_enabled", "1") or "1").strip() == "1"
+    except Exception:
+        return True
+
+
+def set_referral_math_enabled(enabled):
+    try:
+        set_setting("referral_math_enabled", "1" if enabled else "0")
+        return True
+    except Exception:
+        return False

@@ -103,7 +103,7 @@ from handlers_support import (support_menu_callback, st_list_callback, st_view_c
                                adm_wr_reject_callback,
                                adm_pending_delivery_callback, adm_delivery_mode_callback, adm_restock_reqs_callback,
                                adm_deliver_callback, adm_delivery_text_received)
-from handlers_admin import admin_deposit_history_callback, admin_deposit_page_callback, admin_deposit_detail_callback, admin_responses_category_callback, bybit_test_callback  # 📊 Deposit + ✏️ Responses
+from handlers_admin import admin_deposit_history_callback, admin_deposit_page_callback, admin_deposit_detail_callback, admin_responses_category_callback, bybit_test_callback, resp_react_callback, resp_react_set_callback, resp_react_clear_callback, resp_react_prem_callback, resp_react_custom_callback, resp_react_input_received  # 📊 Deposit + ✏️ Responses
 # 🆕 v37: Language, Reviews, Loyalty, Analytics
 from ui_extras import language_menu_callback, set_language_callback
 from handlers_reviews import (
@@ -150,6 +150,7 @@ from ext_suppliers import (
     ext_prod_view_callback, ext_prod_toggle_callback,
     ext_prod_markup_callback, ext_prod_set_mkp_callback,
     ext_sup_bulk_markup_callback, ext_sup_bulk_set_callback,
+    ext_sup_preset_callback, ext_sup_noop_callback,
     ext_prod_emoji_callback, ext_prod_emoji_received,
     ext_prod_cat_callback, ext_prod_setcat_callback,
     # 🆕 v81.1: Fixed price (Smart Lock)
@@ -185,6 +186,7 @@ from supplier_automation import (
     autosync_price_stock_job, autosync_balance_job,
     AUTOSYNC_PRICE_STOCK_INTERVAL, AUTOSYNC_BALANCE_INTERVAL,
     ext_sup_bulk_sync_callback,
+    ext_sup_bulk_unsync_callback,
     ext_sup_lowbal_callback, ext_sup_lowbal_received, ext_sup_lowbal_cancel,
     LOWBAL_EDIT_STATE,
     # 🆕 v96: supplier rename
@@ -225,15 +227,22 @@ from ui_extras import how_to_hub_callback, guide_screen_callback
 # 🆕 Force Join + Activity Destinations
 from ui_extras import (
     fj_panel_callback, fj_toggle_callback,
-    fj_set_channel_callback, fj_channel_received,
-    fj_set_group_callback, fj_group_received,
     fj_set_msg_callback, fj_msg_received,
     fj_test_callback, fj_verified_callback,
-    fj_clear_channel_callback, fj_clear_group_callback,
     fj_reset_msg_callback, fj_noop_callback,
+    fj_add_callback, fj_add_link_received,
+    fjm_callback, fjm_ren_callback, fjm_ren_received,
+    fjm_col_callback, fjm_emo_callback, fjm_emo_received,
+    fjm_emo_clear_callback, fjm_link_callback, fjm_link_received,
+    fjm_del_callback, fjm_del_yes_callback, fjm_move_callback,
+    fj_bulk_callback, fjb_t_callback, fjb_all_callback,
+    fjb_none_callback, fjb_del_callback,
+    fj_vbtn_callback, fj_vbtn_col_callback, fj_vbtn_ren_callback,
+    fj_vbtn_ren_received, fj_vbtn_emo_callback, fj_vbtn_emo_received,
+    fj_vbtn_emo_clear_callback,
     dest_panel_callback, dest_set_callback, dest_clear_chat_callback,
     dest_set_chat_callback, dest_chat_received,
-    FJ_CHANNEL, FJ_GROUP, FJ_MSG, DEST_CHAT,
+    FJ_MSG, DEST_CHAT,
 )
 # 🆕 Per-User Lifetime Fake Activity
 from per_user_activity import restore_all_jobs, setup_activity_table, activity_watchdog_job, fake_activity_status_message
@@ -304,6 +313,9 @@ from handlers_referral_admin import (
     refadm_btn_panel_callback, refadm_btn_edit_callback,
     refadm_btn_color_callback, refadm_btn_reset_callback,
     refadm_text_received,
+    refadm_set_points_start, refadm_set_points_received,
+    refadm_prod_panel_callback, refadm_prod_detail_callback,
+    refadm_math_toggle_callback,
 )
 # 🆕 v50: Screen-by-Screen Editor (drill-down user-side editor)
 from customization import (
@@ -318,7 +330,7 @@ from customization import (
 # 🆕 Fake Broadcast & Fake Reviews systems
 # fake_broadcast + fake_reviews panels removed (use Fake Activity instead)
 # broadcast_new_user_join kept for new-user join notification
-from fake_engagement import broadcast_new_user_join
+from fake_engagement import broadcast_new_user_join, admin_bcast_test_callback
 # 🆕 v24: Removed gmail_checker (replaced by Binance API)
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 
@@ -391,8 +403,47 @@ async def payment_flow_text_handler(update, context):
     return None
 
 
+def _reply_btn_matches(t, english_label, user_id=None):
+    """🆕 v137: true when the tapped reply-keyboard text equals the English
+    label OR any of its translations for this user (persistent keyboard
+    labels now follow the selected language)."""
+    if t == english_label:
+        return True
+    try:
+        from i18n import tr_user, get_user_lang
+        lang = get_user_lang(user_id) if user_id else None
+        for lng in ([lang] if lang else []):
+            try:
+                if t == tr_user(english_label, user_id=user_id, lang=lng):
+                    return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return False
+
+
 async def handle_text(update, context):
     t = update.message.text
+    # 🆕 v134: referral MATH verification answer — MUST run first so a wrong
+    # answer never leaks into other flows.
+    if context.user_data.get('fj_math'):
+        from handlers_start import handle_math_answer
+        if await handle_math_answer(update, context):
+            return
+    # 🆕 v135: force-join admin text-input steps (add target / rename / emoji / link / verify-btn)
+    if context.user_data.get('fj_add_link'):
+        if await fj_add_link_received(update, context): return
+    if context.user_data.get('fj_ren_target'):
+        if await fjm_ren_received(update, context): return
+    if context.user_data.get('fj_emo_target'):
+        if await fjm_emo_received(update, context): return
+    if context.user_data.get('fj_link_target'):
+        if await fjm_link_received(update, context): return
+    if context.user_data.get('fj_vbtn_ren'):
+        if await fj_vbtn_ren_received(update, context): return
+    if context.user_data.get('fj_vbtn_emo'):
+        if await fj_vbtn_emo_received(update, context): return
     # v132: global premium-emoji capture foundation. Any future text-input
     # feature can read these keys instead of losing premium emoji entities.
     try:
@@ -407,9 +458,11 @@ async def handle_text(update, context):
     # and trying to send messages. The background job (every 30s) already
     # handles this — no need to duplicate it here. This caused unnecessary
     # DB queries and potential message sending delays.
-    if t == "🏠 Main Menu": await handle_main_menu_button(update, context); return
+    # 🆕 v137: persistent reply-keyboard labels are translated per user lang
+    if _reply_btn_matches(t, "🏠 Main Menu", update.effective_user.id):
+        await handle_main_menu_button(update, context); return
     # 🆕 v78: 📚 How to Use button on persistent reply keyboard
-    if t == "📚 How to Use":
+    if _reply_btn_matches(t, "📚 How to Use", update.effective_user.id):
         from handlers_start import handle_how_to_button
         await handle_how_to_button(update, context); return
     # 🆕 v50: Screen-by-Screen Editor text input MUST run BEFORE any other 'erk'
@@ -502,6 +555,8 @@ async def handle_text(update, context):
     if context.user_data.get('fcrf_step'):
         if await fcrf_text_received(update, context): return
     # 🆕 v48: Referral Abuse admin inputs (ban / unban / adjust)
+    if context.user_data.get('refadm_step') == 'set_points':
+        if await refadm_set_points_received(update, context): return
     if context.user_data.get('refadm_step'):
         if await refadm_text_received(update, context): return
     # 🆕 v49: Per-product broadcast button editor inputs (text / premium emoji)
@@ -1190,6 +1245,51 @@ async def handle_media_router(update, context):
     # Fallback to existing payment screenshot/document handler
     await handle_screenshot(update, context)
 
+# ════════════════════════════════════════════
+# 🆕 v134: REFERRAL ACTIVITY OBSERVATION HOOKS
+# Runs BEFORE every other handler (group -100). Counts the referred user's
+# real actions (button taps / typed text) — after 2+ actions the pending
+# referral reward unlocks (real-human signal). Never raises; never blocks.
+# ════════════════════════════════════════════
+
+async def _activity_hook_callback(update, context):
+    # 🆕 v135: global force-join gate for EXISTING users — any button tap is
+    # blocked until they (re)join all targets and verify.
+    try:
+        from ui_extras import force_join_action_gate
+        if await force_join_action_gate(update, context):
+            raise ApplicationHandlerStop
+    except ApplicationHandlerStop:
+        raise
+    except Exception:
+        pass
+    try:
+        from handlers_start import notify_user_activity
+        await notify_user_activity(context, update.effective_user.id)
+    except Exception:
+        pass
+    return None  # continue to the real handler
+
+
+async def _activity_hook_text(update, context):
+    # 🆕 v135: global force-join gate for EXISTING users — any text action is
+    # blocked until they (re)join all targets and verify.
+    try:
+        from ui_extras import force_join_action_gate
+        if await force_join_action_gate(update, context):
+            raise ApplicationHandlerStop
+    except ApplicationHandlerStop:
+        raise
+    except Exception:
+        pass
+    try:
+        from handlers_start import notify_user_activity
+        await notify_user_activity(context, update.effective_user.id)
+    except Exception:
+        pass
+    return None  # continue to the real handler
+
+
 def main():
     print("=" * 50)
     print("🤖 BITE STORE")
@@ -1232,6 +1332,10 @@ def main():
         app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
     app.add_error_handler(global_error_handler)
+
+    # ── 🆕 v134: Referral activity observation (runs before all others) ──
+    app.add_handler(CallbackQueryHandler(_activity_hook_callback), group=-100)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _activity_hook_text), group=-100)
 
     # ── Conversations ──
     # 1. Add Category
@@ -1783,6 +1887,11 @@ def main():
         ("^pm_jazzcash$", admin_pm_jazzcash_callback),
         ("^pm_crypto$", admin_pm_crypto_callback),
         ("^bybit_test$", bybit_test_callback),
+        ("^resp_react_",   resp_react_callback),
+        ("^resp_react_set_",   resp_react_set_callback),
+        ("^resp_react_clear_", resp_react_clear_callback),
+        ("^resp_react_prem_",  resp_react_prem_callback),
+        ("^resp_react_custom_", resp_react_custom_callback),
         # 🆕 v30: Binance proxy removed (screenshot verifier doesn't need it)
         # 🆕 v23: Product Color Indicators
         ("^admin_colors$", admin_colors_callback),
@@ -2070,6 +2179,8 @@ def main():
         ("^admin_suppliers$",            admin_suppliers_callback),
         ("^ext_sup_add$",                ext_sup_add_callback),
         ("^ext_sup_add_type_",           ext_sup_add_type_callback),
+        ("^ext_sup_preset_",             ext_sup_preset_callback),
+        ("^ext_sup_noop$",               ext_sup_noop_callback),
         ("^ext_sup_view_",               ext_sup_view_callback),
         ("^ext_sup_test_",               ext_sup_test_callback),
         ("^ext_sup_apiupd_",             ext_sup_api_update_callback),
@@ -2102,6 +2213,7 @@ def main():
         ("^supplier_retry_",             supplier_retry_delivery_callback),
         # 🆕 v85: Bulk sync + low-bal threshold editor + finance + autosync toggle
         ("^ext_sup_bulk_sync_",          ext_sup_bulk_sync_callback),
+        ("^ext_sup_bulk_unsync_",        ext_sup_bulk_unsync_callback),
         ("^admin_finance$",              admin_finance_callback),
         ("^fin_p_",                      fin_p_callback),
         ("^admin_autosync$",             admin_autosync_callback),
@@ -2142,15 +2254,35 @@ def main():
         ("^fj_toggle$",         fj_toggle_callback),
         ("^fj_test$",           fj_test_callback),
         ("^fj_verified$",       fj_verified_callback),
-        ("^fj_clear_channel$",  fj_clear_channel_callback),
-        ("^fj_clear_group$",    fj_clear_group_callback),
         ("^fj_reset_msg$",      fj_reset_msg_callback),
         ("^fj_noop$",           fj_noop_callback),
+        # 🆕 v135: unlimited targets + editable buttons + verify button editor
+        ("^fj_add$",                  fj_add_callback),
+        ("^fj_bulk$",                 fj_bulk_callback),
+        ("^fjb_t_",                   fjb_t_callback),
+        ("^fjb_all$",                 fjb_all_callback),
+        ("^fjb_none$",                fjb_none_callback),
+        ("^fjb_del$",                 fjb_del_callback),
+        ("^fj_vbtn_col_",             fj_vbtn_col_callback),
+        ("^fj_vbtn_emo_clear$",       fj_vbtn_emo_clear_callback),
+        ("^fj_vbtn_emo$",             fj_vbtn_emo_callback),
+        ("^fj_vbtn_ren$",             fj_vbtn_ren_callback),
+        ("^fj_vbtn$",                 fj_vbtn_callback),
+        ("^fjm_ren_",                 fjm_ren_callback),
+        ("^fjm_col_",                 fjm_col_callback),
+        ("^fjm_emo_clear_",           fjm_emo_clear_callback),
+        ("^fjm_emo_",                 fjm_emo_callback),
+        ("^fjm_link_",                fjm_link_callback),
+        ("^fjm_del_yes_",             fjm_del_yes_callback),
+        ("^fjm_del_",                 fjm_del_callback),
+        ("^fjm_up_|^fjm_down_",       fjm_move_callback),
+        ("^fjm_",                     fjm_callback),
         # 🆕 Destinations handlers
         ("^dest_panel$",        dest_panel_callback),
         ("^dest_clear_chat$",   dest_clear_chat_callback),
         # 🆕 Per-User Activity handlers
         ("^act_panel$",        activity_panel_callback),
+        ("^admin_bcast_test$", admin_bcast_test_callback),
         ("^act_toggle_global$", act_toggle_global_callback),
         ("^act_toggle_unit$",   act_toggle_unit_callback),
         ("^act_offset_random$", act_offset_random_callback),
@@ -2188,6 +2320,10 @@ def main():
         ("^freeclaim_share_",   freeclaim_share_callback),  # 🆕 v48
         # 🆕 v48: Referral Abuse admin panel
         ("^refadm_panel$",      refadm_panel_callback),
+        ("^refadm_set_points_start$", refadm_set_points_start),
+        ("^refadm_prod_panel$",       refadm_prod_panel_callback),
+        ("^refadm_prod_detail_",      refadm_prod_detail_callback),
+        ("^refadm_math_toggle$",      refadm_math_toggle_callback),
         # 🆕 v102: alias — Settings → 🔍 Referral Diagnostics button
         ("^admin_ref_diag$",    refadm_panel_callback),
         ("^refadm_log_",        refadm_log_callback),
@@ -2240,20 +2376,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel_conversation),
                    CallbackQueryHandler(conv_cancel_callback, pattern="^conv_cancel$")],
     ))
-    # ── 🔗 Force Join Conversations ──
-    # MUST be registered early — exact patterns, no prefix conflict
-    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
-        entry_points=[CallbackQueryHandler(fj_set_channel_callback, pattern="^fj_set_channel$")],
-        states={FJ_CHANNEL: [MessageHandler(filters.TEXT & ~filters.COMMAND, fj_channel_received)]},
-        fallbacks=[CommandHandler("cancel", cancel_conversation),
-                   CallbackQueryHandler(conv_cancel_callback, pattern="^conv_cancel$")],
-    ))
-    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
-        entry_points=[CallbackQueryHandler(fj_set_group_callback, pattern="^fj_set_group$")],
-        states={FJ_GROUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, fj_group_received)]},
-        fallbacks=[CommandHandler("cancel", cancel_conversation),
-                   CallbackQueryHandler(conv_cancel_callback, pattern="^conv_cancel$")],
-    ))
+    # ── 🔗 Force Join Conversations (v135: only join-message text input) ──
     app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(fj_set_msg_callback, pattern="^fj_set_msg$")],
         states={FJ_MSG: [MessageHandler(filters.TEXT & ~filters.COMMAND, fj_msg_received)]},
@@ -2503,6 +2626,14 @@ def main():
     # 🔧 v124: payment-flow text runs BEFORE all ConversationHandlers so stale
     # conversation states can never swallow amounts/TXIDs/TIDs.
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, payment_flow_text_handler), group=-80)
+
+    # ⚡ v133: response reaction emoji input (premium/custom)
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=300,
+        entry_points=[CallbackQueryHandler(resp_react_prem_callback, pattern=r"^resp_react_prem_"),
+                      CallbackQueryHandler(resp_react_custom_callback, pattern=r"^resp_react_custom_")],
+        states={99: [MessageHandler(filters.TEXT & ~filters.COMMAND, resp_react_input_received)]},
+        fallbacks=[CommandHandler("cancel", cancel_conversation)],
+    ))
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.VOICE | filters.Document.ALL, handle_media_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 

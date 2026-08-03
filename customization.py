@@ -2761,15 +2761,10 @@ SCREEN_TREE = {
             ("payment_binance_menu_text", "📝 Binance Method Menu"),
             ("payment_binance_pay_orderid", "📝 Binance Pay Checkout"),
             ("payment_binance_usdt", "📝 Binance USDT Checkout"),
-            ("binance_pay_instructions", "📝 Binance Instructions"),
-            ("binance_order_created",    "📝 Order Created (Binance)"),
-            ("binance_instructions",     "📝 Important Note"),
-            ("screenshot_received",      "📝 Screenshot Received"),
-            ("analyzing_screenshot",     "📝 Analyzing Screenshot"),
-            ("payment_verified_points",  "📝 Verified — Points Added"),
+                                    ("binance_instructions",     "📝 Important Note"),
+                                    ("payment_verified_points",  "📝 Verified — Points Added"),
             ("payment_verified_product", "📝 Verified — Product Delivered"),
-            ("reupload_screenshot",      "📝 Re-upload Screenshot Prompt"),
-        ],
+                    ],
         "buttons": [
             {"id": "pay_binance", "kind": "registry"},
             {"id": "pay_usdt_bep20", "kind": "registry"},
@@ -2819,8 +2814,7 @@ SCREEN_TREE = {
             ("bybit_usdt_amount_prompt", "📝 USDT Amount Prompt (Screen 2)"),
             ("bybit_usdt_amount_invalid", "📝 USDT Invalid Amount"),
             ("bybit_usdt_deposit_instructions", "📝 USDT Deposit Instructions (Screen 3)"),
-            ("bybit_usdt_cancelled", "📝 USDT Flow Cancelled"),
-        ],
+                    ],
         "buttons": [
             {"id": "pay_bybit_pay", "kind": "registry"},
             # 🔧 v119: editable copy buttons (rename + premium emoji + color)
@@ -2981,13 +2975,7 @@ SCREEN_TREE = {
         "title": "EasyPaisa Payment Flow",
         "description": "All text shown during EasyPaisa TID verification",
         "texts": [
-            ("easypaisa_pay_instructions", "📝 EasyPaisa Instructions"),
-            ("ep_tid_received",            "📝 TID Received"),
-            ("ep_tid_invalid",             "📝 TID Invalid (digit check)"),
-            ("ep_tid_already_used",        "📝 TID Already Used"),
-            ("ep_payment_verified_points", "📝 Verified — Points Added"),
-            ("ep_payment_verified_product","📝 Verified — Product Delivered"),
-        ],
+                                                                                ],
         "buttons": [],
         "children": ["error_messages_screen", "easypaisa_layouts"],
     },
@@ -3009,12 +2997,7 @@ SCREEN_TREE = {
         "title": "JazzCash Payment Flow",
         "description": "All text shown during JazzCash TID verification",
         "texts": [
-            ("jazzcash_pay_instructions", "📝 JazzCash Instructions"),
-            ("jc_screenshot_received",    "📝 Screenshot Received"),
-            ("jc_reupload_screenshot",    "📝 Re-upload Prompt"),
-            ("jc_payment_verified_points","📝 Verified — Points Added"),
-            ("jc_payment_verified_product","📝 Verified — Product Delivered"),
-        ],
+                                                                    ],
         "buttons": [],
         "children": ["error_messages_screen", "jazzcash_layouts"],
     },
@@ -3033,12 +3016,9 @@ SCREEN_TREE = {
         "title": "Order Created / Status",
         "description": "Messages shown after order is created or status changes",
         "texts": [
-            ("order_created",   "📝 Order Created Text"),
-            ("order_rejected",  "📝 Order Rejected Text"),
-            ("order_cancelled", "📝 Order Cancelled Text"),
-            ("screenshot_no_pending", "📝 'No Pending Order' Text"),
-            ("screenshot_received_manual", "📝 Manual Screenshot Received"),
-            ("upload_image_only", "📝 'Image Only' Warning"),
+                        ("order_rejected",  "📝 Order Rejected Text"),
+
+
         ],
         "buttons": [],
         "children": ["order_flow_layouts"],
@@ -3062,10 +3042,7 @@ SCREEN_TREE = {
         "description": "User taps '💎 Buy Points' from main menu",
         "texts": [
             ("buy_points",                "📝 Buy Points Main Text"),
-            ("buy_points_title",          "📝 Buy Points Title"),
-            ("buy_points_custom",         "📝 Custom Amount Prompt"),
-            ("buy_points_custom_confirmed","📝 Custom Confirmed"),
-        ],
+                                            ],
         "buttons": [
             # 🆕 v52: Back-to-main editable
             {"id": "nav_points_back", "kind": "registry"},
@@ -3078,10 +3055,7 @@ SCREEN_TREE = {
         "title": "Buy Points — Pick Payment Method",
         "description": "After selecting amount, pick how to pay",
         "texts": [
-            ("binance_points_instructions",  "📝 Binance (Points) Instructions"),
-            ("easypaisa_points_instructions","📝 EasyPaisa (Points) Instructions"),
-            ("jazzcash_points_instructions", "📝 JazzCash (Points) Instructions"),
-        ],
+                                            ],
         "buttons": [
             {"id": "pay_binance",       "kind": "registry"},
             {"id": "pay_easypaisa",     "kind": "registry"},
@@ -3142,7 +3116,7 @@ SCREEN_TREE = {
         "description": "User's referral link + stats",
         "texts": [
             ("referral_text",                 "📝 Referral Page Text"),
-            ("referral_success_notification", "📝 'New Referral' Notification"),
+
             ("new_user_notification",         "📝 'New User Joined' Notification"),
         ],
         "buttons": [
@@ -3221,11 +3195,10 @@ SCREEN_TREE = {
         "texts": [
             ("freeclaim_user_screen",      "📝 Free Claim Page (eligible)"),
             ("freeclaim_not_enough",       "📝 'Not Enough Refs' Page"),
-            ("freeclaim_already_claimed",  "📝 'Already Claimed' Message"),
-            ("freeclaim_success",          "📝 Claim Success Message"),
-            ("freeclaim_share_message",    "📝 Pre-filled Share Message"),
+
+                        ("freeclaim_share_message",    "📝 Pre-filled Share Message"),
             ("freeclaim_share_screen",     "📝 Share Screen Text"),
-            ("referral_blocked_by_admin",  "📝 'Referral Blocked' Text"),
+
         ],
         "buttons": [],
         "children": [],
@@ -3239,15 +3212,7 @@ SCREEN_TREE = {
         "title": "Error Messages (All Payment Errors)",
         "description": "Reusable error texts across all payment screens",
         "texts": [
-            ("error_duplicate_screenshot",   "📝 Duplicate Screenshot"),
-            ("error_suspicious_screenshot",  "📝 Suspicious Screenshot"),
-            ("error_not_screenshot",         "📝 Not a Valid Screenshot"),
-            ("error_payment_not_successful", "📝 Payment Not Successful"),
-            ("error_amount_mismatch",        "📝 Amount Mismatch"),
-            ("error_no_order_id",            "📝 Order ID Not Readable"),
-            ("error_wrong_receiver",         "📝 Wrong Receiver"),
-            ("error_verification",           "📝 Generic Verification Error"),
-        ],
+                                                                                                        ],
         "buttons": [],
         "children": [],
     },
@@ -3999,9 +3964,9 @@ async def se_sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not label:
                 label = bid
             style = resolve_button_style(bid)
-            btn = make_premium_button(label, callback_data=f"se_subbtn_{sid}_{bid}", style=style)
+            btn = make_premium_button(label, callback_data=f"se_subbtn_{sid}|{bid}", style=style)
         except Exception:
-            btn = InlineKeyboardButton(str(bid), callback_data=f"se_subbtn_{sid}_{bid}")
+            btn = InlineKeyboardButton(str(bid), callback_data=f"se_subbtn_{sid}|{bid}")
         kb.append([btn])
     kb.append([InlineKeyboardButton("🔙 Back to Screen", callback_data=f"se_open_{sid}")])
     await _safe_edit(q, body, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
@@ -4014,9 +3979,14 @@ async def se_subbtn_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await q.answer("❌", show_alert=True); return
     await q.answer()
     raw = q.data.replace("se_subbtn_", "", 1)
-    # format: <current_sid>_<bid> — bid may contain underscores, so split on LAST _
-    *sid_parts, bid = raw.rsplit("_", 1)
-    cur_sid = "_".join(sid_parts)
+    # format: <current_sid>|<bid> — pipe separator keeps multi-underscore
+    # button ids (e.g. pay_binance) intact. 🔧 v132 fix.
+    if "|" in raw:
+        cur_sid, bid = raw.split("|", 1)
+    else:
+        # legacy fallback
+        *sid_parts, bid = raw.rsplit("_", 1)
+        cur_sid = "_".join(sid_parts)
     target = BTN_TARGET_SCREEN.get(bid, cur_sid)
     if not is_valid_screen(target):
         target = cur_sid
@@ -4036,3 +4006,72 @@ async def se_subbtn_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         [InlineKeyboardButton("📋 Back to Screens", callback_data="se_root")],
     ]
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+# ════════════════════════════════════════════════════════════
+# ⚡ v133 — PER-RESPONSE AUTO-REACTION (merged into customization)
+# ============================================================
+
+
+def reaction_enabled() -> bool:
+    try:
+        from database import get_setting
+        return get_setting("react_enabled", "0") == "1"
+    except Exception:
+        return False
+
+
+def set_reaction_enabled(on: bool):
+    try:
+        from database import set_setting
+        set_setting("react_enabled", "1" if on else "0")
+    except Exception:
+        pass
+
+
+def get_reaction(response_key: str) -> str:
+    """Return the stored reaction spec for a response key ('' = none)."""
+    try:
+        from database import get_setting
+        return (get_setting(f"react_{response_key}", "") or "").strip()
+    except Exception:
+        return ""
+
+
+def set_reaction(response_key: str, spec: str):
+    """spec: '' (none), '👍' (regular), or 'premium:<emoji_id>'."""
+    try:
+        from database import set_setting
+        set_setting(f"react_{response_key}", (spec or "").strip())
+    except Exception:
+        pass
+
+
+async def react_to_message(bot, chat_id, message_id, response_key):
+    """React to a message the bot just sent, if a reaction is configured.
+
+    Called automatically by the premium-emoji guard / send helper after every
+    outbound message. Never raises — reactions are cosmetic.
+    """
+    try:
+        if not reaction_enabled():
+            return
+        spec = get_reaction(response_key)
+        if not spec:
+            return
+        import telegram
+        from telegram import ReactionTypeEmoji, ReactionTypeCustomEmoji
+        if spec.startswith("premium:"):
+            eid = spec.split(":", 1)[1].strip()
+            if not eid:
+                return
+            reaction = [ReactionTypeCustomEmoji(custom_emoji_id=eid)]
+        else:
+            # regular emoji (strip surrounding braces/spaces)
+            emoji = spec.strip()
+            if not emoji:
+                return
+            reaction = [ReactionTypeEmoji(emoji=emoji)]
+        await bot.set_message_reaction(chat_id=chat_id, message_id=message_id, reaction=reaction)
+    except Exception as e:
+        logger.debug(f"[React] failed for {response_key}: {e}")

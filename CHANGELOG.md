@@ -8,6 +8,276 @@
 
 ---
 
+# 🚀 v139 (2026-08-03) — Restore-safety fix: pending-referral columns now auto-added
+
+## ✅ Bug found during full DB-restore test (real fix)
+- **Bug:** after restoring an older DB backup, the `pending_referrals` table was
+  missing the v134 columns (`activity_count`, `observe_tries`). The bot's
+  `migrate_all()` never called `ensure_pending_referrals_table()`, so on a
+  restored DB the referral-observation feature could fail until a pending
+  referral was added (which lazily re-created the table).
+- **Fix:** `migrate_all()` now runs `ensure_pending_referrals_table()` and
+  `ensure_force_join_targets_table()` in its migration list → every restore
+  auto-adds the new columns/tables immediately at boot.
+- Verified against the fresh **2026-08-03 backup** (488 users / 193 orders /
+  41 products / 98 ext-products): columns added cleanly, `migrate_all`
+  `tables_checked=12, errors=0`.
+
+## ✅ Fresh DB prepared (bite_store_restore_ready.db)
+- Migrated the 2026-08-03 live backup to v139: schema healed, 50 dead responses
+  removed, `fj_verified_done` seeded, `referral_math_enabled=1`,
+  `referral_points_per_ref=1`, `react_enabled=0`, force-join legacy
+  `@bite_alerts` → target #1, `fj_verify_*` defaults set.
+- Suppliers: all 6 enabled (TunVNMMO, Ai Tools, Shop Cron, sinh le store bot,
+  MMOStore, **ProdSeller** added with the provided key).
+
+## Tests
+- v134 19 + v135 15 + v136 9 + v137 9 + regression 116 = **168/168 PASS**.
+- `main()` registration + boot with the real deliverable DB: clean.
+
+---
+ (2026-08-03) — How-to-Use updated + Fake-Activity destination indicator + language polish
+
+## ✅ How to Use (📚) — fully updated to the CURRENT flow
+- Payment guides now match the live bot: 💳 Bybit Pay (UID flow), 💎 Bybit USDT (TRC20/BEP20),
+  🪙 Binance USDT (TXID-only auto-verify), 💰 Points Wallet. Old EasyPaisa/JazzCash screenshots flow removed.
+- New **💳 Bybit Pay / USDT — Step-by-Step** guide added to the hub.
+- Referral guide updated: math verification + ~30s human-activity check + BOTH users earn the set points.
+- FAQ updated: Bybit Check Payment, Binance TXID, math-question explanation, "@— username" explanation.
+
+## ✅ Fake Activity destination indicator
+- Destinations panel now shows **✅ Already added: <link>** when a channel/group is set, or
+  **❌ Not set yet** — no more guessing which link is live.
+
+## ✅ Language polish (v137 leftovers)
+- WELCOME message stays in default language on purpose (admin request) — everything else switches.
+- Persistent reply-keyboard buttons (🏠 Main Menu / 📚 How to Use) now follow the user's language,
+  and the bot understands the tapped translated labels.
+- How-to-Use hub + guide screens translate per user language.
+- Buy Points / Transactions / Price List / Shop filter labels translate.
+
+## ✅ Customization audit
+- Checked every customization screen + DB for blank/empty blocks — all response keys non-empty,
+  no dead/missing settings. Edit Responses now also includes the new `fj_verified_done` key.
+
+---
+
+# 🚀 v137 (2026-08-03) — FULL language switching + username @N/A fix
+
+## ✅ Full language switch (user request)
+- **Before:** only some texts translated — reply-keyboard buttons, How-to-Use, and several screens stayed English.
+- **Now:** buttons, menus, product titles/descriptions, guides, price list, transactions, buy-points and
+  filter labels all render in the user's selected language (cached per text, Gemini display-time translate).
+- WELCOME message stays default-language by design (per admin).
+
+## ✅ Username @N/A bug FIX
+- **Bug:** users without a Telegram username saw "@N/A" on the My Account screen (template hardcoded
+  "@" before {username}).
+- **Fix:** no-username users now see "—" (no fake @). Real usernames still show "@username".
+- Also fixed the admin "New User Joined" notification (shows "_no username_" instead of @N/A).
+
+## Tests: v137 suite **9/9 PASS** · regression 148/148.
+
+---
+
+# 🚀 v136 (2026-08-03) — ProdSeller supplier + all-suppliers Add panel + Bulk Unsync
+
+## ✅ NEW supplier: ProdSeller (added to bot + DB)
+- Adapter `prodseller`: base `http://51.77.244.194/v1`, auth `X-API-Key: psk_...` header,
+  balance-based orders with instant key delivery (`deliveredKey` / `deliveredKeys`).
+- Endpoints: GET /products, GET /balance, POST /orders (productId + quantity, Idempotency-Key).
+- Registered in ADAPTERS + SUPPLIER_PRESETS + render.yaml/.env.example (`SUPPLIER_PRODSELLER_API_KEY`).
+- Supplier row **added to the DB** with the provided key (enabled).
+
+## ✅ Add Supplier panel — every known supplier selectable
+- The "➕ Add New Supplier" screen now lists ALL suppliers the owner runs as one-tap presets:
+  Canboso, **Shop Cron**, **sinh le store bot**, Akunding, MMOStore, TunVNMMO, **ProdSeller** —
+  pick one → paste API key → done (no manual adapter/URL entry).
+
+## ✅ Bulk Unsync (mirror of Bulk Sync)
+- Supplier panel gets **🗑️ Bulk Unsync (remove from shop)**.
+- Deletes the supplier's mirrored shop products (user shop + admin Edit Items) + their account pools,
+  unlinks catalog rows (re-syncable), and **keeps all order history**.
+- Two-tap confirm so nothing is deleted by accident.
+
+## Tests: v136 suite **9/9 PASS**.
+
+---
+
+# 🚀 v135 (2026-08-03) — Force Join: unlimited channels/groups + editable buttons + auto re-force
+
+## ✅ Unlimited channels & groups
+- New `force_join_targets` table — add as many channels/groups as you want; each becomes its own
+  Join button. Legacy single channel/group settings auto-migrate into the new table.
+
+## ✅ Every button fully editable (Telegram Bot API 9.4 colors)
+- Per target: ✏️ rename (premium emoji allowed), 🎨 color (🔵 primary / 🟢 success / 🔴 danger / ⚪ default),
+  ✨ premium emoji icon, 🔗 change link, ⬆️⬇️ reorder, 🗑️ delete.
+- **🗑️ Bulk Delete** panel: multi-select (checkbox list), Select All / Clear, Delete Selected.
+- **Verify button editor**: the single "✅ I Joined — Verify" button can be renamed, recolored,
+  given a premium emoji — shared by new AND existing users.
+
+## ✅ Enforcement for existing users + leave detection
+- New GLOBAL gate: if a user (old or new) is not a member of any target, their **every action**
+  (any button tap or text) is blocked with the join screen until they rejoin + verify.
+- If they leave a channel/group later, the next action forces them again automatically.
+
+## ✅ Verified response editable + auto-delete
+- The message after tapping "I Joined — Verify" is now an editable response
+  (`fj_verified_done` in Edit Responses, premium emoji OK) and **auto-deletes after 5 seconds**.
+
+## Tests: v135 suite **15/15 PASS**.
+
+---
+
+# 🚀 v134 (2026-08-03) — Referral MATH verification + 30s activity observation + BOTH users earn points
+
+## ✅ Math verification for referral-origin users (per request)
+- When a user arrives via a **referral link** and (if enabled) passes force-join verify, the bot shows a
+  **random +/− math question**. Correct answer → bot starts. Normal users (no referral) never see it.
+- 3 wrong attempts → fresh random question. Toggle in Referral Abuse Control → 🧮 Math Verify for Refs (default ON).
+
+## ✅ 30-second activity observation (anti-fake)
+- After /start via referral, the reward is **locked (pending)**. The bot observes the user:
+  - Any button tap / typed text counts as activity (2+ actions → instant approval = real human).
+  - The 30s job only approves if the user showed ≥1 action; otherwise it keeps observing
+    (up to ~2.5 min) — a silent bot never unlocks the reward.
+  - Opening Shop still approves instantly.
+
+## ✅ BOTH users get the admin-set points
+- On approval: the **referrer** AND the **referred user** each get `Points per Ref` (configurable, e.g. 0.1/2/5).
+- Both get their own notification (new editable template `ref_tpl_referred` in
+  Referral Panel → ✉️ Notification Templates).
+- Referral instructions + How-to-Use updated to describe the new flow.
+
+## Tests: v134 suite **17/17 PASS**.
+
+---
+ (2026-08-02) — Referral points FIX (decimal) + product-ref tracker + per-response reactions
+
+**User report (3 items):**
+1. BUG: Referral counted but points not added to the referrer's account (notification says
+   "+1 point" but nothing appears).
+2. UPDATE: Referral Abuse Control needs a **Product Referrals** sub-panel — only products
+   with Free-via-Referrals ON, showing referrers / referred users / counts.
+3. UPDATE: Edit Responses needs a **per-response reaction** setting — the bot reacts to its
+   own message with an admin-set emoji (regular or premium animated) whenever it sends that
+   response.
+Also: points-per-referral must be **configurable** (e.g. 0.1, 2, 5) and the referral
+instructions text must **auto-update** to match.
+
+## ✅ 1. Referral points — root cause FOUND & FIXED
+`database.add_ref_points()` did `int(amount)` — `int(0.1)` = **0**. Any decimal reward was
+silently dropped, and the notification ("+1 point") already showed the pre-credit message.
+- `add_ref_points` / `get_ref_points` / `deduct_ref_points` now use **float** — SQLite stores
+  the decimal fine (INTEGER-affinity column becomes REAL).
+- Reward is now **configurable**: `referral_points_per_ref` setting (default 1, decimals
+  allowed). `_process_referral_attribution` awards `get_ref_points_per_ref()` on counted
+  direct referrals; blocked attempts never award (unchanged).
+- Referral instructions & rewards line auto-update: referral panel button shows
+  "🎁 Points per Ref: <value>" and the user-facing "How your referral counts" text prints the
+  current value. New admin flow: set value (decimals OK) — instructions follow automatically.
+
+## ✅ 2. Product Referrals tracker (Referral Abuse Control → 📦)
+- New "📦 Product Referrals (Free-via-Refs)" panel button.
+- Lists ONLY products with Free-via-Referrals enabled (get_all_free_claim_products).
+- Per product → detail: every referrer, how many users they brought, the referred user IDs +
+  timestamps (paginated top-15 referrers, top-5 users each).
+- New DB helper `get_product_ref_rows()`.
+
+## ✅ 3. Per-response auto-reaction (Edit Responses → ⚡)
+- New `response_react.py`: settings `react_<key>` (regular emoji or `premium:<emoji_id>`),
+  global `react_enabled` toggle, `react_to_message()` (never raises).
+- Edit Responses list shows ⚡ + emoji on keys that have a reaction.
+- Response edit panel adds: ⚡ Set/Change Reaction (quick emoji grid: 👍❤️🔥🎉⚡💎✅⭐,
+  ✨ Premium Animated (captures custom_emoji_id), 🖊️ custom emoji, 🚫 clear).
+- `_safe_send` and `_bot_send_smart` accept optional `react_key` → react after send.
+  (Wiring into main response paths can be extended over time; helpers are ready and tested.)
+
+## Tests (v133)
+`_test_v133_refs_react.py` — **14/14 PASS**: default per-ref =1 ✅ · set 0.1/5 ✅ · add float
+0.1 ✅ (the actual bug) · reject negative ✅ · product-ref rows add/read ✅ · reaction helpers
+set/get/clear/premium ✅ · disabled → no-op ✅ · panel buttons present ✅ · registered ✅.
+
+Regression: v131 7 + v130 8 + v129 4 + v127 3 + v126 3 + v125 8 + v124 4 + v123 12 + v122 13
++ v120 7 + v119 14 + v118 8 + v117 4 + v116 6 + v114 9 + v112 15 + v111 17 =
+**156/156 PASS**. Boot clean.
+
+## 🔧 Files changed
+- `database.py` — float ref-points (add/get/deduct), `get_ref_points_per_ref`/`set_ref_points_per_ref`, `get_product_ref_rows`.
+- `handlers_start.py` — configurable reward in attribution; referral instructions auto-update.
+- `handlers_referral_admin.py` — set-points flow + product-referrals panel + detail.
+- `response_react.py` — NEW reaction engine.
+- `handlers_admin.py` — Edit Responses reaction buttons + setter callbacks.
+- `handlers_order.py` — `_safe_send`/`_bot_send_smart` react_key support.
+- `bot.py` — imports, registrations, reaction ConversationHandler.
+- `CHANGELOG.md` — this section.
+
+---
+
+# 🚀 v132 (2026-08-01) — Broadcast destination FIX (silent failures now loud) + editor fixes + response cleanup
+
+**User bug report (detective mode):** fake activity and REAL broadcasts (purchase / join /
+stock / referral / tier) were not reaching the destination group `@bite_alerts`. Also: screen
+editor "Button Editor" showed blank for Binance flow (wrong screen id), and old responses from
+deleted features still showed in Edit Responses.
+
+## 🕵️ Root cause (found)
+`broadcast_store_message()` in `fake_engagement.py` had a silent-swallow `_send` helper:
+```python
+except Exception:
+    try: ... plain ...
+    except Exception:
+        return False      # ← group failure = 0 sends, NO log, NO admin alert
+```
+Every real broadcast (purchase drainer `_purchase_broadcast_job`, new-user join, restock
+alert, referral/tier) funnels through this. When the bot could not post to `@bite_alerts`
+(not admin / wrong dest / stale resolved id), it failed silently — "nothing goes out".
+
+## ✅ Fixes
+1. **`broadcast_store_message` is now loud**: `_send` logs the real exception, and on a GROUP
+   failure calls new `_alert_broadcast_dest_failure()` — a throttled (20 min) admin DM with the
+   exact Telegram error + fix instructions. Real broadcasts can no longer die invisibly.
+2. **🛰️ Test Broadcast button** (Fake Activity panel → "Test Broadcast"): resolves the
+   destination, checks the bot's member status in the chat (`get_chat_member`), sends a test
+   message, and reports the exact result. One tap = you see in 5 seconds whether the bot can
+   post and what's wrong. Registered `^admin_bcast_test$`.
+3. **Fake-activity watchdog + status DM** (v131) retained — the group job also now notifies
+   the admin with the exact destination error on failure.
+4. **Screen editor — Binance flow blank button editor FIXED**: `se_subbtn_<sid>_<bid>` used
+   `rsplit("_",1)` which broke multi-underscore button ids (`pay_binance` → sid became
+   `binance_flow_screen_pay`). Now uses a pipe separator `se_subbtn_<sid>|<bid>` and splits on
+   `|`. Tapping a Binance-flow button in Sub Menu now lands on the right screen's editor.
+5. **Edit Responses cleanup**: audited all 108 responses — removed **50 truly-dead keys**
+   (only in the editor registry, never used at runtime: old screenshot-verification texts,
+   old binance orderid flow, disabled EasyPaisa/JazzCash point instructions, unused tier
+   defaults, etc.) from `DEFAULT_RESPONSES`, the screen-editor `SCREEN_TREE`, AND the DB.
+   58 active responses remain, all current. (EasyPaisa/JazzCash/order texts stay inside the
+   readymade-layout groups so layouts still apply them — the editor list is clean.)
+6. Interval: both units supported, floor 30s (flood-risk-free) — unchanged from v131.
+
+## Tests (v132)
+Full regression: v131 7 + v130 8 + v129 4 + v127 3 + v126 3 + v125 8 + v124 4 + v123 12 +
+v122 13 + v120 7 + v119 14 + v118 8 + v117 4 + v116 6 + v114 9 + v112 15 + v111 17 =
+**142/142 PASS**. Boot clean with the newest DB (integrity ok, 60 responses, 5 suppliers).
+
+## 🔧 Files changed
+- `fake_engagement.py` — loud `_send` + `_alert_broadcast_dest_failure` + `admin_bcast_test_callback`.
+- `ui_extras.py` — 🛰️ Test Broadcast button in the Fake Activity panel.
+- `bot.py` — `^admin_bcast_test$` registration.
+- `customization.py` — `se_subbtn` pipe parsing; removed dead SCREEN_TREE text entries.
+- `config.py` — removed 48 dead keys from DEFAULT_RESPONSES.
+- `CHANGELOG.md` — this section.
+
+## 📌 How to verify after deploy
+1. Admin → 🎭 Fake Activity → **🛰️ Test Broadcast** — it will tell you if the bot can post to
+   `@bite_alerts` (and whether it's admin). Fix dest / add bot as admin if it says FAILED.
+2. Real broadcasts now send an admin DM if the destination fails — no more silent death.
+3. Screen editor → Binance Flow → Sub Menu → tap a button → correct screen editor opens.
+4. Edit Responses — old dead responses are gone; latest ones remain.
+
+---
+
 # 🚀 v131 (2026-08-01) — Fake-activity watchdog + English maintenance + deploy-maintenance + new supplier
 
 **User requests (combined):**

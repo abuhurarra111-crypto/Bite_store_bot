@@ -903,12 +903,23 @@ async def price_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         "unavailable": "❌ Out of Stock",
     }[mode]
 
+    try:
+        from i18n import tr_user
+        _uid = q.from_user.id if q.from_user else None
+    except Exception:
+        _uid = None
     lines = [
         "📊 *Price List*",
         "━━━━━━━━━━━━━━━━━━━━",
         f"*Showing:* {mode_label}  ({len(products)})",
         "",
     ]
+    if _uid:
+        try:
+            from i18n import tr_user
+            lines = [tr_user(l, user_id=_uid) or l for l in lines]
+        except Exception:
+            pass
 
     if not products:
         if mode == "available":
@@ -928,6 +939,12 @@ async def price_list_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                 clean = _re.sub(r'<[^>]+>', '', clean)
                 # Limit name length for clean display
                 clean = clean[:50]
+                if _uid:
+                    try:
+                        from i18n import tr_user
+                        clean = tr_user(clean, user_id=_uid) or clean
+                    except Exception:
+                        pass
 
                 price = float(p['price'] or 0)
                 stock = int(p['stock'] or 0)

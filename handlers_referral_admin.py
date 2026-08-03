@@ -24,6 +24,17 @@ logger = logging.getLogger(__name__)
 REF_TPL_DEFAULTS = {
     "referrer": """🎉 *New Referral Joined!*\n━━━━━━━━━━━━━━━━━━━━\n\n👤 Referred user: *{referred_name}*\n🆔 Referred ID: `{referred_id}`\n\n✅ Reward: *+{reward_points} referral point*\n📊 Your direct referrals: *{total_referrals}*\n🎯 Next bonus: *{remaining_to_bonus}* more referrals → *+{milestone_bonus} wallet points* ($1)\n\nKeep sharing your link and earning rewards! 🚀""",
     "admin": """🎁 *New Direct Referral*\n━━━━━━━━━━━━━━━━━━━━\n\n👑 Referrer:\n• Name: *{referrer_name}*\n• Username: @{referrer_username}\n• ID: `{referrer_id}`\n\n🆕 Referred User:\n• Name: *{referred_name}*\n• Username: @{referred_username}\n• ID: `{referred_id}`\n\n🎯 Reward: +{reward_points} referral point\n📊 Referrer's direct referrals: {total_referrals}""",
+    "referred": """🎁 *Referral Reward Credited!*
+━━━━━━━━━━━━━━━━━━━━
+
+✅ You came from a friend's referral link and your activity was verified.
+
+💎 *+{reward_points} point(s)* added to your Referral Points balance!
+
+🆔 Your User ID: `{referred_id}`
+👤 Referred by: *{referrer_name}*
+
+You can spend Referral Points on free products or keep earning by sharing your own link. 🚀""",
     "milestone": """🏆 *Referral Milestone Unlocked!*\n━━━━━━━━━━━━━━━━━━━━\n\n🔥 You reached *{milestone_number} direct referrals*!\n🎁 Bonus reward: *+{milestone_bonus} wallet points* ($1)\n💎 Wallet bonus has been added to your balance.\n\nNext milestone: *{next_milestone} referrals* 🚀""",
     "product_referrer": """🎁 *Product Referral Counted!*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 Product: *{product_name}*\n👤 New user: *{referred_name}*\n🆔 User ID: `{referred_id}`\n\n📊 Your progress: *{product_referrals}/{product_required}*\n🎯 Need *{product_remaining}* more referral(s) to claim this product free.\n\nKeep sharing this product link! 🚀""",
     "product_admin": """🎁 *Product Referral Counted*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 Product: *{product_name}* (`#{product_id}`)\n📊 Progress: *{product_referrals}/{product_required}*\n🎯 Remaining: *{product_remaining}*\n\n👑 Referrer:\n• Name: *{referrer_name}*\n• Username: @{referrer_username}\n• ID: `{referrer_id}`\n\n🆕 Referred User:\n• Name: *{referred_name}*\n• Username: @{referred_username}\n• ID: `{referred_id}`""",
@@ -63,13 +74,21 @@ REF_TPL_READYMADE = {
     ],
 }
 
-REF_PLACEHOLDERS = """Placeholders:\n`{referrer_id}` `{referrer_name}` `{referrer_username}`\n`{referred_id}` `{referred_name}` `{referred_username}`\n`{reward_points}` `{total_referrals}` `{remaining_to_bonus}`\n`{milestone_bonus}` `{milestone_number}` `{next_milestone}`\nProduct-only: `{product_id}` `{product_name}` `{product_referrals}` `{product_required}` `{product_remaining}`"""
+REF_PLACEHOLDERS = """Placeholders:
+`{referrer_id}` `{referrer_name}` `{referrer_username}`
+`{referred_id}` `{referred_name}` `{referred_username}`
+`{reward_points}` `{total_referrals}` `{remaining_to_bonus}`
+`{milestone_bonus}` `{milestone_number}` `{next_milestone}`
+Product-only: `{product_id}` `{product_name}` `{product_referrals}` `{product_required}` `{product_remaining}`
+
+Referred-user message also supports: `{reward_points}` `{referred_id}` `{referrer_name}`"\n`{referrer_id}` `{referrer_name}` `{referrer_username}`\n`{referred_id}` `{referred_name}` `{referred_username}`\n`{reward_points}` `{total_referrals}` `{remaining_to_bonus}`\n`{milestone_bonus}` `{milestone_number}` `{next_milestone}`\nProduct-only: `{product_id}` `{product_name}` `{product_referrals}` `{product_required}` `{product_remaining}`"""
 
 
 REF_TPL_PLACEHOLDERS = {
     "referrer": "Placeholders:\n`{referred_id}` `{referred_name}` `{referred_username}`\n`{reward_points}` `{total_referrals}` `{remaining_to_bonus}` `{milestone_bonus}`",
     "admin": "Placeholders:\n`{referrer_id}` `{referrer_name}` `{referrer_username}`\n`{referred_id}` `{referred_name}` `{referred_username}`\n`{reward_points}` `{total_referrals}`",
     "milestone": "Placeholders:\n`{milestone_number}` `{milestone_bonus}` `{next_milestone}`\n`{referrer_id}` `{referrer_name}`",
+    "referred": "Placeholders:\n`{reward_points}` `{referred_id}` `{referred_name}` `{referrer_name}` `{referrer_id}`",
     "product_referrer": "Placeholders:\n`{product_id}` `{product_name}` `{product_referrals}` `{product_required}` `{product_remaining}`\n`{referred_id}` `{referred_name}` `{referred_username}`",
     "product_admin": "Placeholders:\n`{product_id}` `{product_name}` `{product_referrals}` `{product_required}` `{product_remaining}`\n`{referrer_id}` `{referrer_name}` `{referrer_username}`\n`{referred_id}` `{referred_name}` `{referred_username}`",
     "product_unlock": "Placeholders:\n`{product_id}` `{product_name}` `{product_referrals}` `{product_required}`\n`{referrer_id}` `{referrer_name}`",
@@ -143,14 +162,31 @@ async def _safe_edit(q, text, **kwargs):
 
 
 def _panel_kb():
+    try:
+        from database import get_ref_points_per_ref
+        pp = get_ref_points_per_ref()
+    except Exception:
+        pp = 1
+    try:
+        from database import get_referral_math_enabled as _gme
+        _math_on = bool(_gme())
+    except Exception:
+        _math_on = True
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📜 Recent Referral Log", callback_data="refadm_log_all")],
         [InlineKeyboardButton("✅ Counted Only", callback_data="refadm_log_counted"),
          InlineKeyboardButton("🚫 Blocked Only", callback_data="refadm_log_blocked")],
+        # 🆕 v133: per-ref reward setter (shows current value)
+        [InlineKeyboardButton(f"🎁 Points per Ref: {pp:g}", callback_data="refadm_set_points_start")],
+        # 🆕 v134: math verification toggle for referral-origin users
+        [InlineKeyboardButton(f"🧮 Math Verify for Refs: {'ON' if _math_on else 'OFF'}",
+                              callback_data="refadm_math_toggle")],
         [InlineKeyboardButton("🔨 Ban a User",   callback_data="refadm_ban_start")],
         [InlineKeyboardButton("🔓 Unban a User", callback_data="refadm_unban_start")],
         [InlineKeyboardButton("📋 Banned List",  callback_data="refadm_banlist")],
         [InlineKeyboardButton("💎 Adjust Ref Points", callback_data="refadm_adjust_start")],
+        # 🆕 v133: product-referral tracker panel
+        [InlineKeyboardButton("📦 Product Referrals (Free-via-Refs)", callback_data="refadm_prod_panel")],
         [InlineKeyboardButton("✉️ Notification Templates", callback_data="refadm_tpl_panel")],
         [InlineKeyboardButton("🔙 Back to Admin", callback_data="admin_panel")],
     ])
@@ -318,13 +354,14 @@ def _ref_tpl_panel_text_kb():
         "Edit messages sent when a direct referral is counted.\n\n"
         "• 👤 Referrer message — sent to the user who invited someone\n"
         "• 🛡️ Admin message — sent to admin with both user details\n"
-        "• 🏆 Milestone message — sent every 20 direct referrals when +10 wallet points are awarded\n\n"
+        "• 🏆 Milestone message — sent every 20 direct referrals when +10 wallet points are awarded\n• 🎁 Referred-user message — sent to the new user when their referral is approved (+points)\n\n"
         f"{REF_PLACEHOLDERS}"
     )
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("👤 Direct Referrer Msg", callback_data="refadm_tpl_edit_referrer")],
         [InlineKeyboardButton("🛡️ Direct Admin Msg", callback_data="refadm_tpl_edit_admin")],
         [InlineKeyboardButton("🏆 Direct Milestone Msg", callback_data="refadm_tpl_edit_milestone")],
+        [InlineKeyboardButton("🎁 Referred-User Msg", callback_data="refadm_tpl_edit_referred")],
         [InlineKeyboardButton("📦 Product Referrer Msg", callback_data="refadm_tpl_edit_product_referrer")],
         [InlineKeyboardButton("🛡️ Product Admin Msg", callback_data="refadm_tpl_edit_product_admin")],
         [InlineKeyboardButton("🎉 Product Unlock Msg", callback_data="refadm_tpl_edit_product_unlock")],
@@ -666,3 +703,194 @@ async def refadm_text_received(update: Update, context: ContextTypes.DEFAULT_TYP
         return True
 
     return False
+
+
+# ════════════════════════════════════════════════════════════
+# 🔧 v133 — PER-REF REWARD SETTER + PRODUCT REFERRAL TRACKER
+# ════════════════════════════════════════════════════════════
+
+async def refadm_set_points_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        from database import get_ref_points_per_ref
+        cur = get_ref_points_per_ref()
+    except Exception:
+        cur = 1
+    context.user_data["refadm_step"] = "set_points"
+    await _safe_edit(q,
+        f"🎁 *Points per Direct Referral*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Current: *{cur:g}* point(s) per approved direct referral.\n\n"
+        f"Type a number (decimals allowed), e.g. `0.1`, `1`, `2`, `5`:\n\n"
+        f"_Referral instructions & rewards text update automatically._",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="refadm_panel")]]))
+
+
+async def refadm_set_points_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("refadm_step") != "set_points":
+        return False
+    if update.effective_user.id != ADMIN_ID:
+        return True
+    txt = (update.message.text or '').strip().replace('point', '').replace('points', '').strip()
+    try:
+        val = float(txt)
+        if val < 0:
+            raise ValueError
+    except Exception:
+        await update.message.reply_text("❌ Enter a valid number ≥ 0, e.g. `0.1`, `1`, `5`.",
+                                        parse_mode="Markdown")
+        return True
+    try:
+        from database import set_ref_points_per_ref
+        set_ref_points_per_ref(val)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Save failed: {e}")
+        return True
+    context.user_data.pop("refadm_step", None)
+    await update.message.reply_text(f"✅ *Points per referral set to {val:g}*.\n"
+                                    f"Referral instructions now show {val:g} point(s).",
+                                    parse_mode="Markdown",
+                                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Referral Panel", callback_data="refadm_panel")]]))
+    return True
+
+
+async def refadm_prod_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """📦 Products with Free-via-Referrals ON → per-product referral stats."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        from database import get_all_free_claim_products, count_product_refs, get_product
+        prods = get_all_free_claim_products()
+    except Exception as e:
+        await _safe_edit(q, f"❌ Error: {e}", reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔙 Referral Panel", callback_data="refadm_panel")]]))
+        return
+    if not prods:
+        await _safe_edit(q, "📦 *Product Referrals*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                            "_No products with Free-via-Referrals enabled._\n\n"
+                            "Enable it on any product to start tracking referrals for it.",
+                         parse_mode="Markdown",
+                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Referral Panel", callback_data="refadm_panel")]]))
+        return
+    lines = ["📦 *Product Referrals (Free-via-Refs)*\n━━━━━━━━━━━━━━━━━━━━",
+             "_Products with Free-via-Referrals ON:_", ""]
+    kb = []
+    for row in prods:
+        pid = row.get("product_id") or row.get("id")
+        if not pid:
+            continue
+        p = get_product(pid)
+        if not p:
+            continue
+        from utils import html_strip_tags, is_html_value
+        nm = p["name"]
+        if is_html_value(nm):
+            nm = html_strip_tags(nm)
+        cnt = 0
+        try:
+            cnt = count_product_refs(0, pid)  # total refs (referrer-independent)
+        except Exception:
+            cnt = 0
+        lines.append(f"• #{pid} {nm[:40]} — refs: *{cnt}*")
+        kb.append([InlineKeyboardButton(f"📦 #{pid} {nm[:35]}", callback_data=f"refadm_prod_detail_{pid}")])
+    kb.append([InlineKeyboardButton("🔙 Referral Panel", callback_data="refadm_panel")])
+    await _safe_edit(q, "\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def refadm_prod_detail_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Per-product referral detail: referrers, counts, referred users."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        pid = int(q.data.replace("refadm_prod_detail_", ""))
+    except Exception:
+        await q.answer("Bad id", show_alert=True); return
+    try:
+        from database import get_product, get_product_ref_rows, count_product_refs
+        from utils import html_strip_tags, is_html_value
+        p = get_product(pid)
+        if not p:
+            await _safe_edit(q, "❌ Product not found.", reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Product Referrals", callback_data="refadm_prod_panel")]]))
+            return
+        nm = p["name"]
+        if is_html_value(nm):
+            nm = html_strip_tags(nm)
+        rows = get_product_ref_rows(pid)
+        total = count_product_refs(0, pid)
+        lines = [
+            f"📦 *Product Referrals — #{pid}*",
+            f"━━━━━━━━━━━━━━━━━━━━",
+            f"Product: {nm[:60]}",
+            f"Total referrals: *{total}*",
+            "",
+        ]
+        if not rows:
+            lines.append("_No referrals for this product yet._")
+        else:
+            lines.append("*Referrer → referred users:*")
+            from collections import defaultdict
+            by_ref = defaultdict(list)
+            for r in rows:
+                try:
+                    by_ref[r["referrer_id"]].append((r["referred_id"], r.get("created_at", "")))
+                except Exception:
+                    pass
+            for rid, users in list(by_ref.items())[:15]:
+                un = "?"
+                try:
+                    from database import get_user
+                    ur = get_user(rid)
+                    if ur:
+                        un = (ur.get("username") or ur.get("first_name") or str(rid))[:20]
+                except Exception:
+                    pass
+                lines.append(f"• `{rid}` ({un}): *{len(users)}* referred")
+                for uid2, _ts in users[:5]:
+                    lines.append(f"    ↳ `{uid2}` {str(_ts)[:16]}")
+                if len(users) > 5:
+                    lines.append(f"    …and {len(users)-5} more")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Product Referrals", callback_data="refadm_prod_panel")],
+            [InlineKeyboardButton("🔙 Referral Panel", callback_data="refadm_panel")],
+        ])
+        await _safe_edit(q, "\n".join(lines), parse_mode="Markdown", reply_markup=kb)
+    except Exception as e:
+        await _safe_edit(q, f"❌ Error: {e}", reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔙 Referral Panel", callback_data="refadm_panel")]]))
+
+
+# ════════════════════════════════════════════════════════════════
+# 🆕 v134 — REFERRAL MATH VERIFICATION TOGGLE
+# ════════════════════════════════════════════════════════════════
+
+async def refadm_math_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Toggle math verification for referral-origin users."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        from database import get_referral_math_enabled, set_referral_math_enabled
+        new = not get_referral_math_enabled()
+        set_referral_math_enabled(new)
+        state = "ON 🟢" if new else "OFF 🔴"
+    except Exception as e:
+        await _safe_edit(q, f"❌ Error: {e}", reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔙 Referral Panel", callback_data="refadm_panel")]]))
+        return
+    await _safe_edit(q,
+        f"🧮 *Math Verification*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Now: *{state}*\n\n"
+        f"_When ON, any user arriving via a referral link must answer a random "
+        f"+/− math question (after force-join verify) before the bot starts. "
+        f"Normal users never see it._",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Referral Panel", callback_data="refadm_panel")]]))

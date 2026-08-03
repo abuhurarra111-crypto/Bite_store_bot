@@ -571,7 +571,13 @@ async def shop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                        filter_mode=filter_mode)
     title = _get_resp("shop_title", user_id=q.from_user.id).format(page=pg, total_pages=tp)
     # 🆕 v59: Append filter mode indicator
-    title += f"\n_Filter: {_filter_label(filter_mode)}_"
+    _flt = _filter_label(filter_mode)
+    try:
+        from i18n import tr_user
+        _flt = tr_user(_flt, user_id=q.from_user.id) or _flt
+    except Exception:
+        pass
+    title += f"\n_Filter: {_flt}_"
     try:
         await q.edit_message_text(title, parse_mode="Markdown", reply_markup=kb)
     except Exception:
