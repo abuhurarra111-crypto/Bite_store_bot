@@ -8,7 +8,37 @@
 
 ---
 
-# 🚀 v139.3 (2026-08-03) — Edit-Response reaction emoji FIX (handler ordering)
+# 🚀 v139.4 (2026-08-03) — CRITICAL: reaction text was overwriting response text + auto-react wiring
+
+## 🐛 Bug #4 (reported: "welcome msg gayab ho gaya, sirf emoji aa gaya")
+- **Kahan:** Edit Responses → ⚡ Set/Change Reaction → Premium/Custom emoji input
+- **Root cause (2 layers):**
+  1. When admin tapped ⚡ reaction, the OLD "Edit Response" conversation
+     (`EDIT_RESP_VALUE` state) stayed active. When admin then typed the emoji
+     for Premium/Custom, the old conversation's `response_value_received`
+     caught that text and **saved the emoji AS THE RESPONSE VALUE** → whole
+     welcome message was replaced by a single emoji. (The v133 reaction feature
+     only ever *looked* like it didn't work — it was actually destroying the
+     response text.)
+  2. Even when a reaction WAS set, `react_enabled` (global toggle) had **no
+     admin UI** and defaulted to 0 → bot never auto-reacted anyway.
+- **Fix:**
+  1. `response_value_received` now returns `ConversationHandler.END` when
+     `resp_react_key` is present (reaction-input text can NEVER overwrite a
+     response value).
+  2. Reaction picker refactored into `_render_reaction_picker(q, key)` so
+     set/clear re-render with the CLEAN key (was `set_welcome|👍` garbage).
+  3. New **⚡ Auto-Reaction: ON/OFF** global toggle button on the Edit
+     Responses "all" screen (`resp_react_global_toggle`).
+  4. Welcome sender now auto-reacts: `react_to_message(..., "welcome")` after
+     sending (only when reaction configured + global toggle ON; never raises).
+- **Verified:** 6/6 live simulation — welcome text untouched after all reaction
+  ops; reaction set correctly; global toggle toggles.
+
+## 🧪 Tests: v139.4 suite 9/9 · v139.3 9/9 · full regression 186/186 PASS
+
+---
+ (2026-08-03) — Edit-Response reaction emoji FIX (handler ordering)
 
 ## 🐛 Bug #3 (reported: "edit response ma b emoji ni lg rha")
 - **Kahan:** Edit Responses → ⚡ Set/Change Reaction (v133 feature)

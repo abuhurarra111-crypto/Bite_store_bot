@@ -724,7 +724,9 @@ async def handle_math_answer(update, context):
 
 
 async def _send_welcome_message(reply_to, context, u):
-    """🆕 v138: shared welcome renderer (fixed default-language welcome)."""
+    """🆕 v138: shared welcome renderer (fixed default-language welcome).
+    🆕 v139.4: auto-reacts to the welcome message when the admin set a
+    reaction for 'welcome' and the global reaction toggle is ON."""
     from database import get_setting
     from keyboards import main_menu_keyboard, persistent_menu
     from config import ADMIN_ID, SHOP_NAME
@@ -733,8 +735,14 @@ async def _send_welcome_message(reply_to, context, u):
     text = _r("welcome").format(shop_name=shop, user_id=u.id)
     send_text, send_mode = smart_text_and_mode(text, "Markdown")
     await reply_to.reply_text("👋", reply_markup=persistent_menu(u.id))
-    await reply_to.reply_text(send_text, parse_mode=send_mode,
+    sent = await reply_to.reply_text(send_text, parse_mode=send_mode,
         reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
+    # auto-react (only if configured + enabled); never raises
+    try:
+        from customization import react_to_message
+        await react_to_message(context.bot, sent.chat_id, sent.message_id, "welcome")
+    except Exception:
+        pass
 
 
 async def _complete_start_after_math(update, context):

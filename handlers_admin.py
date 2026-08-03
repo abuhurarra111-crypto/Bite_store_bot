@@ -1403,6 +1403,13 @@ async def _show_responses_category(u, c, category="all", page=1):
             count = len(cat_info["keys"])
             kb.append([InlineKeyboardButton(f"{cat_info['name']} ({count})", callback_data=f"respcat_{cat_id}")])
         kb.append([InlineKeyboardButton("📋 View ALL Responses", callback_data="respcat_all_list")])
+        try:
+            from customization import reaction_enabled
+            _rstate = "ON 🟢" if reaction_enabled() else "OFF 🔴"
+        except Exception:
+            _rstate = "OFF 🔴"
+        kb.append([InlineKeyboardButton(f"⚡ Auto-Reaction (bot reacts to its msgs): {_rstate}",
+                                        callback_data="resp_react_global_toggle")])
         kb.append([InlineKeyboardButton("🔙 Back to Settings", callback_data="admin_settings")])
         await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
     else:
@@ -1507,6 +1514,13 @@ async def edit_response_callback(u,c):
 
 async def response_value_received(u,c):
     if u.effective_user.id!=ADMIN_ID: return ConversationHandler.END
+    # 🐛 v139.4 CRITICAL: when the admin is in the reaction-input flow
+    # (premium/custom emoji), the OLD "Edit Response" conversation is still
+    # active. Without this guard, the emoji the admin types got saved as the
+    # RESPONSE TEXT itself → whole welcome message was overwritten with one
+    # emoji. Reaction text must NEVER touch the response value.
+    if c.user_data.get("resp_react_key"):
+        return ConversationHandler.END
     val = u.message.text or ""
     try:
         html_v = (u.message.text_html_urled or "").strip()
@@ -8394,16 +8408,10 @@ async def bybit_test_callback(u, c):
 # ⚡ v133 — RESPONSE REACTION SETTER (per-response emoji)
 # ════════════════════════════════════════════════════════════
 
-async def resp_react_callback(u, c):
-    """Open the reaction picker for a response key."""
-    q = u.callback_query
-    if q.from_user.id != ADMIN_ID:
-        await q.answer("❌", show_alert=True); return
-    await q.answer()
-    key = q.data.replace("resp_react_", "")
+async def _render_reaction_picker(q, key):
+    """Render the reaction picker for a clean response key (v139.4)."""
     from customization import get_reaction
     cur = get_reaction(key)
-    # Quick emoji choices + premium option + custom
     kb = [
         [InlineKeyboardButton("👍", callback_data=f"resp_react_set_{key}|👍"),
          InlineKeyboardButton("❤️", callback_data=f"resp_react_set_{key}|❤️"),
@@ -8423,6 +8431,16 @@ async def resp_react_callback(u, c):
                      parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 
+async def resp_react_callback(u, c):
+    """Open the reaction picker for a response key."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    key = q.data.replace("resp_react_", "")
+    await _render_reaction_picker(q, key)
+
+
 async def resp_react_set_callback(u, c):
     """Set a regular-emoji reaction."""
     q = u.callback_query
@@ -8433,7 +8451,7 @@ async def resp_react_set_callback(u, c):
     from customization import set_reaction
     set_reaction(key, emoji)
     await q.answer(f"✅ Reaction set: {emoji}", show_alert=True)
-    await resp_react_callback(u, c)
+    await _render_reaction_picker(q, key)
 
 
 async def resp_react_clear_callback(u, c):
@@ -8446,7 +8464,7 @@ async def resp_react_clear_callback(u, c):
     set_reaction(key, "")
     await q.answer("✅ Reaction cleared", show_alert=True)
     try:
-        await resp_react_callback(u, c)
+        await _render_reaction_picker(q, key)
     except Exception:
         pass
 
@@ -8525,3 +8543,28 @@ async def resp_react_input_received(update, context):
     context.user_data.pop("resp_react_key", None)
     context.user_data.pop("resp_react_premium", None)
     return ConversationHandler.END
+
+
+async def resp_react_global_toggle_callback(u, c):
+    """🆕 v139.4: global auto-reaction ON/OFF (Edit Responses panel)."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        from customization import reaction_enabled, set_reaction_enabled
+        new = not reaction_enabled()
+        set_reaction_enabled(new)
+        state = "ON 🟢" if new else "OFF 🔴"
+    except Exception as e:
+        await q.answer(f"❌ {e}", show_alert=True); return
+    try:
+        await q.answer(f"⚡ Auto-reaction: {state}", show_alert=True)
+    except Exception:
+        pass
+    # re-open the responses category list so admin sees updated toggle
+    from handlers_admin import admin_responses_callback
+    try:
+        await admin_responses_callback(u, c)
+    except Exception:
+        pass

@@ -103,7 +103,7 @@ from handlers_support import (support_menu_callback, st_list_callback, st_view_c
                                adm_wr_reject_callback,
                                adm_pending_delivery_callback, adm_delivery_mode_callback, adm_restock_reqs_callback,
                                adm_deliver_callback, adm_delivery_text_received)
-from handlers_admin import admin_deposit_history_callback, admin_deposit_page_callback, admin_deposit_detail_callback, admin_responses_category_callback, bybit_test_callback, resp_react_callback, resp_react_set_callback, resp_react_clear_callback, resp_react_prem_callback, resp_react_custom_callback, resp_react_input_received  # 📊 Deposit + ✏️ Responses
+from handlers_admin import admin_deposit_history_callback, admin_deposit_page_callback, admin_deposit_detail_callback, admin_responses_category_callback, bybit_test_callback, resp_react_callback, resp_react_set_callback, resp_react_clear_callback, resp_react_prem_callback, resp_react_custom_callback, resp_react_input_received, resp_react_global_toggle_callback  # 📊 Deposit + ✏️ Responses
 # 🆕 v37: Language, Reviews, Loyalty, Analytics
 from ui_extras import language_menu_callback, set_language_callback
 from handlers_reviews import (
@@ -1896,6 +1896,7 @@ def main():
         ("^resp_react_(?!set_|clear_|prem_|custom_)", resp_react_callback),
         # NOTE: prem_/custom_ are intentionally NOT in this table — they are
         # entry_points of the ConversationHandler below (state 99).
+        ("^resp_react_global_toggle$", resp_react_global_toggle_callback),
         # 🆕 v30: Binance proxy removed (screenshot verifier doesn't need it)
         # 🆕 v23: Product Color Indicators
         ("^admin_colors$", admin_colors_callback),
