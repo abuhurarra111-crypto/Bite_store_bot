@@ -2224,12 +2224,19 @@ async def fj_panel_callback(update, context):
     """
     Force Join settings panel (v135 — unlimited channels/groups).
     Admin Panel → 🔗 Force Join Setup
+    🐛 v142 FIX: opening the panel MUST clear every force-join text-input flag.
+    Previously a leftover `fj_add_link` (e.g. after an invalid-link retry) stayed
+    set — the NEXT plain text message was then swallowed by fj_add_link_received,
+    making the bot look stuck.
     """
     q = update.callback_query
     if not _is_admin(q.from_user.id):
         await q.answer("❌ Admin only!", show_alert=True)
         return
     await q.answer()
+    for k in ("fj_add_link", "fj_ren_target", "fj_emo_target", "fj_link_target",
+              "fj_vbtn_ren", "fj_vbtn_emo", "fj_bulk_sel"):
+        context.user_data.pop(k, None)
     await _show_fj_panel(q, context.bot)
 
 
@@ -2396,6 +2403,9 @@ async def fjm_callback(update, context):
     if not _is_admin(q.from_user.id):
         await q.answer("❌ Admin only!", show_alert=True); return
     await q.answer()
+    # 🐛 v142: leave any pending text-input step behind
+    for k in ("fj_add_link", "fj_ren_target", "fj_emo_target", "fj_link_target"):
+        context.user_data.pop(k, None)
     try:
         tid = int((q.data or "").replace("fjm_", "").split("_")[0])
         from database import get_fj_target
@@ -2762,6 +2772,9 @@ async def fj_vbtn_callback(update, context):
     if not _is_admin(q.from_user.id):
         await q.answer("❌ Admin only!", show_alert=True); return
     await q.answer()
+    # 🐛 v142: clear text-step flags so a stale verify-input never swallows text
+    for k in ("fj_vbtn_ren", "fj_vbtn_emo", "fj_add_link"):
+        context.user_data.pop(k, None)
     try:
         from database import get_fj_verify_button
         vb = get_fj_verify_button()

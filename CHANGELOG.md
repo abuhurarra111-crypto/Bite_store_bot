@@ -8,7 +8,30 @@
 
 ---
 
-# 🚀 v141 (2026-08-03) — Button Editor: full location coverage + shape/padding + back buttons
+# 🚀 v142 (2026-08-03) — FIX: Force-Join bot stuck after adding targets
+
+## 🐛 Bug (reported: "2 buttons add krke wapas Force Join kholo to bot stuck")
+- **Kahan:** Force Join Setup → ➕ Add Channel/Group → kuch targets add karne ke baad
+  admin panel se 🔗 Force Join Setup dobara kholne par bot "stuck" ho jata tha.
+- **Root cause:** text-input flags (`fj_add_link`, `fj_ren_target`, `fj_emo_target`,
+  `fj_link_target`, `fj_vbtn_ren`, `fj_vbtn_emo`) user_data me set rehte the. Jab
+  admin kisi bhi wajah se "Add" prompt me hota tha (ya invalid-link retry ke baad
+  flag bacha hota tha) aur wapas panel kholta tha, to panel clear nahi karta tha.
+  Phir admin ka AGLA normal text message `fj_add_link_received` pakad leta tha —
+  use link samajh ke parse karta tha → confusing "invalid link" replies → bot
+  stuck lagta tha.
+- **Fix:**
+  1. `fj_panel_callback` ab panel khulte hi **saare** force-join text-step flags
+     clear karta hai (master exit).
+  2. `fjm_callback` (target manage panel) bhi flags clear karta hai.
+  3. `fj_vbtn_callback` (verify editor) bhi flags clear karta hai.
+- **Verified:** reproduce test — invalid link → flag True → panel reopen → flag
+  None → normal text flow safe. Regression test added (v135 suite 16).
+
+## 🧪 Tests: 179/179 PASS · boot clean
+
+---
+ (2026-08-03) — Button Editor: full location coverage + shape/padding + back buttons
 
 ## ✅ Screen Editor ab force-join ko bhi cover karta hai
 - New **🔗 Force Join** screen added to the Screen-by-Screen Editor (SCREEN_TREE,
