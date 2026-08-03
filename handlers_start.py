@@ -735,14 +735,8 @@ async def _send_welcome_message(reply_to, context, u):
     text = _r("welcome").format(shop_name=shop, user_id=u.id)
     send_text, send_mode = smart_text_and_mode(text, "Markdown")
     await reply_to.reply_text("👋", reply_markup=persistent_menu(u.id))
-    sent = await reply_to.reply_text(send_text, parse_mode=send_mode,
+    await reply_to.reply_text(send_text, parse_mode=send_mode,
         reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
-    # auto-react (only if configured + enabled); never raises
-    try:
-        from customization import react_to_message
-        await react_to_message(context.bot, sent.chat_id, sent.message_id, "welcome")
-    except Exception:
-        pass
 
 
 async def _complete_start_after_math(update, context):

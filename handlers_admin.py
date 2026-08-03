@@ -1403,21 +1403,7 @@ async def _show_responses_category(u, c, category="all", page=1):
             count = len(cat_info["keys"])
             kb.append([InlineKeyboardButton(f"{cat_info['name']} ({count})", callback_data=f"respcat_{cat_id}")])
         kb.append([InlineKeyboardButton("📋 View ALL Responses", callback_data="respcat_all_list")])
-        try:
-            from customization import reaction_enabled
-            _rstate = "ON 🟢" if reaction_enabled() else "OFF 🔴"
-        except Exception:
-            _rstate = "OFF 🔴"
-        kb.append([InlineKeyboardButton(f"⚡ Auto-Reaction (bot reacts to its msgs): {_rstate}",
-                                        callback_data="resp_react_global_toggle")])
-        try:
-            from customization import get_default_reaction
-            _dflt = get_default_reaction() or "—"
-            _dflt_disp = _dflt if len(_dflt) < 18 else _dflt[:15] + "..."
-        except Exception:
-            _dflt_disp = "—"
-        kb.append([InlineKeyboardButton(f"🎯 Default Reaction (har msg): {_dflt_disp}",
-                                        callback_data="resp_react_default")])
+
         kb.append([InlineKeyboardButton("🔙 Back to Settings", callback_data="admin_settings")])
         await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
     else:
@@ -1501,34 +1487,16 @@ async def edit_response_callback(u,c):
     cur=get_response(key,DEFAULT_RESPONSES.get(key,""))
     c.user_data['erk']=key
     preview=cur[:400]+"..." if len(cur)>400 else cur
-    # 🔧 v133: include reaction status + quick reaction buttons in the edit panel
-    try:
-        from customization import get_reaction
-        _rr = get_reaction(key)
-    except Exception:
-        _rr = ""
-    react_line = ""
-    if _rr:
-        react_line = f"\n⚡ Reaction: {_rr}"
     await _safe_edit(q,
-        f"✏️ *{key.replace('_',' ').title()}*{react_line}\n\nCurrent:\n```\n{preview}\n```\n\n"
-        f"Type new text, or tap a reaction option:",
+        f"✏️ *{key.replace('_',' ').title()}*\n\nCurrent:\n```\n{preview}\n```\n\n"
+        f"Type new text:",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("⚡ Set/Change Reaction", callback_data=f"resp_react_{key}")],
-            [InlineKeyboardButton("⚡ Clear Reaction", callback_data=f"resp_react_clear_{key}")],
             [InlineKeyboardButton("❌ Cancel", callback_data="noop")],
         ])); return EDIT_RESP_VALUE
 
 async def response_value_received(u,c):
     if u.effective_user.id!=ADMIN_ID: return ConversationHandler.END
-    # 🐛 v139.4 CRITICAL: when the admin is in the reaction-input flow
-    # (premium/custom emoji), the OLD "Edit Response" conversation is still
-    # active. Without this guard, the emoji the admin types got saved as the
-    # RESPONSE TEXT itself → whole welcome message was overwritten with one
-    # emoji. Reaction text must NEVER touch the response value.
-    if c.user_data.get("resp_react_key"):
-        return ConversationHandler.END
     val = u.message.text or ""
     try:
         html_v = (u.message.text_html_urled or "").strip()
@@ -1998,7 +1966,6 @@ async def edit_product_emoji_received(u, c):
     return ConversationHandler.END
 
 
-
 # ════════════════════════════════════════════
 # 📏 BUTTON SIZE (Step 2)
 # ════════════════════════════════════════════
@@ -2051,7 +2018,6 @@ async def set_button_size_callback(u, c):
     await admin_btn_size_callback(u, c)
 
 
-
 # ════════════════════════════════════════════
 # 🎨 MENU STYLES (Step 3)
 # ════════════════════════════════════════════
@@ -2101,7 +2067,6 @@ async def set_menu_style_callback(u, c):
     await q.answer(f"✅ Applied: {name}")
     # Refresh screen
     await admin_menu_style_callback(u, c)
-
 
 
 # ════════════════════════════════════════════
@@ -3899,7 +3864,6 @@ async def toggle_shop_categorized_callback(u, c):
     await admin_toggles_callback(u, c)
 
 
-
 # ════════════════════════════════════════════
 # ❌ UNIVERSAL CONVERSATION CANCEL (inline button)
 # ════════════════════════════════════════════
@@ -5014,7 +4978,6 @@ async def color_reset_callback(u, c):
     await admin_colors_callback(u, c)
 
 
-
 # ════════════════════════════════════════════
 # 🔶 BINANCE API TEST (v24)
 # ════════════════════════════════════════════
@@ -5054,7 +5017,6 @@ async def admin_test_binance_api_callback(u, c):
         [InlineKeyboardButton("🔙 Back to Settings", callback_data="admin_settings")],
     ])
     await _safe_edit(q, text, reply_markup=kb)
-
 
 
 async def admin_test_email_callback(u, c):
@@ -5568,7 +5530,6 @@ async def admin_binance_api_list_callback(u, c):
         [InlineKeyboardButton("🔙 Back",    callback_data="admin_binance_api")],
     ])
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
-
 
 
 # ════════════════════════════════════════════
@@ -6460,7 +6421,6 @@ async def delete_category_do_callback(u, c):
 
 
 # ── Products/Items ──
-
 
 
 async def manual_hist_callback(u, c):
@@ -8351,7 +8311,6 @@ async def admin_pm_crypto_callback(u, c):
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
 
 
-
 async def bybit_test_callback(u, c):
     """🔄 Test the Bybit API connection (on-chain + internal deposits).
 
@@ -8416,195 +8375,3 @@ async def bybit_test_callback(u, c):
 # ⚡ v133 — RESPONSE REACTION SETTER (per-response emoji)
 # ════════════════════════════════════════════════════════════
 
-async def _render_reaction_picker(q, key):
-    """Render the reaction picker for a clean response key (v139.4).
-    🆕 v140: when key is __default__ it edits the DEFAULT reaction that is
-    applied to EVERY message the bot sends."""
-    from customization import get_reaction, get_default_reaction, DEFAULT_REACTION_KEY
-    is_default = (key == DEFAULT_REACTION_KEY)
-    if is_default:
-        cur = get_default_reaction()
-    else:
-        cur = get_reaction(key)
-    kb = [
-        [InlineKeyboardButton("👍", callback_data=f"resp_react_set_{key}|👍"),
-         InlineKeyboardButton("❤️", callback_data=f"resp_react_set_{key}|❤️"),
-         InlineKeyboardButton("🔥", callback_data=f"resp_react_set_{key}|🔥"),
-         InlineKeyboardButton("🎉", callback_data=f"resp_react_set_{key}|🎉")],
-        [InlineKeyboardButton("⚡", callback_data=f"resp_react_set_{key}|⚡"),
-         InlineKeyboardButton("💎", callback_data=f"resp_react_set_{key}|💎"),
-         InlineKeyboardButton("✅", callback_data=f"resp_react_set_{key}|✅"),
-         InlineKeyboardButton("⭐", callback_data=f"resp_react_set_{key}|⭐")],
-        [InlineKeyboardButton("✨ Premium Animated", callback_data=f"resp_react_prem_{key}")],
-        [InlineKeyboardButton("🖊️ Type custom emoji", callback_data=f"resp_react_custom_{key}")],
-        [InlineKeyboardButton("🚫 Clear", callback_data=f"resp_react_clear_{key}")],
-        [InlineKeyboardButton("🔙 Back", callback_data="respcat_all_list" if is_default else f"editresp_{key}")],
-    ]
-    cur_line = f"Current: `{cur}`" if cur else "No reaction set"
-    title = "DEFAULT (har message ke liye)" if is_default else key.replace('_', ' ').title()
-    await _safe_edit(q, f"⚡ *Reaction — {title}*\n━━━━━━━━━━━━━━━━━━━━\n{cur_line}\n\nPick an emoji, premium animated, or type your own:",
-                     parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-
-
-async def resp_react_default_callback(u, c):
-    """🆕 v140: default reaction menu — applied to EVERY message the bot sends
-    (welcome, shop, every button press) like the reference bot."""
-    q = u.callback_query
-    if q.from_user.id != ADMIN_ID:
-        await q.answer("❌", show_alert=True); return
-    await q.answer()
-    from customization import get_default_reaction, DEFAULT_REACTION_KEY
-    cur = get_default_reaction()
-    await _render_reaction_picker(q, DEFAULT_REACTION_KEY)
-
-
-async def resp_react_callback(u, c):
-    """Open the reaction picker for a response key."""
-    q = u.callback_query
-    if q.from_user.id != ADMIN_ID:
-        await q.answer("❌", show_alert=True); return
-    await q.answer()
-    key = q.data.replace("resp_react_", "")
-    await _render_reaction_picker(q, key)
-
-
-async def resp_react_set_callback(u, c):
-    """Set a regular-emoji reaction."""
-    q = u.callback_query
-    if q.from_user.id != ADMIN_ID:
-        await q.answer("❌", show_alert=True); return
-    raw = q.data.replace("resp_react_set_", "")
-    key, emoji = raw.rsplit("|", 1)
-    from customization import set_reaction, set_default_reaction, DEFAULT_REACTION_KEY
-    if key == DEFAULT_REACTION_KEY:
-        set_default_reaction(emoji)
-    else:
-        set_reaction(key, emoji)
-    await q.answer(f"✅ Reaction set: {emoji}", show_alert=True)
-    await _render_reaction_picker(q, key)
-
-
-async def resp_react_clear_callback(u, c):
-    """Clear the reaction for a response key."""
-    q = u.callback_query
-    if q.from_user.id != ADMIN_ID:
-        await q.answer("❌", show_alert=True); return
-    key = q.data.replace("resp_react_clear_", "")
-    from customization import set_reaction, set_default_reaction, DEFAULT_REACTION_KEY
-    if key == DEFAULT_REACTION_KEY:
-        set_default_reaction("")
-    else:
-        set_reaction(key, "")
-    await q.answer("✅ Reaction cleared", show_alert=True)
-    try:
-        await _render_reaction_picker(q, key)
-    except Exception:
-        pass
-
-
-async def resp_react_prem_callback(u, c):
-    """Premium animated emoji — admin sends the emoji (custom_emoji_id captured)."""
-    q = u.callback_query
-    if q.from_user.id != ADMIN_ID:
-        await q.answer("❌", show_alert=True); return
-    key = q.data.replace("resp_react_prem_", "")
-    c.user_data["resp_react_key"] = key
-    c.user_data["resp_react_premium"] = True
-    await _safe_edit(q,
-        "✨ *Premium Animated Reaction*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Send a Telegram Premium emoji (animated) here.\n"
-        "_Premium emojis animate for Premium users; others see the fallback._",
-        parse_mode="Markdown",
-        reply_markup=inline_cancel_btn())
-    # conversation handler for premium emoji text input
-    from telegram.ext import ConversationHandler as _CH
-    return 99
-
-
-async def resp_react_custom_callback(u, c):
-    """Custom emoji — admin types any emoji."""
-    q = u.callback_query
-    if q.from_user.id != ADMIN_ID:
-        await q.answer("❌", show_alert=True); return
-    key = q.data.replace("resp_react_custom_", "")
-    c.user_data["resp_react_key"] = key
-    c.user_data["resp_react_premium"] = False
-    await _safe_edit(q,
-        "🖊️ *Type your emoji*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Send any emoji (e.g. ✅, ⚡, 😍).",
-        parse_mode="Markdown",
-        reply_markup=inline_cancel_btn())
-    return 99
-
-
-async def resp_react_input_received(update, context):
-    """Receive the admin's emoji (regular or premium) for a response reaction."""
-    if update.effective_user.id != ADMIN_ID:
-        return ConversationHandler.END
-    key = context.user_data.get("resp_react_key", "")
-    is_prem = context.user_data.get("resp_react_premium", False)
-    if not key:
-        return ConversationHandler.END
-    try:
-        from customization import (set_reaction, set_default_reaction,
-                                   DEFAULT_REACTION_KEY)
-        def _save(spec):
-            if key == DEFAULT_REACTION_KEY:
-                set_default_reaction(spec)
-            else:
-                set_reaction(key, spec)
-        label = "DEFAULT (har message)" if key == DEFAULT_REACTION_KEY else key
-        if is_prem:
-            # premium emoji — capture custom_emoji_id from entity
-            eid = ""
-            try:
-                if update.message and update.message.entities:
-                    from telegram.constants import MessageEntityType
-                    for ent in update.message.entities:
-                        if ent.type == MessageEntityType.CUSTOM_EMOJI:
-                            eid = str(ent.custom_emoji_id or "")
-                            break
-            except Exception:
-                pass
-            if not eid:
-                await update.message.reply_text("❌ Send a Premium (animated) emoji — this one had no custom_emoji_id.")
-                return ConversationHandler.END
-            _save(f"premium:{eid}")
-            await update.message.reply_text(f"✅ Premium reaction set for `{label}`.", parse_mode="Markdown")
-        else:
-            emoji = (update.message.text or "").strip()
-            if not emoji:
-                await update.message.reply_text("❌ Empty. Send an emoji.")
-                return ConversationHandler.END
-            _save(emoji[:8])
-            await update.message.reply_text(f"✅ Reaction set: {emoji[:8]} for `{label}`", parse_mode="Markdown")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
-    context.user_data.pop("resp_react_key", None)
-    context.user_data.pop("resp_react_premium", None)
-    return ConversationHandler.END
-
-
-async def resp_react_global_toggle_callback(u, c):
-    """🆕 v139.4: global auto-reaction ON/OFF (Edit Responses panel)."""
-    q = u.callback_query
-    if q.from_user.id != ADMIN_ID:
-        await q.answer("❌", show_alert=True); return
-    await q.answer()
-    try:
-        from customization import reaction_enabled, set_reaction_enabled
-        new = not reaction_enabled()
-        set_reaction_enabled(new)
-        state = "ON 🟢" if new else "OFF 🔴"
-    except Exception as e:
-        await q.answer(f"❌ {e}", show_alert=True); return
-    try:
-        await q.answer(f"⚡ Auto-reaction: {state}", show_alert=True)
-    except Exception:
-        pass
-    # re-open the responses category list so admin sees updated toggle
-    from handlers_admin import admin_responses_callback
-    try:
-        await admin_responses_callback(u, c)
-    except Exception:
-        pass

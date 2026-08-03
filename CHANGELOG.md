@@ -8,7 +8,35 @@
 
 ---
 
-# 🚀 v140 (2026-08-03) — GLOBAL AUTO-REACTION on every outbound message
+# 🚀 v140.1 (2026-08-03) — Response-reaction feature REMOVED + Force-Join all-buttons FIX
+
+## ❌ REMOVED — auto-reaction / Edit-Response reaction feature (owner request)
+- **"Rehny do is response wali update ko khtm krdo"** — the whole reaction feature
+  is removed:
+  - Global auto-react guard hook (`_reaction_hook` / `auto_react_to_message`) removed
+    from premium_emoji_guard.py → bot never auto-reacts to its own messages.
+  - Default-reaction + per-response reaction admin UI removed (Edit Responses → no
+    more ⚡ buttons; no Auto-Reaction / Default Reaction toggles).
+  - All `resp_react_*` callbacks + ConversationHandler + registrations removed.
+  - `react_enabled` now defaults OFF and is cleared in the DB.
+- The premium-emoji RENDERING guard stays (that part was never the problem).
+
+## 🐛 FIX — Force Join: only 1 of N buttons showed for new users
+- **Bug:** admin creates 3 channel/group buttons but a new user saw only 1.
+- **Root cause:** the join screen rendered buttons only for targets in `missing`.
+  `_is_member` fails OPEN when the bot is not an admin in a target (TelegramError
+  → treated as "already a member"). So any target the bot wasn't admin in was
+  silently hidden → only the bot-admin target's button appeared.
+- **Fix:** the join screen (and the existing-user re-join gate) now render a
+  button for **EVERY enabled target**, not just `missing`. The Verify tap still
+  re-checks each one. All created buttons always show.
+- Verified: 3 targets + bot admin in only 1 → previously 2 buttons, now **4**
+  (3 join + verify) in both new-user and existing-user paths.
+
+## 🧪 Tests: v140.1 suite 7/7 · full regression 168/168 PASS · boot clean
+
+---
+ (2026-08-03) — GLOBAL AUTO-REACTION on every outbound message
 
 ## ✅ Feature (user request — reference bot in screenshot)
 - Har message pe bot **khud apni message ke UPAR reaction** lagata hai (jaise

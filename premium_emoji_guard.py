@@ -97,28 +97,6 @@ def install():
     # ── Patch each Bot send/edit method (positional or keyword) ──
     # We need to handle both `send_message(chat_id, text, ...)` (positional)
     # and `send_message(chat_id=..., text=..., ...)` (keyword).
-    # 🆕 v140: after any successful outbound message, auto-react to it with the
-    # configured DEFAULT reaction (regular emoji or premium animated), exactly
-    # like the reference bot in the screenshot. Never raises; never recurses
-    # (set_message_reaction is not send_message).
-    def _reaction_hook(bot_obj, result):
-        try:
-            mid = getattr(result, "message_id", None)
-            cid = getattr(result, "chat_id", None)
-            if mid and cid:
-                from customization import auto_react_to_message
-                import asyncio as _asyncio
-                try:
-                    _loop = _asyncio.get_event_loop()
-                except Exception:
-                    _loop = None
-                if _loop is not None and _loop.is_running():
-                    _loop.create_task(auto_react_to_message(bot_obj, cid, mid))
-                else:
-                    _asyncio.run(auto_react_to_message(bot_obj, cid, mid))
-        except Exception as e:
-            logger.debug(f"[premium_guard] auto-react skipped: {e}")
-
     def _wrap_text_method(orig_func, text_param='text'):
         async def wrapped(self, *args, **kwargs):
             # If text is positional (2nd arg after chat_id), promote to kwargs
@@ -134,9 +112,7 @@ def install():
                 _normalize(kwargs, text_param)
             except Exception as e:
                 logger.warning(f"[premium_guard] normalize failed: {e}")
-            result = await orig_func(self, *args, **kwargs)
-            _reaction_hook(self, result)
-            return result
+            return await orig_func(self, *args, **kwargs)
         return wrapped
 
     def _wrap_caption_method(orig_func):
@@ -148,9 +124,8 @@ def install():
             return await orig_func(self, *args, **kwargs)
         return wrapped
 
-    # 🐛 v140 CRITICAL: PTB Application.builder() creates an **ExtBot**, and
-    # ExtBot OVERRIDES send_message — so patching only Bot.send_message did
-    # nothing in production. Patch BOTH Bot and ExtBot.
+    # v140.1: auto-react removed. Patch send_message on BOTH Bot and ExtBot
+    # (PTB Application.builder() uses ExtBot which overrides send_message).
     _targets = [Bot]
     try:
         from telegram.ext import ExtBot
@@ -159,32 +134,12 @@ def install():
     except Exception:
         pass
 
-    _media_methods = ("send_photo", "send_video", "send_document",
-                      "send_animation", "send_audio", "send_voice")
-
     for _T in _targets:
         # send_message — text is 2nd positional
         try:
             _T.send_message = _wrap_text_method(_T.send_message, 'text')
         except Exception as e:
             logger.warning(f"[premium_guard] patch send_message on {_T.__name__} failed: {e}")
-        # 🆕 v140: media sends also auto-react
-        for _meth in _media_methods:
-            try:
-                _orig = getattr(_T, _meth, None)
-                if _orig is None:
-                    continue
-                async def _wrap_media(self, *args, _o=_orig, **kwargs):
-                    try:
-                        _normalize(kwargs, 'caption')
-                    except Exception as e:
-                        logger.warning(f"[premium_guard] {_meth} normalize failed: {e}")
-                    result = await _o(self, *args, **kwargs)
-                    _reaction_hook(self, result)
-                    return result
-                setattr(_T, _meth, _wrap_media)
-            except Exception as e:
-                logger.warning(f"[premium_guard] patch {_meth} on {_T.__name__} failed: {e}")
     # edit_message_text — text is 1st positional in newer PTB? Check signature.
     # PTB 22.x: edit_message_text(text, chat_id=None, message_id=None, ...)
     # So text is 1st positional. Need different wrapper for this one.

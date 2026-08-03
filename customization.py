@@ -4015,16 +4015,15 @@ async def se_subbtn_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 def reaction_enabled() -> bool:
     """Master toggle for auto-reactions.
-    🆕 v140: default ON — the owner asked for the bot to auto-react to its own
-    messages like reference bots. Setting "react_enabled" absent/empty → ON."""
+    🆕 v140.1: response-reaction feature REMOVED (owner request) → default OFF."""
     try:
         from database import get_setting
-        val = get_setting("react_enabled", "1")
+        val = get_setting("react_enabled", "0")
         if val is None or str(val).strip() == "":
-            return True
+            return False
         return str(val).strip() == "1"
     except Exception:
-        return True
+        return False
 
 
 def set_reaction_enabled(on: bool):
@@ -4053,30 +4052,17 @@ def set_reaction(response_key: str, spec: str):
         pass
 
 
-# 🆕 v140 — DEFAULT reaction applied to EVERY outbound message (like the
-# reference bot in the screenshot: any button press → some emoji reaction).
-DEFAULT_REACTION_KEY = "__default__"
+# 🆕 v140.1: default-reaction / auto-react REMOVED (owner request).
+# Per-response react_to_message is kept only as an inert helper; nothing
+# calls it anymore and the master toggle defaults to OFF.
 
-
-def get_default_reaction() -> str:
+async def react_to_message(bot, chat_id, message_id, response_key):
+    """React to a message the bot just sent, if a reaction is configured for
+    that response key. Never raises. (v140.1: no callers — feature removed.)"""
     try:
-        from database import get_setting
-        return (get_setting("react_default", "") or "").strip()
-    except Exception:
-        return ""
-
-
-def set_default_reaction(spec: str):
-    try:
-        from database import set_setting
-        set_setting("react_default", (spec or "").strip())
-    except Exception:
-        pass
-
-
-async def _apply_reaction(bot, chat_id, message_id, spec):
-    """Apply one reaction spec ('' / emoji / premium:<id>) — never raises."""
-    try:
+        if not reaction_enabled():
+            return
+        spec = get_reaction(response_key)
         if not spec:
             return
         from telegram import ReactionTypeEmoji, ReactionTypeCustomEmoji
@@ -4092,29 +4078,4 @@ async def _apply_reaction(bot, chat_id, message_id, spec):
             reaction = [ReactionTypeEmoji(emoji=emoji)]
         await bot.set_message_reaction(chat_id=chat_id, message_id=message_id, reaction=reaction)
     except Exception as e:
-        logger.debug(f"[React] apply failed: {e}")
-
-
-async def react_to_message(bot, chat_id, message_id, response_key):
-    """React to a message the bot just sent, if a reaction is configured for
-    that response key. Never raises."""
-    try:
-        if not reaction_enabled():
-            return
-        spec = get_reaction(response_key)
-        await _apply_reaction(bot, chat_id, message_id, spec)
-    except Exception as e:
         logger.debug(f"[React] failed for {response_key}: {e}")
-
-
-async def auto_react_to_message(bot, chat_id, message_id):
-    """🆕 v140: apply the DEFAULT reaction to an arbitrary message the bot
-    just sent (used by the global premium-emoji guard → EVERY outgoing
-    message gets a reaction when a default is configured). Never raises."""
-    try:
-        if not reaction_enabled():
-            return
-        spec = get_default_reaction()
-        await _apply_reaction(bot, chat_id, message_id, spec)
-    except Exception as e:
-        logger.debug(f"[AutoReact] failed: {e}")

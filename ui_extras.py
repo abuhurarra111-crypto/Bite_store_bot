@@ -1942,11 +1942,14 @@ async def check_force_join(update, context) -> bool:
             "After joining, tap the button below ✅"
         )
 
-    # Build join buttons — one per target (label + premium emoji + color),
-    # plus the single editable Verify button.
+    # Build join buttons — 🐛 v140.1 FIX: render EVERY enabled target, not
+    # only `missing`. _is_member fails OPEN when the bot is not admin in a
+    # group/channel, which used to hide those targets entirely (a 3-button
+    # setup showed only 1). Now all configured buttons always show, and the
+    # Verify tap re-checks each one.
     link_lines = []
     kb_links   = []
-    for t in missing:
+    for t in targets:
         chat = (t.get("link") or "").strip()
         label = (t.get("label") or "Join").strip() or "Join"
         if chat.startswith("https://t.me/"):
@@ -2062,9 +2065,11 @@ async def force_join_action_gate(update, context) -> bool:
                and not await _is_member(bot, user.id, (t.get("link") or "").strip())]
     if not missing:
         return False
-    # User must (re)join → send the same join screen
+    # User must (re)join → send the same join screen (🐛 v140.1: show ALL
+    # enabled targets, not just `missing`, so every button the admin created
+    # is visible even if the bot is not admin in some of them).
     link_lines, kb_links = [], []
-    for t in missing:
+    for t in targets:
         chat = (t.get("link") or "").strip()
         label = (t.get("label") or "Join").strip() or "Join"
         if chat.startswith("https://t.me/"):
