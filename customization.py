@@ -2805,6 +2805,10 @@ SCREEN_TREE = {
             {"id": "pay_binance", "kind": "registry"},
             {"id": "pay_usdt_bep20", "kind": "registry"},
             {"id": "pay_usdt_trc20", "kind": "registry"},
+            # 🆕 v144.1: Binance flow editable buttons (mirror of Bybit)
+            {"id": "pay_copy_binance_payid", "kind": "registry"},
+            {"id": "pay_copy_usdt_address", "kind": "registry"},
+            {"id": "pay_cancel_payment", "kind": "registry"},
         ],
         "children": ["error_messages_screen", "binance_pay_layouts", "binance_usdt_layouts"],
     },

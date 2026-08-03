@@ -8,7 +8,28 @@
 
 ---
 
-# 🚀 v144 (2026-08-04) — CUSTOMIZATION REBUILT (clean hub + 8 new tools)
+# 🚀 v144.1 (2026-08-04) — Binance flow buttons now in the Buttons Editor
+
+## 🐛 Fix (owner: "Bybit flow ke saare buttons aate hain, Binance ke nahi")
+- **Kahan:** Buttons Editor → Binance Payment Flow screen had only 3 buttons
+  (pay_binance, pay_usdt_bep20, pay_usdt_trc20), while Bybit had 12.
+- **Root cause:** Binance Pay & Binance USDT deposit screens used **hardcoded**
+  inline buttons (`📋 Copy Binance Pay ID`, `📋 Copy Address`, `❌ Cancel Payment`)
+  — they were never registry buttons, so the editor could not show/edit them.
+- **Fix:**
+  1. 3 new registry buttons (group `pay`): `pay_copy_binance_payid`,
+     `pay_copy_usdt_address`, `pay_cancel_payment` — editable label + premium
+     emoji + color, same as the Bybit flow buttons.
+  2. Binance Pay Order-ID screen and Binance USDT TXID screen now render those
+     via `_make_flow_btn()` (editable) instead of hardcoded.
+  3. `binance_flow_screen` in SCREEN_TREE now lists all 6 buttons → the Screen
+     Editor shows Binance Auto / USDT BEP20 / USDT TRC20 / Copy Binance Pay ID /
+     Copy Address / Cancel Payment.
+
+## 🧪 Tests: v144 suite now 12/12 · full regression 198/198 PASS · boot clean
+
+---
+ (2026-08-04) — CUSTOMIZATION REBUILT (clean hub + 8 new tools)
 
 ## ✅ Rebuilt hub (replaces old flat menu)
 - Customization ab **sections** me organized hai with a **live summary** at top

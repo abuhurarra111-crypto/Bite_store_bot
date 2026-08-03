@@ -132,6 +132,27 @@ BUTTONS = {
         "large": "📋 Copy Bybit Pay ID", "xl": "📋 Copy Bybit Pay ID",
         "callback": "se_noop",
     },
+    # 🆕 v144.1: Binance flow — editable copy/cancel buttons (mirror of Bybit).
+    # Built via _make_flow_btn() with copy_text / callback_data; never rendered
+    # by _rb() so they are safe to appear in the Screen Editor button list.
+    "pay_copy_binance_payid": {
+        "group": "pay", "essential": True,
+        "short": "📋", "medium": "📋 Binance Pay ID",
+        "large": "📋 Copy Binance Pay ID", "xl": "📋 Copy Binance Pay ID",
+        "callback": "se_noop",
+    },
+    "pay_copy_usdt_address": {
+        "group": "pay", "essential": True,
+        "short": "📋", "medium": "📋 Address",
+        "large": "📋 Copy Address", "xl": "📋 Copy USDT Address",
+        "callback": "se_noop",
+    },
+    "pay_cancel_payment": {
+        "group": "pay", "essential": True,
+        "short": "❌", "medium": "❌ Cancel",
+        "large": "❌ Cancel Payment", "xl": "❌ Cancel Payment",
+        "callback": "cancel_order",
+    },
     # 🆕 v75: main_api button REMOVED — API system disabled on Worker deployment.
     # 🆕 v78: main_how_to inline button REMOVED — now on persistent reply
     # keyboard (always visible at bottom of chat next to 🏠 Main Menu).

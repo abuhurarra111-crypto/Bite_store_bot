@@ -572,9 +572,11 @@ async def _start_binance_order_id_flow(update, context, *, is_points, product, q
     context.user_data["binance_amount"]   = amount
 
     bid_for_copy = get_setting("binance_id", BINANCE_PAY_ID)
+    # 🆕 v144.1: Binance Pay ID copy + cancel are now EDITABLE registry buttons
+    # (rename / premium emoji / color) — mirror of the Bybit flow.
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📋 Copy Binance Pay ID", copy_text=CopyTextButton(bid_for_copy))],
-        [InlineKeyboardButton("❌ Cancel Payment", callback_data="cancel_order")],
+        [_make_flow_btn("pay_copy_binance_payid", copy_text=CopyTextButton(bid_for_copy))],
+        [_make_flow_btn("pay_cancel_payment", callback_data="cancel_order")],
     ])
     await _safe_send(
         q, context,
@@ -2618,10 +2620,11 @@ async def _start_usdt_payment(update, context, method, *, is_points=False, amoun
     )
     # 🔧 v129: Binance USDT is TXID-only — the customer pastes the TXID and the
     # bot auto-verifies via API. No Check button (that's Bybit USDT only).
+    # 🆕 v144.1: Copy Address + Cancel are now EDITABLE registry buttons.
     await _safe_send(q, context, instr,
         parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton('📋 Copy Address', copy_text=CopyTextButton(address))],
-            [InlineKeyboardButton('❌ Cancel Payment', callback_data='cancel_order')],
+            [_make_flow_btn('pay_copy_usdt_address', copy_text=CopyTextButton(address))],
+            [_make_flow_btn('pay_cancel_payment', callback_data='cancel_order')],
         ]))
 
 
