@@ -2286,6 +2286,22 @@ def _button_friendly_label(bid, kind):
             except Exception:
                 return f"🎛️ {bid}"
 
+        if kind == "fj_verify":
+            try:
+                from database import get_fj_verify_button
+                vb = get_fj_verify_button()
+                lbl = vb.get("label") or "✅ I Joined — Verify"
+                return f"✅ {lbl}"
+            except Exception:
+                return "✅ Verify Button"
+        if kind == "fj_targets":
+            try:
+                from database import list_fj_targets
+                n = len(list_fj_targets(enabled_only=True))
+                return f"🔗 Join Targets ({n})"
+            except Exception:
+                return "🔗 Join Targets"
+
         return f"🎛️ {bid}"
     except Exception:
         return f"🎛️ {bid}"
@@ -2295,11 +2311,16 @@ def _button_callback_for(bid, kind):
     """Return the callback that opens THIS button's edit screen.
     Registry → existing 'mbedit_<bid>' (full panel: rename / color / hide / style)
     Dynamic  → existing 'bs_edit_<key>' (styler: size / align / pad)
+    🆕 v141: force-join kinds → dedicated editors (verify button / targets list)
     """
     if kind == "registry":
         return f"mbedit_{bid}"
     if kind == "dynamic":
         return f"bs_edit_{bid}"
+    if kind == "fj_verify":
+        return "fj_vbtn"          # ✅ Verify-Button Editor (rename/color/premium emoji)
+    if kind == "fj_targets":
+        return "fj_panel"         # 🔗 Force Join Setup (all targets, add/delete)
     return None
 
 
@@ -2621,6 +2642,7 @@ SCREEN_TREE = {
             {"id": "main_language",     "kind": "registry"},
         ],
         "children": [
+            "force_join_screen",
             "shop_screen",
             "buy_points_screen",
             "my_account_screen",
@@ -2638,6 +2660,20 @@ SCREEN_TREE = {
     # ═══════════════════════════════════════════════════════════
     # 🛒 SHOP SCREEN
     # ═══════════════════════════════════════════════════════════
+    "force_join_screen": {
+        "icon": "🔗",
+        "title": "Force Join (Join Message + Verify)",
+        "description": "Join message text, Verified response, and the Verify button users tap after joining",
+        "texts": [
+            ("fj_message", "📝 Join Message"),
+            ("fj_verified_done", "📝 Verified Response"),
+        ],
+        "buttons": [
+            {"id": "fj_verify", "kind": "fj_verify"},
+            {"id": "fj_targets", "kind": "fj_targets"},
+        ],
+        "children": [],
+    },
     "shop_screen": {
         "icon": "🛒",
         "title": "Shop / Product List",

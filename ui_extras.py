@@ -2341,7 +2341,8 @@ async def fj_add_callback(update, context):
         await q.answer("❌ Admin only!", show_alert=True); return
     await q.answer()
     context.user_data["fj_add_link"] = True
-    kb = [[InlineKeyboardButton("❌ Cancel", callback_data="fj_panel")]]
+    # 🐛 v141 FIX: back button missing — "Cancel" only. Now explicit Back.
+    kb = [[InlineKeyboardButton("🔙 Back to Force Join", callback_data="fj_panel")]]
     text = (
         "➕ *Add Channel / Group*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -2471,7 +2472,7 @@ async def fjm_ren_callback(update, context):
     except Exception:
         return
     context.user_data["fj_ren_target"] = tid
-    kb = [[InlineKeyboardButton("❌ Cancel", callback_data="fj_panel")]]
+    kb = [[InlineKeyboardButton("🔙 Back", callback_data=f"fjm_{tid}")]]
     try:
         await q.edit_message_text(
             "✏️ *Rename target*\n\nSend the new button name (premium emoji allowed in the name):",
@@ -2513,7 +2514,7 @@ async def fjm_emo_callback(update, context):
         return
     context.user_data["fj_emo_target"] = tid
     kb = [[InlineKeyboardButton("🚫 Clear Emoji", callback_data=f"fjm_emo_clear_{tid}"),
-           InlineKeyboardButton("❌ Cancel", callback_data="fj_panel")]]
+           InlineKeyboardButton("🔙 Back", callback_data=f"fjm_{tid}")]]
     try:
         await q.edit_message_text(
             "✨ *Premium Emoji*\n\nSend the premium emoji (or any emoji) as a message. "
@@ -2577,7 +2578,7 @@ async def fjm_link_callback(update, context):
     except Exception:
         return
     context.user_data["fj_link_target"] = tid
-    kb = [[InlineKeyboardButton("❌ Cancel", callback_data="fj_panel")]]
+    kb = [[InlineKeyboardButton("🔙 Back", callback_data=f"fjm_{tid}")]]
     try:
         await q.edit_message_text(
             "🔗 *Change link*\n\nSend the new channel/group link:",
@@ -2819,7 +2820,7 @@ async def fj_vbtn_ren_callback(update, context):
         await q.answer("❌", show_alert=True); return
     await q.answer()
     context.user_data["fj_vbtn_ren"] = True
-    kb = [[InlineKeyboardButton("❌ Cancel", callback_data="fj_vbtn")]]
+    kb = [[InlineKeyboardButton("🔙 Back", callback_data="fj_vbtn")]]
     try:
         await q.edit_message_text(
             "✏️ *Rename Verify Button*\n\nSend the new name (premium emoji allowed):",
@@ -2856,7 +2857,7 @@ async def fj_vbtn_emo_callback(update, context):
     await q.answer()
     context.user_data["fj_vbtn_emo"] = True
     kb = [[InlineKeyboardButton("🚫 Clear Emoji", callback_data="fj_vbtn_emo_clear"),
-           InlineKeyboardButton("❌ Cancel", callback_data="fj_vbtn")]]
+           InlineKeyboardButton("🔙 Back", callback_data="fj_vbtn")]]
     try:
         await q.edit_message_text(
             "✨ *Verify Button — Premium Emoji*\n\nSend the premium emoji (or any emoji) as a message:",

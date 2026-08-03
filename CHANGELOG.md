@@ -8,7 +8,37 @@
 
 ---
 
-# 🚀 v140.1 (2026-08-03) — Response-reaction feature REMOVED + Force-Join all-buttons FIX
+# 🚀 v141 (2026-08-03) — Button Editor: full location coverage + shape/padding + back buttons
+
+## ✅ Screen Editor ab force-join ko bhi cover karta hai
+- New **🔗 Force Join** screen added to the Screen-by-Screen Editor (SCREEN_TREE,
+  43rd screen, listed under Main Menu):
+  - 📝 Join Message text (editable)
+  - 📝 Verified Response text (editable)
+  - ✅ **I Joined — Verify** button → opens the Verify-Button editor
+    (rename / color / premium emoji / link)
+  - 🔗 **Join Targets** → opens Force Join Setup (all targets, add/delete/rename/color)
+- So now ANY user-side button — main menu, shop, payments, force-join — is reachable
+  from Customization → Buttons Editor.
+
+## ✅ Button Editor: shape / display-format / padding
+- Manage-Button panel now has **📐 Shape / Size / Padding** → opens the Inline
+  Button Styler for that registry button (size S/M/L/XL/Full, alignment
+  left/center/right, extra padding 0–40). Styler already supported `reg_<bid>` keys.
+- **✨ Premium Emoji** dedicated button added (rename flow, premium capture).
+- Background Color (🔵 Blue / 🟢 Green / 🔴 Red) already present — unchanged.
+
+## ✅ Back buttons fixed (user report: "jahan button ni ata back ka")
+- Force Join **Add Channel/Group** prompt: was "❌ Cancel" only → now **🔙 Back to
+  Force Join**.
+- Per-target prompts (rename / emoji / change-link): "❌ Cancel" → **🔙 Back** to
+  that target's panel.
+- Verify-Button editor prompts (rename / emoji): **🔙 Back** to the editor.
+
+## 🧪 Tests: v141 suite 10/10 · full regression 178/178 PASS · boot clean
+
+---
+ (2026-08-03) — Response-reaction feature REMOVED + Force-Join all-buttons FIX
 
 ## ❌ REMOVED — auto-reaction / Edit-Response reaction feature (owner request)
 - **"Rehny do is response wali update ko khtm krdo"** — the whole reaction feature

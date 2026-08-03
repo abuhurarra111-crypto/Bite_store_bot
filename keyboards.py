@@ -1163,6 +1163,9 @@ def manage_one_button_keyboard(btn_id):
             InlineKeyboardButton("🖥️ Edit Large", callback_data=f"mbrenm_{btn_id}_large"),
         ],
         [InlineKeyboardButton("📺 Edit XL", callback_data=f"mbrenm_{btn_id}_xl")],
+        # 🆕 v141: Premium emoji — same rename flow (premium capture supported),
+        # but with a dedicated button so admins know they can add animated emojis.
+        [InlineKeyboardButton("✨ Premium Emoji", callback_data=f"mbrenm_{btn_id}_medium")],
     ]
 
     # 🎨 v46: Button background color (Telegram Premium feature)
@@ -1185,6 +1188,10 @@ def manage_one_button_keyboard(btn_id):
     else:
         kb.append([InlineKeyboardButton("🔒 Essential (cannot hide)", callback_data="locked")])
 
+    # 🆕 v141: Shape / Display-Format / Padding — opens the Inline Button
+    # Styler for this registry button (size / align / pad / shape). The styler
+    # already supports reg_<bid> keys via _apply_styler("reg_<bid>", ...).
+    kb.append([InlineKeyboardButton("📐 Shape / Size / Padding", callback_data=f"bs_edit_reg_{btn_id}")])
     kb.append([InlineKeyboardButton("♻️ Reset to default", callback_data=f"mbrst_{btn_id}")])
     grp = btn.get("group", "main")
     # 🆕 v54: include group name in back label so admin knows exactly where they're going.
