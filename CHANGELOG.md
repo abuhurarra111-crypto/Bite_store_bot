@@ -8,7 +8,38 @@
 
 ---
 
-# 🚀 v139.5 (2026-08-03) — Reaction input STILL not working: PTB "max 1 handler per group" root fix
+# 🚀 v140 (2026-08-03) — GLOBAL AUTO-REACTION on every outbound message
+
+## ✅ Feature (user request — reference bot in screenshot)
+- Har message pe bot **khud apni message ke UPAR reaction** lagata hai (jaise
+  screenshot wale bot me: koi bhi button press → koi na koi emoji, animated).
+- **Global guard** (premium_emoji_guard) ab **har send ke baad auto-react**
+  karta hai: text, photo, video, document, animation — sab pe.
+- **Default reaction** (`react_default`) = 🔥 (regular) ya `premium:<id>`
+  (animated). Har message pe yehi lagta hai.
+- **Per-response override** (Edit Responses → ⚡) — agar kisi response ke liye
+  alag reaction set hai to wo default ki jagah lagta hai (welcome pehle se
+  wired).
+- Master toggle `react_enabled` **default ON** + admin button (Edit Responses
+  screen pe `⚡ Auto-Reaction: ON/OFF`).
+- New admin button: `🎯 Default Reaction (har msg)` — isse aap default emoji
+  ya premium animated set kar sakte ho.
+
+## 🐛 CRITICAL internal fix: guard was patching the WRONG class
+- PTB `Application.builder()` creates an **ExtBot** which **overrides
+  send_message** — patching only `Bot.send_message` silently did NOTHING in
+  production. The guard now patches **both Bot and ExtBot** (+ media sends).
+- Reaction text can NEVER overwrite a response value (v139.4 guard kept) and
+  the reaction conversation is registered first (v139.5 kept).
+
+## 🧪 Tests
+- v140 suite 14/14 · faithful PTB router journey (custom + premium + GLOBAL
+  auto-react, welcome safe 1887 chars) ✅
+- **LIVE Bot API proof:** real token sendMessage + setMessageReaction(👍) → OK
+- Full regression **200/200 PASS** (20 suites)
+
+---
+ (2026-08-03) — Reaction input STILL not working: PTB "max 1 handler per group" root fix
 
 ## 🐛 Bug #5 (reported: "custom emoji click → bot koi response ni kiya, emoji set nahi hua")
 - **Kahan:** Edit Responses → ⚡ Set/Change Reaction → 🖊️ Type custom emoji / ✨ Premium

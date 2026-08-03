@@ -1410,6 +1410,14 @@ async def _show_responses_category(u, c, category="all", page=1):
             _rstate = "OFF 🔴"
         kb.append([InlineKeyboardButton(f"⚡ Auto-Reaction (bot reacts to its msgs): {_rstate}",
                                         callback_data="resp_react_global_toggle")])
+        try:
+            from customization import get_default_reaction
+            _dflt = get_default_reaction() or "—"
+            _dflt_disp = _dflt if len(_dflt) < 18 else _dflt[:15] + "..."
+        except Exception:
+            _dflt_disp = "—"
+        kb.append([InlineKeyboardButton(f"🎯 Default Reaction (har msg): {_dflt_disp}",
+                                        callback_data="resp_react_default")])
         kb.append([InlineKeyboardButton("🔙 Back to Settings", callback_data="admin_settings")])
         await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
     else:
@@ -8409,9 +8417,15 @@ async def bybit_test_callback(u, c):
 # ════════════════════════════════════════════════════════════
 
 async def _render_reaction_picker(q, key):
-    """Render the reaction picker for a clean response key (v139.4)."""
-    from customization import get_reaction
-    cur = get_reaction(key)
+    """Render the reaction picker for a clean response key (v139.4).
+    🆕 v140: when key is __default__ it edits the DEFAULT reaction that is
+    applied to EVERY message the bot sends."""
+    from customization import get_reaction, get_default_reaction, DEFAULT_REACTION_KEY
+    is_default = (key == DEFAULT_REACTION_KEY)
+    if is_default:
+        cur = get_default_reaction()
+    else:
+        cur = get_reaction(key)
     kb = [
         [InlineKeyboardButton("👍", callback_data=f"resp_react_set_{key}|👍"),
          InlineKeyboardButton("❤️", callback_data=f"resp_react_set_{key}|❤️"),
@@ -8424,11 +8438,24 @@ async def _render_reaction_picker(q, key):
         [InlineKeyboardButton("✨ Premium Animated", callback_data=f"resp_react_prem_{key}")],
         [InlineKeyboardButton("🖊️ Type custom emoji", callback_data=f"resp_react_custom_{key}")],
         [InlineKeyboardButton("🚫 Clear", callback_data=f"resp_react_clear_{key}")],
-        [InlineKeyboardButton("🔙 Back", callback_data=f"editresp_{key}")],
+        [InlineKeyboardButton("🔙 Back", callback_data="respcat_all_list" if is_default else f"editresp_{key}")],
     ]
     cur_line = f"Current: `{cur}`" if cur else "No reaction set"
-    await _safe_edit(q, f"⚡ *Reaction — {key.replace('_',' ').title()}*\n━━━━━━━━━━━━━━━━━━━━\n{cur_line}\n\nPick an emoji, premium animated, or type your own:",
+    title = "DEFAULT (har message ke liye)" if is_default else key.replace('_', ' ').title()
+    await _safe_edit(q, f"⚡ *Reaction — {title}*\n━━━━━━━━━━━━━━━━━━━━\n{cur_line}\n\nPick an emoji, premium animated, or type your own:",
                      parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def resp_react_default_callback(u, c):
+    """🆕 v140: default reaction menu — applied to EVERY message the bot sends
+    (welcome, shop, every button press) like the reference bot."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    from customization import get_default_reaction, DEFAULT_REACTION_KEY
+    cur = get_default_reaction()
+    await _render_reaction_picker(q, DEFAULT_REACTION_KEY)
 
 
 async def resp_react_callback(u, c):
@@ -8448,8 +8475,11 @@ async def resp_react_set_callback(u, c):
         await q.answer("❌", show_alert=True); return
     raw = q.data.replace("resp_react_set_", "")
     key, emoji = raw.rsplit("|", 1)
-    from customization import set_reaction
-    set_reaction(key, emoji)
+    from customization import set_reaction, set_default_reaction, DEFAULT_REACTION_KEY
+    if key == DEFAULT_REACTION_KEY:
+        set_default_reaction(emoji)
+    else:
+        set_reaction(key, emoji)
     await q.answer(f"✅ Reaction set: {emoji}", show_alert=True)
     await _render_reaction_picker(q, key)
 
@@ -8460,8 +8490,11 @@ async def resp_react_clear_callback(u, c):
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
     key = q.data.replace("resp_react_clear_", "")
-    from customization import set_reaction
-    set_reaction(key, "")
+    from customization import set_reaction, set_default_reaction, DEFAULT_REACTION_KEY
+    if key == DEFAULT_REACTION_KEY:
+        set_default_reaction("")
+    else:
+        set_reaction(key, "")
     await q.answer("✅ Reaction cleared", show_alert=True)
     try:
         await _render_reaction_picker(q, key)
@@ -8513,7 +8546,14 @@ async def resp_react_input_received(update, context):
     if not key:
         return ConversationHandler.END
     try:
-        from customization import set_reaction
+        from customization import (set_reaction, set_default_reaction,
+                                   DEFAULT_REACTION_KEY)
+        def _save(spec):
+            if key == DEFAULT_REACTION_KEY:
+                set_default_reaction(spec)
+            else:
+                set_reaction(key, spec)
+        label = "DEFAULT (har message)" if key == DEFAULT_REACTION_KEY else key
         if is_prem:
             # premium emoji — capture custom_emoji_id from entity
             eid = ""
@@ -8529,15 +8569,15 @@ async def resp_react_input_received(update, context):
             if not eid:
                 await update.message.reply_text("❌ Send a Premium (animated) emoji — this one had no custom_emoji_id.")
                 return ConversationHandler.END
-            set_reaction(key, f"premium:{eid}")
-            await update.message.reply_text(f"✅ Premium reaction set for `{key}`.", parse_mode="Markdown")
+            _save(f"premium:{eid}")
+            await update.message.reply_text(f"✅ Premium reaction set for `{label}`.", parse_mode="Markdown")
         else:
             emoji = (update.message.text or "").strip()
             if not emoji:
                 await update.message.reply_text("❌ Empty. Send an emoji.")
                 return ConversationHandler.END
-            set_reaction(key, emoji[:8])
-            await update.message.reply_text(f"✅ Reaction set: {emoji[:8]}")
+            _save(emoji[:8])
+            await update.message.reply_text(f"✅ Reaction set: {emoji[:8]} for `{label}`", parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
     context.user_data.pop("resp_react_key", None)
