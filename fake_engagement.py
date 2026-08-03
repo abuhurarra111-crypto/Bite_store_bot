@@ -3866,7 +3866,9 @@ async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None
 async def admin_bcast_test_callback(u, c):
     """Test: can the bot post to the fake-activity destination group/channel?
     Checks bot's member status, resolves dest, sends a test message, and
-    reports the exact result to the admin."""
+    reports the exact result to the admin.
+    🐛 v139 FIX: ADMIN_ID was used without import → NameError on tap."""
+    from config import ADMIN_ID
     q = u.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
