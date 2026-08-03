@@ -8,7 +8,37 @@
 
 ---
 
-# 🚀 v143.2 (2026-08-04) — FIX: raw HTML markup showing in Force-Join panel labels
+# 🚀 v144 (2026-08-04) — CUSTOMIZATION REBUILT (clean hub + 8 new tools)
+
+## ✅ Rebuilt hub (replaces old flat menu)
+- Customization ab **sections** me organized hai with a **live summary** at top
+  (button size · menu style · shop format · active layout · toggles ON count).
+- Sections: 🛍️ Shop Look · 🎛️ Buttons · 🧭 Menu · ⚙️ Extras.
+- All old deep panels still reachable (Buttons Editor, Product Design, Main Menu
+  Layout, Screen Editor, Styles, Colors, Broadcast color, Toggles).
+
+## ✅ 8 NEW features
+1. **🔍 Search** — type any button id / screen / response key → opens its editor
+   (searches BUTTONS registry + SCREEN_TREE + DEFAULT_RESPONSES).
+2. **🎭 Theme Presets (1-click)** — Classic / Colorful / Dark / Minimal / Premium.
+   Each sets button size + menu style + shop format + main-menu layout + group
+   colors in one tap (verified: PREMIUM → xl size, premium layout, grid format,
+   blue main group).
+3. **💾 Backup / Restore** — exports every customization setting (labels, colors,
+   sizes, styles, layout, banners, toggles) as JSON; paste back to restore.
+4. **🖼️ Home Banner** — admin-set banner line above the welcome text
+   (ON/OFF toggle + editable text, `{shop_name}` placeholder).
+5. **🎠 Display Formats — now 4** — Raw / Carousel / **Grid (2-column)** /
+   **List (1-per-row full)**. Grid packs buttons 2/row with compact labels.
+6. **🏷️ Category Colors** — per-category button background color (applies to its
+   shop buttons, in-stock only).
+7. **🎨 Group Colors via hub** — reachable from the new hub (existing engine).
+8. **Improved toggles screen** — same engine, now grouped & reachable from hub.
+
+## 🧪 Tests: v144 suite 9/9 · all suites pass individually (186 + 9 = 195) · boot clean
+
+---
+ (2026-08-04) — FIX: raw HTML markup showing in Force-Join panel labels
 
 ## 🐛 Bug (user screenshot)
 - **Kahan:** Force Join Setup → target rename with premium emoji → back → panel

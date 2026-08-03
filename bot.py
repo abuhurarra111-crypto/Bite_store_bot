@@ -86,6 +86,13 @@ from handlers_admin import (flash_toggle_callback, manual_hist_callback, edit_ma
 from handlers_admin import (flash_toggle_callback, adm_manage_pts_callback, adm_pts_uid_received, adm_pts_amt_received)
 from handlers_admin import *
 from handlers_admin import adm_diagnostics_callback
+from handlers_admin import (cz_noop_callback, cz_search_callback, cz_search_received,
+                            cz_theme_callback, cz_theme_apply_callback,
+                            cz_backup_callback, cz_import_callback, cz_import_received,
+                            cz_banner_callback, cz_banner_toggle_callback,
+                            cz_banner_text_callback, cz_banner_text_received,
+                            cz_catcolors_callback, cz_catcolor_set_callback,
+                            cz_format_callback, cz_fmt_callback)
 from handlers_admin import (flash_toggle_callback, edit_product_field_callback, edit_product_field_received,
                              EDIT_PRODUCT_VALUE, EDIT_CATEGORY_VALUE)
 from handlers_support import (support_menu_callback, st_list_callback, st_view_callback,
@@ -444,6 +451,13 @@ async def handle_text(update, context):
         if await fj_vbtn_ren_received(update, context): return
     if context.user_data.get('fj_vbtn_emo'):
         if await fj_vbtn_emo_received(update, context): return
+    # 🆕 v144: customization text inputs (search / import / banner)
+    if context.user_data.get('cz_search'):
+        if await cz_search_received(update, context): return
+    if context.user_data.get('cz_import'):
+        if await cz_import_received(update, context): return
+    if context.user_data.get('cz_banner_text'):
+        if await cz_banner_text_received(update, context): return
     # v132: global premium-emoji capture foundation. Any future text-input
     # feature can read these keys instead of losing premium emoji entities.
     try:
@@ -1997,6 +2011,19 @@ def main():
         ("^profit_all$", profit_all_callback),
         # 🆕 Customization handlers
         ("^admin_customization$", admin_customization_callback),
+        # 🆕 v144: new customization tools
+        ("^cz_noop$",              cz_noop_callback),
+        ("^cz_search$",            cz_search_callback),
+        ("^cz_theme$",             cz_theme_callback),
+        ("^cz_theme_",             cz_theme_apply_callback),
+        ("^cz_backup$",            cz_backup_callback),
+        ("^cz_import$",            cz_import_callback),
+        ("^cz_banner$",            cz_banner_callback),
+        ("^cz_banner_toggle$",     cz_banner_toggle_callback),
+        ("^cz_banner_text$",       cz_banner_text_callback),
+        ("^cz_catcolors$",         cz_catcolors_callback),
+        ("^cz_catcolor_",          cz_catcolor_set_callback),
+        ("^cz_fmt_",               cz_fmt_callback),
         ("^admin_toggles$", admin_toggles_callback),
         ("^toggle_show_", toggle_field_callback),
         ("^toggle_auto_product_colors$", toggle_field_callback),

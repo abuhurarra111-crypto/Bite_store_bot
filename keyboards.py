@@ -348,6 +348,24 @@ def all_products_keyboard(products, page=1, per_page=10, user=None, filter_mode=
         extract_emoji_from_html = None
     kb = []
     user_id = getattr(user, 'id', None) if user is not None else None
+    # 🆕 v144: display format (grid = 2/row compact, list = 1/row full)
+    try:
+        from database import get_setting as _gs2
+        _fmt = (_gs2("display_format", "raw") or "raw").strip().lower()
+        if _fmt not in ("raw", "grid", "list"):
+            _fmt = "raw"
+    except Exception:
+        _fmt = "raw"
+    # 🆕 v144: per-category color map (catcolor_<cid>)
+    _catcolors = {}
+    try:
+        from database import get_connection as _gc3
+        _cn = _gc3(); _cur = _cn.cursor()
+        for (k, v) in _cur.execute("SELECT key, value FROM bot_settings WHERE key LIKE 'catcolor_%'").fetchall():
+            _catcolors[str(k).replace("catcolor_", "")] = (v or "").strip()
+        _cn.close()
+    except Exception:
+        pass
     for p in page_prods:
         s = p['stock']
         p = dict(p)
@@ -365,7 +383,12 @@ def all_products_keyboard(products, page=1, per_page=10, user=None, filter_mode=
         # Use plain_name everywhere a text label is needed
         p['name'] = plain_name
 
-        if size == "small":
+        if _fmt == "grid":
+            # compact 2-column labels (name + price, short)
+            label = f"{this_prod_emoji}{p['name'][:16]} {fmt_price(p['price'])}" if s > 0 else f"{this_prod_emoji}{p['name'][:14]} ❌"
+        elif _fmt == "list":
+            label = f"{this_prod_emoji}{p['name']}  —  {fmt_price(p['price'])}" if s > 0 else f"{this_prod_emoji}{p['name']}  ❌"
+        elif size == "small":
             label = f"{this_prod_emoji}{p['name'][:18]}" if s > 0 else f"❌ {p['name'][:18]}"
         elif size == "medium":
             label = f"{this_prod_emoji}{p['name']} — {fmt_price(p['price'])}" if s > 0 else f"{this_prod_emoji}{p['name']} ❌"
@@ -386,13 +409,24 @@ def all_products_keyboard(products, page=1, per_page=10, user=None, filter_mode=
 
         # 🎨 v46: auto background color (out=red / manual=blue / auto=green)
         _pstyle = auto_product_style(p)
+        # 🆕 v144: per-category color override (only when in stock)
+        try:
+            _cid = str(p.get("category_id") or 0)
+            if s > 0 and _cid in _catcolors and _catcolors[_cid]:
+                _pstyle = _catcolors[_cid]
+        except Exception:
+            pass
         # 🆕 v45: If name has premium emoji, ALSO use icon_custom_emoji_id
-        if (name_emoji_id or _pstyle) and make_premium_button:
-            kb.append([make_premium_button(label, emoji_id=(name_emoji_id or None),
-                                            style=_pstyle,
-                                            callback_data=f"prod_{p['id']}")])
+        if make_premium_button:
+            _btn = make_premium_button(label, emoji_id=(name_emoji_id or None),
+                                       style=_pstyle or None,
+                                       callback_data=f"prod_{p['id']}")
         else:
-            kb.append([InlineKeyboardButton(label, callback_data=f"prod_{p['id']}")])
+            _btn = InlineKeyboardButton(label, callback_data=f"prod_{p['id']}")
+        if _fmt == "grid" and kb and len(kb[-1]) < 2:
+            kb[-1].append(_btn)
+        else:
+            kb.append([_btn])
 
     # 🆕 v52: Pagination buttons now editable via Customization → 🎨 Buttons → Navigation
     nav = []

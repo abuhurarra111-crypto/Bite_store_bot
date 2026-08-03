@@ -733,6 +733,18 @@ async def _send_welcome_message(reply_to, context, u):
     shop = get_setting("shop_name", SHOP_NAME)
     # 🆕 v137: WELCOME stays default-language (never switches) per admin request.
     text = _r("welcome").format(shop_name=shop, user_id=u.id)
+    # 🆕 v144: Home Banner — admin-set banner line above the welcome text.
+    try:
+        from database import get_setting as _g4
+        if _g4("home_banner_enabled", "0") == "1":
+            _bn = (_g4("home_banner_text", "") or "").strip()
+            if _bn:
+                _bn = _bn.replace("{shop_name}", str(shop))
+                from utils import smart_text_and_mode as _stm
+                _bt, _bm = _stm(_bn, "Markdown")
+                text = f"{_bt}\n\n{text}"
+    except Exception:
+        pass
     send_text, send_mode = smart_text_and_mode(text, "Markdown")
     await reply_to.reply_text("👋", reply_markup=persistent_menu(u.id))
     await reply_to.reply_text(send_text, parse_mode=send_mode,

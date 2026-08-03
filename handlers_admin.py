@@ -1815,19 +1815,8 @@ async def admin_customization_callback(u, c):
     q = u.callback_query
     if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
     await q.answer()
-    text = """🎨 *Customization Panel*
-━━━━━━━━━━━━━━━━━━━━
-
-Customize your bot's look and feel:
-
-✅ *All Features Active:*
-• 👁️ Product Detail Toggles
-• 📏 Button Sizes (4 sizes)
-• 🎨 Menu Styles (10 looks)
-• 🎠 Display Format (Raw / Carousel)
-
-Tap a feature to customize:"""
-    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=customization_menu_keyboard())
+    # ── 🆕 v144: REBUILT customization hub (clean sections + live summary) ──
+    await _render_customization_hub(q)
 
 
 async def admin_toggles_callback(u, c):
@@ -8375,3 +8364,470 @@ async def bybit_test_callback(u, c):
 # ⚡ v133 — RESPONSE REACTION SETTER (per-response emoji)
 # ════════════════════════════════════════════════════════════
 
+
+
+# ════════════════════════════════════════════════════════════════
+# 🆕 v144 — REBUILT CUSTOMIZATION SYSTEM
+# Clean hub with sections + live summary + search + themes + backup
+# + banner + batch apply + more display formats + category colors
+# ════════════════════════════════════════════════════════════════
+
+def _cz_setting(key, default=""):
+    try:
+        from database import get_setting
+        return get_setting(key, default)
+    except Exception:
+        return default
+
+
+def _cz_set(key, val):
+    try:
+        from database import set_setting
+        set_setting(key, val)
+    except Exception:
+        pass
+
+
+def _cz_summary_lines():
+    """One-line summary of the current look (live stats)."""
+    size = _cz_setting("button_size", "medium")
+    style = _cz_setting("menu_style", "") or "classic"
+    fmt = _cz_setting("display_format", "raw")
+    layout = _cz_setting("main_menu_layout", "") or "default"
+    try:
+        from main_menu_layouts import get_active_layout_id, LAYOUTS
+        _lid = get_active_layout_id()
+        layout = LAYOUTS.get(_lid, {}).get("name", str(_lid))
+    except Exception:
+        pass
+    toggles_on = 0
+    for t in ("show_warranty", "show_quantity", "show_stock", "show_photo",
+              "show_sold", "show_product_emoji", "auto_product_colors",
+              "auto_group_by_name", "shop_categorized"):
+        try:
+            from database import get_toggle
+            if get_toggle(t, "1") == "1":
+                toggles_on += 1
+        except Exception:
+            pass
+    return [
+        f"📏 Size: *{size}*  ·  🎨 Style: *{style}*",
+        f"🎠 Shop: *{fmt}*  ·  📐 Menu: *{layout}*",
+        f"👁️ Toggles ON: *{toggles_on}/9*",
+    ]
+
+
+async def _render_customization_hub(q):
+    """v144 main hub — sections + new tools, everything reachable."""
+    try:
+        lines = _cz_summary_lines()
+    except Exception:
+        lines = []
+    text = (
+        "🎨 *Customization* (v144)\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "**Quick status:**\n"
+        + "\n".join(lines) +
+        "\n\n🔍 *New tools:* search, 1-click themes, backup/restore, banner.\n"
+        "👇 Pick a section:\n"
+    )
+    kb = [
+        # ── NEW TOOLS ──
+        [InlineKeyboardButton("🔍 Search Buttons/Screens", callback_data="cz_search")],
+        [InlineKeyboardButton("🎭 Theme Presets (1-click)", callback_data="cz_theme")],
+        [InlineKeyboardButton("💾 Backup / Restore", callback_data="cz_backup")],
+        # ── SHOP LOOK ──
+        [InlineKeyboardButton("━━━ 🛍️ Shop Look ━━━", callback_data="cz_noop")],
+        [InlineKeyboardButton("🎠 Display Format", callback_data="admin_display_format")],
+        [InlineKeyboardButton("🛍️ Product Design", callback_data="pd_panel")],
+        [InlineKeyboardButton("🖼️ Home Banner", callback_data="cz_banner")],
+        [InlineKeyboardButton("🏷️ Category Colors", callback_data="cz_catcolors")],
+        # ── BUTTONS ──
+        [InlineKeyboardButton("━━━ 🎛️ Buttons ━━━", callback_data="cz_noop")],
+        [InlineKeyboardButton("🎨 Buttons Editor", callback_data="admin_buttons")],
+        [InlineKeyboardButton("📏 Global Size", callback_data="admin_btn_size")],
+        [InlineKeyboardButton("🎨 Group Colors", callback_data="admin_colors")],
+        # ── MENU & NAV ──
+        [InlineKeyboardButton("━━━ 🧭 Menu ━━━", callback_data="cz_noop")],
+        [InlineKeyboardButton("🎨 Main Menu Layout (50)", callback_data="admin_main_layout")],
+        [InlineKeyboardButton("🎨 Menu Styles", callback_data="admin_menu_style")],
+        [InlineKeyboardButton("📱 Screen Editor (43 screens)", callback_data="se_root")],
+        # ── EXTRAS ──
+        [InlineKeyboardButton("━━━ ⚙️ Extras ━━━", callback_data="cz_noop")],
+        [InlineKeyboardButton("👁️ Toggles", callback_data="admin_toggles")],
+        [InlineKeyboardButton("🎨 Broadcast Button Color", callback_data="admin_broadcast_color")],
+        [InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_panel")],
+    ]
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def cz_noop_callback(update, context):
+    q = update.callback_query
+    try:
+        await q.answer()
+    except Exception:
+        pass
+
+
+# ── 🔍 SEARCH ─────────────────────────────────────────────────
+async def cz_search_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    context.user_data["cz_search"] = True
+    kb = [[InlineKeyboardButton("🔙 Back", callback_data="admin_customization")]]
+    await _safe_edit(q,
+        "🔍 *Search*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Type a button name, button ID, screen name, or response key —\n"
+        "I'll find it and open its editor.\n\n"
+        "Examples: `main_shop`, `shop`, `welcome`, `bybit`, `verify`",
+        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def cz_search_received(update, context):
+    if update.effective_user.id != ADMIN_ID:
+        context.user_data.pop("cz_search", None); return False
+    if not context.user_data.get("cz_search"):
+        return False
+    context.user_data.pop("cz_search", None)
+    q = update.effective_user.id
+    term = (update.message.text or "").strip().lower()
+    if not term or term == "/cancel":
+        await update.message.reply_text("❌ Cancelled.")
+        return True
+    results = []
+
+    # 1) buttons registry
+    try:
+        from button_system import BUTTONS
+        for bid, info in BUTTONS.items():
+            if term in bid.lower() or term in str(info.get("medium", "")).lower():
+                results.append(("🎛️ Button", bid, f"mbedit_{bid}"))
+    except Exception:
+        pass
+    # 2) screens
+    try:
+        import customization as _cz
+        for sid, node in _cz.SCREEN_TREE.items():
+            if term in sid.lower() or term in str(node.get("title", "")).lower():
+                results.append(("📱 Screen", sid, f"se_open_{sid}"))
+    except Exception:
+        pass
+    # 3) response keys
+    try:
+        from config import DEFAULT_RESPONSES
+        for k in DEFAULT_RESPONSES:
+            if term in k.lower():
+                results.append(("📝 Response", k, f"editresp_{k}"))
+    except Exception:
+        pass
+
+    if not results:
+        await update.message.reply_text(
+            f"❌ *No match* for `{term}`.\n\nTry a different word, or use /cancel.",
+            parse_mode="Markdown")
+        return True
+
+    kb = []
+    for kind, name, cb in results[:18]:
+        kb.append([InlineKeyboardButton(f"{kind} {name[:40]}", callback_data=cb)])
+    kb.append([InlineKeyboardButton("🔙 Back", callback_data="admin_customization")])
+    await update.message.reply_text(
+        f"✅ *{len(results)} match(es)* for `{term}`:\n\n_Tap to open its editor._",
+        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    return True
+
+
+# ── 🎭 THEME PRESETS ───────────────────────────────────────────
+_THEMES = {
+    "classic":   {"button_size": "medium", "menu_style": "classic",
+                  "display_format": "raw", "main_menu_layout": "classic",
+                  "grpstyle_main": "", "grpstyle_shop": "", "grpstyle_admin": ""},
+    "colorful":  {"button_size": "large",  "menu_style": "colorful",
+                  "display_format": "raw", "main_menu_layout": "colorful",
+                  "grpstyle_main": "success", "grpstyle_shop": "primary",
+                  "grpstyle_admin": "danger"},
+    "dark":      {"button_size": "medium", "menu_style": "dark",
+                  "display_format": "raw", "main_menu_layout": "dark",
+                  "grpstyle_main": "", "grpstyle_shop": "", "grpstyle_admin": ""},
+    "minimal":   {"button_size": "small",  "menu_style": "minimal",
+                  "display_format": "list", "main_menu_layout": "minimal",
+                  "grpstyle_main": "", "grpstyle_shop": "", "grpstyle_admin": ""},
+    "premium":   {"button_size": "xl",     "menu_style": "premium",
+                  "display_format": "grid", "main_menu_layout": "premium",
+                  "grpstyle_main": "primary", "grpstyle_shop": "success",
+                  "grpstyle_admin": "danger"},
+}
+
+async def cz_theme_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    kb = []
+    for key, cfg in _THEMES.items():
+        emoji = {"classic": "🔵", "colorful": "🌈", "dark": "🌑",
+                 "minimal": "⚪", "premium": "💎"}.get(key, "🎨")
+        kb.append([InlineKeyboardButton(f"{emoji} {key.title()} Theme",
+                                        callback_data=f"cz_theme_{key}")])
+    kb.append([InlineKeyboardButton("🔙 Back", callback_data="admin_customization")])
+    await _safe_edit(q,
+        "🎭 *Theme Presets (1-click)*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Apply a full look instantly — button size, menu style, shop format,\n"
+        "main-menu layout and group colors all at once.\n\n"
+        "_Tap a theme to apply it. You can change anything after._",
+        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def cz_theme_apply_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    key = (q.data or "").replace("cz_theme_", "")
+    cfg = _THEMES.get(key)
+    if not cfg:
+        await q.answer("Unknown theme", show_alert=True); return
+    for k, v in cfg.items():
+        _cz_set(k, v)
+    # apply layout via the layout engine if available
+    try:
+        from main_menu_layouts import apply_layout_by_id
+        apply_layout_by_id(cfg.get("main_menu_layout", ""))
+    except Exception:
+        pass
+    await q.answer(f"✅ {key.title()} theme applied!", show_alert=True)
+    await _render_customization_hub(q)
+
+
+# ── 💾 BACKUP / RESTORE ────────────────────────────────────────
+_BACKUP_KEYS_PREFIXES = ("btn_label_", "btn_style_", "grpstyle_", "btn_hidden_",
+                         "btn_order_", "scrpad_", "bstyle_", "main_menu_layout",
+                         "menu_style", "button_size", "display_format",
+                         "pd_", "react_", "tplbtn", "tplbtnemoji", "fj_verify",
+                         "shop_categorized", "auto_", "show_", "product_emoji")
+
+def _collect_backup():
+    import json as _json
+    from database import get_connection
+    out = {}
+    conn = get_connection(); c = conn.cursor()
+    for (key, value) in c.execute("SELECT key, value FROM bot_settings").fetchall():
+        if key.startswith(_BACKUP_KEYS_PREFIXES) or key in (
+                "button_size", "menu_style", "display_format",
+                "main_menu_layout", "shop_categorized", "product_emoji"):
+            out[key] = value
+    conn.close()
+    return _json.dumps(out, ensure_ascii=False, indent=1)
+
+
+async def cz_backup_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        payload = _collect_backup()
+    except Exception as e:
+        await q.answer(f"❌ {e}", show_alert=True); return
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📥 Restore from Backup", callback_data="cz_import")],
+        [InlineKeyboardButton("🔙 Back", callback_data="admin_customization")],
+    ])
+    await _safe_edit(q,
+        "💾 *Customization Backup*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Copy the JSON below and save it somewhere safe. "
+        "To restore later, tap *Restore* and paste it back.\n\n"
+        "```json\n" + payload[:900] + "\n```\n\n"
+        f"_Full backup: {len(payload)} chars — shows preview only._",
+        parse_mode="Markdown", reply_markup=kb)
+
+
+async def cz_import_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    context.user_data["cz_import"] = True
+    kb = [[InlineKeyboardButton("🔙 Cancel", callback_data="admin_customization")]]
+    await _safe_edit(q,
+        "📥 *Restore Customization*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Paste the backup JSON you saved earlier.\n\n"
+        "_This overwrites current customization settings only._",
+        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def cz_import_received(update, context):
+    if update.effective_user.id != ADMIN_ID:
+        context.user_data.pop("cz_import", None); return False
+    if not context.user_data.get("cz_import"):
+        return False
+    context.user_data.pop("cz_import", None)
+    import json as _json
+    raw = (update.message.text or "").strip()
+    # strip markdown fences if present
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        raw = raw.lstrip("json").strip()
+    try:
+        data = _json.loads(raw)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Invalid JSON: {e}")
+        return True
+    if not isinstance(data, dict):
+        await update.message.reply_text("❌ Expected a JSON object.")
+        return True
+    n = 0
+    for k, v in data.items():
+        try:
+            _cz_set(k, str(v))
+            n += 1
+        except Exception:
+            pass
+    await update.message.reply_text(f"✅ Restored *{n}* settings.", parse_mode="Markdown")
+    return True
+
+
+# ── 🖼️ HOME BANNER ─────────────────────────────────────────────
+async def cz_banner_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    on = _cz_setting("home_banner_enabled", "0") == "1"
+    text = _cz_setting("home_banner_text", "") or "(empty)"
+    kb = [
+        [InlineKeyboardButton(f"🖼️ Banner: {'ON' if on else 'OFF'}", callback_data="cz_banner_toggle")],
+        [InlineKeyboardButton("✏️ Set Banner Text", callback_data="cz_banner_text")],
+        [InlineKeyboardButton("🔙 Back", callback_data="admin_customization")],
+    ]
+    await _safe_edit(q,
+        f"🖼️ *Home Banner*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Status: {'🟢 ON' if on else '🔴 OFF'}\n"
+        f"Text: `{text[:60]}`\n\n"
+        f"_Shows a welcome banner line in the shop/welcome message._",
+        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def cz_banner_toggle_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    cur = _cz_setting("home_banner_enabled", "0")
+    _cz_set("home_banner_enabled", "0" if cur == "1" else "1")
+    await cz_banner_callback(update, context)
+
+
+async def cz_banner_text_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    context.user_data["cz_banner_text"] = True
+    kb = [[InlineKeyboardButton("🔙 Cancel", callback_data="cz_banner")]]
+    await _safe_edit(q,
+        "✏️ *Banner Text*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Send the banner text (premium emoji allowed).\n"
+        "Use `{shop_name}` for the shop name.",
+        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def cz_banner_text_received(update, context):
+    if update.effective_user.id != ADMIN_ID:
+        context.user_data.pop("cz_banner_text", None); return False
+    if not context.user_data.get("cz_banner_text"):
+        return False
+    context.user_data.pop("cz_banner_text", None)
+    txt = (update.message.text or "").strip()
+    try:
+        from utils import capture_user_text
+        txt = capture_user_text(update.message) or txt
+    except Exception:
+        pass
+    _cz_set("home_banner_text", txt)
+    _cz_set("home_banner_enabled", "1")
+    await update.message.reply_text("✅ *Banner saved & enabled.*", parse_mode="Markdown")
+    return True
+
+
+# ── 🏷️ CATEGORY COLORS ─────────────────────────────────────────
+async def cz_catcolors_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        from database import get_connection
+        conn = get_connection(); c = conn.cursor()
+        cats = c.execute("SELECT id, name, emoji FROM categories ORDER BY id").fetchall()
+        conn.close()
+    except Exception:
+        cats = []
+    kb = []
+    for cat in cats:
+        cid = cat["id"]
+        cur = _cz_setting(f"catcolor_{cid}", "")
+        mark = {"primary": "🔵", "success": "🟢", "danger": "🔴"}.get(cur, "⬜")
+        nm = (cat.get("name") or "?")[:20]
+        kb.append([InlineKeyboardButton(f"{mark} {nm}",
+                                        callback_data=f"cz_catcolor_{cid}_none")])
+    kb.append([InlineKeyboardButton("🔙 Back", callback_data="admin_customization")])
+    await _safe_edit(q,
+        "🏷️ *Category Colors*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Pick a color per category (applies to its shop buttons).\n"
+        "_Tap a category then choose color._",
+        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def cz_catcolor_set_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    parts = (q.data or "").split("_")
+    # cz_catcolor_<cid>_<color>
+    try:
+        cid = parts[2]
+        color = parts[3] if len(parts) > 3 else "none"
+        _cz_set(f"catcolor_{cid}", "" if color == "none" else color)
+    except Exception:
+        pass
+    await cz_catcolors_callback(update, context)
+
+
+# ── 🎠 DISPLAY FORMAT EXTENSION (grid/list/card) ───────────────
+async def cz_format_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    cur = _cz_setting("display_format", "raw")
+    def mk(label, val):
+        mark = " ✅" if cur == val else ""
+        return InlineKeyboardButton(label + mark, callback_data=f"cz_fmt_{val}")
+    kb = [
+        [mk("📋 Raw — Classic list", "raw")],
+        [mk("🎠 Carousel — swipe cards", "carousel")],
+        [mk("🔲 Grid — 2-column compact", "grid")],
+        [mk("📄 List — 1-per-row full", "list")],
+        [mk("🔙 Back", "admin_customization")],
+    ]
+    await _safe_edit(q,
+        "🎠 *Display Format*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Current: *{cur}*\n\nChoose how products appear in the shop:",
+        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def cz_fmt_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    val = (q.data or "").replace("cz_fmt_", "")
+    if val not in ("raw", "carousel", "grid", "list"):
+        val = "raw"
+    _cz_set("display_format", val)
+    await q.answer(f"✅ Format: {val}", show_alert=True)
+    await cz_format_callback(update, context)

@@ -304,9 +304,9 @@ def _sold_line(p):
 
 
 def _get_display_format():
-    """Returns 'raw' or 'carousel'. Default: raw"""
+    """Returns raw/carousel/grid/list. Default: raw. 🆕 v144 grid+list."""
     fmt = get_setting("display_format", "raw").lower().strip()
-    return fmt if fmt in ("raw", "carousel") else "raw"
+    return fmt if fmt in ("raw", "carousel", "grid", "list") else "raw"
 
 
 # 🆕 v42: Build the product detail text in either Markdown OR HTML mode,
