@@ -8,7 +8,28 @@
 
 ---
 
-# 🚀 v139.1 (2026-08-03) — Live-test bugfix: Fake Activity 🛰️ Test Broadcast button crashed
+# 🚀 v139.2 (2026-08-03) — Live-flow simulation bugfix: Verify-Button editor crashed
+
+## 🐛 Bug #2 (found via in-process live-flow simulation with real DB copy)
+- **Bug:** Force Join → ✅ **Verify Button Editor** (`fj_vbtn_callback`) crashed with
+  `UnboundLocalError: cannot access local variable 'InlineKeyboardButton'`.
+  Root cause: `InlineKeyboardButton`/`InlineKeyboardMarkup` were imported only in
+  the `except` branch (premium-button path). In production `make_premium_button`
+  always succeeds, so the imports never ran and the button rows below raised
+  UnboundLocalError → the editor broke every time admin opened it.
+- **Fix:** imports moved to the top of the callback.
+- **Verified:** 9-force-join-admin-panel simulation suite now passes
+  (manage/color/rename/emoji/link/move/bulk/add/delete).
+
+## 🧪 Live-flow simulation harness added (`_live_sim.py`, dev-only)
+- Drives the REAL bot handlers with synthetic Telegram updates against a COPY of
+  the live DB: /start+referral→force-join→math→welcome→observation→both-credited,
+  force-join gate (block/verify/admin), verify-button editor, supplier preset
+  panel, my_account @N/A, how-to hub, Test-Broadcast button, payment helpers.
+- 18/18 simulated flows pass after this fix.
+
+---
+ (2026-08-03) — Live-test bugfix: Fake Activity 🛰️ Test Broadcast button crashed
 
 ## 🐛 Bug (found during live test session)
 - **Bug:** Fake Activity panel ka **🛰️ Test Broadcast** button `admin_bcast_test_callback`

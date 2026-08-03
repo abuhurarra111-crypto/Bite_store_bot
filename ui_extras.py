@@ -2746,6 +2746,12 @@ async def fjb_del_callback(update, context):
 
 # ── Verify button editor ──────────────────────────────────────
 async def fj_vbtn_callback(update, context):
+    """✅ Verify-button editor.
+    🐛 v139.2 FIX: InlineKeyboardButton/InlineKeyboardMarkup were imported only
+    in the except-branch → when make_premium_button succeeded (always in
+    production) the button rows below raised UnboundLocalError → the editor
+    crashed on open. Imports are now at function top."""
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     q = update.callback_query
     if not _is_admin(q.from_user.id):
         await q.answer("❌ Admin only!", show_alert=True); return
