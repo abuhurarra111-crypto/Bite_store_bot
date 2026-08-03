@@ -8,7 +8,28 @@
 
 ---
 
-# 🚀 v139.4 (2026-08-03) — CRITICAL: reaction text was overwriting response text + auto-react wiring
+# 🚀 v139.5 (2026-08-03) — Reaction input STILL not working: PTB "max 1 handler per group" root fix
+
+## 🐛 Bug #5 (reported: "custom emoji click → bot koi response ni kiya, emoji set nahi hua")
+- **Kahan:** Edit Responses → ⚡ Set/Change Reaction → 🖊️ Type custom emoji / ✨ Premium
+- **Root cause (deep):** PTB fires **only ONE handler per group** (`break` after the first
+  match). When admin opened Edit Response, that conversation stayed ACTIVE. Tapping ⚡ did
+  not end it. So when the admin typed the emoji, the **Edit Response conversation claimed
+  the text first** — the v139.4 guard (return END) correctly stopped it from overwriting
+  the response, but the `break` meant the **reaction ConversationHandler never received the
+  emoji** → no response, no reaction.
+- **Fix (v139.5):** the reaction emoji-input ConversationHandler is now registered as the
+  **FIRST conversation handler** (before Edit Response). When state 99 is active it claims
+  the admin's emoji text before any stale conversation can. Normal response edits still
+  work (reaction conversation only claims text while it is active).
+- **Verified with a faithful PTB router test** (real handlers, real ordering, FakeRequest):
+  edit panel → picker → custom prompt → type 🔥 → **reaction saved + confirmation**, welcome
+  text untouched (1887 chars); premium path → `premium:<id>` saved. ALL PASS.
+
+## 🧪 Tests: v139.5 router 6/6 · v139.4 9/9 · v139.3 9/9 · full regression 186/186 PASS
+
+---
+ (2026-08-03) — CRITICAL: reaction text was overwriting response text + auto-react wiring
 
 ## 🐛 Bug #4 (reported: "welcome msg gayab ho gaya, sirf emoji aa gaya")
 - **Kahan:** Edit Responses → ⚡ Set/Change Reaction → Premium/Custom emoji input

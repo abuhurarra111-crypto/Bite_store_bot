@@ -1338,6 +1338,16 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _activity_hook_text), group=-100)
 
     # ── Conversations ──
+    # ⚡ v133/v139.5: response reaction emoji input (premium/custom) —
+    # registered FIRST so that when the admin types the emoji, this
+    # conversation claims the text BEFORE the still-active "Edit Response"
+    # conversation can swallow it. (PTB: max 1 handler per group fires.)
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=300,
+        entry_points=[CallbackQueryHandler(resp_react_prem_callback, pattern=r"^resp_react_prem_"),
+                      CallbackQueryHandler(resp_react_custom_callback, pattern=r"^resp_react_custom_")],
+        states={99: [MessageHandler(filters.TEXT & ~filters.COMMAND, resp_react_input_received)]},
+        fallbacks=[CommandHandler("cancel", cancel_conversation)],
+    ))
     # 1. Add Category
     app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(add_category_callback, pattern="^add_category$")],
@@ -2632,13 +2642,6 @@ def main():
     # conversation states can never swallow amounts/TXIDs/TIDs.
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, payment_flow_text_handler), group=-80)
 
-    # ⚡ v133: response reaction emoji input (premium/custom)
-    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=300,
-        entry_points=[CallbackQueryHandler(resp_react_prem_callback, pattern=r"^resp_react_prem_"),
-                      CallbackQueryHandler(resp_react_custom_callback, pattern=r"^resp_react_custom_")],
-        states={99: [MessageHandler(filters.TEXT & ~filters.COMMAND, resp_react_input_received)]},
-        fallbacks=[CommandHandler("cancel", cancel_conversation)],
-    ))
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.VOICE | filters.Document.ALL, handle_media_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
