@@ -785,11 +785,13 @@ class SupplierAdapterBase:
 _DELIVERY_COLLECTION_KEYS = (
     "deliveredAccounts", "delivered_accounts", "deliveryItems", "delivery_items",
     "accounts", "accountList", "account_list", "items", "itemList", "item_list",
-    "orders", "results", "codes", "keys", "licenses", "credentials",
+    "orders", "results", "codes", "keys", "deliveredKeys", "delivered_keys",
+    "licenses", "credentials", "deliveredCredentials",
 )
 _DELIVERY_SINGLE_KEYS = (
     "account", "credential", "accountData", "account_data", "content", "text",
-    "value", "code", "link", "url", "license", "key",
+    "value", "code", "link", "url", "license", "key", "deliveredKey",
+    "delivered_account", "deliveryLink", "delivery_url", "downloadUrl", "fileUrl",
 )
 _DELIVERY_NEST_KEYS = (
     "data", "order", "result", "response", "payload", "purchase", "delivery",
@@ -1646,12 +1648,17 @@ class ProdSellerAdapter(SupplierAdapterBase):
             return {"ok": False,
                     "error": j.get("error") if isinstance(j, dict) else f"HTTP {r.status_code}",
                     "items": [], "raw": j}
-        keys = j.get("deliveredKeys") or []
+        # 🐛 v144.2 FIX: ProdSeller responses often have ONLY `deliveredKey`
+        # (single) and NO `deliveredKeys`. Old code did `j.get("deliveredKeys") or []`
+        # → empty list is still a list → `if isinstance(keys, list)` was True →
+        # `elif single` never ran → items=[] → "Supplier returned only 0/1 item(s)."
+        # Now: non-empty list wins (more complete), single is the fallback.
+        keys = j.get("deliveredKeys")
         single = j.get("deliveredKey")
         items = []
-        if isinstance(keys, list):
+        if isinstance(keys, list) and keys:
             items = [str(k).strip() for k in keys if str(k).strip()]
-        elif single:
+        if not items and single is not None and str(single).strip():
             items = [str(single).strip()]
         if not items:
             items = _extract_delivery_items(j)
@@ -3992,7 +3999,18 @@ async def route_order_to_supplier(bot, order):
     # (was > 3). For 1-9 accounts, only compact text message is sent.
     # For 10+, both compact text preview + .txt file are sent.
     # File naming: bite_store_order_{id}_{qty}accounts.txt (branded)
-    if len(items) >= 10:
+    # 🐛 v144.2: ALSO send the .txt file when content is long (any single item
+    # > 220 chars or 5+ multi-line items) — long redeem links / big payloads
+    # get a proper file so nothing is truncated by Telegram.
+    _needs_file = len(items) >= 10
+    if not _needs_file:
+        try:
+            _long = any(len(str(i)) > 220 for i in items)
+            _multi = sum(1 for i in items if str(i).count('\n') >= 1)
+            _needs_file = _long or _multi >= 5
+        except Exception:
+            _needs_file = False
+    if _needs_file:
         try:
             import io
             buf = io.BytesIO()
@@ -4210,6 +4228,43 @@ V83_FORMATS = {
         "separator": "",
         "icons":  ["📝 Content"],
     },
+    # 🆕 v144.2 — new formats found in supplier catalogs/docs
+    "phone_number": {
+        "label": "📱 Phone Number (PVA)",
+        "fields": ["phone"],
+        "separator": "",
+        "icons":  ["📱 Phone"],
+    },
+    "license_key": {
+        "label": "🗝️ License / Serial Key",
+        "fields": ["key"],
+        "separator": "",
+        "icons":  ["🗝️ License"],
+    },
+    "cookie_session": {
+        "label": "🍪 Cookies / Session",
+        "fields": ["cookie"],
+        "separator": "",
+        "icons":  ["🍪 Cookies"],
+    },
+    "api_token": {
+        "label": "🔑 API Token / Bearer Key",
+        "fields": ["token"],
+        "separator": "",
+        "icons":  ["🔑 Token"],
+    },
+    "email_pass_cookie": {
+        "label": "🧩 Email + Password + Cookies",
+        "fields": ["email", "password", "cookie"],
+        "separator": "|",
+        "icons":  ["📧 Email", "🔑 Password", "🍪 Cookie"],
+    },
+    "username_pass": {
+        "label": "👤 Username + Password",
+        "fields": ["username", "password"],
+        "separator": "|",
+        "icons":  ["👤 Username", "🔑 Password"],
+    },
 }
 
 
@@ -4294,6 +4349,29 @@ def _detect_from_keywords(name, description):
     name_lc = (name or "").lower()
     desc_lc = (description or "").lower()
     text = f"{name_lc} {desc_lc}"
+
+    # 🆕 v144.2 PRIORITY -1: new supplier formats (phone / license / cookies / api)
+    _phone_signals = ("phone number", "phone for gmail", "pva phone", "verification phone",
+                      "số điện thoại", "phone verification", "receive sms", "otp phone")
+    if any(s in text for s in _phone_signals):
+        return "phone_number"
+    _license_signals = ("license key", "serial key", "product key", "activation key",
+                        "license code", "đăng ký", "activation code")
+    if any(s in text for s in _license_signals) and "email" not in text:
+        return "license_key"
+    _cookie_signals = ("cookie", "session", "cookies")
+    if any(s in text for s in _cookie_signals):
+        # email+password+cookie vs cookie-only
+        if "email" in text or "mail" in text or "password" in text:
+            return "email_pass_cookie"
+        return "cookie_session"
+    _token_signals = ("api key", "api token", "bearer", "access token", "auth token")
+    if any(s in text for s in _token_signals):
+        return "api_token"
+    _userpass_signals = ("username and password", "username:password", "login:password",
+                         "user|pass", "user:pass", "username | password")
+    if any(s in text for s in _userpass_signals):
+        return "username_pass"
 
     # 🆕 v99 PRIORITY 0: NAME contains explicit format tokens
     # These are the STRONGEST possible signals — product name itself declares the format.

@@ -8,7 +8,40 @@
 
 ---
 
-# 🚀 v144.1 (2026-08-04) — Binance flow buttons now in the Buttons Editor
+# 🚀 v144.2 (2026-08-04) — ProdSeller auto-delivery FIX + new formats + smart .txt file
+
+## 🐛 CRITICAL: ProdSeller balance deducted but no delivery ("retry" loop)
+- **Kahan:** ProdSeller orders #94-96 failed: `Supplier returned only 0/1 item(s).`
+  Balance was deducted but nothing delivered → bot kept offering retry.
+- **Root cause (verified against live API):** ProdSeller responses contain ONLY
+  `deliveredKey` (single) and NO `deliveredKeys` key. The adapter did
+  `keys = j.get("deliveredKeys") or []` → empty list is still a list →
+  `if isinstance(keys, list)` was True → items=[] → the `deliveredKey` was
+  never read. Also `_extract_delivery_items` only matched exact `"key"`, not
+  `deliveredKey`.
+- **Fix:**
+  1. `create_order`: non-empty `deliveredKeys` list wins, otherwise `deliveredKey`
+     fallback, then generic parser.
+  2. `_DELIVERY_SINGLE_KEYS` += `deliveredKey`, `delivered_account`, `deliveryLink`,
+     `delivery_url`, `downloadUrl`, `fileUrl`; `_DELIVERY_COLLECTION_KEYS` +=
+     `deliveredKeys`, `delivered_keys`, `deliveredCredentials`.
+- **Verified live:** placed a $0.39 test order → `deliveredKey` (activation link)
+  returned → adapter now returns 1 item. Balance $7.22.
+
+## ✅ Smart .txt file delivery (owner request)
+- .txt file now also sent when **any single item > 220 chars** or **5+ multi-line
+  items** (long redeem links / big payloads) — not only when 10+ items.
+
+## ✅ 6 NEW delivery formats (found in supplier catalogs/docs)
+- 📱 `phone_number` (PVA) · 🗝️ `license_key` · 🍪 `cookie_session` ·
+  🔑 `api_token` · 🧩 `email_pass_cookie` · 👤 `username_pass`
+- Auto-detect updated with their keyword signals (phone/license/cookie/token/
+  user:pass).
+
+## 🧪 Tests: v144.2 suite 10/10 · full regression 208/208 PASS · boot clean
+
+---
+ (2026-08-04) — Binance flow buttons now in the Buttons Editor
 
 ## 🐛 Fix (owner: "Bybit flow ke saare buttons aate hain, Binance ke nahi")
 - **Kahan:** Buttons Editor → Binance Payment Flow screen had only 3 buttons
