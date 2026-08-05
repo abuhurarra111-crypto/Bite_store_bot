@@ -1219,7 +1219,8 @@ def restore_all_jobs(app):
 async def activity_watchdog_job(context):
     """Runs every 60s. If fake activity is enabled but the group job or per-user
     jobs are NOT scheduled (e.g. a deploy hiccup / silent exception), re-schedule
-    them. This makes fake activity self-healing — it can never silently die."""
+    them. This makes fake activity self-healing — it can never silently die.
+    🐛 v144.3: also repairs a corrupted/blank global flag (default ON)."""
     try:
         app = context.application
         if app is None:

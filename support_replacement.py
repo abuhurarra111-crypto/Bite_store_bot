@@ -494,11 +494,17 @@ async def user_replace_reason_callback(update: Update, context: ContextTypes.DEF
 # 🛡 ADMIN — Approve / Reject
 # ════════════════════════════════════════════════════════════
 async def admin_replace_approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin approved — dispense new account."""
+    """Admin approved — STEP 1: choose how to deliver the replacement.
+    🆕 v144.3: admin picks:
+       🔄 API Replacement — re-buy from the SAME supplier (auto)
+       📤 Upload Product  — admin sends the account details manually (auto
+                            format-detect), bot delivers to customer
+       📦 From Stock      — existing auto-dispense from local stock
+    """
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
-    await q.answer("Processing replacement…")
+    await q.answer()
     try:
         oid = int(q.data.replace("adm_repap_", ""))
     except Exception:
@@ -508,67 +514,217 @@ async def admin_replace_approve_callback(update: Update, context: ContextTypes.D
     if not o:
         await q.edit_message_text("❌ Order not found."); return
 
-    # Try to dispense a new account
     p = get_product(o.get('product_id')) if o.get('product_id') else None
-    if not p:
-        await q.edit_message_text("❌ Product not found in DB."); return
+    ext_link = False
+    if p:
+        try:
+            pd = dict(p)
+            ext_link = bool(pd.get("ext_product_id") or pd.get("ext_supplier_id"))
+        except Exception:
+            ext_link = False
 
-    qty = 1
-    import re as _re
-    qm = _re.search(r'×\s*(\d+)$', o.get('product_name','') or '')
-    if qm:
-        qty = int(qm.group(1))
+    kb = []
+    if ext_link:
+        kb.append([InlineKeyboardButton("🔄 API Replacement (same supplier)", callback_data=f"adm_repx_api_{oid}")])
+    kb.append([InlineKeyboardButton("📤 Upload Product (manual)", callback_data=f"adm_repx_up_{oid}")])
+    kb.append([InlineKeyboardButton("📦 From Stock (auto)", callback_data=f"adm_repx_stock_{oid}")])
+    kb.append([InlineKeyboardButton("❌ Cancel", callback_data="admin_panel")])
+
+    pname = (o.get('product_name') or 'your product')[:40]
+    await q.edit_message_text(
+        f"🔁 *Replacement — Order #{oid}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📦 Product: {__import__('utils').html_escape_plain(pname)}\n"
+        f"{'🔗 Supplier-linked product → API re-buy available.' if ext_link else ''}\n\n"
+        f"*How do you want to deliver the replacement?*",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def admin_replace_api_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🆕 v144.3: re-buy from the SAME supplier via its API, then deliver."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer("🔄 Buying from supplier API…")
+    try:
+        oid = int(q.data.replace("adm_repx_api_", ""))
+    except Exception:
+        await q.answer("Invalid", show_alert=True); return
+    o = get_order(oid)
+    if not o:
+        await q.edit_message_text("❌ Order not found."); return
 
     try:
-        # 🔧 AUDIT-FIX C1/C2 (2026-07-31): structured result — a replacement is
-        # only approved when the FULL quantity can be dispensed. The old code
-        # checked for "no stock" in the text, which never matched the actual
-        # out-of-stock message, so replacements were "approved" with an OOS text.
-        dres = build_delivery_detailed(
-            o['product_id'], o['id'], qty, o['user_id'],
-        )
+        from ext_suppliers import route_order_to_supplier
+        # Route this order through the supplier API (re-purchase)
+        handled = await route_order_to_supplier(context.bot, o)
+        if handled:
+            # mark replacement approved + notify
+            try:
+                mark_replacement_approved(oid)
+            except Exception:
+                pass
+            user_id = o['user_id']
+            try:
+                await context.bot.send_message(
+                    user_id,
+                    "[[HTML]]✅ <b>Replacement Approved (new from supplier)!</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n\n🧾 Order #{oid}\n\n"
+                    f"📨 Your new account is in the message above/below. "
+                    f"Sorry for the inconvenience! 🙏",
+                    parse_mode="HTML")
+            except Exception:
+                pass
+            await q.edit_message_text(
+                f"✅ *API Replacement done*\nOrder #{oid} — re-bought from supplier and delivered to `{user_id}`.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Admin Panel", callback_data="admin_panel")]]))
+            return
     except Exception as e:
-        await q.edit_message_text(
-            f"❌ *Auto-dispense failed*\n\n`{e}`\n\n"
-            f"Probably no stock left. Please add stock or deliver manually.",
-            parse_mode="Markdown")
+        await q.edit_message_text(f"❌ *API re-buy failed:*\n`{str(e)[:200]}`", parse_mode="Markdown",
+                                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Admin Panel", callback_data="admin_panel")]]))
         return
+    await q.edit_message_text("❌ Not a supplier product.", parse_mode="Markdown",
+                              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Admin Panel", callback_data="admin_panel")]]))
 
-    if not dres['ok']:
-        await q.edit_message_text(
-            "⚠️ *No stock available*\n\n"
-            "Please add more stock to this product and try again,\n"
-            "or use 📦 Pending Manual Delivery to deliver manually.",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📦 Pending Delivery", callback_data="adm_pending_delivery")],
-            ]))
-        return
 
-    new_delivery = dres['text']
-
-    # Save replacement delivery + mark order
+async def admin_replace_upload_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🆕 v144.3: admin uploads the account details manually → bot delivers."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
     try:
-        save_order_delivery_content(oid, f"[🔁 REPLACEMENT]\n{new_delivery}")
+        oid = int(q.data.replace("adm_repx_up_", ""))
+    except Exception:
+        await q.answer("Invalid", show_alert=True); return
+    context.user_data["rep_upload_oid"] = oid
+    kb = [[InlineKeyboardButton("❌ Cancel", callback_data="admin_panel")]]
+    await q.edit_message_text(
+        f"📤 *Upload Replacement — Order #{oid}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Send the new account details now (email:pass, link, code, etc.).\n"
+        f"_The bot will detect the format and deliver to the customer._",
+        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def admin_replace_upload_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🆕 v144.3: receive uploaded replacement text → auto format-detect → deliver."""
+    if update.effective_user.id != ADMIN_ID:
+        context.user_data.pop("rep_upload_oid", None); return False
+    oid = context.user_data.get("rep_upload_oid")
+    if not oid:
+        return False
+    context.user_data.pop("rep_upload_oid", None)
+    o = get_order(int(oid))
+    if not o:
+        await update.message.reply_text("❌ Order not found.")
+        return True
+
+    raw = (update.message.text or update.message.caption or "").strip()
+    try:
+        from utils import capture_user_text
+        raw = capture_user_text(update.message) or raw
     except Exception:
         pass
-    mark_replacement_approved(oid)
+    if not raw:
+        await update.message.reply_text("❌ Empty. Send the account details.")
+        context.user_data["rep_upload_oid"] = int(oid)
+        return True
 
-    # Notify customer
+    # Try format detection (best-effort; doesn't change what we deliver)
+    fmt = "raw_text"
+    try:
+        from ext_suppliers import detect_product_format
+        fmt = detect_product_format({"name": o.get("product_name") or "", "description": raw})
+    except Exception:
+        pass
+
+    try:
+        save_order_delivery_content(int(oid), f"[🔁 REPLACEMENT-UPLOADED]\n{raw}")
+    except Exception:
+        pass
+    try:
+        mark_replacement_approved(int(oid))
+    except Exception:
+        pass
+
     user_id = o['user_id']
     pname = o.get('product_name','') or 'your product'
-    customer_msg = (
-        # 🆕 v80 BYTE-PERFECT: switch to HTML mode for the delivery portion.
-        # <code>...</code> preserves _ * / \\ etc. exactly as admin entered them.
-        f"[[HTML]]✅ <b>Replacement Approved!</b>\n"
+    msg = (
+        "[[HTML]]✅ <b>Replacement Approved!</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🧾 Order #{oid}\n"
         f"📦 Product: <b>{__import__('utils').html_escape_plain(pname)}</b>\n\n"
         f"📨 <b>New Delivery:</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"{__import__('utils').html_code_block(new_delivery[:1500])}\n"
+        f"{__import__('utils').html_code_block(raw[:2000])}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Sorry for the inconvenience. Thank you for your patience! 🙏"
+        f"Sorry for the inconvenience. Thank you! 🙏"
+    )
+    send_text, send_mode = smart_text_and_mode(msg, "Markdown")
+    try:
+        await context.bot.send_message(user_id, send_text, parse_mode=send_mode,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📜 Order History", callback_data="my_orders")],
+                [InlineKeyboardButton("🛒 Shop More",     callback_data="shop")],
+            ]))
+        await update.message.reply_text(f"✅ *Replacement delivered* (format: `{fmt}`)", parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Failed to deliver: {e}")
+    return True
+
+
+async def admin_replace_stock_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🆕 v144.3: original auto-dispense from local stock (old behavior)."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer("Dispensing from stock…")
+    try:
+        oid = int(q.data.replace("adm_repx_stock_", ""))
+    except Exception:
+        await q.answer("Invalid", show_alert=True); return
+    o = get_order(oid)
+    if not o:
+        await q.edit_message_text("❌ Order not found."); return
+    p = get_product(o.get('product_id')) if o.get('product_id') else None
+    if not p:
+        await q.edit_message_text("❌ Product not found."); return
+    qty = 1
+    import re as _re
+    qm = _re.search(r'×\s*(\d+)$', o.get('product_name','') or '')
+    if qm:
+        qty = int(qm.group(1))
+    try:
+        dres = build_delivery_detailed(o['product_id'], o['id'], qty, o['user_id'])
+    except Exception as e:
+        await q.edit_message_text(f"❌ *Auto-dispense failed*\n`{e}`", parse_mode="Markdown"); return
+    if not dres['ok']:
+        await q.edit_message_text(
+            "⚠️ *No stock available*\n\nAdd stock or use 📤 Upload Product / 🔄 API Replacement.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Admin Panel", callback_data="admin_panel")]]))
+        return
+    new_delivery = dres['text']
+    try:
+        save_order_delivery_content(oid, f"[🔁 REPLACEMENT]\n{new_delivery}")
+    except Exception:
+        pass
+    try:
+        mark_replacement_approved(oid)
+    except Exception:
+        pass
+    user_id = o['user_id']
+    pname = o.get('product_name','') or 'your product'
+    customer_msg = (
+        "[[HTML]]✅ <b>Replacement Approved!</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n🧾 Order #{oid}\n"
+        f"📦 Product: <b>{__import__('utils').html_escape_plain(pname)}</b>\n\n"
+        f"📨 <b>New Delivery:</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"{__import__('utils').html_code_block(new_delivery[:1500])}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\nSorry for the inconvenience. 🙏"
     )
     send_text, send_mode = smart_text_and_mode(customer_msg, "Markdown")
     try:
@@ -579,18 +735,10 @@ async def admin_replace_approve_callback(update: Update, context: ContextTypes.D
             ]))
     except Exception as e:
         logger.warning(f"[Replacement] customer notify failed: {e}")
-
-    # Admin confirmation
     await q.edit_message_text(
-        f"✅ *Replacement Sent*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Order #{oid} — new account dispensed from stock.\n"
-        f"Customer `{user_id}` has been notified.",
+        f"✅ *Replacement Sent (stock)*\nOrder #{oid} — new account dispensed. Customer notified.",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📦 Pending Delivery", callback_data="adm_pending_delivery")],
-            [InlineKeyboardButton("🔙 Admin Panel",      callback_data="admin_panel")],
-        ]))
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Admin Panel", callback_data="admin_panel")]]))
 
 
 async def admin_replace_reject_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

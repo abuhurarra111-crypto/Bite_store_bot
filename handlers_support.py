@@ -704,12 +704,17 @@ async def adm_tickets_list_callback(update, context):
     await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 
-async def adm_st_view_callback(update, context):
-    """Admin: View ticket detail"""
+async def adm_st_view_callback(update, context, _skip_answer=False):
+    """Admin: View ticket detail
+    🐛 v144.3 FIX: when called from close/resolve/progress (which already
+    answered the callback), passing _skip_answer avoids the PTB double-answer
+    error that made the view fail to re-render → ticket kept showing old status.
+    """
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
-    await q.answer()
+    if not _skip_answer:
+        await q.answer()
 
     tid = int(q.data.replace("adm_st_view_", ""))
     t = get_ticket(tid)
@@ -1062,7 +1067,7 @@ async def adm_st_resolve_callback(update, context):
         except:
             pass
     set_cb_data(update, f"adm_st_view_{tid}"); u = update
-    await adm_st_view_callback(u, context)
+    await adm_st_view_callback(u, context, _skip_answer=True)
 
 
 async def adm_st_progress_callback(update, context):
@@ -1074,7 +1079,7 @@ async def adm_st_progress_callback(update, context):
     tid = int(q.data.replace("adm_st_progress_", ""))
     update_ticket(tid, status='in_progress')
     set_cb_data(update, f"adm_st_view_{tid}"); u = update
-    await adm_st_view_callback(u, context)
+    await adm_st_view_callback(u, context, _skip_answer=True)
 
 
 async def adm_st_close_callback(update, context):
@@ -1086,7 +1091,7 @@ async def adm_st_close_callback(update, context):
     tid = int(q.data.replace("adm_st_close_", ""))
     update_ticket(tid, status='closed')
     set_cb_data(update, f"adm_st_view_{tid}"); u = update
-    await adm_st_view_callback(u, context)
+    await adm_st_view_callback(u, context, _skip_answer=True)
 
 
 # ════════════════════════════════════════════

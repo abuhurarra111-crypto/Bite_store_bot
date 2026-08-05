@@ -8,7 +8,42 @@
 
 ---
 
-# 🚀 v144.2 (2026-08-04) — ProdSeller auto-delivery FIX + new formats + smart .txt file
+# 🚀 v144.3 (2026-08-05) — Support-ticket close fix + Replacement 2-step + Flash placeholder + Ai Tools
+
+## 🐛 Fix 1: Support ticket Close/Resolve — notification but still "open"
+- **Root cause:** close/resolve/progress callbacks did `q.answer(...)` then called
+  `adm_st_view_callback` which did `q.answer()` AGAIN (PTB double-answer) → the
+  view failed to re-render → admin saw the old status even though DB updated.
+- **Fix:** `adm_st_view_callback(..., _skip_answer=True)` when chained; DB already
+  updated correctly (verified `update_ticket → 'closed'`).
+
+## ✨ Fix 2: Replacement approve → 3 delivery choices (owner request)
+- Approve now shows:
+  - **🔄 API Replacement** — re-buys from the SAME supplier via its API
+    (`route_order_to_supplier`) and delivers automatically.
+  - **📤 Upload Product** — admin pastes the new account details; bot auto
+    detects format (`detect_product_format`) and delivers to the customer.
+  - **📦 From Stock** — original auto-dispense from local stock.
+- New callbacks `adm_repx_api_` / `adm_repx_up_` / `adm_repx_stock_` + upload
+  text handler (`rep_upload_oid`).
+
+## 🐛 Fix 3: Fake-activity Flash-sale template sent raw placeholders
+- **Root cause:** custom template with an unknown placeholder (e.g. `{old_price}`)
+  made `.format()` raise KeyError → except returned the RAW template → `{price}`
+  etc. were sent literally.
+- **Fix:** `format_map` with a safe mapping — known placeholders filled
+  (`{price}`, `{product}`, `{old_price}`, `{save}`, `{timer}`, `{product_name}`
+  aliases), unknown ones left as-is. Same for new-product template.
+
+## ✅ Fix 4: Ai Tools supplier re-added + preset
+- Ai Tools (Canboso, key `tgb_3b5f…`) re-added to DB (id 16) — connection
+  verified live: 21 products, $12.46 balance.
+- `Ai Tools` preset added to Add-Supplier panel so it can always be re-added.
+
+## 🧪 Tests: v144.3 suite 7/7 · full regression 215/215 PASS · boot clean
+
+---
+ (2026-08-04) — ProdSeller auto-delivery FIX + new formats + smart .txt file
 
 ## 🐛 CRITICAL: ProdSeller balance deducted but no delivery ("retry" loop)
 - **Kahan:** ProdSeller orders #94-96 failed: `Supplier returned only 0/1 item(s).`

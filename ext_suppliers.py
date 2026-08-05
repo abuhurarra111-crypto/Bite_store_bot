@@ -1671,6 +1671,7 @@ class ProdSellerAdapter(SupplierAdapterBase):
 # the API key. Covers every supplier the owner actually runs.
 SUPPLIER_PRESETS = {
     "canboso":   {"adapter": "canboso",    "name": "Canboso",         "base_url": "https://canboso.com", "docs_url": "https://canboso.com/api/swagger"},
+    "ai_tools":  {"adapter": "canboso",    "name": "Ai Tools",        "base_url": "https://canboso.com", "docs_url": "https://canboso.com/api/swagger"},
     "shop_cron": {"adapter": "canboso",    "name": "Shop Cron",       "base_url": "https://canboso.com", "docs_url": "https://canboso.com/api/swagger"},
     "sinhle":    {"adapter": "canboso",    "name": "sinh le store bot", "base_url": "https://canboso.com", "docs_url": "https://canboso.com/api/swagger"},
     "akunding":  {"adapter": "akunding",   "name": "Akunding",        "base_url": "https://akunding.shop/api", "docs_url": "https://akunding.shop/swagger"},

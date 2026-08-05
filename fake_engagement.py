@@ -3257,14 +3257,25 @@ def build_flash_message(product, timer_text="23-59-59", tpl_index=None):
         idx = get_flash_template_index() if tpl_index is None else tpl_index
         idx = max(0, min(len(FLASH_TEMPLATES) - 1, idx))
         tpl = FLASH_TEMPLATES[idx]
+    # 🐛 v144.3 FIX: `.format()` raised KeyError when a custom template used a
+    # placeholder not in the args (e.g. {old_price}) → except returned the RAW
+    # template → all placeholders (incl. {price}) were sent literally.
+    # Now format_map fills known keys and leaves unknown ones as-is.
     try:
-        return tpl.format(
-            product=d.get('name', 'Product'),
-            price=f"{price:.2f}",
-            regular=f"{regular:.2f}",
-            save=f"{save:.2f}",
-            timer=timer_text,
-        )
+        class _SafeMap(dict):
+            def __missing__(self, key):
+                return "{" + key + "}"
+        return tpl.format_map(_SafeMap({
+            'product': d.get('name', 'Product'),
+            'product_name': d.get('name', 'Product'),
+            'price': f"{price:.2f}",
+            'old_price': f"{regular:.2f}",
+            'regular': f"{regular:.2f}",
+            'save': f"{save:.2f}",
+            'discount': f"{save:.2f}",
+            'timer': timer_text,
+            'timer_text': timer_text,
+        }))
     except Exception:
         return tpl  # custom text with no/odd placeholders
 
@@ -3285,12 +3296,16 @@ def build_newproduct_message(product, tpl_index=None):
         idx = max(0, min(len(NEW_PRODUCT_TEMPLATES) - 1, idx))
         tpl = NEW_PRODUCT_TEMPLATES[idx]
     try:
-        return tpl.format(
-            product=d.get('name', 'Product'),
-            price=f"{price:.2f}",
-            desc=desc,
-            stock=stock,
-        )
+        class _SafeMap(dict):
+            def __missing__(self, key):
+                return "{" + key + "}"
+        return tpl.format_map(_SafeMap({
+            'product': d.get('name', 'Product'),
+            'product_name': d.get('name', 'Product'),
+            'price': f"{price:.2f}",
+            'desc': desc,
+            'stock': stock,
+        }))
     except Exception:
         return tpl
 

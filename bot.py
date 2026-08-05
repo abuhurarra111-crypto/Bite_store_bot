@@ -60,6 +60,8 @@ from handlers_support import (
 from support_replacement import (
     user_replace_start_callback, user_replace_reason_callback,
     admin_replace_approve_callback, admin_replace_reject_callback,
+    admin_replace_api_callback, admin_replace_upload_callback,
+    admin_replace_upload_received, admin_replace_stock_callback,
 )
 # 🆕 v72: Delivery integrity dashboard
 from admin_panels import (
@@ -458,6 +460,9 @@ async def handle_text(update, context):
         if await cz_import_received(update, context): return
     if context.user_data.get('cz_banner_text'):
         if await cz_banner_text_received(update, context): return
+    # 🆕 v144.3: replacement upload text
+    if context.user_data.get('rep_upload_oid'):
+        if await admin_replace_upload_received(update, context): return
     # v132: global premium-emoji capture foundation. Any future text-input
     # feature can read these keys instead of losing premium emoji entities.
     try:
@@ -1795,6 +1800,9 @@ def main():
         ("^reprsn_",                    user_replace_reason_callback),
         # 🆕 v71: Replacement system — admin side
         ("^adm_repap_",                 admin_replace_approve_callback),
+        ("^adm_repx_api_",              admin_replace_api_callback),
+        ("^adm_repx_up_",               admin_replace_upload_callback),
+        ("^adm_repx_stock_",            admin_replace_stock_callback),
         ("^adm_reprj_",                 admin_replace_reject_callback),
         # 🆕 v71: Per-product replacement window — apply set
         # (the picker callback is registered earlier, near ^editfield_)
