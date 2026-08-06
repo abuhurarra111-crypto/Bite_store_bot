@@ -1216,7 +1216,7 @@ class CanbosoAdapter(SupplierAdapterBase):
         as documented (header is still sent for backwards compatibility).
         """
         import uuid as _uu
-        qty = max(1, min(100, int(quantity or 1)))
+        qty = max(1, min(9999, int(quantity or 1)))
         body = {"key": self.api_key, "product_id": str(remote_id), "quantity": qty}
         internal_oid = str(getattr(self, "_current_internal_order_id", "") or "").strip()
         # Stable idempotency for the same bot order prevents duplicate paid
@@ -1612,18 +1612,27 @@ class ProdSellerAdapter(SupplierAdapterBase):
             except Exception:
                 price = 0.0
             in_stock = bool(p.get("inStock", True))
+            # 🐛 v145 FIX: use the REAL stock from the API (products list includes
+            # a stock field) instead of hardcoding 999.
+            try:
+                stock = int(p.get("stock") or 0)
+            except Exception:
+                stock = 0
+            if stock <= 0 and in_stock:
+                stock = 1  # supplier says in stock but no number → assume 1+ (on-demand)
             out.append({
                 "remote_id": rid,
                 "name": (p.get("name") or "Product")[:200],
                 "description": (p.get("description") or "")[:1500],
                 "cost_usd": price,
-                "stock": 999 if in_stock else 0,
+                "stock": stock,
                 "raw": p,
             })
         return out
 
     def create_order(self, remote_id, quantity):
-        qty = max(1, min(100, int(quantity or 1)))
+        # 🐛 v145 FIX: no hard 100 cap — deliver exactly what the user ordered.
+        qty = max(1, min(9999, int(quantity or 1)))
         body = {"productId": str(remote_id), "quantity": qty}
         import uuid as _uu
         internal_oid = str(getattr(self, "_current_internal_order_id", "") or "").strip()
@@ -4019,13 +4028,26 @@ async def route_order_to_supplier(bot, order):
                 buf.write(f"{i}. {item}\n".encode('utf-8'))
             buf.seek(0)
             fname = f"bite_store_order_{order['id']}_{len(items)}accounts.txt"
-            await bot.send_document(
-                order['user_id'],
-                document=buf, filename=fname,
-                caption=f"📎 *{len(items)} accounts — Order #{order['id']}*\n"
-                        f"_Each line = 1 account. Save this file safely._",
-                parse_mode="Markdown"
-            )
+            try:
+                sent_doc = await bot.send_document(
+                    order['user_id'],
+                    document=buf, filename=fname,
+                    caption=f"📎 *{len(items)} accounts — Order #{order['id']}*\n"
+                            f"_Each line = 1 account. Save this file safely._",
+                    parse_mode="Markdown"
+                )
+                # 🐛 v145: save the document file_id so it can be re-opened /
+                # downloaded from Completed Orders later.
+                try:
+                    _did = getattr(sent_doc, "document", None)
+                    if _did is not None and getattr(_did, "file_id", None):
+                        _gc2 = _gc(); _cc = _gc2.cursor()
+                        _cc.execute("UPDATE orders SET delivery_file_id=? WHERE id=?", (str(_did.file_id), order['id']))
+                        _gc2.commit(); _gc2.close()
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.warning(f"[router] bulk .txt file send failed: {e}")
         except Exception as e:
             logger.warning(f"[router] bulk .txt file send failed: {e}")
 

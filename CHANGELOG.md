@@ -8,7 +8,47 @@
 
 ---
 
-# 🚀 v144.4 (2026-08-06) — FIX: fake activity not going to selected destination
+# 🚀 v145 (2026-08-06) — ProdSeller stock/qty FIX + rich payment alerts + .txt file in orders + user search + ticket auto-close
+
+## 🐛 FIX 1: ProdSeller stock showed 999 + 200 qty delivered only 100
+- **Stock:** ProdSeller adapter hardcoded `stock: 999` for in-stock products. Now
+  uses the REAL `stock` field from the products API (falls back to 1 for
+  in-stock-but-unknown).
+- **Quantity cap:** `create_order` capped qty at 100 (`min(100, ...)`) — that's
+  why a 200-qty order delivered only 100. Cap raised to 9999 for ProdSeller AND
+  Canboso (the router still enforces actual stock as the real limit).
+- UI bulk hints `Max: 100` → `Max: 9999`.
+
+## ✨ FIX 2: Rich admin payment notifications (every method)
+- Every "Pending" admin alert now includes: 📦 Product + qty, 💰 Selling price +
+  total, 🔗 Supplier name, 🧾 Supplier cost/pc, 📈 Margin, and the payment
+  METHOD label with network (Bybit Pay / Bybit USDT TRC20 / Bybit USDT BEP20 /
+  Binance Pay / Binance USDT TRC20 / Binance USDT BEP20 / EasyPaisa / JazzCash /
+  Points).
+- Wired into Binance Pay (API + Gmail), JazzCash, and Bybit failure alerts.
+
+## ✨ FIX 3: Bulk .txt delivery file saved + downloadable
+- When 10+ accounts (or long content) are delivered as a .txt file, the
+  document `file_id` is saved on the order (`orders.delivery_file_id`).
+- Completed Orders shows **📎 Download Delivery File (.txt)** — admin can
+  re-open/download it anytime.
+
+## ✨ FIX 4: Users search (ID or username)
+- Users list gets **🔍 Search User** — type a numeric user ID or a username
+  (partial, case-insensitive) → results with 📊 activity buttons.
+
+## 🐛 FIX 5: usernames showing "—" for some users
+- My Account now refreshes the DB profile on open (live Telegram username) and
+  falls back to the saved DB username when the live one is missing.
+
+## ✨ FIX 6: Ticket auto-close after 30 min no user reply
+- New `ticket_auto_close_job` (every 5 min): open/in-progress tickets whose last
+  USER message is >30 min old → auto-**resolved**, user + admin notified.
+
+## 🧪 Tests: v145 suite 10/10 · full regression 231/231 PASS · boot clean
+
+---
+ (2026-08-06) — FIX: fake activity not going to selected destination
 
 ## 🐛 Root cause (detective mode)
 - **Report:** fake activity messages never appeared at the selected destination.

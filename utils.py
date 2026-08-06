@@ -987,3 +987,109 @@ def fmt_price_precise(value):
     if v == int(v):
         return f"{int(v)}"
     return f"{v:.10f}".rstrip("0").rstrip(".")
+
+
+
+def order_payment_context(oid):
+    """🐛 v145: build a rich context line for ADMIN payment notifications.
+    Extracts product name, supplier (if any), supplier cost, selling price,
+    qty and total from an order — so every 'pending' alert shows what the
+    user is actually buying and the margin.
+    Returns a list of display lines (already markdown-safe) or [] if nothing.
+    """
+    lines = []
+    try:
+        from database import get_order, get_product, get_connection
+        o = get_order(int(oid))
+        if not o:
+            return lines
+        pname = (o.get('product_name') or '').strip()
+        qty = int(o.get('order_qty') or 1)
+        selling = 0.0
+        try:
+            selling = float(o.get('price') or 0)
+        except Exception:
+            selling = 0.0
+        total = round(selling * qty, 2)
+
+        # Points purchase?
+        order_type = (o.get('order_type') or '')
+        if 'point' in str(order_type).lower() or 'buy_points' in str(order_type).lower() or pname.lower().startswith('💎'):
+            lines.append(f"💎 *Buying:* Points (amount ${total:.2f})")
+            return lines
+
+        if pname:
+            lines.append(f"📦 *Product:* {pname[:40]}{' × '+str(qty) if qty>1 else ''}")
+        if selling and total:
+            lines.append(f"💰 *Selling:* ${selling:.2f}/pc · Total ${total:.2f}")
+
+        # Supplier cost via ext_product link
+        try:
+            pid = o.get('product_id')
+            if pid:
+                p = get_product(int(pid))
+                if p:
+                    pd = dict(p)
+                    ext_sid = int(pd.get('ext_supplier_id') or 0)
+                    ext_pid = int(pd.get('ext_product_id') or 0)
+                    cost = None
+                    sup_name = None
+                    if ext_sid:
+                        conn = get_connection(); c = conn.cursor()
+                        c.execute("SELECT name FROM ext_suppliers WHERE id=?", (ext_sid,))
+                        r = c.fetchone()
+                        if r:
+                            sup_name = r[0]
+                        if ext_pid:
+                            c.execute("SELECT cost_usd FROM ext_products WHERE id=?", (ext_pid,))
+                            r2 = c.fetchone()
+                            if r2:
+                                try:
+                                    cost = float(r2[0] or 0)
+                                except Exception:
+                                    cost = None
+                        conn.close()
+                    if sup_name:
+                        lines.append(f"🔗 *Supplier:* {sup_name[:30]}")
+                    if cost is not None:
+                        lines.append(f"🧾 *Supplier cost:* ${cost:.2f}/pc")
+                        if selling > 0:
+                            margin = round((selling - cost) * qty, 2)
+                            lines.append(f"📈 *Margin:* ${margin:.2f}")
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return lines
+
+
+def payment_method_label(method):
+    """Friendly + network-aware label for a payment method string."""
+    m = (method or '').lower()
+    if 'bybit_pay' in m:
+        return "💳 Bybit Pay"
+    if 'bybit_usdt_trc20' in m:
+        return "💎 Bybit USDT (TRC20)"
+    if 'bybit_usdt_bep20' in m:
+        return "💎 Bybit USDT (BEP20)"
+    if 'bybit' in m:
+        return "💳 Bybit"
+    if 'binance_pay' in m or ('binance' in m and 'usdt' not in m):
+        return "🪙 Binance Pay"
+    if 'binance_usdt_trc20' in m or ('binance' in m and 'trc20' in m):
+        return "🪙 Binance USDT (TRC20)"
+    if 'binance_usdt_bep20' in m or ('binance' in m and 'bep20' in m):
+        return "🪙 Binance USDT (BEP20)"
+    if 'binance' in m:
+        return "🪙 Binance"
+    if 'easy' in m:
+        return "📱 EasyPaisa"
+    if 'jazz' in m:
+        return "📞 JazzCash"
+    if 'usdt_trc20' in m:
+        return "💎 USDT (TRC20)"
+    if 'usdt_bep20' in m:
+        return "💎 USDT (BEP20)"
+    if 'point' in m:
+        return "💎 Points"
+    return (method or 'Payment').title()

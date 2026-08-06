@@ -21,7 +21,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, CopyTextButton
 from config import *
 from database import *
 from keyboards import *
-from utils import escape_md, format_pkr, nav_push, build_manual_order_whatsapp_url, get_product_mode_tag, smart_text_and_mode, contains_premium_markup, fmt_price, points_from_usd, fmt_points
+from utils import escape_md, format_pkr, nav_push, build_manual_order_whatsapp_url, get_product_mode_tag, smart_text_and_mode, contains_premium_markup, fmt_price, points_from_usd, fmt_points, order_payment_context, payment_method_label
 import re
 import os
 import logging
@@ -256,7 +256,7 @@ async def buy_callback(update, context):
         context.user_data['bulk_step'] = 'waiting_qty'
         cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel Payment", callback_data="cancel_order")]])
         if is_manual:
-            stock_text = "🟢 On-Demand"; max_qty = 100
+            stock_text = "🟢 On-Demand"; max_qty = 9999
         else:
             stock_text = f"{p['stock']}"; max_qty = p['stock']
         pkr = format_pkr(_get_eff_price(p), _pkr_rate())
@@ -342,7 +342,7 @@ async def buy_multiple_callback(update, context):
     
     if is_manual:
         stock_text = "🟢 On-Demand (Unlimited)"
-        max_qty = 100
+        max_qty = 9999
     else:
         stock_text = f"{p['stock']}"
         max_qty = p['stock']
@@ -748,14 +748,18 @@ async def binance_order_id_received(update, context):
     send_text, send_mode = smart_text_and_mode(text, "Markdown")
     await update.message.reply_text(send_text, parse_mode=send_mode, reply_markup=kb)
 
-    # Notify admin
+    # Notify admin (🐛 v145: enriched with product + supplier cost + selling)
     try:
         u2 = update.effective_user
+        ctx_lines = order_payment_context(oid)
+        ctx_txt = "\n".join(ctx_lines) + ("\n" if ctx_lines else "")
         await context.bot.send_message(
             ADMIN_ID,
-            f"🟡 *Binance Order Pending #{oid}*\n"
+            f"🟡 *Binance Pay Pending #{oid}*\n"
             f"User: {escape_md(u2.first_name or '?')} (`{u2.id}`)\n"
+            f"Method: 🪙 Binance Pay\n"
             f"Amount: ${expected_amount:.2f}\n"
+            f"{ctx_txt}"
             f"Order ID submitted: `{order_id}`\n"
             f"_Waiting for confirmation…_",
             parse_mode="Markdown",
@@ -1575,13 +1579,16 @@ async def binance_amount_received(update, context):
     send_text, send_mode = smart_text_and_mode(msg, "Markdown")
     await update.message.reply_text(send_text, parse_mode=send_mode, reply_markup=kb)
     
-    # Notify admin
+    # Notify admin (🐛 v145: enriched)
     try:
+        ctx_lines = order_payment_context(oid)
+        ctx_txt = "\n".join(ctx_lines) + ("\n" if ctx_lines else "")
         await context.bot.send_message(
             ADMIN_ID,
-            f"🔶 *Binance Order Pending #{oid}*\n"
+            f"🔶 *Binance (Gmail) Pending #{oid}*\n"
             f"User: {escape_md(un)} (`{u.id}`)\n"
-            f"Product: {_fmt_msg_name(pname)}\n"
+            f"Method: 🪙 Binance Pay (Gmail auto-verify)\n"
+            f"{ctx_txt}"
             f"Amount: ${amt} | Sender: {escape_md(sender_name)}\n"
             f"_Waiting for payment confirmation..._",
             parse_mode="Markdown")
@@ -1883,10 +1890,13 @@ async def _start_jc_manual(update, context):
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel Payment", callback_data="cancel_order")]]))
     try:
+        ctx_lines = order_payment_context(oid)
+        ctx_txt = "\n".join(ctx_lines) + ("\n" if ctx_lines else "")
         await _bot_send_smart(context.bot, ADMIN_ID,
-            f"📱 *JazzCash Order Pending #{oid}*\n"
+            f"📞 *JazzCash Pending #{oid}*\n"
             f"User: {escape_md(un)} (`{u.id}`)\n"
-            f"Product: {_fmt_msg_name(pname)}\n"
+            f"Method: 📞 JazzCash\n"
+            f"{ctx_txt}"
             f"Amount: Rs.{total_rs:.0f}\n"
             f"_Waiting for TID..._",
             parse_mode="Markdown")
@@ -3111,6 +3121,7 @@ async def _notify_admin_bybit_failure(bot, order, reason):
             f"🧾 Order: `#{oid}` (created {escape_md(str(order.get('created_at') or '?'))})\n"
             f"👤 Customer: `{order.get('user_id') or '?'}`\n"
             f"💵 Amount: *{fmt_price(exp)} USDT*\n"
+            + "\n".join(order_payment_context(oid)) + ("\n" if order_payment_context(oid) else "") +
             f"🔗 ID pasted: `{escape_md(note_dbg[:60]) or '—'}`\n"
             f"📋 Reason: `{escape_md(str(reason)[:120])}`\n"
             f"💡 {_bybit_failure_hint(reason)}\n\n"

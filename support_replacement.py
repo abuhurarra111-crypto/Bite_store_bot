@@ -1271,3 +1271,100 @@ async def review_reminder_job(context):
     except Exception as e:
         logger.error(f"[ReviewReminder] job error: {e}")
 
+
+
+# ════════════════════════════════════════════════════════════
+# 🆕 v145 — TICKET AUTO-CLOSE (30 min no user reply → resolved)
+# ════════════════════════════════════════════════════════════
+def get_stale_open_tickets(minutes=30, limit=25):
+    """Return open/in_progress tickets whose LAST message was from the USER
+    more than `minutes` ago (or that have no user message at all), i.e. the
+    user has gone quiet → auto-resolve."""
+    ensure_ticket_messages_table()
+    try:
+        conn = get_connection(); c = conn.cursor()
+        # last user-message time per ticket
+        c.execute("""
+            SELECT tm.ticket_id, MAX(tm.created_at) AS last_user_msg
+            FROM ticket_messages tm
+            WHERE tm.sender='user'
+            GROUP BY tm.ticket_id
+        """)
+        user_msgs = {r[0]: (r[1] or '') for r in c.fetchall()}
+        c.execute("SELECT * FROM support_tickets WHERE status IN ('open','in_progress') ORDER BY id DESC LIMIT 200")
+        rows = [dict(r) for r in c.fetchall()]
+        conn.close()
+    except Exception as e:
+        logger.warning(f"[TicketAutoClose] scan failed: {e}")
+        return []
+
+    from datetime import datetime, timedelta
+    now = datetime.now()
+    stale = []
+    for t in rows:
+        last = user_msgs.get(t['id'], '')
+        if last:
+            try:
+                last_dt = datetime.strptime(str(last)[:19], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                last_dt = now
+            # ticket created_at fallback
+            try:
+                created_dt = datetime.strptime(str(t.get('created_at') or '')[:19], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                created_dt = now
+            ref_dt = last_dt if last else created_dt
+        else:
+            # no user message at all → use created_at
+            try:
+                ref_dt = datetime.strptime(str(t.get('created_at') or '')[:19], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                ref_dt = now
+        if (now - ref_dt) > timedelta(minutes=minutes):
+            stale.append(t)
+            if len(stale) >= limit:
+                break
+    return stale
+
+
+async def ticket_auto_close_job(context):
+    """Runs every 5 minutes. Auto-resolves tickets where the user hasn't
+    replied for 30 minutes. Notifies both user + admin."""
+    try:
+        stale = get_stale_open_tickets(minutes=30)
+        if not stale:
+            return
+        from database import update_ticket
+        for t in stale:
+            tid = t['id']
+            try:
+                update_ticket(tid, status='resolved')
+                # also mark closed in a follow-up? we use 'resolved' tag only
+            except Exception as e:
+                logger.warning(f"[TicketAutoClose] update #{tid} failed: {e}")
+                continue
+            # notify user
+            try:
+                uid = t.get('user_id')
+                if uid:
+                    await context.bot.send_message(
+                        uid,
+                        f"🔒 *Ticket #{tid} auto-resolved* (no reply for 30 minutes).\n\n"
+                        f"If you still need help, open a new ticket anytime.",
+                        parse_mode="Markdown")
+            except Exception:
+                pass
+            # notify admin
+            try:
+                from config import ADMIN_ID
+                if ADMIN_ID:
+                    await context.bot.send_message(
+                        ADMIN_ID,
+                        f"🔒 *Ticket #{tid} auto-resolved* (no user reply for 30 min).\n"
+                        f"User: `{t.get('user_id')}`",
+                        parse_mode="Markdown")
+            except Exception:
+                pass
+            logger.info(f"[TicketAutoClose] auto-resolved #{tid}")
+    except Exception as e:
+        logger.warning(f"[TicketAutoClose] job error: {e}")

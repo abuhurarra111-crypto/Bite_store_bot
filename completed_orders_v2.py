@@ -310,6 +310,10 @@ def _build_order_detail_kb(order: dict) -> InlineKeyboardMarkup:
     if order.get("status") == "delivered" and order.get("delivery_content"):
         kb.append([InlineKeyboardButton("👀 User-Side Delivery View",
                                          callback_data=f"ac2_userview_{oid}")])
+    # 🐛 v145: bulk .txt delivery file — re-open / download from Completed Orders
+    if order.get("delivery_file_id"):
+        kb.append([InlineKeyboardButton("📎 Download Delivery File (.txt)",
+                                         callback_data=f"ac2_dlfile_{oid}")])
     kb.append([InlineKeyboardButton("🔙 Back to User's Orders",
                                      callback_data=f"ac2_user_{uid}_0")])
     kb.append([InlineKeyboardButton("👥 All Users",
@@ -603,3 +607,24 @@ async def ac2_search_cancel(update, context):
     except Exception:
         pass
     return -1
+
+
+async def ac2_dlfile_callback(update, context):
+    """🐛 v145: admin downloads the bulk .txt delivery file from Completed Orders."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        oid = int(q.data.replace("ac2_dlfile_", ""))
+        from database import get_order
+        o = get_order(oid)
+        if not o or not o.get("delivery_file_id"):
+            await q.answer("No file for this order", show_alert=True); return
+        await context.bot.send_document(
+            q.from_user.id,
+            document=str(o["delivery_file_id"]),
+            caption=f"📎 *Delivery file — Order #{oid}*",
+            parse_mode="Markdown")
+    except Exception as e:
+        await q.answer(f"❌ {str(e)[:60]}", show_alert=True)

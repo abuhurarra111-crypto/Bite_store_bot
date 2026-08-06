@@ -1104,6 +1104,7 @@ async def admin_users_callback(u,c):
         for i in range(0, len(nav), 2):
             kb.append(nav[i:i+2])
 
+    kb.append([InlineKeyboardButton("🔍 Search User (ID / username)", callback_data="adm_users_search")])
     kb.append([InlineKeyboardButton("💬 Start User Chat", callback_data="admin_direct_chat")])
     kb.append([InlineKeyboardButton("💎 Manage User Points", callback_data="adm_manage_pts")])
     kb.append([InlineKeyboardButton("🧹 Wipe Activity Now",  callback_data="adm_uact_wipe_confirm")])
@@ -8831,3 +8832,77 @@ async def cz_fmt_callback(update, context):
     _cz_set("display_format", val)
     await q.answer(f"✅ Format: {val}", show_alert=True)
     await cz_format_callback(update, context)
+
+
+# ════════════════════════════════════════════════════════════
+# 🆕 v145 — USER SEARCH (by user ID or username)
+# ════════════════════════════════════════════════════════════
+async def adm_users_search_callback(u, c):
+    """Ask for a user ID or username to search."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    c.user_data["adm_users_search"] = True
+    kb = [[InlineKeyboardButton("🔙 Cancel", callback_data="admin_users")]]
+    await _safe_edit(q,
+        "🔍 *Search User*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Send a Telegram **User ID** (e.g. `7105782769`)\n"
+        "or a **username** (e.g. `@alex` or `alex`).\n\n"
+        "_Matches are case-insensitive and partial._",
+        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def adm_users_search_received(update, context):
+    if update.effective_user.id != ADMIN_ID:
+        context.user_data.pop("adm_users_search", None); return False
+    if not context.user_data.get("adm_users_search"):
+        return False
+    context.user_data.pop("adm_users_search", None)
+    term = (update.message.text or "").strip()
+    if not term or term.lower() == "/cancel":
+        await update.message.reply_text("❌ Cancelled.")
+        return True
+
+    from database import get_connection
+    conn = get_connection(); c = conn.cursor()
+    term_l = term.lower().lstrip("@")
+    results = []
+    try:
+        # numeric → exact/prefix by user_id
+        if term_l.isdigit():
+            c.execute("SELECT * FROM users WHERE user_id LIKE ? ORDER BY user_id DESC LIMIT 20",
+                      (f"%{term_l}%",))
+            results = c.fetchall()
+        else:
+            # username OR first_name partial match (case-insensitive)
+            c.execute("""SELECT * FROM users
+                         WHERE lower(username) LIKE ? OR lower(first_name) LIKE ?
+                         ORDER BY user_id DESC LIMIT 20""",
+                      (f"%{term_l}%", f"%{term_l}%"))
+            results = c.fetchall()
+    except Exception as e:
+        conn.close()
+        await update.message.reply_text(f"❌ Search error: {e}")
+        return True
+    conn.close()
+
+    if not results:
+        await update.message.reply_text(
+            f"❌ *No user found* for `{term}`.", parse_mode="Markdown")
+        return True
+
+    text = f"🔍 *Results for* `{term}` — *{len(results)}* found:\n━━━━━━━━━━━━━━━━━━━━\n\n"
+    kb = []
+    for usr in results[:15]:
+        uid = usr["user_id"]
+        uname = (usr["username"] or "").strip()
+        fname = (usr["first_name"] or "?")
+        uname_txt = f"@{uname}" if uname else "_no username_"
+        text += f"• `{uid}` — {escape_md(fname)} ({uname_txt}) 💎{usr['points']}\n"
+        label = f"📊 {uid} {('@'+uname) if uname else fname}"[:40]
+        kb.append([InlineKeyboardButton(label, callback_data=f"adm_uact_{uid}")])
+    kb.append([InlineKeyboardButton("🔙 Users List", callback_data="admin_users")])
+    await update.message.reply_text(text[:3900], parse_mode="Markdown",
+                                    reply_markup=InlineKeyboardMarkup(kb))
+    return True

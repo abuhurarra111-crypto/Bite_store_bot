@@ -970,12 +970,22 @@ async def my_account_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     await q.answer()
     q = update.callback_query; await q.answer(); u = q.from_user; db = get_user(u.id)
     nav_push(context, 'my_account')  # 🔙 Track navigation
-    from database import get_ref_points  # 🆕 v48
-    # 🔧 FIXED: escape markdown + format date nicely
-    # 🆕 v48: extra placeholders {ref_points} {ref_points_label} for admin to use
-    # 🐛 v137 FIX: users without a username saw "@N/A" — now shows "—" instead
-    # of a fake @username. Template still keeps its "@" prefix for real ones.
-    _uname = (u.username or '').strip()
+    from database import get_ref_points, save_user as _su  # 🆕 v48/v145
+    # 🐛 v145 FIX: refresh the DB profile on every My-Account open so usernames
+    # are never stale. Fall back to the saved DB username when Telegram's live
+    # username is missing (some clients report it empty).
+    try:
+        _su(u.id, u.username or "", u.first_name or "")
+    except Exception:
+        pass
+    _live_uname = (u.username or '').strip()
+    _db_uname = ''
+    try:
+        if db is not None:
+            _db_uname = str(db.get('username') or '').strip()
+    except Exception:
+        pass
+    _uname = _live_uname or _db_uname
     _uname_disp = escape_md(_uname) if _uname else '—'
     fmt_dict = dict(
         name=escape_md(u.first_name or 'N/A'),

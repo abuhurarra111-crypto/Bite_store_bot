@@ -62,6 +62,7 @@ from support_replacement import (
     admin_replace_approve_callback, admin_replace_reject_callback,
     admin_replace_api_callback, admin_replace_upload_callback,
     admin_replace_upload_received, admin_replace_stock_callback,
+    ticket_auto_close_job,
 )
 # 🆕 v72: Delivery integrity dashboard
 from admin_panels import (
@@ -88,7 +89,8 @@ from handlers_admin import (flash_toggle_callback, manual_hist_callback, edit_ma
 from handlers_admin import (flash_toggle_callback, adm_manage_pts_callback, adm_pts_uid_received, adm_pts_amt_received)
 from handlers_admin import *
 from handlers_admin import adm_diagnostics_callback
-from handlers_admin import (cz_noop_callback, cz_search_callback, cz_search_received,
+from handlers_admin import (adm_users_search_callback, adm_users_search_received,
+                            cz_noop_callback, cz_search_callback, cz_search_received,
                             cz_theme_callback, cz_theme_apply_callback,
                             cz_backup_callback, cz_import_callback, cz_import_received,
                             cz_banner_callback, cz_banner_toggle_callback,
@@ -186,6 +188,7 @@ from maintenance_mode import (
 from completed_orders_v2 import (
     admin_completed_v2_callback, ac2_page_callback,
     ac2_user_callback, ac2_order_callback, ac2_userview_callback, ac2_noop_callback,
+    ac2_dlfile_callback,
     ac2_clear_search_callback,
     ac2_search_entry, ac2_search_received, ac2_search_cancel,
     AC2_SEARCH_TEXT,
@@ -454,6 +457,8 @@ async def handle_text(update, context):
     if context.user_data.get('fj_vbtn_emo'):
         if await fj_vbtn_emo_received(update, context): return
     # 🆕 v144: customization text inputs (search / import / banner)
+    if context.user_data.get('adm_users_search'):
+        if await adm_users_search_received(update, context): return
     if context.user_data.get('cz_search'):
         if await cz_search_received(update, context): return
     if context.user_data.get('cz_import'):
@@ -1013,6 +1018,14 @@ async def post_init(app):
                 name="review_reminder_24h",
             )
             print("[ReviewReminder] Hourly job scheduled — asks for review 24h after delivery")
+            # 🆕 v145: auto-close stale support tickets (30 min no user reply)
+            try:
+                app.job_queue.run_repeating(
+                    ticket_auto_close_job, interval=300, first=180,
+                    name="ticket_auto_close")
+                print("[TicketAutoClose] scheduled — resolves tickets with no reply for 30 min")
+            except Exception as e:
+                print(f"[TicketAutoClose] schedule error: {e}")
     except Exception as e:
         print(f'[ReviewReminder] Job setup error: {e}')
 
@@ -2020,6 +2033,7 @@ def main():
         # 🆕 Customization handlers
         ("^admin_customization$", admin_customization_callback),
         # 🆕 v144: new customization tools
+        ("^adm_users_search$",     adm_users_search_callback),
         ("^cz_noop$",              cz_noop_callback),
         ("^cz_search$",            cz_search_callback),
         ("^cz_theme$",             cz_theme_callback),
@@ -2191,6 +2205,7 @@ def main():
         ("^ac2_order_",                  ac2_order_callback),
         # 🆕 v101: user-side delivery preview (admin sees exactly what customer got)
         ("^ac2_userview_",               ac2_userview_callback),
+        ("^ac2_dlfile_",                 ac2_dlfile_callback),
         ("^ac2_clear_search$",           ac2_clear_search_callback),
         ("^ac2_noop$",                   ac2_noop_callback),
         # 🆕 v84: Maintenance Mode admin panel

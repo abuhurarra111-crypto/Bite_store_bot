@@ -434,6 +434,7 @@ def migrate_all():
         ensure_product_columns(c)
         ensure_product_accounts_table(c)
         ensure_column(c, "orders", "payment_note_id", "TEXT DEFAULT ''")
+        ensure_column(c, "orders", "delivery_file_id", "TEXT DEFAULT ''")
         ensure_column(c, "orders", "order_qty", "INTEGER DEFAULT 1")
         ensure_column(c, "orders", "payment_reminder_count", "INTEGER DEFAULT 0")
         ensure_column(c, "orders", "last_payment_reminder_at", "TEXT DEFAULT ''")
