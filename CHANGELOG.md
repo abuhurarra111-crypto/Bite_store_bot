@@ -8,7 +8,33 @@
 
 ---
 
-# 🚀 v144.3 (2026-08-05) — Support-ticket close fix + Replacement 2-step + Flash placeholder + Ai Tools
+# 🚀 v144.4 (2026-08-06) — FIX: fake activity not going to selected destination
+
+## 🐛 Root cause (detective mode)
+- **Report:** fake activity messages never appeared at the selected destination.
+- **Investigation:**
+  - dest settings were correct (`@bite_alerts`, `group_only`, enabled) and the bot
+    IS an admin there (live getChatMember = administrator, resolved id
+    -1003997101970 matches the cache).
+  - `build_fake_message(user_id=0)` builds fine (40/40 ok).
+  - **The real bug:** `_group_job_scheduled` (module-level flag) could get STUCK
+    `True` (e.g. job fired, process restarted, or a scheduler hiccup). The old
+    `schedule_group_activity_job()` only checked that flag → if it was True it
+    returned early, even when the actual job was gone. The 60s watchdog also
+    checked `if not _group_job_scheduled` → it ALSO skipped → the group job was
+    never re-scheduled → fake activity silently dead at the destination forever.
+- **Fix (per_user_activity.py):**
+  1. New `_group_job_actually_scheduled(app)` — inspects the JOB QUEUE for a live
+     `pua_group_central` job (not just the flag).
+  2. `schedule_group_activity_job` uses it (stale flag resets + schedules fresh).
+  3. Watchdog re-schedules based on the actual queue too.
+- **Also:** DB fake-activity interval set to `minutes 1–60` (was `seconds 1–10`
+  which flood-guard floor forced to 30s anyway).
+
+## 🧪 Tests: v144.4 suite 6/6 · full regression 221/221 PASS · boot clean
+
+---
+ (2026-08-05) — Support-ticket close fix + Replacement 2-step + Flash placeholder + Ai Tools
 
 ## 🐛 Fix 1: Support ticket Close/Resolve — notification but still "open"
 - **Root cause:** close/resolve/progress callbacks did `q.answer(...)` then called

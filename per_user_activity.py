@@ -1108,16 +1108,39 @@ async def start_personal_activity(bot, app, user_id: int):
 
 _group_job_scheduled = False
 
+def _group_job_actually_scheduled(app):
+    """🐛 v144.4: check the JOB QUEUE (not just the in-memory flag) for a
+    live 'pua_group_central' job. A stuck True flag used to block re-scheduling
+    even when the actual job was lost (restart/scheduler hiccup) → fake
+    activity silently died forever (watchdog also skipped because the flag
+    was True)."""
+    try:
+        if app is None or app.job_queue is None:
+            return False
+        for j in app.job_queue.jobs():
+            try:
+                if getattr(j, "name", "") == "pua_group_central":
+                    return True
+            except Exception:
+                continue
+        return False
+    except Exception:
+        return False
+
+
 def schedule_group_activity_job(app):
     """
     Schedules a single central job to send fake activity directly to the group.
     Runs if global fake activity is ON and dest_mode is 'group_only' or 'both'.
     Keeps the group active even if there are 0 users in the bot.
+    🐛 v144.4: now verifies the ACTUAL job exists in the queue before skipping —
+    a stale True flag no longer blocks scheduling.
     """
     global _group_job_scheduled
-    if _group_job_scheduled:
+    if _group_job_scheduled and _group_job_actually_scheduled(app):
         logger.debug("[Activity] Group job already scheduled, skipping.")
         return
+    _group_job_scheduled = False  # stale flag → reset so we schedule fresh
 
     # Let's get the interval range
     mn_s, mx_s = get_speed_seconds()
@@ -1227,12 +1250,14 @@ async def activity_watchdog_job(context):
             return
         if not is_globally_enabled():
             return
-        # 1) group job
+        # 1) group job — 🐛 v144.4: verify the ACTUAL job in the queue, not
+        # just the flag. A stale True flag used to hide a dead group job.
         try:
-            if not _group_job_scheduled:
+            if not _group_job_actually_scheduled(app):
                 mode = _g("dest_mode", "bot_only")
                 dest = _g("dest_chat_id", "").strip()
                 if mode in ("group_only", "both") and dest:
+                    _group_job_scheduled = False
                     schedule_group_activity_job(app)
                     logger.info("[Activity][Watchdog] re-scheduled group job")
         except Exception as e:
