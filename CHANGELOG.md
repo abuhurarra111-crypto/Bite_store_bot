@@ -8,6 +8,37 @@
 
 ---
 
+# 🚀 v148 (2026-08-07) — 📊 Polls: admin polls broadcast to all users, vote tracking & live results
+
+## ✨ NEW: Poll system (user demand / opinion voting)
+- **Admin:** Admin Panel → **📊 Polls** (new button, fully editable via Manage
+  Buttons like every admin button).
+  - **➕ Create Poll** — 3-step wizard: (1) sawal likho, (2) options har ek
+    line me (2–10), (3) anonymous/public chuno + duration (1h / 6h / 24h /
+    3 days / never close).
+  - **📊 View Results** — har poll ke live votes: per-option count + percent +
+    bar, total voters, 🟢 Live / ⏹ Closed status.
+  - Per-poll: **⏹ Close Poll Now** (votes freeze; best-effort `stopPoll` in
+    every chat) and **🗑 Delete Poll**.
+- **Users:** poll as a NATIVE Telegram poll message goes to every registered
+  user's chat → they tap an option to vote right there (no buttons, no extra
+  steps). Votes are private-chat safe and instant.
+- **Tracking:** every `PollAnswer` update is recorded in new DB tables
+  (`polls`, `poll_answers`) — idempotent per user (re-vote replaces their
+  previous choice). Telegram poll_id → DB poll mapping so results aggregate
+  across all users.
+- Use case: demand polling — "Aap ko kaunsa product chahiye?" → community
+  votes tell you what to stock.
+
+## 🗄 DB
+- New tables `polls` + `poll_answers` auto-created by `ensure_poll_tables()`
+  during migrate_all/startup.
+
+## 🧪 Tests
+- New `_test_v148_polls.py` (9 tests: create/answers/revote/tg-mapping/close/
+  delete + handlers + button registry + bot registration). All 14 in-repo
+  suites + 19 legacy suites pass; live `sendPoll` verified against the real bot.
+
 # 🚀 v147 (2026-08-07) — 8 bug fixes: manual Buy Now error + replacement refund/reject-reason + maintenance gates + group silence + payment-method alerts + buy-now emoji + broadcast link/product buttons + pinned-post delete/push-unpin
 
 ## 🐛 FIX 1: Manual products — "Buy Now" error (Can't parse entities)

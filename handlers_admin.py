@@ -9074,3 +9074,415 @@ async def adm_users_search_received(update, context):
     await update.message.reply_text(text[:3900], parse_mode="Markdown",
                                     reply_markup=InlineKeyboardMarkup(kb))
     return True
+
+
+# ════════════════════════════════════════════════════════════════
+# 📊 v148: POLLS — admin creates a poll → broadcast to all users →
+# users vote in-chat (native Telegram poll) → live results for admin.
+# ════════════════════════════════════════════════════════════════
+
+POLL_MAX_OPTIONS = 10
+
+
+async def admin_polls_callback(u, c):
+    """📊 Polls main panel: create / view results / manage."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    from database import get_polls
+    polls = get_polls()
+    text = (
+        "📊 *Polls — User Demand / Opinion*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Poll banao → sab users ko jayega → wo chat me hi vote "
+        "karenge → aap results yahan dekh sakte ho.\n\n"
+        f"*Total polls:* {len(polls)}\n"
+    )
+    kb = [
+        [InlineKeyboardButton("➕ Create Poll", callback_data="poll_create")],
+        [InlineKeyboardButton("📊 View Results", callback_data="poll_results")],
+    ]
+    if polls:
+        kb.append([InlineKeyboardButton("📋 Last 5 Polls", callback_data="poll_list")])
+    kb.append([InlineKeyboardButton("🔙 Back to Admin", callback_data="admin_panel")])
+    await _safe_edit(q, text, reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def poll_create_start_callback(u, c):
+    """Step 1: ask the poll QUESTION."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    c.user_data['poll_step'] = 'poll_q'
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data='poll_cancel')]])
+    await _safe_edit(q,
+        "📊 *Create Poll — Step 1/3*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Poll ka *sawal* likho (next message me).\n\n"
+        "Example:\n`Aap ko konsi service sab se zyada chahiye?`\n\n"
+        "_Max 300 characters._",
+        parse_mode="Markdown", reply_markup=kb)
+
+
+async def poll_question_received(u, c):
+    if u.effective_user.id != ADMIN_ID or c.user_data.get('poll_step') != 'poll_q':
+        return False
+    question = (u.message.text or '').strip()[:300]
+    if not question:
+        await u.message.reply_text("❌ Sawal khali hai. Dobara bhejo:")
+        return True
+    c.user_data['poll_question'] = question
+    c.user_data['poll_step'] = 'poll_options'
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data='poll_cancel')]])
+    await u.message.reply_text(
+        f"✅ Sawal: *{question}*\n\n"
+        f"📊 *Step 2/3 — Options*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Ab *options* bhejo — har option ek line me (2 se {POLL_MAX_OPTIONS} tak).\n\n"
+        f"Example:\n"
+        f"`Netflix`\n`ChatGPT`\n`Spotify`\n`Canva`\n\n"
+        f"_Har option max 100 chars._",
+        parse_mode="Markdown", reply_markup=kb)
+    return True
+
+
+async def poll_options_received(u, c):
+    if u.effective_user.id != ADMIN_ID or c.user_data.get('poll_step') != 'poll_options':
+        return False
+    raw = (u.message.text or '').strip()
+    lines = [ln.strip()[:100] for ln in raw.splitlines() if ln.strip()]
+    # also allow comma-separated single line
+    if len(lines) == 1 and ',' in raw:
+        lines = [x.strip()[:100] for x in raw.split(',') if x.strip()]
+    if len(lines) < 2:
+        await u.message.reply_text("❌ Kam se kam 2 options chahiye. Dobara bhejo:")
+        return True
+    if len(lines) > POLL_MAX_OPTIONS:
+        await u.message.reply_text(f"❌ Zyada options hain — max {POLL_MAX_OPTIONS}. Dobara bhejo:")
+        return True
+    c.user_data['poll_options'] = lines
+    c.user_data['poll_step'] = 'poll_anon'
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🙈 Anonymous (votes hidden)", callback_data='poll_anon_1')],
+        [InlineKeyboardButton("🙋 Public (names shown)", callback_data='poll_anon_0')],
+        [InlineKeyboardButton("❌ Cancel", callback_data='poll_cancel')],
+    ])
+    preview = "\n".join(f"  {i+1}. {o}" for i, o in enumerate(lines))
+    await u.message.reply_text(
+        f"✅ Options ({len(lines)}):\n{preview}\n\n"
+        f"*Step 3/3 — Poll kaise ho?*",
+        parse_mode="Markdown", reply_markup=kb)
+    return True
+
+
+async def poll_anon_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        anon = int(q.data.replace('poll_anon_', ''))
+    except Exception:
+        anon = 1
+    c.user_data.setdefault('poll_anon', anon)
+    c.user_data['poll_step'] = 'poll_dur'
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("1 hour", callback_data='poll_dur_1'),
+         InlineKeyboardButton("6 hours", callback_data='poll_dur_6')],
+        [InlineKeyboardButton("24 hours", callback_data='poll_dur_24'),
+         InlineKeyboardButton("3 days", callback_data='poll_dur_72')],
+        [InlineKeyboardButton("♾️ Never close", callback_data='poll_dur_0')],
+        [InlineKeyboardButton("❌ Cancel", callback_data='poll_cancel')],
+    ])
+    await _safe_edit(q,
+        "⏱️ *Poll kitni der khula rahe?*\n\n"
+        "Time khatam hote hi votes band ho jayenge (results freeze).",
+        reply_markup=kb)
+
+
+async def poll_duration_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        hours = int(q.data.replace('poll_dur_', ''))
+    except Exception:
+        hours = 0
+    question = c.user_data.pop('poll_question', '')
+    options = c.user_data.pop('poll_options', [])
+    anon = c.user_data.pop('poll_anon', 1)
+    c.user_data.pop('poll_step', None)
+    if not question or not options:
+        await _safe_edit(q, "❌ Poll data missing. Dobara try karo.", reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔙 Polls", callback_data='admin_polls')]]))
+        return
+    from database import create_poll
+    close_date = ""
+    if hours and int(hours) > 0:
+        from datetime import datetime, timedelta
+        close_date = (datetime.utcnow() + timedelta(hours=int(hours))).strftime("%Y-%m-%d %H:%M:%S")
+    poll_id = create_poll(question, options, is_anonymous=bool(anon), allows_multiple=False, close_date=close_date)
+    if not poll_id:
+        await _safe_edit(q, "❌ Poll banane me error. Dobara try karo.", reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔙 Polls", callback_data='admin_polls')]]))
+        return
+    await q.answer("📢 Broadcasting poll to all users…", show_alert=False)
+    sent, failed = await _broadcast_poll_to_users(c.bot, poll_id)
+    await _safe_edit(q,
+        f"✅ *Poll Created & Broadcast!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🧾 ID: `#{poll_id}`\n"
+        f"❓ {question}\n"
+        f"📤 Sent: *{sent}* users | ❌ Failed: *{failed}*\n\n"
+        f"Users ab chat me vote kar sakte hain. Results dekhne ke "
+        f"liye 📊 Polls → View Results.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+            "📊 View Results", callback_data="poll_results")]]))
+
+
+async def _broadcast_poll_to_users(bot, poll_id):
+    """Send the native Telegram poll to every registered user. Returns (sent, failed)."""
+    from database import get_poll, get_all_users_for_broadcast, add_tg_poll_ids
+    import json as _json, asyncio as _aio
+    poll = get_poll(poll_id)
+    if not poll:
+        return 0, 0
+    try:
+        options = _json.loads(poll.get("options_json") or "[]")
+    except Exception:
+        options = []
+    if len(options) < 2:
+        return 0, 0
+    close_dt = None
+    if poll.get("close_date"):
+        try:
+            from datetime import datetime
+            close_dt = datetime.strptime(poll["close_date"], "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            close_dt = None
+    try:
+        users = get_all_users_for_broadcast()
+    except Exception:
+        users = []
+    sent = failed = 0
+    tg_ids = []
+    for usr in users:
+        uid = usr["user_id"] if isinstance(usr, dict) else usr[0]
+        try:
+            m = await bot.send_poll(
+                chat_id=uid,
+                question=poll.get("question", "Poll")[:300],
+                options=options,
+                is_anonymous=bool(poll.get("is_anonymous", 1)),
+                allows_multiple_answers=bool(poll.get("allows_multiple", 0)),
+                close_date=close_dt,
+            )
+            sent += 1
+            try:
+                if m.poll and m.poll.id:
+                    tg_ids.append(str(m.poll.id))
+            except Exception:
+                pass
+        except Exception:
+            failed += 1
+        await _aio.sleep(0.05)
+    if tg_ids:
+        try:
+            add_tg_poll_ids(poll_id, tg_ids)
+        except Exception:
+            pass
+    return sent, failed
+
+
+async def poll_results_callback(u, c):
+    """List all polls with live vote counts."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    from database import get_polls, get_poll_results
+    polls = get_polls()
+    if not polls:
+        await _safe_edit(q, "📊 *No polls yet.*\n\nAbhi koi poll nahi bana. ➕ Create Poll se banao.",
+                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("➕ Create Poll", callback_data='poll_create')],
+                                                            [InlineKeyboardButton("🔙 Polls", callback_data='admin_polls')]]))
+        return
+    lines = ["📊 *Poll Results*\n━━━━━━━━━━━━━━━━━━━━\n"]
+    for p in polls[:10]:
+        res = get_poll_results(p["id"])
+        if not res:
+            continue
+        voters = res["total_voters"]
+        status = "🟢 Live" if not res["closed"] else "⏹ Closed"
+        lines.append(f"`#{p['id']}` {status} — 👥 {voters} votes\n{res['poll'].get('question','')[:60]}\n")
+    text = "\n".join(lines)
+    kb = []
+    for p in polls[:10]:
+        kb.append([InlineKeyboardButton(f"📊 #{p['id']} — {p.get('question','')[:35]}",
+                                        callback_data=f"poll_detail_{p['id']}")])
+    kb.append([InlineKeyboardButton("🔙 Polls", callback_data="admin_polls")])
+    await _safe_edit(q, text[:3900], reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def poll_detail_callback(u, c):
+    """Show per-option votes + close/delete buttons for one poll."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        pid = int(q.data.replace('poll_detail_', ''))
+    except Exception:
+        await q.answer("Invalid", show_alert=True); return
+    from database import get_poll_results
+    res = get_poll_results(pid)
+    if not res:
+        await _safe_edit(q, "❌ Poll not found.", reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("🔙 Polls", callback_data='poll_results')]]))
+        return
+    poll = res["poll"]
+    status = "🟢 Live" if not res["closed"] else "⏹ Closed"
+    lines = [
+        f"📊 *Poll #{pid}* — {status}\n━━━━━━━━━━━━━━━━━━━━",
+        f"❓ {poll.get('question','')}",
+        f"👥 Total voters: *{res['total_voters']}*",
+        "",
+    ]
+    total = max(1, res["total_voters"])
+    for opt in res["options"]:
+        pct = round(opt["votes"] * 100.0 / total)
+        bar = "█" * (pct // 10)
+        lines.append(f"{opt['option'][:45]}\n  {opt['votes']} votes ({pct}%) {bar}")
+    if poll.get("close_date"):
+        lines.append(f"\n⏱ Close: `{poll['close_date']}` UTC")
+    kb = []
+    if not res["closed"]:
+        kb.append([InlineKeyboardButton("⏹ Close Poll Now", callback_data=f"poll_close_{pid}")])
+    kb.append([InlineKeyboardButton("🗑 Delete Poll", callback_data=f"poll_del_{pid}")])
+    kb.append([InlineKeyboardButton("🔙 All Polls", callback_data="poll_results")])
+    await _safe_edit(q, "\n".join(lines)[:3900], reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def poll_close_callback(u, c):
+    """Close a poll now — mark inactive + best-effort stopPoll in all chats."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        pid = int(q.data.replace('poll_close_', ''))
+    except Exception:
+        await q.answer("Invalid", show_alert=True); return
+    from database import set_poll_active, get_tg_poll_ids
+    set_poll_active(pid, False)
+    import asyncio as _aio
+    _aio.create_task(_stop_poll_in_chats(c.bot, pid))
+    await q.answer("⏹ Poll closed!", show_alert=True)
+    await poll_detail_callback(u, c)
+
+
+async def _stop_poll_in_chats(bot, poll_id):
+    """Best-effort: stopPoll for every chat where the poll was sent."""
+    try:
+        from database import get_poll, get_tg_poll_ids
+        poll = get_poll(poll_id)
+        if not poll:
+            return
+        import json as _json
+        try:
+            opts = _json.loads(poll.get("options_json") or "[]")
+        except Exception:
+            opts = []
+        from database import get_all_users_for_broadcast
+        users = get_all_users_for_broadcast() or []
+        for usr in users:
+            uid = usr["user_id"] if isinstance(usr, dict) else usr[0]
+            try:
+                # find the message id: we don't store per-user message ids, so
+                # use get_user_chat_poll_message if available; otherwise skip.
+                mid = await _find_poll_message_id(bot, uid, poll_id)
+                if mid:
+                    await bot.stop_poll(chat_id=uid, message_id=mid)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+async def _find_poll_message_id(bot, chat_id, poll_id):
+    """We can't enumerate old messages; rely on stored message ids if the
+    caller provided one via poll_message_ids_json (future). Return None."""
+    try:
+        from database import get_connection
+        conn = get_connection(); c = conn.cursor()
+        c.execute("SELECT value FROM bot_settings WHERE key=?", (f"poll_msg_{poll_id}_{chat_id}",))
+        r = c.fetchone(); conn.close()
+        if r and r[0]:
+            return int(r[0])
+    except Exception:
+        pass
+    return None
+
+
+async def poll_delete_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        pid = int(q.data.replace('poll_del_', ''))
+    except Exception:
+        await q.answer("Invalid", show_alert=True); return
+    from database import delete_poll_row
+    delete_poll_row(pid)
+    await q.answer("🗑 Poll deleted!", show_alert=True)
+    await poll_results_callback(u, c)
+
+
+async def poll_cancel_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    for k in ('poll_step', 'poll_question', 'poll_options', 'poll_anon'):
+        c.user_data.pop(k, None)
+    await q.answer("Cancelled")
+    await admin_polls_callback(u, c)
+
+
+async def poll_list_callback(u, c):
+    """📋 Last 5 polls (quick list)."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    from database import get_polls, get_poll_results
+    polls = get_polls()[:5]
+    if not polls:
+        await poll_results_callback(u, c); return
+    lines = ["📋 *Last 5 Polls*\n━━━━━━━━━━━━━━━━━━━━\n"]
+    for p in polls:
+        res = get_poll_results(p["id"])
+        votes = res["total_voters"] if res else 0
+        status = "🟢" if (res and not res["closed"]) else "⏹"
+        lines.append(f"{status} `#{p['id']}` ({votes} votes) — {p.get('question','')[:55]}")
+    kb = [[InlineKeyboardButton(f"📊 #{p['id']}", callback_data=f"poll_detail_{p['id']}") for p in polls[:3]]]
+    kb.append([InlineKeyboardButton("🔙 Polls", callback_data="admin_polls")])
+    await _safe_edit(q, "\n".join(lines)[:3900], reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def handle_poll_answer(update, context):
+    """📊 v148: record a user's vote whenever Telegram delivers a PollAnswer."""
+    try:
+        pa = update.poll_answer
+        if not pa:
+            return
+        tg_poll_id = str(getattr(pa, "poll_id", "") or "")
+        user = getattr(pa, "user", None)
+        option_ids = list(getattr(pa, "option_ids", []) or [])
+        uid = getattr(user, "id", 0)
+        if not tg_poll_id or not uid:
+            return
+        from database import find_poll_by_tg_id, record_poll_answer
+        pid = find_poll_by_tg_id(tg_poll_id)
+        if not pid:
+            return
+        record_poll_answer(pid, uid, option_ids)
+    except Exception:
+        pass

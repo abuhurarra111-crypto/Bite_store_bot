@@ -5444,3 +5444,242 @@ def set_referral_math_enabled(enabled):
         return True
     except Exception:
         return False
+
+
+# ════════════════════════════════════════════════════════════════
+# 📊 v148: POLLS (admin polls broadcast to all users + vote tracking)
+# ════════════════════════════════════════════════════════════════
+# The admin creates a poll (question + options) → the bot sends it as a
+# native Telegram poll to every registered user → users vote in-chat →
+# the bot records PollAnswer updates and shows live results to the admin.
+# ════════════════════════════════════════════════════════════════
+
+def ensure_poll_tables(c=None):
+    try:
+        if c is None:
+            conn = get_connection(); c = conn.cursor()
+            own = True
+        else:
+            own = False
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS polls (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                question      TEXT NOT NULL,
+                options_json  TEXT NOT NULL,
+                is_anonymous  INTEGER DEFAULT 1,
+                allows_multiple INTEGER DEFAULT 0,
+                created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+                active        INTEGER DEFAULT 1,
+                close_date    TEXT DEFAULT '',
+                tg_poll_ids_json TEXT DEFAULT '[]'
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS poll_answers (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                poll_id         INTEGER NOT NULL,
+                user_id         INTEGER NOT NULL,
+                option_ids_json TEXT NOT NULL,
+                answered_at     TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(poll_id, user_id)
+            )
+        """)
+        c.execute("CREATE INDEX IF NOT EXISTS idx_poll_ans_poll ON poll_answers(poll_id)")
+        if own:
+            conn.commit(); conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).debug(f"[Polls] ensure_poll_tables: {e}")
+
+
+def create_poll(question, options, is_anonymous=True, allows_multiple=False, close_date="") -> int:
+    """Create a poll row. Returns the new poll id (0 on failure)."""
+    try:
+        ensure_poll_tables()
+        import json as _json
+        opts = [str(o).strip()[:100] for o in (options or []) if str(o).strip()]
+        conn = get_connection(); c = conn.cursor()
+        c.execute(
+            "INSERT INTO polls (question, options_json, is_anonymous, allows_multiple, close_date, active) "
+            "VALUES (?,?,?,?,?,1)",
+            (str(question)[:300], _json.dumps(opts), 1 if is_anonymous else 0,
+             1 if allows_multiple else 0, str(close_date or "")))
+        new_id = c.lastrowid
+        conn.commit(); conn.close()
+        return int(new_id or 0)
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"[Polls] create_poll: {e}")
+        return 0
+
+
+def get_polls(include_inactive=False):
+    try:
+        ensure_poll_tables()
+        conn = get_connection(); conn.row_factory = DictRow
+        c = conn.cursor()
+        if include_inactive:
+            c.execute("SELECT * FROM polls ORDER BY id DESC LIMIT 50")
+        else:
+            c.execute("SELECT * FROM polls ORDER BY id DESC LIMIT 50")
+        rows = [dict(r) for r in c.fetchall()]
+        conn.close()
+        return rows
+    except Exception:
+        return []
+
+
+def get_poll(poll_id):
+    try:
+        ensure_poll_tables()
+        conn = get_connection(); conn.row_factory = DictRow
+        c = conn.cursor()
+        c.execute("SELECT * FROM polls WHERE id=?", (int(poll_id),))
+        r = c.fetchone()
+        conn.close()
+        return dict(r) if r else None
+    except Exception:
+        return None
+
+
+def set_poll_active(poll_id, active):
+    try:
+        ensure_poll_tables()
+        conn = get_connection(); c = conn.cursor()
+        c.execute("UPDATE polls SET active=? WHERE id=?", (1 if active else 0, int(poll_id)))
+        conn.commit(); conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def delete_poll_row(poll_id):
+    try:
+        ensure_poll_tables()
+        conn = get_connection(); c = conn.cursor()
+        c.execute("DELETE FROM poll_answers WHERE poll_id=?", (int(poll_id),))
+        c.execute("DELETE FROM polls WHERE id=?", (int(poll_id),))
+        conn.commit(); conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def add_tg_poll_ids(poll_id, tg_ids):
+    """Record the Telegram poll_ids this DB poll was broadcast as."""
+    try:
+        ensure_poll_tables()
+        import json as _json
+        conn = get_connection(); c = conn.cursor()
+        c.execute("SELECT tg_poll_ids_json FROM polls WHERE id=?", (int(poll_id),))
+        r = c.fetchone()
+        cur = []
+        if r:
+            try:
+                cur = _json.loads(r[0] or "[]")
+            except Exception:
+                cur = []
+        cur = list(dict.fromkeys(cur + [str(x) for x in (tg_ids or [])]))
+        c.execute("UPDATE polls SET tg_poll_ids_json=? WHERE id=?", (_json.dumps(cur), int(poll_id)))
+        conn.commit(); conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def get_tg_poll_ids(poll_id):
+    try:
+        ensure_poll_tables()
+        import json as _json
+        conn = get_connection(); c = conn.cursor()
+        c.execute("SELECT tg_poll_ids_json FROM polls WHERE id=?", (int(poll_id),))
+        r = c.fetchone()
+        conn.close()
+        if not r:
+            return []
+        try:
+            return [str(x) for x in _json.loads(r[0] or "[]")]
+        except Exception:
+            return []
+    except Exception:
+        return []
+
+
+def find_poll_by_tg_id(tg_poll_id):
+    """Map a Telegram poll_id (from a PollAnswer update) back to our DB poll."""
+    try:
+        ensure_poll_tables()
+        import json as _json
+        conn = get_connection(); c = conn.cursor()
+        c.execute("SELECT id, tg_poll_ids_json FROM polls")
+        for r in c.fetchall():
+            try:
+                ids = _json.loads(r[1] or "[]")
+            except Exception:
+                ids = []
+            if str(tg_poll_id) in [str(x) for x in ids]:
+                conn.close()
+                return int(r[0])
+        conn.close()
+        return 0
+    except Exception:
+        return 0
+
+
+def record_poll_answer(poll_id, user_id, option_ids):
+    """Idempotent per (poll, user): updates the user's vote if they re-vote."""
+    try:
+        ensure_poll_tables()
+        import json as _json
+        conn = get_connection(); c = conn.cursor()
+        c.execute("INSERT OR IGNORE INTO poll_answers (poll_id, user_id, option_ids_json) VALUES (?,?,?)",
+                  (int(poll_id), int(user_id), _json.dumps([int(x) for x in (option_ids or [])])))
+        if c.rowcount == 0:
+            # re-vote → update
+            c.execute("UPDATE poll_answers SET option_ids_json=? WHERE poll_id=? AND user_id=?",
+                      (_json.dumps([int(x) for x in (option_ids or [])]), int(poll_id), int(user_id)))
+        conn.commit(); conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def get_poll_results(poll_id):
+    """Return {poll, options:[{option, votes}], total_voters, closed}."""
+    try:
+        ensure_poll_tables()
+        import json as _json
+        poll = get_poll(poll_id)
+        if not poll:
+            return None
+        try:
+            opts = _json.loads(poll.get("options_json") or "[]")
+        except Exception:
+            opts = []
+        conn = get_connection(); conn.row_factory = DictRow
+        c = conn.cursor()
+        c.execute("SELECT user_id, option_ids_json FROM poll_answers WHERE poll_id=?", (int(poll_id),))
+        rows = c.fetchall()
+        conn.close()
+        counts = [0] * len(opts)
+        voters = set()
+        for r in rows:
+            voters.add(r[0])
+            try:
+                ids = _json.loads(r[1] or "[]")
+            except Exception:
+                ids = []
+            for oid in ids:
+                try:
+                    oi = int(oid)
+                    if 0 <= oi < len(counts):
+                        counts[oi] += 1
+                except Exception:
+                    pass
+        out_opts = [{"option": o, "votes": counts[i]} for i, o in enumerate(opts)]
+        return {
+            "poll": poll,
+            "options": out_opts,
+            "total_voters": len(voters),
+            "closed": int(poll.get("active") or 0) != 1,
+        }
+    except Exception:
+        return None

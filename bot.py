@@ -633,6 +633,11 @@ async def handle_text(update, context):
     # 🐛 v147 FIX (Bug7): broadcast button custom-link input
     if context.user_data.get('broadcast_button_step') == 'url':
         if await broadcast_button_url_received(update, context): return
+    # 🆕 v148: Poll creation text steps (question → options)
+    if context.user_data.get('poll_step') == 'poll_q':
+        if await poll_question_received(update, context): return
+    if context.user_data.get('poll_step') == 'poll_options':
+        if await poll_options_received(update, context): return
     if context.user_data.get('fake_custom_broadcast'):
         if await handle_fake_custom_broadcast_message(update, context): return
     if context.user_data.get('broadcasting'):
@@ -2061,6 +2066,17 @@ def main():
         ("^admin_terms$", admin_terms_callback),
         ("^admin_responses$", admin_responses_callback),
         ("^admin_broadcast$", broadcast_callback),
+        # 🆕 v148: Polls (create / results / manage / answers)
+        ("^admin_polls$", admin_polls_callback),
+        ("^poll_create$", poll_create_start_callback),
+        ("^poll_anon_", poll_anon_callback),
+        ("^poll_dur_", poll_duration_callback),
+        ("^poll_results$", poll_results_callback),
+        ("^poll_detail_", poll_detail_callback),
+        ("^poll_close_", poll_close_callback),
+        ("^poll_del_", poll_delete_callback),
+        ("^poll_cancel$", poll_cancel_callback),
+        ("^poll_list$", poll_list_callback),
         ("^bcbtn_(yes|no)$", broadcast_button_choice_callback),
         ("^bcbtn_color_", broadcast_button_color_callback),
         ("^bcbtn_cancel$", broadcast_button_color_callback),
@@ -2716,6 +2732,16 @@ def main():
 
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.VOICE | filters.Document.ALL, handle_media_router))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    # 🆕 v148: Poll answers — users voting in broadcast polls
+    try:
+        from telegram.ext import PollAnswerHandler
+        app.add_handler(PollAnswerHandler(handle_poll_answer))
+    except Exception:
+        try:
+            app.add_handler(MessageHandler(filters.POLL_ANSWER, handle_poll_answer))
+        except Exception:
+            pass
 
     app.add_handler(CallbackQueryHandler(catch_all_callback))
     print("✅ Running!")

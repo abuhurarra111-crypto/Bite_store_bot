@@ -252,6 +252,13 @@ BUTTONS = {
         "large": "🌐 Global Message", "xl": "🌐 Global Message — Send to all",
         "callback": "admin_broadcast",
     },
+    # 🆕 v148: Polls — create + broadcast + view results
+    "admin_polls": {
+        "group": "admin", "essential": False,
+        "short": "📊", "medium": "📊 Polls",
+        "large": "📊 Polls (Demand/Vote)", "xl": "📊 Polls — create poll & get users' votes",
+        "callback": "admin_polls",
+    },
     # 🆕 v73: "admin_orders" (Pending Orders button) REMOVED permanently per user request.
     # Replaced by "admin_completed" (Completed Orders with Delivered/Refunded/Cancelled tabs)
     # plus "admin_pending_delivery" which already covers manual delivery queue.
