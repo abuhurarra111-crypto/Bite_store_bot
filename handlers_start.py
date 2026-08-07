@@ -605,11 +605,13 @@ async def _pending_referral_job(context):
 # ════════════════════════════════════════════════════════════════
 
 def _parse_start_arg(arg):
-    """Parse deep-link payload → (referrer_id, open_pid)."""
-    rid, open_pid = 0, 0
+    """Parse deep-link payload → (referrer_id, open_pid, checkout_pid).
+    🐛 v147 FIX (Bug7): `chk_<pid>` deep link opens the product's CHECKOUT
+    (payment-method screen) directly instead of the product detail page."""
+    rid, open_pid, chk_pid = 0, 0, 0
     try:
         if not arg:
-            return 0, 0
+            return 0, 0, 0
         if arg.startswith("ref_"):
             rest = arg[4:]
             if "_" in rest:
@@ -617,13 +619,15 @@ def _parse_start_arg(arg):
                 rid = int(rid_s); open_pid = int(pid_s)
             else:
                 rid = int(rest)
+        elif arg.startswith("chk_"):
+            chk_pid = int(arg[4:])
         elif arg.startswith("buy_"):
             open_pid = int(arg[4:])
         else:
             rid = int(arg)
     except Exception:
-        rid, open_pid = 0, 0
-    return rid, open_pid
+        rid, open_pid, chk_pid = 0, 0, 0
+    return rid, open_pid, chk_pid
 
 
 def _referral_math_enabled():
@@ -755,7 +759,16 @@ async def _complete_start_after_math(update, context):
     """After math passes → open product (if deep link) or send welcome."""
     u = update.effective_user
     open_pid = context.user_data.pop('_start_pid', 0) or 0
+    chk_pid = context.user_data.pop('_start_checkout_pid', 0) or 0
     context.user_data.pop('_start_ref', None)
+    # 🐛 v147 FIX (Bug7): checkout deep link wins over product detail
+    if chk_pid:
+        try:
+            from handlers_order import open_checkout_direct
+            if await open_checkout_direct(context.bot, u.id, chk_pid):
+                return
+        except Exception:
+            pass
     if open_pid:
         try:
             from handlers_shop import show_product_detail_direct
@@ -795,6 +808,7 @@ async def continue_after_force_join_verified(update, context, u):
     the flow was fully handled here (welcome/math/product shown)."""
     rid = context.user_data.pop('_start_ref', 0) or 0
     open_pid = context.user_data.pop('_start_pid', 0) or 0
+    chk_pid = context.user_data.pop('_start_checkout_pid', 0) or 0
     try:
         from database import get_user
         is_new = get_user(u.id) is None
@@ -821,6 +835,14 @@ async def continue_after_force_join_verified(update, context, u):
         except Exception:
             pass
         # Math done / disabled → finish the start (product or welcome)
+        # 🐛 v147 FIX (Bug7): checkout deep link wins
+        if chk_pid:
+            try:
+                from handlers_order import open_checkout_direct
+                if await open_checkout_direct(context.bot, u.id, chk_pid):
+                    return True
+            except Exception:
+                pass
         if open_pid:
             try:
                 from handlers_shop import show_product_detail_direct
@@ -831,6 +853,14 @@ async def continue_after_force_join_verified(update, context, u):
         await _send_welcome_message(update.effective_message, context, u)
         return True
     # No referral → normal welcome (or product deep-link)
+    # 🐛 v147 FIX (Bug7): checkout deep link wins
+    if chk_pid:
+        try:
+            from handlers_order import open_checkout_direct
+            if await open_checkout_direct(context.bot, u.id, chk_pid):
+                return True
+        except Exception:
+            pass
     if open_pid:
         try:
             from handlers_shop import show_product_detail_direct
@@ -842,15 +872,29 @@ async def continue_after_force_join_verified(update, context, u):
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 🐛 v147 FIX (Bug4): groups — bot never responds to /start (or any message)
+    # inside a group/supergroup, whether or not the bot is admin there.
+    try:
+        chat = update.effective_chat
+        ct = str(getattr(chat, "type", "") or "")
+        if ct in ("group", "supergroup"):
+            return
+    except Exception:
+        pass
     await _panic_reset_user_session(update, context)
     u = update.effective_user
     # 🆕 v134: parse deep-link EARLY so the force-join continuation knows it
     # came from a referral link (math verification happens after "I Joined").
     arg = context.args[0] if context.args else ""
-    rid, open_pid = _parse_start_arg(arg)
+    rid, open_pid, chk_pid = _parse_start_arg(arg)
     if rid and int(rid) != int(u.id):
         context.user_data['_start_ref'] = int(rid)
         context.user_data['_start_pid'] = int(open_pid or 0)
+    # 🐛 v147 FIX (Bug7): chk_<pid> → open checkout directly after welcome
+    if chk_pid:
+        context.user_data['_start_checkout_pid'] = int(chk_pid)
+    elif open_pid:
+        context.user_data['_start_pid'] = int(open_pid)
     # 🔗 Force Join check — must be FIRST before any other logic
     try:
         from ui_extras import check_force_join
@@ -906,7 +950,16 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    # ─── Deep-link to product detail ───
+    # ─── Deep-link to product detail / checkout ───
+    # 🐛 v147 FIX (Bug7): chk_<pid> → direct checkout screen (payment methods)
+    chk_pid = context.user_data.pop('_start_checkout_pid', 0) or 0
+    if chk_pid:
+        try:
+            from handlers_order import open_checkout_direct
+            if await open_checkout_direct(context.bot, u.id, chk_pid):
+                return  # Checkout shown
+        except Exception:
+            pass
     if open_pid:
         try:
             from handlers_shop import show_product_detail_direct

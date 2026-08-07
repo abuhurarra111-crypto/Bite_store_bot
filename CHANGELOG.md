@@ -8,6 +8,86 @@
 
 ---
 
+# 🚀 v147 (2026-08-07) — 8 bug fixes: manual Buy Now error + replacement refund/reject-reason + maintenance gates + group silence + payment-method alerts + buy-now emoji + broadcast link/product buttons + pinned-post delete/push-unpin
+
+## 🐛 FIX 1: Manual products — "Buy Now" error (Can't parse entities)
+- **Root cause (live-reproduced):** product names that contain `<b>` tags inside
+  premium markup (e.g. `[[HTML]]<tg-emoji>🎨</tg-emoji><b>Canva 500 User Panel</b>`)
+  got double-wrapped: the checkout template wraps the name in Markdown `*...*`
+  → `markdownish_to_html` produced `<b><tg-emoji>…</tg-emoji><b>Canva…</b></b>`
+  → `sanitize_html_tags` kept the inner `<b>` but did NOT push it, so its close
+  was dropped as orphan → outer `<b>` never closed → Telegram rejected the whole
+  message: *"Can't find end tag corresponding to start tag b"* → customer saw an
+  error right after tapping Buy Now.
+- **Fix:** `sanitize_html_tags` now DROPS duplicate inner same-name opening tags
+  so nesting stays balanced. Verified against the REAL Telegram API — the exact
+  checkout message now sends OK (msg sent to admin as proof).
+
+## 🐛 FIX 2: Replacement — 💸 Refund button + rejection reason shown to user
+- Admin replacement notification now has a third button **💸 Refund** (reuses
+  the existing refund flow: order → refunded + points credited + user notified).
+- Tapping **❌ Reject** now asks the admin to type a rejection reason
+  (or /skip) — the reason is stored (`orders.replacement_reject_reason`) and
+  shown to the customer inside the rejection message.
+
+## 🐛 FIX 3: Fake activity must STOP during maintenance mode
+- `per_user_activity` private sends + central group-destination job and
+  `fake_engagement.run_fake_broadcast` had NO maintenance gate — fake messages
+  kept going to the selected destination (and users) while maintenance was ON.
+- **Fix:** all three now check `is_maintenance_on()` and skip. The group job
+  re-schedules itself without sending.
+
+## 🐛 FIX 4: Bot never auto-responds in groups
+- Added `_is_group_chat(update)` + early-returns in `handle_text`,
+  `handle_media_router`, `payment_flow_text_handler`, `_activity_hook_text`,
+  and `start_command`. The global error handler also stops replying
+  "⚠️ Temporary error…" inside groups. Result: any user message in any group
+  (text/voice/photo/anything) → the bot stays completely silent, admin or not.
+
+## 🐛 FIX 5: Fake deposit alerts — ONLY enabled payment methods
+- `_enabled_payment_methods()` (both fake_engagement.py and per_user_activity.py)
+  only knew Binance/JazzCash/EasyPaisa. With jazzcash+easypaisa OFF, every fake
+  deposit said "Binance Pay".
+- **Fix:** the list now covers ALL toggleable methods (Binance Pay, USDT TRC20,
+  USDT BEP20, Bybit, Bybit Pay, Bybit USDT TRC20/BEP20, JazzCash, EasyPaisa) and
+  filters by the same `is_payment_enabled` toggles the admin uses.
+
+## 🐛 FIX 6: Buy-Now button emoji — supplier fixed emoji vs own-name emoji
+- New `_product_buy_emoji(pid)`: supplier-linked products use the FIXED premium
+  emoji from `ext_products.emoji_id/emoji_char`; own (manual) products use the
+  premium emoji typed inside the product NAME. Wired into `_buy_now_label`,
+  `_buy_now_keyboard` and `broadcast_store_message` so fake-activity Buy-Now
+  buttons show the right emoji.
+
+## ✨ FIX 7: Global broadcast button — custom link OR product checkout
+- Broadcast button flow extended: after naming the button, admin picks the
+  action — 🤖 Open Bot (default) / 🔗 Custom Link (paste any URL) /
+  🛒 Product Checkout (pick from a paged product list).
+- Product-checkout buttons use the new `https://t.me/<bot>?start=chk_<pid>`
+  deep link → user lands DIRECTLY on that product's payment-method screen
+  (new `open_checkout_direct` + `chk_` arg support in `_parse_start_arg`).
+
+## 🐛 FIX 8: Pinned announcements — delete post vs unpin push
+- **🗑 Delete Post** now DELETES the pushed message from EVERY user's chat
+  (not just unpin) and removes the DB row.
+- **📌 Unpin Push** (new) unpins the announcement everywhere but KEEPS the
+  post in users' chats and keeps the pin row.
+
+## 🎯 Bonus: Binance Pay wrong-Order-ID rescue
+- Live finding: a customer typed a slightly-wrong Binance Pay Order ID
+  (447270079587229696 vs real 447270259987202048) — the money WAS there
+  (0.59 from "Khalid Zarook") but auto-verify failed.
+- `verify_payment_unified` now falls back to amount + fuzzy sender-name match
+  (anti-reuse still applies) and the auto-verify job passes the order's
+  customer name. Rescues stuck `binance_waiting` orders.
+- The 2 pending orders in the restore-ready DB (#321 Binance Pay 0.59,
+  #322 BEP20 4.2) are live-verified and will auto-deliver on deploy.
+
+## 🧪 Tests
+- New `_test_v147_bugs.py` (12 tests) + updated `_test_v134_ref_math.py` for the
+  3-tuple `_parse_start_arg`. All 13 in-repo suites + 19 legacy suites pass;
+  boot smoke clean; Bug1 + both pending payments verified against the REAL APIs.
+
 # 🚀 v146 (2026-08-07) — REAL fix: BEP20/Binance auto-payment tolerance + ProdSeller varied stock + TXID-vs-address guard
 
 ## 🐛 FIX 1 (ROOT CAUSE): Binance USDT BEP20 payments "arrive but never auto-added"

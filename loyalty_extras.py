@@ -955,12 +955,18 @@ async def admin_pins_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             callback_data="admin_pin_realmode_toggle")],
     ]
     # Per-pin manage rows — 🆕 v101: also add "📢 Broadcast+Pin Now" per pin
+    # 🐛 v147 (Bug8): split delete into two actions —
+    #   🗑 Delete Post  → removes the message from EVERY user chat + DB row
+    #   📌 Unpin Push   → unpins everywhere, keeps the post + DB row
     for p in pins[:10]:
         pid = p['id']
         kb.append([
             InlineKeyboardButton(f"⏸️/▶️ #{pid}", callback_data=f"admin_pin_toggle_{pid}"),
             InlineKeyboardButton(f"📢 Push #{pid}", callback_data=f"admin_pin_push_{pid}"),
-            InlineKeyboardButton(f"🗑 #{pid}",    callback_data=f"admin_pin_del_{pid}"),
+        ])
+        kb.append([
+            InlineKeyboardButton(f"🗑 Delete Post #{pid}", callback_data=f"admin_pin_del_{pid}"),
+            InlineKeyboardButton(f"📌 Unpin Push #{pid}",  callback_data=f"admin_pin_unpush_{pid}"),
         ])
     kb.append([InlineKeyboardButton("🔙 Back to Settings", callback_data="admin_settings")])
 
@@ -1366,15 +1372,17 @@ async def admin_pin_del_callback(update, context):
     # Delete the DB row FIRST — makes it stop showing in menus immediately
     ok = delete_pin(pin_id)
     try:
-        await q.answer("🗑 Deleted (unpinning in background)" if ok else "❌ Failed",
+        await q.answer("🗑 Deleted (deleting from all users in background)" if ok else "❌ Failed",
                        show_alert=False)
     except Exception:
         pass
 
-    # Dispatch heavy unpin loop to background — safe if pin was broadcast
+    # Dispatch heavy DELETE loop to background — 🐛 v147 (Bug8): removing the
+    # pinned post also deletes the pushed message from every user's chat.
     if ok:
         import asyncio as _aio
-        _aio.create_task(_do_pin_unpin_bg(context.bot, q.from_user.id, pin_id))
+        _aio.create_task(_do_pin_unpin_bg(context.bot, q.from_user.id, pin_id,
+                                          delete_messages=True))
 
     # Refresh admin panel — safe_edit tolerates stale query
     try:
@@ -1383,14 +1391,48 @@ async def admin_pin_del_callback(update, context):
         pass
 
 
-async def _do_pin_unpin_bg(bot, admin_uid, pin_id):
-    """🆕 v110: Background unpin worker for delete flow."""
+async def admin_pin_unpush_callback(update, context):
+    """🐛 v147 FIX (Bug8): 'Delete Push' — unpin the announcement from every
+    user's chat but KEEP the post (and the pin row). The broadcasted message
+    stays in each user's inbox, just not pinned anymore."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        try: await q.answer("❌", show_alert=True)
+        except Exception: pass
+        return
     try:
-        await unpin_and_deactivate(bot, pin_id)
+        pin_id = int(q.data.replace("admin_pin_unpush_", ""))
+    except Exception:
+        try: await q.answer("Invalid ID", show_alert=True)
+        except Exception: pass
+        return
+    try: await q.answer("📌 Unpinning push in background…")
+    except Exception: pass
+    import asyncio as _aio
+    _aio.create_task(_do_pin_unpin_bg(context.bot, q.from_user.id, pin_id,
+                                      delete_messages=False))
+    try:
+        await q.edit_message_text(
+            f"📌 *Unpin Push in progress…*\n\n"
+            f"Pin `#{pin_id}` ki push ab sab users se unpin ho rahi hai.\n"
+            f"Post unke chat me rahegi, bs pin hat jayegi. ✅\n\n"
+            f"_Ye background me chalta hai — summary message milegi._",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "🔙 Back to Pinned Announcements", callback_data="admin_pins")]]))
+    except Exception:
+        pass
+
+
+async def _do_pin_unpin_bg(bot, admin_uid, pin_id, delete_messages=False):
+    """🆕 v110 / 🐛 v147: Background unpin/delete worker for delete flow."""
+    try:
+        await unpin_and_deactivate(bot, pin_id, delete_messages=delete_messages)
     except Exception as e:
         try:
             await bot.send_message(admin_uid,
-                f"⚠️ Some unpins failed for deleted pin `#{pin_id}`: `{e}`\n"
+                f"⚠️ Some {'deletes' if delete_messages else 'unpins'} failed for "
+                f"pin `#{pin_id}`: `{e}`\n"
                 f"_(DB entry was already removed.)_",
                 parse_mode="Markdown")
         except Exception: pass
@@ -1596,11 +1638,17 @@ async def broadcast_and_pin(bot, pin_id: int) -> tuple:
     return sent, pinned, failed
 
 
-async def unpin_and_deactivate(bot, pin_id: int) -> tuple:
-    """Unpin the message from every user chat where it was pinned + mark
-    the pin inactive. Called by watchdog on expiry, or manually by admin.
+async def unpin_and_deactivate(bot, pin_id: int, delete_messages: bool = False) -> tuple:
+    """Unpin (and optionally DELETE) the message from every user chat where
+    it was pinned + mark the pin inactive. Called by watchdog on expiry, or
+    manually by admin.
 
-    Returns (unpinned_count, failed_count)
+    🐛 v147 FIX (Bug8):
+      - delete_messages=False → unpin only (the post STAYS in the user's chat)
+      - delete_messages=True  → DELETE the message from every user chat
+        (used by "Delete Post" so the pushed post disappears everywhere)
+
+    Returns (ok_count, failed_count)
     """
     from database import get_connection
     import json as _json
@@ -1618,14 +1666,17 @@ async def unpin_and_deactivate(bot, pin_id: int) -> tuple:
     except Exception:
         msg_map = {}
 
-    unpinned = failed = 0
+    ok = failed = 0
     for uid_str, mid in msg_map.items():
         try:
-            await bot.unpin_chat_message(chat_id=int(uid_str), message_id=int(mid))
-            unpinned += 1
+            if delete_messages:
+                await bot.delete_message(chat_id=int(uid_str), message_id=int(mid))
+            else:
+                await bot.unpin_chat_message(chat_id=int(uid_str), message_id=int(mid))
+            ok += 1
         except Exception as _e:
             failed += 1
-            logger.debug(f"[pin_broadcast] unpin uid={uid_str}: {_e}")
+            logger.debug(f"[pin_broadcast] {'delete' if delete_messages else 'unpin'} uid={uid_str}: {_e}")
 
     # Mark inactive
     try:

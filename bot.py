@@ -46,6 +46,7 @@ from loyalty_extras import (
     admin_pins_templates_callback, admin_pin_use_template_callback,
     # 🆕 v101: Real Pin Mode (broadcast + pin in each user's DM + auto-unpin)
     admin_pin_realmode_toggle_callback, admin_pin_push_callback,
+    admin_pin_unpush_callback,  # 🐛 v147 (Bug8): delete-push = unpin everywhere
     pin_expiry_watchdog_job,
 )
 from loyalty_extras import share_product_callback, share_qr_callback
@@ -354,9 +355,29 @@ async def global_error_handler(update, context):
     logging.getLogger(__name__).exception("Unhandled bot error", exc_info=context.error)
     try:
         if update and getattr(update, "effective_message", None):
+            # 🐛 v147 FIX: never reply "Temporary error" inside a group — the
+            # bot must stay silent in groups (see _is_group_chat).
+            if _is_group_chat(update):
+                return
             await update.effective_message.reply_text("⚠️ Temporary error. Please try again.")
     except Exception:
         pass
+
+
+def _is_group_chat(update) -> bool:
+    """🐛 v147 FIX (Bug4): True when the incoming update is from a GROUP or
+    SUPERGROUP. The owner wants the bot to NEVER auto-respond to any user
+    message in a group (text / voice / photo / anything) — whether or not the
+    bot is admin there. All main message/command handlers early-return on this.
+    """
+    try:
+        chat = update.effective_chat
+        if chat is None:
+            return False
+        ct = str(getattr(chat, "type", "") or "")
+        return ct in ("group", "supergroup")
+    except Exception:
+        return False
 
 
 async def _flush_tier_notifications(context):
@@ -381,6 +402,10 @@ async def payment_flow_text_handler(update, context):
     it returns None and the update flows on to normal handlers.
     """
     ud = context.user_data
+    # 🐛 v147 FIX (Bug4): never consume/answer payment-flow steps from group
+    # messages — bot must be silent in groups.
+    if _is_group_chat(update):
+        return None
     # 🟡 v125: unified Bybit flow (warning → UID → amount → deposit)
     # 🔧 v127: never silent — any flow exception is logged and the customer gets
     # a visible fallback instead of nothing.
@@ -436,6 +461,9 @@ def _reply_btn_matches(t, english_label, user_id=None):
 
 
 async def handle_text(update, context):
+    # 🐛 v147 FIX (Bug4): groups — bot never auto-responds to any user text.
+    if _is_group_chat(update):
+        return
     t = update.message.text
     # 🆕 v134: referral MATH verification answer — MUST run first so a wrong
     # answer never leaks into other flows.
@@ -602,6 +630,9 @@ async def handle_text(update, context):
         if await bulk_price_custom_received(update, context): return
     if context.user_data.get('broadcast_button_step') == 'name':
         if await broadcast_button_name_received(update, context): return
+    # 🐛 v147 FIX (Bug7): broadcast button custom-link input
+    if context.user_data.get('broadcast_button_step') == 'url':
+        if await broadcast_button_url_received(update, context): return
     if context.user_data.get('fake_custom_broadcast'):
         if await handle_fake_custom_broadcast_message(update, context): return
     if context.user_data.get('broadcasting'):
@@ -1264,6 +1295,9 @@ async def unhandled_cbq_fallback(update, context):
 
 async def handle_media_router(update, context):
     """Route admin media to broadcast/static-delivery flows before payment screenshot handler."""
+    # 🐛 v147 FIX (Bug4): groups — never process/respond to media in groups.
+    if _is_group_chat(update):
+        return
     try:
         if update.effective_user and update.effective_user.id == ADMIN_ID:
             if context.user_data.get('broadcasting'):
@@ -1304,6 +1338,9 @@ async def _activity_hook_callback(update, context):
 
 
 async def _activity_hook_text(update, context):
+    # 🐛 v147 FIX (Bug4): groups — bot never reacts to any user message.
+    if _is_group_chat(update):
+        return None
     # 🆕 v135: global force-join gate for EXISTING users — any text action is
     # blocked until they (re)join all targets and verify.
     try:
@@ -1798,6 +1835,7 @@ def main():
         # 🆕 v101: real-pin-mode toggle + manual broadcast push
         ("^admin_pin_realmode_toggle$", admin_pin_realmode_toggle_callback),
         ("^admin_pin_push_",            admin_pin_push_callback),
+        ("^admin_pin_unpush_",          admin_pin_unpush_callback),
         # 🆕 v79: Pin templates
         ("^admin_pins_templates$",      admin_pins_templates_callback),
         ("^admin_pin_tpl_",             admin_pin_use_template_callback),
@@ -2027,6 +2065,10 @@ def main():
         ("^bcbtn_color_", broadcast_button_color_callback),
         ("^bcbtn_cancel$", broadcast_button_color_callback),
         ("^bcbtn_send_", broadcast_button_send_callback),
+        ("^bcbtn_action_", broadcast_button_action_callback),
+        ("^bcbtn_pick_", broadcast_button_pick_callback),
+        ("^bcbtn_ppage_", broadcast_button_product_page_callback),
+        ("^bcbtn_noop$", broadcast_button_noop_callback),
         ("^fake_custom_broadcast$", fake_custom_broadcast_callback),
         ("^admin_profit$", admin_profit_callback),
         ("^profit_all$", profit_all_callback),

@@ -1580,13 +1580,42 @@ def _admin_button_from_state(context, bot_username=""):
         return None
     label = data.get('label') or 'Open Bot'
     color = data.get('color') or ''
+    action = data.get('action') or 'bot'
     prefix = {'red': '🔴', 'blue': '🔵', 'green': '🟢'}.get(color, '')
     label_for_button = f"{prefix} {label}".strip()
-    url = f"https://t.me/{bot_username}" if bot_username else "https://t.me/"
+    # 🐛 v147 FIX (Bug7): button action — open bot / custom link / product checkout
     try:
         from button_system import make_premium_button
-        btn = make_premium_button(label_for_button, url=url)
+        if action == 'url':
+            url = data.get('url') or ''
+            if not url:
+                url = f"https://t.me/{bot_username}" if bot_username else "https://t.me/"
+            try:
+                btn = make_premium_button(label_for_button, url=url)
+            except Exception:
+                btn = InlineKeyboardButton(label_for_button, url=url)
+        elif action == 'product':
+            pid = int(data.get('pid') or 0)
+            if pid:
+                deep = f"https://t.me/{bot_username}?start=chk_{pid}" if bot_username else f"https://t.me/?start=chk_{pid}"
+                try:
+                    btn = make_premium_button(label_for_button, url=deep)
+                except Exception:
+                    btn = InlineKeyboardButton(label_for_button, url=deep)
+            else:
+                url = f"https://t.me/{bot_username}" if bot_username else "https://t.me/"
+                try:
+                    btn = make_premium_button(label_for_button, url=url)
+                except Exception:
+                    btn = InlineKeyboardButton(label_for_button, url=url)
+        else:  # 'bot' default
+            url = f"https://t.me/{bot_username}" if bot_username else "https://t.me/"
+            try:
+                btn = make_premium_button(label_for_button, url=url)
+            except Exception:
+                btn = InlineKeyboardButton(label_for_button, url=url)
     except Exception:
+        url = f"https://t.me/{bot_username}" if bot_username else "https://t.me/"
         btn = InlineKeyboardButton(label_for_button, url=url)
     return InlineKeyboardMarkup([[btn]])
 
@@ -1674,12 +1703,151 @@ async def broadcast_button_name_received(update, context):
     except Exception:
         label = msg.text or 'Open Bot'
     context.user_data['broadcast_button'] = {'label': label}
+    context.user_data['broadcast_button_step'] = 'action'
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton('🤖 Open Bot (default)', callback_data='bcbtn_action_bot')],
+        [InlineKeyboardButton('🔗 Custom Link', callback_data='bcbtn_action_url')],
+        [InlineKeyboardButton('🛒 Product Checkout', callback_data='bcbtn_action_product')],
+        [InlineKeyboardButton('❌ Cancel', callback_data='bcbtn_cancel')],
+    ])
+    await msg.reply_text('🔘 Button kis kaam ka hoga? Select action:', reply_markup=kb)
+    return True
+
+
+async def broadcast_button_action_callback(update, context):
+    """🐛 v147 FIX (Bug7): choose what the broadcast button does —
+    open bot / custom link / product checkout."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    action = q.data.replace('bcbtn_action_', '')
+    await q.answer()
+    if action == 'bot':
+        context.user_data.setdefault('broadcast_button', {})['action'] = 'bot'
+        context.user_data['broadcast_button_step'] = 'color'
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton('🔴 Red', callback_data='bcbtn_color_red'), InlineKeyboardButton('🔵 Blue', callback_data='bcbtn_color_blue'), InlineKeyboardButton('🟢 Green', callback_data='bcbtn_color_green')],
+            [InlineKeyboardButton('❌ Cancel', callback_data='bcbtn_cancel')],
+        ])
+        await _safe_edit(q, '🎨 Button color select karo:', reply_markup=kb)
+        return
+    if action == 'url':
+        context.user_data.setdefault('broadcast_button', {})['action'] = 'url'
+        context.user_data['broadcast_button_step'] = 'url'
+        await _safe_edit(q,
+            "🔗 *Custom Link Button*\\n\\n"
+            "Ab wo link paste karo jo button kholay (https://... ya https://t.me/...).",
+            parse_mode="Markdown", reply_markup=inline_cancel_btn())
+        return
+    if action == 'product':
+        context.user_data.setdefault('broadcast_button', {})['action'] = 'product'
+        context.user_data['broadcast_button_step'] = 'product'
+        await _show_broadcast_product_picker(update, context, page=0)
+        return
+
+
+async def _show_broadcast_product_picker(update, context, page=0):
+    """Show a paged list of buyable products for the broadcast checkout button."""
+    from database import get_all_products, is_product_hidden
+    try:
+        products = [p for p in get_all_products()
+                    if not (dict(p).get('stock', 0) or 0) <= 0]
+        products = [p for p in products
+                    if not is_product_hidden(p['id'])]
+    except Exception:
+        products = []
+    if not products:
+        context.user_data.pop('broadcast_button_step', None)
+        await _safe_edit(update.callback_query, "❌ Koi buyable product nahi mila.",
+                         reply_markup=InlineKeyboardMarkup(
+                             [[InlineKeyboardButton("🔙 Cancel", callback_data='bcbtn_cancel')]]))
+        return
+    per = 8
+    total = len(products)
+    pages = max(1, (total + per - 1) // per)
+    page = max(0, min(page, pages - 1))
+    chunk = products[page * per:(page + 1) * per]
+    rows = []
+    for p in chunk:
+        pid = p['id']
+        name = str(dict(p).get('name', f'Product #{pid}'))
+        try:
+            from utils import html_escape_plain
+            name = html_escape_plain(name)
+        except Exception:
+            pass
+        if len(name) > 34:
+            name = name[:33] + '…'
+        rows.append([InlineKeyboardButton(f"🛒 {name}", callback_data=f"bcbtn_pick_{pid}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️", callback_data=f"bcbtn_ppage_{page-1}"))
+    nav.append(InlineKeyboardButton(f"📄 {page+1}/{pages}", callback_data='bcbtn_noop'))
+    if page < pages - 1:
+        nav.append(InlineKeyboardButton("➡️", callback_data=f"bcbtn_ppage_{page+1}"))
+    rows.append(nav)
+    rows.append([InlineKeyboardButton("❌ Cancel", callback_data='bcbtn_cancel')])
+    await _safe_edit(update.callback_query,
+                     "🛒 *Product Checkout Button*\\n\\n"
+                     "Jis product ka checkout button chahiye usay chuno — "
+                     "user us button pe tap karega to us product ka payment "
+                     "screen direct khulega.",
+                     parse_mode="Markdown",
+                     reply_markup=InlineKeyboardMarkup(rows))
+
+
+async def broadcast_button_product_page_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        page = int(q.data.replace('bcbtn_ppage_', ''))
+    except Exception:
+        page = 0
+    await q.answer()
+    await _show_broadcast_product_picker(update, context, page=page)
+
+
+async def broadcast_button_noop_callback(update, context):
+    await update.callback_query.answer()
+
+
+async def broadcast_button_pick_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        pid = int(q.data.replace('bcbtn_pick_', ''))
+    except Exception:
+        await q.answer("Invalid", show_alert=True); return
+    context.user_data.setdefault('broadcast_button', {})['pid'] = pid
     context.user_data['broadcast_button_step'] = 'color'
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton('🔴 Red', callback_data='bcbtn_color_red'), InlineKeyboardButton('🔵 Blue', callback_data='bcbtn_color_blue'), InlineKeyboardButton('🟢 Green', callback_data='bcbtn_color_green')],
         [InlineKeyboardButton('❌ Cancel', callback_data='bcbtn_cancel')],
     ])
-    await msg.reply_text('🎨 Button color select karo:', reply_markup=kb)
+    await _safe_edit(q, '🎨 Button color select karo:', reply_markup=kb)
+
+
+async def broadcast_button_url_received(update, context):
+    """🐛 v147 FIX (Bug7): receive the custom link for the button."""
+    if update.effective_user.id != ADMIN_ID or context.user_data.get('broadcast_button_step') != 'url':
+        return False
+    url = (update.message.text or '').strip()
+    if not url.lower().startswith(('http://', 'https://', 't.me/')):
+        await update.message.reply_text(
+            "❌ Link `http://` ya `https://` se start hona chahiye. Dobara bhejo:",
+            parse_mode="Markdown")
+        return True
+    if url.lower().startswith('t.me/'):
+        url = 'https://' + url
+    context.user_data.setdefault('broadcast_button', {})['url'] = url
+    context.user_data['broadcast_button_step'] = 'color'
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton('🔴 Red', callback_data='bcbtn_color_red'), InlineKeyboardButton('🔵 Blue', callback_data='bcbtn_color_blue'), InlineKeyboardButton('🟢 Green', callback_data='bcbtn_color_green')],
+        [InlineKeyboardButton('❌ Cancel', callback_data='bcbtn_cancel')],
+    ])
+    await update.message.reply_text('🎨 Button color select karo:', reply_markup=kb)
     return True
 
 

@@ -777,6 +777,22 @@ def verify_payment_unified(
                     note_id=note_id,
                     tolerance=tolerance,
                 )
+            # 🐛 v147 FIX: the customer often types a slightly-wrong Order ID /
+            # note (observed live: entered 447270079587229696 vs real
+            # 447270259987202048). The money IS there. When the exact
+            # order-id/note match fails, fall back to amount + fuzzy
+            # sender-name ONLY (anti-reuse still applies). This rescues real
+            # payments instead of leaving them stuck in binance_waiting.
+            if not match and sender_name:
+                try:
+                    match = find_matching_payment(
+                        expected_amount=expected_amount,
+                        sender_name=sender_name,
+                        note_id=None,
+                        tolerance=tolerance,
+                    )
+                except Exception as _e:
+                    logger.debug(f"[BinancePayAPI] amount+name fallback err: {_e}")
             if match:
                 result.update({
                     'success':     True,

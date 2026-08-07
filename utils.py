@@ -274,8 +274,15 @@ def sanitize_html_tags(text):
     drops = []
     for i, (st, en, name, closing) in enumerate(ops):
         if not closing:
-            # skip if already inside same tag (avoid double-open)
+            # 🐛 v147 FIX: nested SAME-name tag (`<b><b>x</b></b>`) — the old
+            # code kept the inner opening tag text but did NOT push it, so its
+            # matching close was later treated as orphan and dropped → the outer
+            # <b> never closed → Telegram "Can't find end tag corresponding to
+            # start tag b" (this broke Buy Now on manual products whose names
+            # contain <b> tags, e.g. "Canva 500 User Panel"). Now we DROP the
+            # duplicate inner opening tag so the outer tag stays balanced.
             if stack and stack[-1] == name:
+                drops.append((st, en))
                 continue
             stack.append(name)
         else:

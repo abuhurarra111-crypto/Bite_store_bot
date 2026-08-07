@@ -1314,6 +1314,16 @@ async def binance_note_background_job(context):
                         verify_payment_unified,
                         expected_amount=expected, note_id=note_id, use_email_fallback=True,
                     )
+                # 🐛 v147: customer typed a wrong Order ID → rescue by
+                # amount + fuzzy customer-name (real payment observed live).
+                if not result.get('success'):
+                    _uname = str(order.get('user_name') or '').strip()
+                    if _uname:
+                        result = await asyncio.to_thread(
+                            verify_payment_unified,
+                            expected_amount=expected, sender_name=_uname,
+                            use_email_fallback=True,
+                        )
             else:
                 # Email path — try note-id match, fall back to order-id body match
                 result = await asyncio.to_thread(verify_binance_payment_by_note, note_id, expected)
@@ -4350,6 +4360,48 @@ async def order_pass_received(update, context):
     
     await _show_payment_screen(None, context, p, qty, update=update)
     return True
+
+async def open_checkout_direct(bot, user_id, product_id):
+    """🐛 v147 FIX (Bug7): open a product's CHECKOUT (payment-method screen)
+    directly in a user's private chat — used by broadcast buttons with the
+    `https://t.me/<bot>?start=chk_<pid>` deep link."""
+    try:
+        from database import get_product
+        from utils import smart_text_and_mode, format_pkr, contains_premium_markup
+        p = get_product(int(product_id))
+        if not p:
+            return False
+        d = dict(p)
+        if int(d.get('is_active', 1) or 1) != 1:
+            return False
+        try:
+            from database import is_product_hidden
+            if is_product_hidden(int(product_id)):
+                return False
+        except Exception:
+            pass
+        stock = int(d.get('stock') or 0)
+        manual = d.get('delivery_mode') == 'manual'
+        if not manual and stock <= 0:
+            return False
+        qty = 1
+        total = _get_eff_price(p) * qty
+        pkr = format_pkr(total, _pkr_rate())
+        msg = (
+            f"🛒 *Confirm Purchase*\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"📦 *{_fmt_msg_name(d.get('name',''))}*\n"
+            f"🔢 Quantity: *{qty}*\n"
+            f"💰 Total: *${total:.2f}* ≈ *{pkr}*\n\n"
+            f"Select payment method:"
+        )
+        send_text, send_mode = smart_text_and_mode(msg, "Markdown")
+        kb = payment_method_keyboard(int(product_id), qty)
+        await bot.send_message(chat_id=user_id, text=send_text,
+                               parse_mode=send_mode, reply_markup=kb)
+        return True
+    except Exception:
+        return False
+
 
 async def _show_payment_screen(q, context, p, qty, update=None):
     total_price = _get_eff_price(p) * qty

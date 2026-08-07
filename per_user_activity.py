@@ -78,24 +78,31 @@ PAYMENT_METHODS = ["Binance Pay ⚡", "JazzCash 📱", "EasyPaisa 📲"]
 
 
 def _enabled_payment_methods():
-    """🆕 v102: return ONLY the payment methods the admin has enabled.
-    Bug: fake purchase/deposit broadcasts used to advertise EasyPaisa and
-    JazzCash even when admin had disabled those methods → customers would
-    tap 'Buy Now' + get 'method unavailable' error. Now filters random pick
-    to enabled-only.
+    """🆕 v102 / 🐛 v147 FIX (Bug5): return ONLY the payment methods the admin
+    has enabled via the payment toggles. The old list only had 3 entries
+    (Binance/JazzCash/EasyPaisa) and NO Bybit/USDT entries — so when
+    jazzcash+easypaisa were off, EVERY fake deposit alert said "Binance Pay".
+    Now every toggleable external method participates; disabled ones never
+    appear. "points" is excluded (not an external deposit method).
 
-    Fallback: if admin somehow disabled everything, return the full list so
-    fake activity keeps working (never break the broadcast pipeline).
+    Fallback: if admin somehow disabled everything, return a single safe
+    default so fake activity keeps working (never break the pipeline).
     """
     try:
         from database import is_payment_enabled
         pairs = [
-            ("binance",   "Binance Pay ⚡"),
-            ("jazzcash",  "JazzCash 📱"),
-            ("easypaisa", "EasyPaisa 📲"),
+            ("binance",          "Binance Pay ⚡"),
+            ("usdt_trc20",       "Binance USDT TRC20"),
+            ("usdt_bep20",       "Binance USDT BEP20"),
+            ("bybit",            "Bybit"),
+            ("bybit_pay",        "Bybit Pay"),
+            ("bybit_usdt_trc20", "Bybit USDT TRC20"),
+            ("bybit_usdt_bep20", "Bybit USDT BEP20"),
+            ("jazzcash",         "JazzCash 📱"),
+            ("easypaisa",        "EasyPaisa 📲"),
         ]
         enabled = [label for method, label in pairs if is_payment_enabled(method)]
-        return enabled or PAYMENT_METHODS  # never empty
+        return enabled or ["Binance Pay ⚡"]  # never empty
     except Exception:
         return PAYMENT_METHODS
 
@@ -139,6 +146,19 @@ def _s(key, val):
 def is_globally_enabled():
     """Returns True if fake activity system is ON globally."""
     return _g(S_GLOBAL_ON, "1") == "1"
+
+
+def _activity_blocked_by_maintenance() -> bool:
+    """🐛 v147 FIX: fake activity must STOP during maintenance mode.
+    Maintenance gate was missing here — fake messages kept going to the
+    destination group and to private chats even with maintenance ON."""
+    try:
+        from maintenance_mode import is_maintenance_on
+        if is_maintenance_on():
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def get_speed():
@@ -1013,6 +1033,9 @@ async def _send_activity_to_user(bot, user_id: int):
     """
     if not is_globally_enabled():
         return
+    # 🐛 v147 FIX: maintenance ON → no fake messages to users
+    if _activity_blocked_by_maintenance():
+        return
     if not is_user_active(user_id):
         return
 
@@ -1155,6 +1178,11 @@ def schedule_group_activity_job(app):
         # Check if still enabled and correct mode
         mode = _g("dest_mode", "bot_only")
         dest_chat = _g("dest_chat_id", "").strip()
+
+        # 🐛 v147 FIX: maintenance ON → no fake messages to the destination group
+        if _activity_blocked_by_maintenance():
+            schedule_group_activity_job(context.application)
+            return
 
         if is_globally_enabled() and mode in ("group_only", "both") and dest_chat:
             try:

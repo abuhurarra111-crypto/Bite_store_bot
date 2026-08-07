@@ -228,18 +228,27 @@ PAYMENT_METHODS = ["Binance Pay", "JazzCash", "EasyPaisa"]
 
 
 def _enabled_payment_methods():
-    """🆕 v102: return ONLY the payment methods admin has enabled.
-    Same fix as per_user_activity._enabled_payment_methods — mirror here
-    for the legacy fake_broadcast panel."""
+    """🆕 v102 / 🐛 v147 FIX (Bug5): return ONLY the payment methods admin has
+    enabled via the payment toggles. The old list had only 3 entries
+    (Binance/JazzCash/EasyPaisa) and NO Bybit/USDT entries — so with
+    jazzcash+easypaisa off, EVERY fake deposit alert said "Binance Pay".
+    Now every toggleable external method participates; disabled ones never
+    appear. "points" is excluded (it's not an external deposit method)."""
     try:
         from database import is_payment_enabled
         pairs = [
-            ("binance",   "Binance Pay"),
-            ("jazzcash",  "JazzCash"),
-            ("easypaisa", "EasyPaisa"),
+            ("binance",         "Binance Pay"),
+            ("usdt_trc20",      "Binance USDT TRC20"),
+            ("usdt_bep20",      "Binance USDT BEP20"),
+            ("bybit",           "Bybit"),
+            ("bybit_pay",       "Bybit Pay"),
+            ("bybit_usdt_trc20", "Bybit USDT TRC20"),
+            ("bybit_usdt_bep20", "Bybit USDT BEP20"),
+            ("jazzcash",        "JazzCash"),
+            ("easypaisa",       "EasyPaisa"),
         ]
         enabled = [label for method, label in pairs if is_payment_enabled(method)]
-        return enabled or PAYMENT_METHODS
+        return enabled or ["Binance Pay"]
     except Exception:
         return PAYMENT_METHODS
 
@@ -508,6 +517,16 @@ async def run_fake_broadcast(bot, force_type=None):
     # ── Master switch check (skip only for non-test calls) ──
     if not is_enabled() and not is_test:
         return None, 0, 0
+
+    # 🐛 v147 FIX: fake broadcast must NOT run during maintenance mode.
+    if not is_test:
+        try:
+            from maintenance_mode import is_maintenance_on
+            if is_maintenance_on():
+                logger.info("[FakeBroadcast] SKIPPED — maintenance ON")
+                return None, 0, 0
+        except Exception:
+            pass
 
     # ── Get real in-stock, NOT-hidden products ──
     # 🆕 v60: get_all_products() now excludes hidden by default. Belt-and-suspenders:
@@ -3355,6 +3374,49 @@ def build_real_purchase_message(product_name, qty=1, amount=None, pid=None):
 # ─────────────────────────────────────────────────────────────
 # 🆕 v94: Buy Now button — product-name prefix + global color
 # ─────────────────────────────────────────────────────────────
+def _product_buy_emoji(pid):
+    """🐛 v147 FIX (Bug6): return (emoji_id, emoji_char) for a product's
+    Buy-Now button.
+
+    Priority:
+      1. SUPPLIER-LINKED products → the FIXED premium emoji the admin set in
+         the supplier emoji library (`ext_products.emoji_id` / `emoji_char`).
+         Supplier raw names carry no emoji; this fixed emoji is the source of
+         truth the owner wants on the button.
+      2. OWN (manual) products → the premium emoji inside the product NAME
+         (the owner types it directly in the name, e.g.
+         `[[HTML]]<tg-emoji ...>🎨</tg-emoji>Canva 500 User Panel`).
+    Returns ("", "") when nothing is found.
+    """
+    try:
+        from database import get_connection
+        c = get_connection().cursor()
+        # 1) supplier-linked → fixed emoji from ext_products
+        c.execute(
+            "SELECT e.emoji_id, e.emoji_char FROM ext_products e "
+            "WHERE e.shop_product_id=? AND e.emoji_id IS NOT NULL AND e.emoji_id!='' "
+            "LIMIT 1", (int(pid),))
+        row = c.fetchone()
+        if row:
+            eid = str(row[0] or "").strip()
+            ech = str(row[1] or "").strip()
+            if eid or ech:
+                return eid, ech
+        # 2) own product → premium emoji from the NAME
+        c.execute("SELECT name FROM products WHERE id=?", (int(pid),))
+        row = c.fetchone()
+        if row:
+            try:
+                from button_system import extract_emoji_from_html
+                eid, ech = extract_emoji_from_html(row["name"] or "")
+                return str(eid or ""), str(ech or "")
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return "", ""
+
+
 def _buy_now_label(pid, default_suffix="🛒 Buy Now") -> str:
     """Return the Buy Now button label.
 
@@ -3401,6 +3463,18 @@ def _buy_now_label(pid, default_suffix="🛒 Buy Now") -> str:
     # ── Step 1: Extract leading emoji (regular OR premium fallback char) ──
     leading_emoji = ""
     body = raw
+
+    # 🐛 v147 FIX (Bug6): supplier-linked products use their FIXED emoji from
+    # ext_products; own products use the emoji in the name.
+    try:
+        _eid, _ech = _product_buy_emoji(int(pid))
+        if _ech:
+            leading_emoji = _ech
+            # strip the fixed emoji prefix from the body so it isn't repeated
+            if body.startswith(_ech):
+                body = body[len(_ech):].lstrip()
+    except Exception:
+        pass
 
     # Case A: [[HTML]]<tg-emoji emoji-id="X">EMOJI</tg-emoji> rest...
     if body.startswith("[[HTML]]"):
@@ -3552,35 +3626,29 @@ async def _buy_now_keyboard(bot, pid, btn_key="sb_buy_generic"):
     prefixed = _buy_now_label(pid, "🛒 Buy Now")
     color = _get_broadcast_global_color(tpl_id)
 
-    # 🆕 v102: extract product's OWN premium emoji_id (from `products.name`)
-    # so we can render it as the button icon. If the product name uses
-    # <tg-emoji emoji-id="...">📱</tg-emoji> markup, we pull the ID here.
+    # 🆕 v102 / 🐛 v147 FIX (Bug6): extract the product's premium emoji_id —
+    # supplier-linked products use the FIXED emoji from ext_products, own
+    # products use the emoji in the NAME — and render it as the button icon.
     product_emoji_id = ""
     try:
-        from database import get_connection
-        from button_system import extract_emoji_from_html
-        _c = get_connection().cursor()
-        _c.execute("SELECT name FROM products WHERE id=?", (int(pid),))
-        _row = _c.fetchone()
-        if _row:
-            _eid, _ = extract_emoji_from_html(_row["name"] or "")
-            if _eid:
-                product_emoji_id = str(_eid)
-                # Also strip the leading fallback char from the label if we
-                # already put one there — otherwise emoji appears twice.
-                # _buy_now_label(v96) returns "[emoji] first_2_words Buy Now"
-                # so drop the leading emoji token when we're going to render
-                # a proper premium icon.
-                import re as _re
-                # Match the first "word" (emoji cluster) and strip it if it's
-                # a lone emoji-like character followed by space
-                _stripped = _re.sub(
-                    r"^\s*[\U0001F000-\U0001FFFF\u2600-\u27BF"
-                    r"\U00002B00-\U00002BFF\U0001F300-\U0001F9FF"
-                    r"\u2700-\u27BF\u203C-\u2049\ufe0f]+\s+", "", prefixed
-                )
-                if _stripped and _stripped != prefixed:
-                    prefixed = _stripped
+        _eid, _ = _product_buy_emoji(int(pid))
+        if _eid:
+            product_emoji_id = str(_eid)
+            # Also strip the leading fallback char from the label if we
+            # already put one there — otherwise emoji appears twice.
+            # _buy_now_label(v96) returns "[emoji] first_2_words Buy Now"
+            # so drop the leading emoji token when we're going to render
+            # a proper premium icon.
+            import re as _re
+            # Match the first "word" (emoji cluster) and strip it if it's
+            # a lone emoji-like character followed by space
+            _stripped = _re.sub(
+                r"^\s*[\U0001F000-\U0001FFFF\u2600-\u27BF"
+                r"\U00002B00-\U00002BFF\U0001F300-\U0001F9FF"
+                r"\u2700-\u27BF\u203C-\u2049\ufe0f]+\s+", "", prefixed
+            )
+            if _stripped and _stripped != prefixed:
+                prefixed = _stripped
     except Exception:
         pass
 
@@ -3736,28 +3804,24 @@ async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None
                 # 🆕 v94: label now has product name prefix — "{product} - Buy Now"
                 _btn_label = _buy_now_label(pid, "🛒 Buy Now")
 
-                # 🆕 v102: pull product's own premium emoji_id + strip leading
-                # emoji fallback from label so premium icon renders correctly
+                # 🆕 v102 / 🐛 v147 FIX (Bug6): pull the product's premium
+                # emoji_id (supplier → fixed ext emoji; own → name emoji) and
+                # strip the leading emoji fallback from the label so the
+                # premium icon renders correctly.
                 _product_emoji_id = ""
                 try:
-                    from database import get_connection as _gcp
-                    from button_system import extract_emoji_from_html as _eeh
-                    _cc = _gcp().cursor()
-                    _cc.execute("SELECT name FROM products WHERE id=?", (int(pid),))
-                    _rr = _cc.fetchone()
-                    if _rr:
-                        _eid, _ = _eeh(_rr["name"] or "")
-                        if _eid:
-                            _product_emoji_id = str(_eid)
-                            import re as _re_local
-                            _stripped = _re_local.sub(
-                                r"^\s*[\U0001F000-\U0001FFFF\u2600-\u27BF"
-                                r"\U00002B00-\U00002BFF\U0001F300-\U0001F9FF"
-                                r"\u2700-\u27BF\u203C-\u2049\ufe0f]+\s+", "",
-                                _btn_label
-                            )
-                            if _stripped and _stripped != _btn_label:
-                                _btn_label = _stripped
+                    _eid, _ = _product_buy_emoji(int(pid))
+                    if _eid:
+                        _product_emoji_id = str(_eid)
+                        import re as _re_local
+                        _stripped = _re_local.sub(
+                            r"^\s*[\U0001F000-\U0001FFFF\u2600-\u27BF"
+                            r"\U00002B00-\U00002BFF\U0001F300-\U0001F9FF"
+                            r"\u2700-\u27BF\u203C-\u2049\ufe0f]+\s+", "",
+                            _btn_label
+                        )
+                        if _stripped and _stripped != _btn_label:
+                            _btn_label = _stripped
                 except Exception:
                     pass
 
