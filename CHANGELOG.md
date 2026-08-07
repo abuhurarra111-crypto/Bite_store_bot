@@ -8,6 +8,40 @@
 
 ---
 
+# 🚀 v150 (2026-08-07) — 📦 BUNDLED DB: bot ALWAYS boots with the latest database (old-data problem SOLVED for good)
+
+## 🐛 THE PROBLEM (user reported 3x)
+- Restoring the DB still showed OLD data. Reason: the bot's data lives at
+  `DB_PATH` (/var/data/shop.db on Render's disk) — a code deploy does NOT touch
+  it, and a manual file upload could land in the wrong place / be shadowed by a
+  stale WAL or a fallback `shop.db`. The deployed bot kept reading an old file.
+
+## ✅ THE FIX — bundle the DB into the deployment
+- The latest database is now shipped INSIDE the repo as **`latest_shop.db`**.
+- New `database.restore_bundled_db_if_needed()` runs at the very TOP of
+  `main()` (before anything reads the DB):
+  - first boot after deploy → backs up whatever DB exists, copies
+    `latest_shop.db` over `DB_PATH`, wipes stale `-wal`/`-shm`, marks
+    `bundled_db_restored=1` → **the bot boots with the 898-user dataset**;
+  - later boots → marker present → skips → live data keeps persisting;
+  - DB missing / disk wiped → bundle restores again (always a sane baseline).
+- Manual bot-UI restore (💾 Backup → Restore) also sets the marker, so an
+  admin's own restore is never overridden by the bundle afterwards.
+
+## 🗄 DB (bundled)
+- `latest_shop.db` = the admin's latest backup, v149-modified: 898 users,
+  320 orders, 51 products, 162 ext-products, 7 suppliers, polls tables,
+  flash-template fix, ProdSeller varied stock, maint_enabled=0, pending
+  orders #321 (Binance 0.59) & #322 (BEP20 4.2) intact.
+- Data preservation verified: 58 → 60 tables, ZERO rows lost (only the two
+  new poll tables added).
+
+## 🧪 Tests
+- New bundled-restore tests: (1) fresh DB → restored to 898; (2) already
+  restored → skipped (live data untouched); (3) old DB without marker →
+  REPLACED by bundle. All pass. All 15 in-repo suites + 19 legacy suites pass;
+  boot smoke clean.
+
 # 🚀 v149 (2026-08-07) — Flash template placeholder FIX + refund-by-user-ID with reason & history + per-user full history
 
 ## 🐛 FIX 1: Flash sale template — {product} placeholder went LITERAL + fixed emoji
