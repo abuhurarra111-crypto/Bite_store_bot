@@ -3279,14 +3279,13 @@ def build_flash_message(product, timer_text="23-59-59", tpl_index=None):
     # 🐛 v144.3 FIX: `.format()` raised KeyError when a custom template used a
     # placeholder not in the args (e.g. {old_price}) → except returned the RAW
     # template → all placeholders (incl. {price}) were sent literally.
-    # Now format_map fills known keys and leaves unknown ones as-is.
+    # 🐛 v149 FIX: case-insensitive filling — custom template had `{Product}`
+    # (capital P) which the old exact-key map left LITERAL. Now any casing works.
     try:
-        class _SafeMap(dict):
-            def __missing__(self, key):
-                return "{" + key + "}"
-        return tpl.format_map(_SafeMap({
-            'product': d.get('name', 'Product'),
-            'product_name': d.get('name', 'Product'),
+        _pname = _product_name_with_fixed_emoji(d)
+        return _fill_placeholders_ci(tpl, {
+            'product': _pname,
+            'product_name': _pname,
             'price': f"{price:.2f}",
             'old_price': f"{regular:.2f}",
             'regular': f"{regular:.2f}",
@@ -3294,7 +3293,7 @@ def build_flash_message(product, timer_text="23-59-59", tpl_index=None):
             'discount': f"{save:.2f}",
             'timer': timer_text,
             'timer_text': timer_text,
-        }))
+        })
     except Exception:
         return tpl  # custom text with no/odd placeholders
 
@@ -3315,16 +3314,14 @@ def build_newproduct_message(product, tpl_index=None):
         idx = max(0, min(len(NEW_PRODUCT_TEMPLATES) - 1, idx))
         tpl = NEW_PRODUCT_TEMPLATES[idx]
     try:
-        class _SafeMap(dict):
-            def __missing__(self, key):
-                return "{" + key + "}"
-        return tpl.format_map(_SafeMap({
-            'product': d.get('name', 'Product'),
-            'product_name': d.get('name', 'Product'),
+        _pname = _product_name_with_fixed_emoji(d)
+        return _fill_placeholders_ci(tpl, {
+            'product': _pname,
+            'product_name': _pname,
             'price': f"{price:.2f}",
             'desc': desc,
             'stock': stock,
-        }))
+        })
     except Exception:
         return tpl
 
@@ -3369,6 +3366,64 @@ def build_real_purchase_message(product_name, qty=1, amount=None, pid=None):
             f"📦 {product_name}\n"
             f"🔢 Qty: {qty}\n\n"
             f"⚡ Delivered instantly ✅")
+
+
+def _fill_placeholders_ci(template, mapping):
+    """🐛 v149 FIX: fill {Placeholders} CASE-INSENSITIVELY.
+
+    The old code used `str.format_map({...})` with exact lowercase keys. The
+    admin's custom flash template used `{Product}` (capital P) → the key didn't
+    match `product` → the placeholder went out LITERALLY as "{Product}".
+    Now any casing of {product}/{Product}/{PRODUCT} is filled; unknown keys
+    stay untouched."""
+    import re as _re
+    if not template or "{" not in template:
+        return template
+    low_map = {str(k).lower(): v for k, v in (mapping or {}).items()}
+
+    def _sub(m):
+        key = m.group(1)
+        spec = m.group(2) or ""
+        v = low_map.get(key.lower())
+        if v is None:
+            return m.group(0)
+        try:
+            return format(str(v), spec) if spec else str(v)
+        except Exception:
+            return str(v)
+
+    return _re.sub(r"\{([A-Za-z_][A-Za-z0-9_]*)(:[^}]*)?\}", _sub, template)
+
+
+def _product_name_with_fixed_emoji(product):
+    """🐛 v149 FIX: product name for templates, prefixed with its FIXED emoji
+    (supplier ext emoji) when one exists — so flash/new-product broadcasts show
+    the emoji with the name exactly like the shop.
+
+    Rules:
+      - name already contains premium <tg-emoji> markup → leave as-is (the
+        shop name emoji is already there; no double emoji).
+      - name already starts with the emoji char → leave as-is.
+      - otherwise prepend the fixed emoji (premium when an id exists)."""
+    try:
+        d = dict(product) if product else {}
+        raw = str(d.get("name") or "Product")
+        pid = d.get("id")
+        if not pid:
+            return raw
+        if "<tg-emoji" in raw.lower():
+            return raw
+        eid, ech = _product_buy_emoji(int(pid))
+        if not ech:
+            return raw
+        plain = raw.replace("[[HTML]]", "")
+        if plain.lstrip().startswith(ech):
+            return raw
+        if eid:
+            return f'[[HTML]]<tg-emoji emoji-id="{eid}">{ech}</tg-emoji> {raw}'
+        return f"{ech} {raw}"
+    except Exception:
+        return str(product.get("name") or "Product") if product else "Product"
 
 
 # ─────────────────────────────────────────────────────────────

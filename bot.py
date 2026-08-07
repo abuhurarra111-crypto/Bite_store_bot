@@ -638,6 +638,15 @@ async def handle_text(update, context):
         if await poll_question_received(update, context): return
     if context.user_data.get('poll_step') == 'poll_options':
         if await poll_options_received(update, context): return
+    # 🆕 v149: Refund-by-User-ID text steps (id → amount → reason) + history-id
+    if context.user_data.get('ruid_step') == 'id':
+        if await adm_refund_uid_received(update, context): return
+    if context.user_data.get('ruid_step') == 'amt':
+        if await adm_refund_uid_amt_received(update, context): return
+    if context.user_data.get('ruid_step') == 'reason':
+        if await adm_refund_uid_reason_received(update, context): return
+    if context.user_data.get('ruid_step') == 'uhist_id':
+        if await adm_uhist_id_received(update, context): return
     if context.user_data.get('fake_custom_broadcast'):
         if await handle_fake_custom_broadcast_message(update, context): return
     if context.user_data.get('broadcasting'):
@@ -2062,6 +2071,13 @@ def main():
         ("^view_order_", view_order_callback),
         ("^approve_", approve_order_callback), ("^reject_", reject_order_callback),
         ("^admin_users$", admin_users_callback),
+        # 🆕 v149: refund-by-user-ID + per-user full history
+        ("^adm_refund_uid$", adm_refund_uid_callback),
+        ("^adm_refund_uid_", adm_refund_uid_callback),
+        ("^adm_uhist_enter$", adm_uhist_enter_callback),
+        ("^adm_uhist_", adm_uhist_callback),
+        ("^ruid_confirm$", adm_refund_uid_confirm_callback),
+        ("^ruid_cancel$", adm_refund_uid_cancel_callback),
         ("^admin_settings$", admin_settings_callback),
         ("^admin_terms$", admin_terms_callback),
         ("^admin_responses$", admin_responses_callback),

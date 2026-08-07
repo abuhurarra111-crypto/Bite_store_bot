@@ -976,8 +976,24 @@ def render_template(tpl_id, data: dict):
     """
     text = get_template(tpl_id)
     try:
-        return text.format(**data)
-    except KeyError:
+        # 🐛 v149 FIX: case-insensitive placeholder fill. Old code used
+        # `.format(**data)` with exact keys — `{Product}` vs `product` threw
+        # KeyError → returned the RAW template (placeholders sent literally).
+        # Now any casing works; unknown keys stay untouched.
+        import re as _re
+        low_map = {str(k).lower(): v for k, v in (data or {}).items()}
+        def _sub(m):
+            key = m.group(1)
+            spec = m.group(2) or ""
+            v = low_map.get(key.lower())
+            if v is None:
+                return m.group(0)
+            try:
+                return format(str(v), spec) if spec else str(v)
+            except Exception:
+                return str(v)
+        return _re.sub(r"\{([A-Za-z_][A-Za-z0-9_]*)(:[^}]*)?\}", _sub, text)
+    except Exception:
         return text  # Return unformatted if variable missing
 
 

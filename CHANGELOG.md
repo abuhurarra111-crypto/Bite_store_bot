@@ -8,6 +8,49 @@
 
 ---
 
+# 🚀 v149 (2026-08-07) — Flash template placeholder FIX + refund-by-user-ID with reason & history + per-user full history
+
+## 🐛 FIX 1: Flash sale template — {product} placeholder went LITERAL + fixed emoji
+- **Root cause (reproduced live):** the admin's custom flash template used
+  `{Product}` (capital P) while the renderer only filled lowercase
+  `{product}` → `str.format_map` left the key untouched → the destination
+  group received the raw placeholder text instead of the product name.
+- **Fix (double):**
+  - Code: new `_fill_placeholders_ci()` makes ALL placeholder filling
+    case-insensitive (any casing of {product}/{Product}/{PRODUCT} works;
+    unknown keys stay literal). Applied to `build_flash_message`,
+    `build_newproduct_message` and `customization.render_template` (the fake
+    broadcast + purchase/deposit/etc. templates).
+  - Data: the stored `flash_tpl_custom` value is normalized to `{product}`.
+- **Fixed emoji with name:** new `_product_name_with_fixed_emoji()` prepends
+  the product's fixed premium emoji (supplier ext emoji) to the name in flash
+  / new-product broadcasts — exactly like the shop shows it. If the name
+  already carries its own premium emoji markup, nothing is duplicated.
+
+## ✨ FIX 2: Refund by USER ID (any user) — with reason + history
+- Admin Panel → 👤 Users → **💸 Refund by User ID** (or 📋 Full History →
+  💸 Refund This User, or 📊 activity → 💸 Refund).
+- Flow: type user ID → bot shows the user → type refund amount (USD, auto-
+  converted to points) → type the reason → ✅ Confirm → points credited,
+  the user is NOTIFIED with the reason, and it's saved to their points-ledger
+  history (description = the reason).
+
+## ✨ FIX 3: Per-user FULL history (Users button)
+- Every user's 📊 activity view now has **📋 Full History**: orders (last 10,
+  with status), points ledger (deposits/refunds/credits with reasons), and
+  recent actions — plus a direct 💸 Refund button.
+- Users panel also gets **📋 User Full History (by ID)** to jump straight to
+  any user's history.
+
+## 🗄 DB
+- No schema changes (history lives in existing `orders`, `points_ledger`,
+  `user_clicks`). Template data fix applied to `bot_settings.flash_tpl_custom`.
+
+## 🧪 Tests
+- New `_test_v149_refund_flash.py` (8 tests). All 15 in-repo suites + 19
+  legacy suites pass; refund flow verified end-to-end (points credit + reason
+  + ledger entry) and flash build verified against the REAL DB template.
+
 # 🚀 v148 (2026-08-07) — 📊 Polls: admin polls broadcast to all users, vote tracking & live results
 
 ## ✨ NEW: Poll system (user demand / opinion voting)

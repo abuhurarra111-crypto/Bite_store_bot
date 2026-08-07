@@ -1107,6 +1107,9 @@ async def admin_users_callback(u,c):
     kb.append([InlineKeyboardButton("🔍 Search User (ID / username)", callback_data="adm_users_search")])
     kb.append([InlineKeyboardButton("💬 Start User Chat", callback_data="admin_direct_chat")])
     kb.append([InlineKeyboardButton("💎 Manage User Points", callback_data="adm_manage_pts")])
+    # 🆕 v149: Refund any user by ID (with reason) + per-user full history
+    kb.append([InlineKeyboardButton("💸 Refund by User ID", callback_data="adm_refund_uid")])
+    kb.append([InlineKeyboardButton("📋 User Full History (by ID)", callback_data="adm_uhist_enter")])
     kb.append([InlineKeyboardButton("🧹 Wipe Activity Now",  callback_data="adm_uact_wipe_confirm")])
     kb.append([InlineKeyboardButton("🔙 Back to Admin",      callback_data="admin_panel")])
 
@@ -1196,6 +1199,9 @@ async def adm_user_activity_callback(u, c):
     kb = [
         period_btns[:2],
         period_btns[2:],
+        # 🆕 v149: full history + quick refund straight from the activity view
+        [InlineKeyboardButton("📋 Full History", callback_data=f"adm_uhist_{uid}"),
+         InlineKeyboardButton("💸 Refund", callback_data=f"adm_refund_uid_{uid}")],
         [InlineKeyboardButton("🔄 Refresh", callback_data=f"adm_uact_{uid}_p{period}")],
         [InlineKeyboardButton("🔙 Back to Users", callback_data="admin_users")],
     ]
@@ -9484,5 +9490,344 @@ async def handle_poll_answer(update, context):
         if not pid:
             return
         record_poll_answer(pid, uid, option_ids)
+    except Exception:
+        pass
+
+
+# ════════════════════════════════════════════════════════════════
+# 💸 v149: REFUND BY USER ID (with reason) + per-user FULL HISTORY
+# Admin can refund ANY user by ID — bot asks amount + reason, credits
+# points, notifies the user with the reason, and it lands in history.
+# ════════════════════════════════════════════════════════════════
+
+async def adm_uhist_callback(u, c):
+    """📋 Full history for one user: orders + points ledger (deposits/
+    refunds/credits) + recent actions. Added in the 📊 activity view."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        uid = int(q.data.replace("adm_uhist_", ""))
+    except Exception:
+        await q.answer("Invalid", show_alert=True); return
+
+    from database import get_user, get_user_points, get_connection
+    user = get_user(uid)
+    fname = (user['first_name'] if user and 'first_name' in user.keys() else None) or '?'
+    uname = (user['username'] if user and 'username' in user.keys() else '') or ''
+    pts = get_user_points(uid)
+
+    conn = get_connection(); conn.row_factory = DictRow
+    c2 = conn.cursor()
+    # Orders
+    c2.execute("""SELECT id, product_name, price, status, payment_method, created_at
+                  FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 12""", (uid,))
+    orders = [dict(r) for r in c2.fetchall()]
+    # Points ledger (deposits/refunds/credits/debits)
+    try:
+        c2.execute("SELECT * FROM points_ledger WHERE user_id=? ORDER BY id DESC LIMIT 12", (uid,))
+        ledger = [dict(r) for r in c2.fetchall()]
+    except Exception:
+        ledger = []
+    conn.close()
+
+    from user_tracking import get_user_clicks, pretty_event
+    recent = get_user_clicks(uid, limit=8)
+
+    lines = [
+        f"📋 *Full History — {escape_md(fname)}* (`{uid}`)",
+        f"━━━━━━━━━━━━━━━━━━━━",
+        f"👤 {('@'+escape_md(uname)) if uname else '_no username_'} | 💎 {pts} pts",
+        "",
+        f"📦 *Orders ({len(orders)}):*",
+    ]
+    if orders:
+        for o in orders[:10]:
+            st = {"delivered":"✅","refunded":"💸","cancelled":"❌","pending":"🟡"}.get(str(o["status"]),"🟡")
+            pn = (str(o["product_name"] or "?")).replace("[[HTML]]","")
+            if len(pn) > 30: pn = pn[:29] + "…"
+            lines.append(f"  {st} `#{o['id']}` ${float(o['price'] or 0):.2f} {escape_md(pn)}")
+    else:
+        lines.append("  _No orders_")
+
+    lines.append("")
+    lines.append(f"💸 *Points Ledger ({len(ledger)}):*")
+    if ledger:
+        for l in ledger[:10]:
+            t = {"deposit":"💳","refund":"💸","credit":"➕","debit":"➖"}.get(str(l.get("tx_type")),"•")
+            desc = str(l.get("description") or "")[:40]
+            lines.append(f"  {t} {float(l.get('amount') or 0):+.2f} — {escape_md(desc)}")
+    else:
+        lines.append("  _No ledger entries_")
+
+    lines.append("")
+    lines.append("🎯 *Recent actions:*")
+    if recent:
+        for action, ts in recent[:8]:
+            lines.append(f"  `{(ts or '')[5:16]}` — {pretty_event(action)}")
+    else:
+        lines.append("  _No recorded actions_")
+
+    kb = [
+        [InlineKeyboardButton("💸 Refund This User", callback_data=f"adm_refund_uid_{uid}")],
+        [InlineKeyboardButton("📊 Activity", callback_data=f"adm_uact_{uid}_pall"),
+         InlineKeyboardButton("🔙 Users", callback_data="admin_users")],
+    ]
+    await _safe_edit(q, "\n".join(lines)[:3900], parse_mode="Markdown",
+                     reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def adm_uhist_enter_callback(u, c):
+    """📋 Full History by user ID — entry (asks for the ID)."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    c.user_data['ruid_step'] = 'uhist_id'
+    await _safe_edit(q,
+        "📋 *User Full History*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Jis user ki history dekhni hai uski *User ID* bhejo (number).\n\n"
+        "_Orders + Points Ledger (deposits/refunds) + Actions dikhengi._",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="ruid_cancel")]]))
+
+
+async def adm_uhist_id_received(u, c):
+    if u.effective_user.id != ADMIN_ID or c.user_data.get('ruid_step') != 'uhist_id':
+        return False
+    txt = (u.message.text or '').strip()
+    if not txt.isdigit():
+        await u.message.reply_text("❌ User ID number hota hai. Dobara bhejo:")
+        return True
+    uid = int(txt)
+    c.user_data.pop('ruid_step', None)
+    from database import get_user
+    if not get_user(uid):
+        await u.message.reply_text(
+            "❌ Ye user DB me nahi mila.", reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Users", callback_data="admin_users")]]))
+        return True
+    # show history by faking a callback renderer
+    class _FakeQ:
+        def __init__(self, uid):
+            self.data = f"adm_uhist_{uid}"
+            self.from_user = u.effective_user
+        async def answer(self, *a, **k):
+            return None
+        async def edit_message_text(self, *a, **k):
+            # fallback: just send a new message with same payload via u.message.reply_text
+            try:
+                text = a[0]; kwargs = k
+                return await u.message.reply_text(text, **kwargs)
+            except Exception:
+                return None
+        async def edit_message_caption(self, *a, **k):
+            return None
+    await adm_uhist_callback(type("_U", (), {"callback_query": _FakeQ(uid)})(), c)
+    return True
+
+
+async def adm_refund_uid_callback(u, c):
+    """💸 Refund by User ID — entry. callback: adm_refund_uid  (or adm_refund_uid_<uid>)"""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    direct_uid = None
+    if q.data.startswith("adm_refund_uid_"):
+        try:
+            direct_uid = int(q.data.replace("adm_refund_uid_", ""))
+        except Exception:
+            direct_uid = None
+    if direct_uid:
+        c.user_data['ruid_user'] = direct_uid
+        c.user_data['ruid_step'] = 'amt'
+        from database import get_user
+        usr = get_user(direct_uid)
+        fname = (usr['first_name'] if usr and 'first_name' in usr.keys() else '?') if usr else '?'
+        await _safe_edit(q,
+            f"💸 *Refund User* (`{direct_uid}`)\n"
+            f"👤 {escape_md(fname)}\n\n"
+            f"*Refund amount (USD)* bhejo — points me convert ho kar add hoga.\n"
+            f"Example: `5` = $5 → 50 points.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="ruid_cancel")]]))
+        return
+    c.user_data['ruid_step'] = 'id'
+    await _safe_edit(q,
+        "💸 *Refund by User ID*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Jis user ko refund karna hai uski *User ID* bhejo (number).\n\n"
+        "_User ID users list me `123456789` wala number hai._",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="ruid_cancel")]]))
+
+
+async def adm_refund_uid_received(u, c):
+    """Text step: receives user ID."""
+    if u.effective_user.id != ADMIN_ID or c.user_data.get('ruid_step') != 'id':
+        return False
+    txt = (u.message.text or '').strip()
+    if not txt.isdigit():
+        await u.message.reply_text("❌ User ID number hota hai. Dobara bhejo:")
+        return True
+    uid = int(txt)
+    from database import get_user, get_user_points
+    usr = get_user(uid)
+    if not usr:
+        await u.message.reply_text(
+            "❌ Ye user DB me nahi mila. User list me se ID check karo.\n"
+            "ID dobara bhejo ya /cancel:", reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Users", callback_data="admin_users")]]))
+        c.user_data['ruid_step'] = 'id'
+        return True
+    c.user_data['ruid_user'] = uid
+    c.user_data['ruid_step'] = 'amt'
+    fname = usr['first_name'] if 'first_name' in usr.keys() else '?'
+    uname = (usr['username'] if 'username' in usr.keys() else '') or ''
+    pts = get_user_points(uid)
+    await u.message.reply_text(
+        f"✅ *User mil gaya:*\n"
+        f"👤 {escape_md(fname)} (`{uid}`)\n"
+        f"{('@'+escape_md(uname)) if uname else '_no username_'}\n"
+        f"💎 Points: {pts}\n\n"
+        f"*Refund amount (USD)* bhejo — points me convert ho kar add hoga.\n"
+        f"Example: `5` = $5 → 50 points.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="ruid_cancel")]]))
+    return True
+
+
+async def adm_refund_uid_amt_received(u, c):
+    """Text step: receives refund amount (USD)."""
+    if u.effective_user.id != ADMIN_ID or c.user_data.get('ruid_step') != 'amt':
+        return False
+    uid = c.user_data.get('ruid_user')
+    if not uid:
+        c.user_data.pop('ruid_step', None)
+        return False
+    txt = (u.message.text or '').strip().replace("$", "").replace(",", "")
+    try:
+        amt = float(txt)
+        if amt <= 0 or amt > 100000:
+            raise ValueError
+    except Exception:
+        await u.message.reply_text("❌ Sahi amount (USD) bhejo, e.g. `5` ya `2.5`:")
+        return True
+    c.user_data['ruid_amt'] = amt
+    c.user_data['ruid_step'] = 'reason'
+    await u.message.reply_text(
+        f"✅ Amount: *${amt:.2f}* → *{points_from_usd(amt):g} points*\n\n"
+        f"*Refund ki wajah (reason)* likho — ye user ko dikhega aur history me save hoga.\n"
+        f"Example: `Product out of stock` ya `Delivery issue`\n\n"
+        f"_(Chaho to /skip kar ke default reason use ho sakta hai)_",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="ruid_cancel")]]))
+    return True
+
+
+async def adm_refund_uid_reason_received(u, c):
+    """Text step: receives reason → confirm screen."""
+    if u.effective_user.id != ADMIN_ID or c.user_data.get('ruid_step') != 'reason':
+        return False
+    reason = (u.message.text or '').strip()[:200] or "Refund"
+    c.user_data['ruid_reason'] = reason
+    c.user_data['ruid_step'] = 'confirm'
+    uid = c.user_data['ruid_user']; amt = c.user_data['ruid_amt']
+    from database import get_user, get_user_points
+    usr = get_user(uid)
+    fname = (usr['first_name'] if usr and 'first_name' in usr.keys() else '?') if usr else '?'
+    pts_now = get_user_points(uid)
+    pts_add = points_from_usd(amt)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Confirm Refund", callback_data="ruid_confirm")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="ruid_cancel")],
+    ])
+    await u.message.reply_text(
+        f"🔄 *Refund Confirm*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👤 User: {escape_md(fname)} (`{uid}`)\n"
+        f"💰 Amount: *${amt:.2f}*\n"
+        f"💎 Points add: *{pts_add:g}* (ab {pts_now})\n"
+        f"📝 Reason: *{escape_md(reason)}*\n\n"
+        f"Confirm karo?",
+        parse_mode="Markdown", reply_markup=kb)
+    return True
+
+
+async def adm_refund_uid_confirm_callback(u, c):
+    """Execute the refund: credit points, notify user with reason, log history."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    uid = c.user_data.get('ruid_user')
+    amt = c.user_data.get('ruid_amt')
+    reason = c.user_data.get('ruid_reason') or 'Refund'
+    for k in ('ruid_user', 'ruid_amt', 'ruid_reason', 'ruid_step'):
+        c.user_data.pop(k, None)
+    if not uid or not amt:
+        await q.answer("Session expired — dobara try karo.", show_alert=True)
+        try:
+            await q.edit_message_text("❌ Refund data missing.", reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Users", callback_data="admin_users")]]))
+        except Exception:
+            pass
+        return
+    from database import add_points, get_user_points, get_user
+    import time as _t
+    pts = points_from_usd(amt)
+    ok = add_points(uid, pts, tx_type='refund', description=f"Admin refund: {reason}",
+                    event_id=f"admin_refund_uid_{uid}_{int(_t.time())}", order_id=0)
+    new_bal = get_user_points(uid)
+    usr = get_user(uid)
+    fname = (usr['first_name'] if usr and 'first_name' in usr.keys() else '?') if usr else '?'
+    # Notify the user
+    try:
+        from utils import smart_text_and_mode
+        msg = (
+            "💸 *Refund Received!*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"✅ *{pts:g} Points* aapke wallet me add kar diye gaye.\n"
+            f"💰 Amount: *${amt:.2f}*\n"
+            f"📝 Reason: *{reason}*\n\n"
+            f"💎 Naya balance: *{new_bal:g} Points*\n\n"
+            f"Hamari taraf se inconvenience ke liye maazrat. 🙏"
+        )
+        send_t, send_m = smart_text_and_mode(msg, "Markdown")
+        await c.bot.send_message(chat_id=uid, text=send_t, parse_mode=send_m,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛒 Shop", callback_data="shop")],
+                [InlineKeyboardButton("📜 My Orders", callback_data="my_orders")],
+            ]))
+        user_notified = True
+    except Exception:
+        user_notified = False
+    await q.answer("✅ Refund done!")
+    try:
+        await q.edit_message_text(
+            f"✅ *Refund Done!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👤 {escape_md(fname)} (`{uid}`)\n"
+            f"💰 +${amt:.2f} → +{pts:g} points\n"
+            f"📝 Reason: *{escape_md(reason)}*\n"
+            f"💎 Naya balance: {new_bal:g}\n"
+            f"🔔 User notified: {'✅' if user_notified else '❌ (bot blocked)'}\n\n"
+            f"_History me saved — user ki 📋 Full History me dikhega._",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 User History", callback_data=f"adm_uhist_{uid}")],
+                [InlineKeyboardButton("🔙 Users", callback_data="admin_users")],
+            ]))
+    except Exception:
+        pass
+
+
+async def adm_refund_uid_cancel_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    for k in ('ruid_user', 'ruid_amt', 'ruid_reason', 'ruid_step'):
+        c.user_data.pop(k, None)
+    await q.answer("Cancelled")
+    try:
+        await admin_users_callback(u, c)
     except Exception:
         pass
