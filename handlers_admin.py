@@ -4868,17 +4868,6 @@ async def backup_restore_do_callback(u, c):
             migration_stats = {"tables_checked": 0, "columns_added": 0,
                                "errors": [f"migrate_all crashed: {me}"]}
 
-        # 🆕 v150: mark bundled-restore as done so the manual restore the admin
-        # just performed is RESPECTED (the bundled latest_shop.db won't override
-        # it on the next boot).
-        try:
-            from database import get_connection
-            _conn = get_connection(); _cur = _conn.cursor()
-            _cur.execute("INSERT OR REPLACE INTO bot_settings (key, value) VALUES ('bundled_db_restored','1')")
-            _conn.commit(); _conn.close()
-        except Exception:
-            pass
-
         # 4. Cleanup
         try: os.remove(restore_file)
         except: pass

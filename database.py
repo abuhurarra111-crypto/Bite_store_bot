@@ -397,6 +397,7 @@ def migrate_all():
         ("setup_ref_points_and_log",  setup_ref_points_and_log),  # 🆕 v48
         ("ensure_pending_referrals_table", ensure_pending_referrals_table),  # 🆕 v134/v139
         ("ensure_force_join_targets_table", ensure_force_join_targets_table),  # 🆕 v135/v139
+        ("ensure_poll_tables",            ensure_poll_tables),            # 🆕 v148 polls
     ):
         try:
             fn(); stats["tables_checked"] += 1
@@ -5685,89 +5686,3 @@ def get_poll_results(poll_id):
         return None
 
 
-# ════════════════════════════════════════════════════════════════
-# 📦 v150: BUNDLED DB AUTO-RESTORE — the bot ALWAYS boots with the
-# latest bundled database (latest_shop.db) so "old data" can never
-# come back. One-time per boot-session: on the first startup after a
-# deploy, the bundled DB replaces whatever is at DB_PATH (after backing
-# up the old file). Once restored, a marker prevents re-copying, so
-# live data keeps persisting afterwards.
-# ════════════════════════════════════════════════════════════════
-
-def _effective_db_path():
-    """Resolve the DB file path the same way get_connection() does
-    (env DB_PATH, with fallback to local shop.db when unwritable)."""
-    global DB_PATH, _DB_FALLBACK_WARNED
-    try:
-        _ensure_db_parent(DB_PATH)
-        _c = sqlite3.connect(DB_PATH, timeout=10.0)
-        _c.close()
-        return DB_PATH
-    except Exception:
-        return "shop.db"
-
-
-def restore_bundled_db_if_needed():
-    """v150: one-time auto-restore from bundled latest_shop.db.
-
-    Returns a short status string. Runs on bot startup BEFORE anything
-    reads the DB, so the deployed bot always begins with the latest
-    dataset (898 users etc.). The marker 'bundled_db_restored' (stored
-    INSIDE the DB) prevents it from re-copying on every boot, so real
-    live orders/users added afterwards are never lost.
-    """
-    import hashlib as _hl
-    import shutil as _sh
-    import os as _os
-    bundle = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "latest_shop.db")
-    if not _os.path.exists(bundle):
-        return "no_bundle"
-    try:
-        with open(bundle, "rb") as _f:
-            _bundle_hash = _hl.md5(_f.read()).hexdigest()
-    except Exception as _e:
-        return f"bundle_read_error:{_e}"
-    target = _effective_db_path()
-    # already restored in a previous boot?
-    try:
-        if _os.path.exists(target):
-            _c = sqlite3.connect(target, timeout=10.0)
-            _cur = _c.cursor()
-            _cur.execute("SELECT value FROM bot_settings WHERE key='bundled_db_restored'")
-            _r = _cur.fetchone()
-            _c.close()
-            if _r and str(_r[0]) == "1":
-                return "already_restored"
-    except Exception:
-        pass
-    # back up whatever is currently there
-    try:
-        if _os.path.exists(target):
-            from datetime import datetime as _dt
-            _os.makedirs("auto_backups", exist_ok=True)
-            _ts = _dt.now().strftime("%Y%m%d_%H%M%S")
-            _sh.copy2(target, _os.path.join("auto_backups", f"pre_bundle_{_ts}.db"))
-    except Exception:
-        pass
-    # swap in the bundled DB
-    try:
-        _sh.copy2(bundle, target)
-    except Exception as _e:
-        return f"copy_error:{_e}"
-    # remove stale WAL/SHM so no old data shadows the new file
-    for _suf in ("-wal", "-shm"):
-        try:
-            if _os.path.exists(target + _suf):
-                _os.remove(target + _suf)
-        except Exception:
-            pass
-    # mark as restored
-    try:
-        _c = sqlite3.connect(target, timeout=10.0)
-        _cur = _c.cursor()
-        _cur.execute("CREATE TABLE IF NOT EXISTS bot_settings (key TEXT PRIMARY KEY, value TEXT DEFAULT '')")
-        _cur.execute("INSERT OR REPLACE INTO bot_settings (key, value) VALUES ('bundled_db_restored','1')")
-        _c.commit(); _c.close()
-    except Exception:
-        pass
-    return "restored"

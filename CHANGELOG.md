@@ -8,6 +8,34 @@
 
 ---
 
+# 🚀 v151 (2026-08-07) — Bot boots FRESH (bundled DB removed) + restore-ready DB (latest 220950)
+
+## 🔄 CHANGE (user request): no more hardcoded DB
+- The bundled `latest_shop.db` + the v150 auto-restore-on-startup are REMOVED.
+- On deploy the bot now starts with a **FRESH empty database** (schema auto-
+  created). The admin restores their own data whenever they want via
+  **Admin → 💾 Backup & Restore → 📤 Restore Database** (upload .db → validate →
+  migrate_all → done).
+- `latest_shop.db` added to `.gitignore` so a DB can never be committed again.
+- `ensure_poll_tables()` is now part of `migrate_all()`, so every fresh boot
+  AND every manual restore immediately has the polls tables.
+
+## 📦 Restore-ready DB (admin's latest — shop_backup_20260807_220950)
+- Modified to match v151 code with ZERO data loss (58 tables before/after,
+  only the 2 poll tables added):
+  - Users **901** | Orders **328** | Products **51** | Ext-products **168** |
+    Suppliers **7** | Force-join 3 | polls tables ready | maint_enabled=0
+  - Pending order **#328** (Binance 1.7) intact — bot auto-delivers on deploy.
+  - Flash template placeholder normalized; ProdSeller pseudo-stock refreshed;
+    missing responses/settings seeded.
+- Restore flow verified: upload → `migrate_all()` clean → all features
+  (polls, refund-by-ID, replacement, force-join, suppliers, payments) work.
+
+## 🧪 Tests
+- Removed `_test_v150_bundle.py`; added `_test_v151_fresh.py` (fresh boot
+  creates schema; restore-ready DB boots clean; no bundle code remains).
+  All 16 in-repo suites pass; boot smoke clean on the restore-ready DB.
+
 # 🚀 v150 (2026-08-07) — 📦 BUNDLED DB: bot ALWAYS boots with the latest database (old-data problem SOLVED for good)
 
 ## 🐛 THE PROBLEM (user reported 3x)

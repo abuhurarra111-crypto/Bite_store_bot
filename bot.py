@@ -1379,14 +1379,8 @@ def main():
     print("=" * 50)
     # Fail fast with a clear message instead of silently using leaked/default secrets.
     validate_required_config()
-    # 📦 v150: bundled DB auto-restore FIRST — the bot always boots with the
-    # latest dataset (never the old one), before anything reads the DB.
-    try:
-        from database import restore_bundled_db_if_needed
-        _bst = restore_bundled_db_if_needed()
-        print(f"[BundleDB] {_bst}")
-    except Exception as _e:
-        print(f"[BundleDB] error: {_e}")
+    # 🆕 v151: bot boots FRESH — no bundled DB. The admin restores their own
+    # database via Admin → 💾 Backup & Restore whenever they want.
     _apply_startup_maintenance()
     setup_database()
     # 🛡️ v51: Install GLOBAL premium-emoji rendering guard BEFORE any Bot
