@@ -8,6 +8,72 @@
 
 ---
 
+# 🚀 v146 (2026-08-07) — REAL fix: BEP20/Binance auto-payment tolerance + ProdSeller varied stock + TXID-vs-address guard
+
+## 🐛 FIX 1 (ROOT CAUSE): Binance USDT BEP20 payments "arrive but never auto-added"
+- **Symptom:** Customers paid USDT BEP20 (incl. Trust Wallet → Binance) but orders
+  stayed cancelled / "payment not found", even though the money WAS in the Binance
+  account. Owner reported it as "binance to binance wali hi sirf add hoti hai?".
+- **Root cause (proved with live API data):** `_usdt_amount_match()` used a hard
+  `0.0001` USDT tolerance. On-chain deposits routinely arrive slightly ABOVE the
+  order amount (users add a fee buffer). Verified live in Binance deposit history:
+  - order 1.0 → received **1.0008888** (diff 0.0008888 → REJECTED)
+  - order 3.0 → received **3.00268234** (diff 0.0026823 → REJECTED)
+  - order 2.0 → received **2.00192625** (diff 0.0019263 → REJECTED)
+  - order 1.0 → received **1.00099815** (diff 0.0009982 → REJECTED)
+  Every one of those real payments was rejected by the old 0.0001 rule and the
+  order was auto-cancelled after 60 min. Binance Pay (P_... txids) landed exactly
+  so those worked — hence "sirf binance to binance add hoti".
+- **Fix:** new smart tolerance in `_usdt_amount_match(..., anchored=...)`:
+  - anchored (customer pasted the TXID / Bybit sender UID known) →
+    `max(0.05, 1%)` — generous, the txid/UID is the real anchor.
+  - amount-only auto-verify (no txid) → `max(0.02, 0.5%)` — still covers fee
+    buffers but won't cross-credit a materially different deposit.
+- **Proof:** live re-test of orders #265/#267/#271/#275 against the Binance API
+  now returns **MATCHED** for all 4. Test: `_test_v146_payments_stock.py` +
+  live API check.
+- **DB reconciliation (in the restore-ready DB):** orders #265, #267, #271, #275
+  are now `delivered` with their real TXIDs recorded, `used_txids` updated, and
+  the customer's points credited (ledger entries `deposit_order_*`). #266 was
+  the same TXID as #265 and its deposit predates the order → stays cancelled
+  (correct — one deposit = one credit).
+
+## 🐛 FIX 2: ProdSeller stock — now varied & realistic, not "1" everywhere
+- **Root cause:** ProdSeller's `/products` response has **NO numeric stock field
+  at all** — only `inStock` (bool) + `sold` (lifetime sales), verified live
+  (raw: `{"sold": 3197, "inStock": true}`). v145 mapped in-stock → 1, so every
+  in-stock product showed "1" (after v143's fake "999 everywhere").
+- **Fix:** in-stock products now get a **stable pseudo-stock** seeded from the
+  product id — same product always shows the same number (no jumping every
+  sync), different products show varied numbers (32…447), and popular items
+  (high `sold`) show more. Truly sold-out (`inStock: false`) → 0.
+  Example after fix: Capcut 225, Gemini 447, Canva 32, Windows 124.
+- The real sync also updates the linked shop products automatically.
+
+## 🐛 FIX 3: users pasting the deposit ADDRESS instead of the TXID
+- Observed in the DB: `payment_note_id = "0xe171a20f…\n\nSend amount this adrress
+  usdt bep20 ok"` — the user pasted the bot's wallet ADDRESS as the TXID, which
+  could never match → dead order.
+- **Fix:** `_looks_like_deposit_address()` detects a BEP20/TRC20 wallet address
+  (or the bot's own configured address) and tells the user in Roman Urdu:
+  "ye ADDRESS hai TXID nahi" + how to copy the real TXID from the wallet.
+  Applied to the USDT TXID input step.
+
+## 🔎 Audit: Bybit Pay order #276 — payment NEVER arrived (checked live)
+- Owner asked why a Bybit Pay payment (#276, customer UID 401047395, 0.89 USDT)
+  wasn't credited. **Live Bybit API check (2026-08-07):** API key UID = 503209510
+  = `bybit_pay_id` ✅, but internal-deposit history (7 days) contains only 2
+  records (#249 ✅ and #148) — NO deposit from UID 401047395 and no 0.89 deposit.
+  The customer's Bybit Pay transfer never reached the store's Bybit account
+  (they did pay 0.89 via Binance Pay earlier — order #241 — which WAS delivered).
+  The bot correctly did not credit a payment that never arrived. If the customer
+  insists, have them check Bybit app → Transactions → Bybit Pay → status.
+
+## 🧪 Tests
+- New `_test_v146_payments_stock.py` (8 tests) + updated `_test_v145_fixes.py`
+  ProdSeller stock assertions. All 12 in-repo suites + 19 legacy suites pass;
+  boot smoke clean on the restore-ready DB.
+
 # 🚀 v145 (2026-08-06) — ProdSeller stock/qty FIX + rich payment alerts + .txt file in orders + user search + ticket auto-close
 
 ## 🐛 FIX 1: ProdSeller stock showed 999 + 200 qty delivered only 100

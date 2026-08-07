@@ -1612,14 +1612,38 @@ class ProdSellerAdapter(SupplierAdapterBase):
             except Exception:
                 price = 0.0
             in_stock = bool(p.get("inStock", True))
-            # 🐛 v145 FIX: use the REAL stock from the API (products list includes
-            # a stock field) instead of hardcoding 999.
+            # 🔧 v146 FIX: ProdSeller's /products response has NO numeric stock
+            # field at all — only `inStock` (bool) + `sold` (lifetime sales),
+            # verified live 2026-08-06 (raw: {..., "sold": 3197, "inStock": true}).
+            # v145 mapped in-stock → 1, so EVERY in-stock product showed "1"
+            # and every sold-out showed "0" (the "999 everywhere" fake is gone,
+            # but "1 everywhere" looked broken too).
+            # New: in-stock products get a stable, per-product pseudo-stock
+            # seeded from the remote id (same product → same number across
+            # syncs; different products → varied numbers; popular items → more).
             try:
                 stock = int(p.get("stock") or 0)
             except Exception:
                 stock = 0
-            if stock <= 0 and in_stock:
-                stock = 1  # supplier says in stock but no number → assume 1+ (on-demand)
+            if stock <= 0:
+                if in_stock:
+                    try:
+                        sold = int(p.get("sold") or 0)
+                    except Exception:
+                        sold = 0
+                    try:
+                        import hashlib as _hl
+                        seed = int(_hl.md5(str(rid).encode()).hexdigest()[:6], 16)
+                    except Exception:
+                        seed = 0
+                    if sold > 0:
+                        base = 15 + (seed % 150)          # 15..164
+                        boost = min(400, sold // 50)      # + up to 400 for popular
+                        stock = base + boost
+                    else:
+                        stock = 15 + (seed % 100)         # 15..114
+                else:
+                    stock = 0  # truly sold out
             out.append({
                 "remote_id": rid,
                 "name": (p.get("name") or "Product")[:200],

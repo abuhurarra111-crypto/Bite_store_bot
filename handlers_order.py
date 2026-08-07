@@ -2454,11 +2454,29 @@ def _usdt_cfg(method):
     return cfg
 
 
-def _usdt_amount_match(actual, expected, tolerance=0.0001):
+def _usdt_amount_match(actual, expected, tolerance=None, anchored=False):
+    """v146: on-chain USDT deposits routinely arrive slightly ABOVE the order
+    amount (users add a small fee buffer / round up). The old hard 0.0001
+    tolerance rejected REAL payments — e.g. order for 1.0 USDT received
+    1.0008888 (verified live against Binance deposit history, 2026-08-06).
+
+    New policy:
+      - `anchored=True`  (customer pasted the TXID / Bybit sender UID known):
+        generous tolerance = 5 US-cents or 1% of expected (whichever is bigger).
+        The txid/UID is the primary anchor; the amount is only confirmatory.
+      - `anchored=False` (amount-only auto-match, no txid): tighter =
+        2 US-cents or 0.5% of expected — still covers fee buffers but avoids
+        cross-crediting a materially different deposit to the shared address.
+    """
     try:
-        return abs(float(actual) - float(expected)) <= float(tolerance)
+        actual = float(actual)
+        expected = float(expected)
     except Exception:
         return False
+    if tolerance is None:
+        tolerance = (max(0.05, 0.01 * abs(expected)) if anchored
+                     else max(0.02, 0.005 * abs(expected)))
+    return abs(actual - expected) <= float(tolerance)
 
 
 def _usdt_network_ok(network, cfg):
@@ -2502,7 +2520,7 @@ def _find_matching_usdt_deposit(order, lookback_hours=96):
             continue
         if not _usdt_address_ok(d.get('address'), cfg):
             continue
-        if not _usdt_amount_match(d.get('amount'), expected):
+        if not _usdt_amount_match(d.get('amount'), expected, anchored=bool(note)):
             continue
         # 🔧 v118: on-chain deposits have no note — anchor on time. A deposit that
         # landed BEFORE the order was created can't be this payment.
@@ -2557,6 +2575,27 @@ async def _verify_usdt_order_and_respond(target, context, oid):
         ]))
 
 
+def _looks_like_deposit_address(text, cfg=None):
+    """v146: heuristics to catch users pasting the DEPOSIT ADDRESS where the
+    bot expects a TXID (observed in the wild: '0xe171a20f...\n\nSend amount
+    this adrress usdt bep20 ok'). Returns True for a plain wallet address."""
+    t = str(text or '').strip()
+    if not t:
+        return False
+    if cfg:
+        addr = str(cfg.get('address') or '').strip().lower()
+        if addr and addr in t.lower():
+            return True
+    import re as _re
+    # BSC/ETH-style address: 0x + 40 hex
+    if _re.fullmatch(r'0x[0-9a-fA-F]{40}', t):
+        return True
+    # Tron-style address: T + 33 base58 chars
+    if t.startswith('T') and len(t) == 34 and _re.fullmatch(r'[1-9A-HJ-NP-Za-km-z]{34}', t):
+        return True
+    return False
+
+
 async def usdt_txid_received(update, context):
     if context.user_data.get('usdt_step') != 'waiting_txid':
         return False
@@ -2565,6 +2604,23 @@ async def usdt_txid_received(update, context):
     if not oid:
         await update.message.reply_text('❌ No pending order.')
         return True
+    # 🔧 v146: catch address-vs-TXID confusion BEFORE creating a dead order.
+    try:
+        from database import get_order
+        _o = get_order(int(oid))
+        cfg = _usdt_cfg(str((_o or {}).get('payment_method') or '')) if _o else None
+        if _looks_like_deposit_address(note, cfg):
+            await update.message.reply_text(
+                "⚠️ *Ye deposit ADDRESS hai, TXID nahi!*\n\n"
+                "Aap ne bot ka wallet address paste kar diya hai. Bot ko *transaction "
+                "ID (TXID)* chahiye — wo transaction ka 64-characters ka proof hota hai.\n\n"
+                "🪙 *TXID kaise copy karein:*\n"
+                "Trust Wallet → Transaction History → us payment pe tap karein → "
+                "copy karein (0x se start hone wala long hash).\n\n"
+                "Ab TXID paste karein:", parse_mode='Markdown')
+            return True
+    except Exception:
+        pass
     from database import set_order_payment_note
     set_order_payment_note(int(oid), note)
     context.user_data.pop('usdt_step', None)
@@ -2804,7 +2860,7 @@ def _bybit_recent_amount_fallback(rows, expected, order=None, window_min=0):
                 continue
             if str(d.get('network') or '').upper() != 'BYBIT_INTERNAL':
                 continue
-            if not _usdt_amount_match(d.get('amount'), expected):
+            if not _usdt_amount_match(d.get('amount'), expected, anchored=True):
                 continue
             t = int(d.get('time_ms') or 0)
             if t and order_ts and t < order_ts:
@@ -2899,7 +2955,7 @@ def _find_matching_bybit_payment(order, lookback_hours=96):
                         continue
                     if str(d.get('from_member_id') or '').strip() != cust_uid:
                         continue
-                    if not _usdt_amount_match(d.get('amount'), expected):
+                    if not _usdt_amount_match(d.get('amount'), expected, anchored=True):
                         continue
                     return d, 'matched'
                 except Exception:
@@ -2967,9 +3023,9 @@ def _find_matching_bybit_payment(order, lookback_hours=96):
             hash_ok = (_bybit_hash_matches(d, note)
                        or (note_norm and _deep_find_id(d, note_norm))
                        or (ref_norm and _deep_find_id(d, ref_norm)))
-            if hash_ok and not _usdt_amount_match(d.get('amount'), expected):
+            if hash_ok and not _usdt_amount_match(d.get('amount'), expected, anchored=True):
                 return None, 'amount_mismatch'
-            if hash_ok and _usdt_amount_match(d.get('amount'), expected):
+            if hash_ok and _usdt_amount_match(d.get('amount'), expected, anchored=True):
                 return d, 'matched'
         # 🔧 v113/v117: Bybit Pay Order ID vs internal txID fallback (see helper).
         fb = _bybit_recent_amount_fallback(rows, expected, order=order)
@@ -2986,7 +3042,7 @@ def _find_matching_bybit_payment(order, lookback_hours=96):
             if not _bybit_hash_matches(d, note): continue
             if not _usdt_network_ok(d.get('network'), cfg): continue
             if not _usdt_address_ok(d.get('address'), cfg): continue
-            if _usdt_amount_match(d.get('amount'), expected): return d, 'matched'
+            if _usdt_amount_match(d.get('amount'), expected, anchored=True): return d, 'matched'
         if not rows:
             return None, 'no_records'
         return None, 'not_found'
