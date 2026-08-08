@@ -9235,17 +9235,59 @@ async def fwd_poll_no_callback(u, c):
 
 
 async def fwd_poll_yes_callback(u, c):
-    """Confirm → create DB poll row + launch BACKGROUND broadcast."""
+    """Confirm → ask WHERE to send the poll (v154):
+    📢 Destination Group/Channel = ONE shared poll → LIVE votes + who-voted
+       right on that message (what the owner wants);
+    👥 All Users (DM) = each user gets their own copy; votes tracked → View
+       Results shows aggregates.
+    """
     q = u.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
-    data = c.user_data.pop("fwd_poll", None)
+    data = c.user_data.get("fwd_poll")
     if not data:
         await q.answer("Poll data nahi mila — dobara poll bhejo.", show_alert=True)
         try:
             await q.edit_message_text("❌ Poll data missing. Please forward the poll again.",
                                       reply_markup=InlineKeyboardMarkup(
                                           [[InlineKeyboardButton("🔙 Polls", callback_data="admin_polls")]]))
+        except Exception:
+            pass
+        return
+    # stash for next step
+    c.user_data["fwd_poll_pending"] = data
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Destination Group / Channel (live votes)", callback_data="fwd_where_group")],
+        [InlineKeyboardButton("👥 All Users (DM)", callback_data="fwd_where_dm")],
+        [InlineKeyboardButton("✅ Both", callback_data="fwd_where_both")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="fwd_poll_no")],
+    ])
+    try:
+        await q.edit_message_text(
+            "📤 *Where should the poll go?*\n\n"
+            "• *Group/Channel* → ONE shared poll, LIVE votes + who-voted "
+            "visible on the message itself (best for demand polling)\n"
+            "• *All Users (DM)* → each user votes in their private chat; "
+            "see totals in 📊 View Results\n"
+            "• *Both* → shared poll + personal copies",
+            parse_mode="Markdown", reply_markup=kb)
+    except Exception:
+        pass
+
+
+async def fwd_where_callback(u, c):
+    """v154: route the poll to the chosen destination(s)."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    where = q.data.replace("fwd_where_", "")
+    data = c.user_data.pop("fwd_poll_pending", None)
+    c.user_data.pop("fwd_poll", None)
+    if not data:
+        await q.answer("Poll data missing. Forward the poll again.", show_alert=True)
+        try:
+            await q.edit_message_text("❌ Poll data missing.", reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Polls", callback_data="admin_polls")]]))
         except Exception:
             pass
         return
@@ -9266,23 +9308,24 @@ async def fwd_poll_yes_callback(u, c):
                           allows_multiple=bool(data.get("allows_multiple", False)),
                           close_date=close_date)
     if not poll_id:
-        await q.answer("❌ Poll banane me error.", show_alert=True)
+        await q.answer("❌ Poll create error.", show_alert=True)
         return
-    # 🐛 v152 FIX: broadcast in BACKGROUND so the callback returns instantly
-    # (old code awaited it → blocked 4-5 min → bot looked stuck).
     import asyncio as _aio
     try:
-        _aio.create_task(_broadcast_poll_task(c.bot, poll_id, ADMIN_ID))
+        _aio.create_task(_broadcast_poll_task(c.bot, poll_id, ADMIN_ID, where=where))
     except Exception:
         pass
+    label = {"group": "📢 Destination Group/Channel", "dm": "👥 All Users (DM)",
+             "both": "✅ Both (group + DM)"}.get(where, where)
     try:
         await q.edit_message_text(
             f"✅ *Poll created!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
             f"🧾 ID: `#{poll_id}`\n"
-            f"📤 *Sending to all users in the background...*\n\n"
-            f"Complete hone par summary message aayegi. Votes 📊 Polls → "
-            f"View Results me dekho, aur users apne chat me bhi results "
-            f"dekhenge.",
+            f"📤 Destination: {label}\n\n"
+            f"*Sending in the background...* A summary will arrive when done.\n\n"
+            f"💡 *Tip:* Group/Channel poll pe LIVE votes + who-voted dikhte "
+            f"hain. Agar names dekhne hain to poll *public* (non-anonymous) "
+            f"banayein.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📊 View Results", callback_data="poll_results")],
@@ -9297,29 +9340,42 @@ async def fwd_poll_yes_callback(u, c):
 
 
 _POLL_BROADCASTING = set()  # poll_ids currently broadcasting (anti double-send)
+_POLL_BROADCASTING = set()  # poll_ids currently broadcasting (anti double-send)
 
 
-async def _broadcast_poll_task(bot, poll_id, notify_uid=None):
+async def _broadcast_poll_task(bot, poll_id, notify_uid=None, where="dm"):
     """Background broadcast with rate-limit safety. Sends a summary message
-    to the admin when done (and per-user results stay native in each chat)."""
+    to the admin when done (and per-user results stay native in each chat).
+    v154: `where` = 'group' | 'dm' | 'both'."""
     import asyncio as _aio
     if poll_id in _POLL_BROADCASTING:
         return
     _POLL_BROADCASTING.add(poll_id)
     try:
-        sent, failed = await _broadcast_poll_to_users(bot, poll_id)
+        sent_dm = failed_dm = 0
+        sent_group = 0
+        if where in ("group", "both"):
+            try:
+                sent_group = await _broadcast_poll_to_group(bot, poll_id)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"[PollBroadcast] group error: {e}")
+        if where in ("dm", "both"):
+            sent_dm, failed_dm = await _broadcast_poll_to_users(bot, poll_id)
         if notify_uid:
             try:
-                await bot.send_message(
-                    notify_uid,
-                    f"✅ *Poll Broadcast Complete*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"🧾 Poll `#{poll_id}`\n"
-                    f"📤 Sent: *{sent}* users | ❌ Failed: *{failed}*\n\n"
-                    f"Votes: 📊 Polls → View Results.",
-                    parse_mode="Markdown",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("📊 View Results", callback_data="poll_results")],
-                    ]))
+                lines = [f"✅ *Poll Broadcast Complete*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                         f"🧾 Poll `#{poll_id}`"]
+                if where in ("group", "both"):
+                    lines.append(f"📢 Group/Channel: *{sent_group}* post")
+                if where in ("dm", "both"):
+                    lines.append(f"👥 DM: *{sent_dm}* sent | ❌ *{failed_dm}* failed")
+                lines.append("\nVotes: 📊 Polls → View Results (and live on the group poll).")
+                await bot.send_message(notify_uid, "\n".join(lines),
+                                       parse_mode="Markdown",
+                                       reply_markup=InlineKeyboardMarkup([
+                                           [InlineKeyboardButton("📊 View Results", callback_data="poll_results")],
+                                       ]))
             except Exception:
                 pass
     except Exception as e:
@@ -9335,118 +9391,57 @@ async def _broadcast_poll_task(bot, poll_id, notify_uid=None):
         _POLL_BROADCASTING.discard(poll_id)
 
 
-async def poll_question_received(u, c):
-    if u.effective_user.id != ADMIN_ID or c.user_data.get('poll_step') != 'poll_q':
-        return False
-    question = (u.message.text or '').strip()[:300]
-    if not question:
-        await u.message.reply_text("❌ Sawal khali hai. Dobara bhejo:")
-        return True
-    c.user_data['poll_question'] = question
-    c.user_data['poll_step'] = 'poll_options'
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data='poll_cancel')]])
-    await u.message.reply_text(
-        f"✅ Sawal: *{question}*\n\n"
-        f"📊 *Step 2/3 — Options*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Ab *options* bhejo — har option ek line me (2 se {POLL_MAX_OPTIONS} tak).\n\n"
-        f"Example:\n"
-        f"`Netflix`\n`ChatGPT`\n`Spotify`\n`Canva`\n\n"
-        f"_Har option max 100 chars._",
-        parse_mode="Markdown", reply_markup=kb)
-    return True
-
-
-async def poll_options_received(u, c):
-    if u.effective_user.id != ADMIN_ID or c.user_data.get('poll_step') != 'poll_options':
-        return False
-    raw = (u.message.text or '').strip()
-    lines = [ln.strip()[:100] for ln in raw.splitlines() if ln.strip()]
-    # also allow comma-separated single line
-    if len(lines) == 1 and ',' in raw:
-        lines = [x.strip()[:100] for x in raw.split(',') if x.strip()]
-    if len(lines) < 2:
-        await u.message.reply_text("❌ Kam se kam 2 options chahiye. Dobara bhejo:")
-        return True
-    if len(lines) > POLL_MAX_OPTIONS:
-        await u.message.reply_text(f"❌ Zyada options hain — max {POLL_MAX_OPTIONS}. Dobara bhejo:")
-        return True
-    c.user_data['poll_options'] = lines
-    c.user_data['poll_step'] = 'poll_anon'
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🙈 Anonymous (votes hidden)", callback_data='poll_anon_1')],
-        [InlineKeyboardButton("🙋 Public (names shown)", callback_data='poll_anon_0')],
-        [InlineKeyboardButton("❌ Cancel", callback_data='poll_cancel')],
-    ])
-    preview = "\n".join(f"  {i+1}. {o}" for i, o in enumerate(lines))
-    await u.message.reply_text(
-        f"✅ Options ({len(lines)}):\n{preview}\n\n"
-        f"*Step 3/3 — Poll kaise ho?*",
-        parse_mode="Markdown", reply_markup=kb)
-    return True
-
-
-async def poll_anon_callback(u, c):
-    q = u.callback_query
-    if q.from_user.id != ADMIN_ID:
-        await q.answer("❌", show_alert=True); return
+async def _broadcast_poll_to_group(bot, poll_id):
+    """v154: send the poll ONCE to the configured destination group/channel
+    (dest_chat_id). Everyone in that chat votes on the SAME poll → LIVE votes
+    and (for public polls) who-voted names show directly on the message."""
+    from database import get_poll, get_setting, add_tg_poll_ids
+    import json as _json
+    poll = get_poll(poll_id)
+    if not poll:
+        return 0
     try:
-        anon = int(q.data.replace('poll_anon_', ''))
+        options = _json.loads(poll.get("options_json") or "[]")
     except Exception:
-        anon = 1
-    c.user_data.setdefault('poll_anon', anon)
-    c.user_data['poll_step'] = 'poll_dur'
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("1 hour", callback_data='poll_dur_1'),
-         InlineKeyboardButton("6 hours", callback_data='poll_dur_6')],
-        [InlineKeyboardButton("24 hours", callback_data='poll_dur_24'),
-         InlineKeyboardButton("3 days", callback_data='poll_dur_72')],
-        [InlineKeyboardButton("♾️ Never close", callback_data='poll_dur_0')],
-        [InlineKeyboardButton("❌ Cancel", callback_data='poll_cancel')],
-    ])
-    await _safe_edit(q,
-        "⏱️ *Poll kitni der khula rahe?*\n\n"
-        "Time khatam hote hi votes band ho jayenge (results freeze).",
-        reply_markup=kb)
-
-
-async def poll_duration_callback(u, c):
-    q = u.callback_query
-    if q.from_user.id != ADMIN_ID:
-        await q.answer("❌", show_alert=True); return
+        options = []
+    if len(options) < 2:
+        return 0
+    dest = (get_setting("dest_chat_id", "") or "").strip()
+    if not dest:
+        return 0
+    close_dt = None
     try:
-        hours = int(q.data.replace('poll_dur_', ''))
+        if poll.get("close_date"):
+            from datetime import datetime, timezone
+            close_dt = datetime.strptime(poll["close_date"], "%Y-%m-%d %H:%M:%S")
+            if close_dt.tzinfo is None:
+                close_dt = close_dt.replace(tzinfo=timezone.utc)
     except Exception:
-        hours = 0
-    question = c.user_data.pop('poll_question', '')
-    options = c.user_data.pop('poll_options', [])
-    anon = c.user_data.pop('poll_anon', 1)
-    c.user_data.pop('poll_step', None)
-    if not question or not options:
-        await _safe_edit(q, "❌ Poll data missing. Dobara try karo.", reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🔙 Polls", callback_data='admin_polls')]]))
-        return
-    from database import create_poll
-    close_date = ""
-    if hours and int(hours) > 0:
-        from datetime import datetime, timedelta
-        close_date = (datetime.utcnow() + timedelta(hours=int(hours))).strftime("%Y-%m-%d %H:%M:%S")
-    poll_id = create_poll(question, options, is_anonymous=bool(anon), allows_multiple=False, close_date=close_date)
-    if not poll_id:
-        await _safe_edit(q, "❌ Poll banane me error. Dobara try karo.", reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🔙 Polls", callback_data='admin_polls')]]))
-        return
-    await q.answer("📢 Broadcasting poll to all users…", show_alert=False)
-    sent, failed = await _broadcast_poll_to_users(c.bot, poll_id)
-    await _safe_edit(q,
-        f"✅ *Poll Created & Broadcast!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🧾 ID: `#{poll_id}`\n"
-        f"❓ {question}\n"
-        f"📤 Sent: *{sent}* users | ❌ Failed: *{failed}*\n\n"
-        f"Users ab chat me vote kar sakte hain. Results dekhne ke "
-        f"liye 📊 Polls → View Results.",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
-            "📊 View Results", callback_data="poll_results")]]))
+        close_dt = None
+    try:
+        from ui_extras import _resolve_chat_id
+        resolved = await _resolve_chat_id(bot, dest)
+    except Exception:
+        resolved = dest
+    try:
+        m = await bot.send_poll(
+            chat_id=resolved,
+            question=poll.get("question", "Poll")[:300],
+            options=options,
+            is_anonymous=bool(poll.get("is_anonymous", 1)),
+            allows_multiple_answers=bool(poll.get("allows_multiple", 0)),
+            close_date=close_dt,
+        )
+        try:
+            if m.poll and m.poll.id:
+                add_tg_poll_ids(poll_id, [str(m.poll.id)])
+        except Exception:
+            pass
+        return 1
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"[PollBroadcast] group send failed: {e}")
+        return 0
 
 
 async def _broadcast_poll_to_users(bot, poll_id):

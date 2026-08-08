@@ -8,6 +8,29 @@
 
 ---
 
+# 🚀 v154 (2026-08-08) — Poll WHERE-CHOOSER: send to GROUP (LIVE votes + who-voted) or DM
+
+## ✨ New (as the owner asked): "mera poll hi jaye aur us pe votes dikhein"
+- After forwarding a poll to the bot, the bot now asks **where to send it**:
+  - **📢 Destination Group/Channel** → the poll is posted ONCE to the
+    configured destination (dest_chat_id). Everyone in that chat votes on the
+    SAME poll → **LIVE votes and (for public polls) who-voted names show
+    directly on that message** — exactly the "meri poll pe votes" the owner
+    wanted. No bot panel needed to watch results.
+  - **👥 All Users (DM)** → each user gets their own copy; votes are tracked
+    and totals shown in 📊 View Results.
+  - **✅ Both** → shared poll + personal copies.
+- Why DM-only can't show votes on the admin's poll: Telegram treats every
+  sent poll as a separate instance and does NOT sync votes between copies.
+  The group/channel route is the only way to get one shared, live poll.
+- Tip shown: to see voter NAMES, create the poll as **public**
+  (non-anonymous) — Telegram reveals voters on public polls.
+
+## 🧪 Tests
+- `_test_v152_pollfwd.py` extended (+3 v154 tests: chooser present, bot
+  registration, group sender). All 17 in-repo suites pass; LIVE verified: poll
+  actually posted to @bite_alerts via `sendPoll` 200 OK.
+
 # 🚀 v153 (2026-08-08) — POLL BROADCAST & LIVE RESULTS REALLY FIXED + English UI
 
 ## 🐛 FIX 1 (ROOT CAUSE): polls never reached users — wrong chat_id in broadcasts
