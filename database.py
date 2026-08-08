@@ -5511,29 +5511,43 @@ def ensure_poll_tables(c=None):
                 poll_id         INTEGER NOT NULL,
                 user_id         INTEGER NOT NULL,
                 option_ids_json TEXT NOT NULL,
+                user_name       TEXT DEFAULT '',
+                username        TEXT DEFAULT '',
                 answered_at     TEXT DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(poll_id, user_id)
             )
         """)
         c.execute("CREATE INDEX IF NOT EXISTS idx_poll_ans_poll ON poll_answers(poll_id)")
+        # 🆕 v155: premium-emoji entity payloads (question + per-option)
+        ensure_column(c, "polls", "question_entities_json", "TEXT DEFAULT ''")
+        ensure_column(c, "polls", "options_entities_json", "TEXT DEFAULT ''")
+        # 🆕 v155: who-voted (voter name/username on poll_answers)
+        ensure_column(c, "poll_answers", "user_name", "TEXT DEFAULT ''")
+        ensure_column(c, "poll_answers", "username", "TEXT DEFAULT ''")
         if own:
             conn.commit(); conn.close()
     except Exception as e:
         logging.getLogger(__name__).debug(f"[Polls] ensure_poll_tables: {e}")
 
 
-def create_poll(question, options, is_anonymous=True, allows_multiple=False, close_date="") -> int:
-    """Create a poll row. Returns the new poll id (0 on failure)."""
+def create_poll(question, options, is_anonymous=True, allows_multiple=False, close_date="",
+                 question_entities=None, options_entities=None) -> int:
+    """Create a poll row. Returns the new poll id (0 on failure).
+    🆕 v155: question_entities / options_entities = JSON-serializable entity
+    payloads that preserve premium emojis when rebroadcasting."""
     try:
         ensure_poll_tables()
         import json as _json
         opts = [str(o).strip()[:100] for o in (options or []) if str(o).strip()]
         conn = get_connection(); c = conn.cursor()
+        q_ent = _json.dumps(question_entities or []) if question_entities else ""
+        o_ent = _json.dumps(options_entities or []) if options_entities else ""
         c.execute(
-            "INSERT INTO polls (question, options_json, is_anonymous, allows_multiple, close_date, active) "
-            "VALUES (?,?,?,?,?,1)",
+            "INSERT INTO polls (question, options_json, is_anonymous, allows_multiple, close_date, active, "
+            "question_entities_json, options_entities_json) "
+            "VALUES (?,?,?,?,?,1,?,?)",
             (str(question)[:300], _json.dumps(opts), 1 if is_anonymous else 0,
-             1 if allows_multiple else 0, str(close_date or "")))
+             1 if allows_multiple else 0, str(close_date or ""), q_ent, o_ent))
         new_id = c.lastrowid
         conn.commit(); conn.close()
         return int(new_id or 0)
@@ -5655,18 +5669,24 @@ def find_poll_by_tg_id(tg_poll_id):
         return 0
 
 
-def record_poll_answer(poll_id, user_id, option_ids):
-    """Idempotent per (poll, user): updates the user's vote if they re-vote."""
+def record_poll_answer(poll_id, user_id, option_ids, user_name="", username=""):
+    """Idempotent per (poll, user): updates the user's vote if they re-vote.
+    🆕 v155: stores voter name/username so results can show WHO voted."""
     try:
         ensure_poll_tables()
         import json as _json
         conn = get_connection(); c = conn.cursor()
-        c.execute("INSERT OR IGNORE INTO poll_answers (poll_id, user_id, option_ids_json) VALUES (?,?,?)",
-                  (int(poll_id), int(user_id), _json.dumps([int(x) for x in (option_ids or [])])))
+        c.execute("INSERT OR IGNORE INTO poll_answers (poll_id, user_id, option_ids_json, user_name, username) "
+                  "VALUES (?,?,?,?,?)",
+                  (int(poll_id), int(user_id), _json.dumps([int(x) for x in (option_ids or [])]),
+                   str(user_name or "")[:120], str(username or "")[:120]))
         if c.rowcount == 0:
             # re-vote → update
-            c.execute("UPDATE poll_answers SET option_ids_json=? WHERE poll_id=? AND user_id=?",
-                      (_json.dumps([int(x) for x in (option_ids or [])]), int(poll_id), int(user_id)))
+            c.execute("UPDATE poll_answers SET option_ids_json=?, user_name=?, username=? "
+                      "WHERE poll_id=? AND user_id=?",
+                      (_json.dumps([int(x) for x in (option_ids or [])]),
+                       str(user_name or "")[:120], str(username or "")[:120],
+                       int(poll_id), int(user_id)))
         conn.commit(); conn.close()
         return True
     except Exception:
@@ -5687,13 +5707,17 @@ def get_poll_results(poll_id):
             opts = []
         conn = get_connection(); conn.row_factory = DictRow
         c = conn.cursor()
-        c.execute("SELECT user_id, option_ids_json FROM poll_answers WHERE poll_id=?", (int(poll_id),))
+        c.execute("SELECT user_id, option_ids_json, user_name, username FROM poll_answers WHERE poll_id=?",
+                  (int(poll_id),))
         rows = c.fetchall()
         conn.close()
         counts = [0] * len(opts)
         voters = set()
+        voters_by_option = [{"count": 0, "users": []} for _ in opts]
         for r in rows:
             voters.add(r[0])
+            uname = str(r[2] or "").strip() or f"User {r[0]}"
+            utag = str(r[3] or "").strip()
             try:
                 ids = _json.loads(r[1] or "[]")
             except Exception:
@@ -5703,9 +5727,13 @@ def get_poll_results(poll_id):
                     oi = int(oid)
                     if 0 <= oi < len(counts):
                         counts[oi] += 1
+                        voters_by_option[oi]["count"] += 1
+                        voters_by_option[oi]["users"].append({
+                            "user_id": r[0], "name": uname, "username": utag})
                 except Exception:
                     pass
-        out_opts = [{"option": o, "votes": counts[i]} for i, o in enumerate(opts)]
+        out_opts = [{"option": o, "votes": counts[i], "voters": voters_by_option[i]["users"]}
+                    for i, o in enumerate(opts)]
         return {
             "poll": poll,
             "options": out_opts,

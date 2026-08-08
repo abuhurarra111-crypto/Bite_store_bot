@@ -9184,10 +9184,16 @@ async def handle_admin_poll_message(update, context):
                 pass
             return True
         options = []
+        options_entities = []   # 🆕 v155: premium-emoji entities per option
         for o in (poll.options or []):
             t = str(getattr(o, "text", "") or "").strip()
             if t:
                 options.append(t[:100])
+                try:
+                    ents = [e.to_dict() for e in (getattr(o, "text_entities", None) or [])]
+                except Exception:
+                    ents = []
+                options_entities.append(ents)
         if len(options) < 2:
             try:
                 await msg.reply_text("⚠️ Poll must have at least 2 options.")
@@ -9195,9 +9201,16 @@ async def handle_admin_poll_message(update, context):
                 pass
             return True
         question = str(getattr(poll, "question", "") or "")[:300]
+        # 🆕 v155: capture question premium-emoji entities too
+        try:
+            question_entities = [e.to_dict() for e in (getattr(poll, "question_entities", None) or [])]
+        except Exception:
+            question_entities = []
         context.user_data["fwd_poll"] = {
             "question": question or "Poll",
             "options": options,
+            "question_entities": question_entities,
+            "options_entities": options_entities,
             "is_anonymous": bool(getattr(poll, "is_anonymous", True)),
             "allows_multiple": bool(getattr(poll, "allows_multiple_answers", False)),
             "close_date": getattr(poll, "close_date", None),
@@ -9235,59 +9248,18 @@ async def fwd_poll_no_callback(u, c):
 
 
 async def fwd_poll_yes_callback(u, c):
-    """Confirm → ask WHERE to send the poll (v154):
-    📢 Destination Group/Channel = ONE shared poll → LIVE votes + who-voted
-       right on that message (what the owner wants);
-    👥 All Users (DM) = each user gets their own copy; votes tracked → View
-       Results shows aggregates.
-    """
+    """Confirm → create DB poll row + launch BACKGROUND broadcast to ALL users
+    (v153 flow restored per owner request — no destination chooser)."""
     q = u.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
-    data = c.user_data.get("fwd_poll")
+    data = c.user_data.pop("fwd_poll", None)
     if not data:
         await q.answer("Poll data nahi mila — dobara poll bhejo.", show_alert=True)
         try:
             await q.edit_message_text("❌ Poll data missing. Please forward the poll again.",
                                       reply_markup=InlineKeyboardMarkup(
                                           [[InlineKeyboardButton("🔙 Polls", callback_data="admin_polls")]]))
-        except Exception:
-            pass
-        return
-    # stash for next step
-    c.user_data["fwd_poll_pending"] = data
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📢 Destination Group / Channel (live votes)", callback_data="fwd_where_group")],
-        [InlineKeyboardButton("👥 All Users (DM)", callback_data="fwd_where_dm")],
-        [InlineKeyboardButton("✅ Both", callback_data="fwd_where_both")],
-        [InlineKeyboardButton("❌ Cancel", callback_data="fwd_poll_no")],
-    ])
-    try:
-        await q.edit_message_text(
-            "📤 *Where should the poll go?*\n\n"
-            "• *Group/Channel* → ONE shared poll, LIVE votes + who-voted "
-            "visible on the message itself (best for demand polling)\n"
-            "• *All Users (DM)* → each user votes in their private chat; "
-            "see totals in 📊 View Results\n"
-            "• *Both* → shared poll + personal copies",
-            parse_mode="Markdown", reply_markup=kb)
-    except Exception:
-        pass
-
-
-async def fwd_where_callback(u, c):
-    """v154: route the poll to the chosen destination(s)."""
-    q = u.callback_query
-    if q.from_user.id != ADMIN_ID:
-        await q.answer("❌", show_alert=True); return
-    where = q.data.replace("fwd_where_", "")
-    data = c.user_data.pop("fwd_poll_pending", None)
-    c.user_data.pop("fwd_poll", None)
-    if not data:
-        await q.answer("Poll data missing. Forward the poll again.", show_alert=True)
-        try:
-            await q.edit_message_text("❌ Poll data missing.", reply_markup=InlineKeyboardMarkup(
-                [[InlineKeyboardButton("🔙 Polls", callback_data="admin_polls")]]))
         except Exception:
             pass
         return
@@ -9306,26 +9278,25 @@ async def fwd_where_callback(u, c):
     poll_id = create_poll(data["question"], data["options"],
                           is_anonymous=bool(data.get("is_anonymous", True)),
                           allows_multiple=bool(data.get("allows_multiple", False)),
-                          close_date=close_date)
+                          close_date=close_date,
+                          question_entities=data.get("question_entities") or [],
+                          options_entities=data.get("options_entities") or [])
     if not poll_id:
-        await q.answer("❌ Poll create error.", show_alert=True)
+        await q.answer("❌ Poll banane me error.", show_alert=True)
         return
+    # 🐛 v152 FIX: broadcast in BACKGROUND so the callback returns instantly
     import asyncio as _aio
     try:
-        _aio.create_task(_broadcast_poll_task(c.bot, poll_id, ADMIN_ID, where=where))
+        _aio.create_task(_broadcast_poll_task(c.bot, poll_id, ADMIN_ID))
     except Exception:
         pass
-    label = {"group": "📢 Destination Group/Channel", "dm": "👥 All Users (DM)",
-             "both": "✅ Both (group + DM)"}.get(where, where)
     try:
         await q.edit_message_text(
             f"✅ *Poll created!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
             f"🧾 ID: `#{poll_id}`\n"
-            f"📤 Destination: {label}\n\n"
-            f"*Sending in the background...* A summary will arrive when done.\n\n"
-            f"💡 *Tip:* Group/Channel poll pe LIVE votes + who-voted dikhte "
-            f"hain. Agar names dekhne hain to poll *public* (non-anonymous) "
-            f"banayein.",
+            f"📤 *Sending to all users in the background...*\n\n"
+            f"Premium emojis preserved. A summary will be sent when done. "
+            f"Votes: 📊 Polls → View Results (see WHO voted there).",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📊 View Results", callback_data="poll_results")],
@@ -9341,41 +9312,30 @@ async def fwd_where_callback(u, c):
 
 _POLL_BROADCASTING = set()  # poll_ids currently broadcasting (anti double-send)
 _POLL_BROADCASTING = set()  # poll_ids currently broadcasting (anti double-send)
+_POLL_BROADCASTING = set()  # poll_ids currently broadcasting (anti double-send)
 
 
-async def _broadcast_poll_task(bot, poll_id, notify_uid=None, where="dm"):
-    """Background broadcast with rate-limit safety. Sends a summary message
-    to the admin when done (and per-user results stay native in each chat).
-    v154: `where` = 'group' | 'dm' | 'both'."""
+async def _broadcast_poll_task(bot, poll_id, notify_uid=None):
+    """Background broadcast to ALL users with rate-limit safety. Sends a
+    summary message to the admin when done."""
     import asyncio as _aio
     if poll_id in _POLL_BROADCASTING:
         return
     _POLL_BROADCASTING.add(poll_id)
     try:
-        sent_dm = failed_dm = 0
-        sent_group = 0
-        if where in ("group", "both"):
-            try:
-                sent_group = await _broadcast_poll_to_group(bot, poll_id)
-            except Exception as e:
-                import logging
-                logging.getLogger(__name__).warning(f"[PollBroadcast] group error: {e}")
-        if where in ("dm", "both"):
-            sent_dm, failed_dm = await _broadcast_poll_to_users(bot, poll_id)
+        sent, failed = await _broadcast_poll_to_users(bot, poll_id)
         if notify_uid:
             try:
-                lines = [f"✅ *Poll Broadcast Complete*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                         f"🧾 Poll `#{poll_id}`"]
-                if where in ("group", "both"):
-                    lines.append(f"📢 Group/Channel: *{sent_group}* post")
-                if where in ("dm", "both"):
-                    lines.append(f"👥 DM: *{sent_dm}* sent | ❌ *{failed_dm}* failed")
-                lines.append("\nVotes: 📊 Polls → View Results (and live on the group poll).")
-                await bot.send_message(notify_uid, "\n".join(lines),
-                                       parse_mode="Markdown",
-                                       reply_markup=InlineKeyboardMarkup([
-                                           [InlineKeyboardButton("📊 View Results", callback_data="poll_results")],
-                                       ]))
+                await bot.send_message(
+                    notify_uid,
+                    f"✅ *Poll Broadcast Complete*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"🧾 Poll `#{poll_id}`\n"
+                    f"📤 Sent: *{sent}* users | ❌ Failed: *{failed}*\n\n"
+                    f"Votes (incl. who voted): 📊 Polls → View Results.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📊 View Results", callback_data="poll_results")],
+                    ]))
             except Exception:
                 pass
     except Exception as e:
@@ -9389,59 +9349,6 @@ async def _broadcast_poll_task(bot, poll_id, notify_uid=None, where="dm"):
                 pass
     finally:
         _POLL_BROADCASTING.discard(poll_id)
-
-
-async def _broadcast_poll_to_group(bot, poll_id):
-    """v154: send the poll ONCE to the configured destination group/channel
-    (dest_chat_id). Everyone in that chat votes on the SAME poll → LIVE votes
-    and (for public polls) who-voted names show directly on the message."""
-    from database import get_poll, get_setting, add_tg_poll_ids
-    import json as _json
-    poll = get_poll(poll_id)
-    if not poll:
-        return 0
-    try:
-        options = _json.loads(poll.get("options_json") or "[]")
-    except Exception:
-        options = []
-    if len(options) < 2:
-        return 0
-    dest = (get_setting("dest_chat_id", "") or "").strip()
-    if not dest:
-        return 0
-    close_dt = None
-    try:
-        if poll.get("close_date"):
-            from datetime import datetime, timezone
-            close_dt = datetime.strptime(poll["close_date"], "%Y-%m-%d %H:%M:%S")
-            if close_dt.tzinfo is None:
-                close_dt = close_dt.replace(tzinfo=timezone.utc)
-    except Exception:
-        close_dt = None
-    try:
-        from ui_extras import _resolve_chat_id
-        resolved = await _resolve_chat_id(bot, dest)
-    except Exception:
-        resolved = dest
-    try:
-        m = await bot.send_poll(
-            chat_id=resolved,
-            question=poll.get("question", "Poll")[:300],
-            options=options,
-            is_anonymous=bool(poll.get("is_anonymous", 1)),
-            allows_multiple_answers=bool(poll.get("allows_multiple", 0)),
-            close_date=close_dt,
-        )
-        try:
-            if m.poll and m.poll.id:
-                add_tg_poll_ids(poll_id, [str(m.poll.id)])
-        except Exception:
-            pass
-        return 1
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"[PollBroadcast] group send failed: {e}")
-        return 0
 
 
 async def _broadcast_poll_to_users(bot, poll_id):
@@ -9467,6 +9374,24 @@ async def _broadcast_poll_to_users(bot, poll_id):
                 close_dt = close_dt.replace(tzinfo=timezone.utc)
         except Exception:
             close_dt = None
+    # 🆕 v155: rebuild premium-emoji entities (question + options) so the
+    # broadcast poll looks EXACTLY like the one the admin forwarded.
+    try:
+        from telegram import InputPollOption, MessageEntity
+        q_ents = _json.loads(poll.get("question_entities_json") or "[]") if poll.get("question_entities_json") else []
+        o_ents = _json.loads(poll.get("options_entities_json") or "[]") if poll.get("options_entities_json") else []
+        question_entities = [MessageEntity.de_json(e, bot) for e in q_ents] if q_ents else None
+        send_options = []
+        for i, opt in enumerate(options):
+            ent_list = o_ents[i] if i < len(o_ents) else []
+            ents = [MessageEntity.de_json(e, bot) for e in ent_list] if ent_list else None
+            send_options.append(InputPollOption(text=opt, text_entities=ents))
+    except Exception:
+        question_entities = None
+        send_options = None
+    if not send_options:
+        send_options = list(options)
+
     try:
         users = get_all_users_for_broadcast()
     except Exception:
@@ -9479,7 +9404,8 @@ async def _broadcast_poll_to_users(bot, poll_id):
             m = await bot.send_poll(
                 chat_id=uid,
                 question=poll.get("question", "Poll")[:300],
-                options=options,
+                options=send_options,
+                question_entities=question_entities,
                 is_anonymous=bool(poll.get("is_anonymous", 1)),
                 allows_multiple_answers=bool(poll.get("allows_multiple", 0)),
                 close_date=close_dt,
@@ -9558,10 +9484,20 @@ async def poll_detail_callback(u, c):
         "",
     ]
     total = max(1, res["total_voters"])
+    # 🆕 v155: show WHO voted for each option (names + @usernames)
     for opt in res["options"]:
         pct = round(opt["votes"] * 100.0 / total)
         bar = "█" * (pct // 10)
         lines.append(f"{opt['option'][:45]}\n  {opt['votes']} votes ({pct}%) {bar}")
+        for v in (opt.get("voters") or [])[:12]:
+            nm = str(v.get("name") or "?")
+            un = str(v.get("username") or "").strip()
+            if un:
+                lines.append(f"     👤 {escape_md(nm)} (@{escape_md(un)})")
+            else:
+                lines.append(f"     👤 {escape_md(nm)}")
+        if len(opt.get("voters") or []) > 12:
+            lines.append(f"     _... aur {len(opt['voters']) - 12} aur_")
     if poll.get("close_date"):
         lines.append(f"\n⏱ Close: `{poll['close_date']}` UTC")
     kb = []
@@ -9693,7 +9629,13 @@ async def handle_poll_answer(update, context):
         pid = find_poll_by_tg_id(tg_poll_id)
         if not pid:
             return
-        record_poll_answer(pid, uid, option_ids)
+        # 🆕 v155: store voter name/username so results show WHO voted
+        try:
+            uname = str(getattr(user, "first_name", "") or "")[:120]
+            utag = str(getattr(user, "username", "") or "")[:120]
+        except Exception:
+            uname, utag = "", ""
+        record_poll_answer(pid, uid, option_ids, user_name=uname, username=utag)
     except Exception:
         pass
 

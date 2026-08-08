@@ -2143,8 +2143,7 @@ def main():
         # 🆕 v152: forwarded-poll confirm (background broadcast)
         ("^fwd_poll_yes$", fwd_poll_yes_callback),
         ("^fwd_poll_no$", fwd_poll_no_callback),
-        # 🆕 v154: poll destination chooser (group / dm / both)
-        ("^fwd_where_", fwd_where_callback),
+
         ("^poll_results$", poll_results_callback),
         ("^poll_detail_", poll_detail_callback),
         ("^poll_close_", poll_close_callback),

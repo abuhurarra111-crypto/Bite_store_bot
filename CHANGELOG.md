@@ -8,6 +8,33 @@
 
 ---
 
+# 🚀 v155 (2026-08-08) — Poll: premium emojis preserved + WHO voted in results (v154 chooser reverted)
+
+## 🔄 REVERT (owner request — "main ne sirf poocha tha, update nahi karna tha")
+- v154's "where-chooser" (Group / DM / Both) is REMOVED. Poll flow is back to
+  v153: forward a poll → bot sends it to ALL users (DM) in the background.
+
+## ✨ NEW 1: Premium emojis in polls (question + options)
+- When the admin forwards a poll that contains premium/custom emojis in the
+  question or options, the bot now CAPTURES the emoji entities and
+  REBROADCASTS the exact same poll — premium emojis preserved for every user.
+  (New polls columns: question_entities_json / options_entities_json.)
+
+## ✨ NEW 2: Results show WHO voted
+- Every vote now stores the voter's name + @username (poll_answers.user_name /
+  username). 📊 View Results → per poll, per option: vote count + the list of
+  users who voted (names + @handles). No more anonymous totals only.
+
+## 🗄 DB
+- polls: +question_entities_json, +options_entities_json
+- poll_answers: +user_name, +username (ensure_column → works on existing DBs)
+
+## 🧪 Tests
+- `_test_v152_pollfwd.py` extended (14 tests: v154 removed, premium capture,
+  who-voted flow). All 17 in-repo suites pass; LIVE verified: forwarded poll
+  with premium entities → broadcast to real user (sendPoll 200 OK) → vote
+  recorded with name → results show voters.
+
 # 🚀 v154 (2026-08-08) — Poll WHERE-CHOOSER: send to GROUP (LIVE votes + who-voted) or DM
 
 ## ✨ New (as the owner asked): "mera poll hi jaye aur us pe votes dikhein"
