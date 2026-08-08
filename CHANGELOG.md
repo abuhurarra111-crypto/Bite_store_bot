@@ -8,6 +8,45 @@
 
 ---
 
+# 🚀 v152 (2026-08-08) — POLL FIX + NEW POLL SYSTEM (forward your own poll)
+
+## 🐛 FIX 1: Poll wizard "stuck at time options" + repeated log errors
+- **Root cause:** the old wizard ran the broadcast (send poll to 900+ users)
+  INSIDE the callback handler — that blocked for 4-5 minutes, exceeded
+  Telegram's bot rate limit (→ 429 Too Many Requests spam in logs) and made
+  the callback query expire ("query too old") — the bot looked completely
+  stuck and the poll never completed.
+- **Fix:** broadcast now runs as a BACKGROUND task (`_broadcast_poll_task` +
+  `asyncio.create_task`) → the callback answers instantly; the bot shows
+  "✅ Poll bana diya — background me send ho raha hai" and sends a summary
+  message when done. Rate-limit-safe pacing (0.12s = ~8 msgs/sec) stops the
+  429 log flood. Duplicate-broadcast guard added (same poll can't send twice).
+
+## ✨ FIX 2: NEW poll system (as requested)
+- **You create the ORIGINAL Telegram poll yourself** (in any chat, or forward
+  one from somewhere) and send/forward it to the bot's DM.
+- The bot captures it (question + options + anonymous + multiple-answers),
+  asks "✅ sab users ko bhejo?", and on Yes rebroadcasts that EXACT poll to
+  every user's inbox (background, non-blocking).
+- **Votes:** users vote in their chat; the bot records every PollAnswer
+  (polls/poll_answers tables). You see live results in Admin → 📊 Polls →
+  View Results, and users also see running results natively in their own chat
+  (Telegram shows results after voting).
+- The old multi-step wizard (sawal → options → anon → time) is REMOVED from
+  the panel — 📊 Polls → "📤 Poll Bhejo / Forward Karein" now shows the new
+  1-step instructions. Close/delete/results still work per poll.
+
+## 📦 Restore-ready DB (admin's latest — bite_store_backup_20260808_015338)
+- 904 users | 331 orders | 52 products | 168 ext-products | 7 suppliers |
+  force-join 3 | polls tables ready | maint_enabled=0 — ZERO data loss
+  (60→62 tables, only the 2 poll tables added; user's existing poll kept).
+- All v148–v151 features verified present.
+
+## 🧪 Tests
+- New `_test_v152_pollfwd.py` (6 tests): capture admin poll, ignore
+  non-admin, DB create, background broadcast, panel instructions, bot
+  registration. All 17 in-repo suites pass; boot smoke clean.
+
 # 🚀 v151 (2026-08-07) — Bot boots FRESH (bundled DB removed) + restore-ready DB (latest 220950)
 
 ## 🔄 CHANGE (user request): no more hardcoded DB

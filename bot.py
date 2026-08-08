@@ -2089,6 +2089,9 @@ def main():
         ("^poll_create$", poll_create_start_callback),
         ("^poll_anon_", poll_anon_callback),
         ("^poll_dur_", poll_duration_callback),
+        # 🆕 v152: forwarded-poll confirm (background broadcast)
+        ("^fwd_poll_yes$", fwd_poll_yes_callback),
+        ("^fwd_poll_no$", fwd_poll_no_callback),
         ("^poll_results$", poll_results_callback),
         ("^poll_detail_", poll_detail_callback),
         ("^poll_close_", poll_close_callback),
@@ -2749,6 +2752,12 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, payment_flow_text_handler), group=-80)
 
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.VOICE | filters.Document.ALL, handle_media_router))
+    # 🆕 v152: admin sends/forwards a POLL to the bot → rebroadcast to all users
+    try:
+        from telegram.ext import MessageHandler as _MH
+        app.add_handler(_MH(filters.POLL, handle_admin_poll_message))
+    except Exception:
+        pass
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     # 🆕 v148: Poll answers — users voting in broadcast polls

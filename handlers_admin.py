@@ -9091,7 +9091,7 @@ POLL_MAX_OPTIONS = 10
 
 
 async def admin_polls_callback(u, c):
-    """📊 Polls main panel: create / view results / manage."""
+    """📊 Polls main panel: send/forward a poll + view results / manage."""
     q = u.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
@@ -9101,12 +9101,18 @@ async def admin_polls_callback(u, c):
     text = (
         "📊 *Polls — User Demand / Opinion*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Poll banao → sab users ko jayega → wo chat me hi vote "
-        "karenge → aap results yahan dekh sakte ho.\n\n"
+        "*Aise banao (naya tareeqa — asaan):*\n"
+        "1️⃣ Telegram me *khud poll banao* (kisi b chat me) ya kisi se "
+        "forward karo\n"
+        "2️⃣ Us poll ko is bot ke *DM me bhejo / forward karo*\n"
+        "3️⃣ Bot confirm karega → ✅ dabao → poll *sab users ke inbox* "
+        "me chala jayega\n"
+        "4️⃣ Users vote karenge — aap 📊 View Results me live votes dekho, "
+        "users bhi apne chat me results dekhenge\n\n"
         f"*Total polls:* {len(polls)}\n"
     )
     kb = [
-        [InlineKeyboardButton("➕ Create Poll", callback_data="poll_create")],
+        [InlineKeyboardButton("📤 Poll Bhejo / Forward Karein", callback_data="poll_create")],
         [InlineKeyboardButton("📊 View Results", callback_data="poll_results")],
     ]
     if polls:
@@ -9116,19 +9122,218 @@ async def admin_polls_callback(u, c):
 
 
 async def poll_create_start_callback(u, c):
-    """Step 1: ask the poll QUESTION."""
+    """Step: tell admin to SEND/FORWARD a poll to the bot (no more wizard).
+    🐛 v152 FIX: the old multi-step wizard (sawal → options → anon → time)
+    got STUCK at the time step because the broadcast ran inside the callback
+    (blocked 4-5 min for 900+ users → Telegram rate-limit + 'query too old').
+    Now the admin creates the ORIGINAL Telegram poll themselves and just sends
+    it to the bot — the bot rebroadcasts it in the background."""
     q = u.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
     await q.answer()
-    c.user_data['poll_step'] = 'poll_q'
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data='poll_cancel')]])
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Polls", callback_data="admin_polls")]])
     await _safe_edit(q,
-        "📊 *Create Poll — Step 1/3*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Poll ka *sawal* likho (next message me).\n\n"
-        "Example:\n`Aap ko konsi service sab se zyada chahiye?`\n\n"
-        "_Max 300 characters._",
+        "📤 *Poll Forward Karein*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "1. Telegram me *khud ek poll banao* (kisi b chat/group me) — ya "
+        "kisi aur se banwa kar *forward* karo\n"
+        "2. Us poll ko *yahan is bot ke DM me bhejo / forward karo*\n"
+        "3. Bot poochega \"Sab users ko bhejna hai?\" → ✅ Yes dabao\n"
+        "4. Poll *sab users ke inbox* me chala jayega (background me, "
+        "bot stuck nahi hoga)\n"
+        "5. Users vote karenge — votes aap 📊 Polls → View Results me "
+        "dekh sakte ho, aur users apne chat me bhi results dekhenge\n\n"
+        "_Poll type: regular poll (anonymous/public + multiple answers jaisa "
+        "aapne banaya hai, waisa hi jayega)._\n\n"
+        "👉 *Ab poll bhejo / forward karo:*",
         parse_mode="Markdown", reply_markup=kb)
+
+
+# ════════════════════════════════════════════════════════════════
+# 🆕 v152: POLL FORWARD FLOW — admin creates the ORIGINAL Telegram poll
+# themselves and sends/forwards it to the bot DM. The bot rebroadcasts it
+# to every user's inbox in the BACKGROUND (never blocks the callback →
+# fixes the old "stuck at time options" bug + 429 rate-limit log spam).
+# ════════════════════════════════════════════════════════════════
+
+async def handle_admin_poll_message(update, context):
+    """Admin sent/forwarded a poll to the bot → capture it and ask to
+    broadcast. Registered with MessageHandler(filters.POLL)."""
+    try:
+        msg = update.message
+        if msg is None or msg.poll is None:
+            return None
+        # Only the admin's private chat counts
+        try:
+            if msg.from_user is None or msg.from_user.id != ADMIN_ID:
+                return None
+            chat_type = str(getattr(msg.chat, "type", "") or "")
+            if chat_type != "private":
+                return None
+        except Exception:
+            return None
+        poll = msg.poll
+        # A bot can only rebroadcast REGULAR polls (quiz needs correct_option_id)
+        if getattr(poll, "type", "regular") == "quiz":
+            try:
+                await msg.reply_text(
+                    "⚠️ Quiz polls forward nahi ho sakte — sirf *regular poll* "
+                    "(ek ya multiple choice) bhejo/forward karo.",
+                    parse_mode="Markdown")
+            except Exception:
+                pass
+            return True
+        options = []
+        for o in (poll.options or []):
+            t = str(getattr(o, "text", "") or "").strip()
+            if t:
+                options.append(t[:100])
+        if len(options) < 2:
+            try:
+                await msg.reply_text("⚠️ Poll me kam se kam 2 options hone chahiye.")
+            except Exception:
+                pass
+            return True
+        question = str(getattr(poll, "question", "") or "")[:300]
+        context.user_data["fwd_poll"] = {
+            "question": question or "Poll",
+            "options": options,
+            "is_anonymous": bool(getattr(poll, "is_anonymous", True)),
+            "allows_multiple": bool(getattr(poll, "allows_multiple_answers", False)),
+            "close_date": getattr(poll, "close_date", None),
+        }
+        prev = (str(question) or "Poll")[:60]
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Yes, sab users ko bhejo", callback_data="fwd_poll_yes")],
+            [InlineKeyboardButton("❌ No, cancel", callback_data="fwd_poll_no")],
+        ])
+        await msg.reply_text(
+            f"📊 *Poll pakra gaya!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"❓ {prev}\n"
+            f"🔢 Options: {len(options)}\n\n"
+            f"Ye poll *sab users ke inbox* me bhejna hai?",
+            parse_mode="Markdown", reply_markup=kb)
+        return True
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"[PollFwd] capture error: {e}")
+        return True
+
+
+async def fwd_poll_no_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    c.user_data.pop("fwd_poll", None)
+    await q.answer("Cancelled")
+    try:
+        await q.edit_message_text("❌ Poll cancel kar diya.",
+                                  reply_markup=InlineKeyboardMarkup(
+                                      [[InlineKeyboardButton("🔙 Polls", callback_data="admin_polls")]]))
+    except Exception:
+        pass
+
+
+async def fwd_poll_yes_callback(u, c):
+    """Confirm → create DB poll row + launch BACKGROUND broadcast."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    data = c.user_data.pop("fwd_poll", None)
+    if not data:
+        await q.answer("Poll data nahi mila — dobara poll bhejo.", show_alert=True)
+        try:
+            await q.edit_message_text("❌ Poll data missing. Dobara poll forward karo.",
+                                      reply_markup=InlineKeyboardMarkup(
+                                          [[InlineKeyboardButton("🔙 Polls", callback_data="admin_polls")]]))
+        except Exception:
+            pass
+        return
+    from database import create_poll
+    close_date = ""
+    try:
+        if data.get("close_date"):
+            from datetime import datetime, timezone
+            cd = data["close_date"]
+            if hasattr(cd, "strftime"):
+                close_date = cd.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                close_date = str(cd)
+    except Exception:
+        close_date = ""
+    poll_id = create_poll(data["question"], data["options"],
+                          is_anonymous=bool(data.get("is_anonymous", True)),
+                          allows_multiple=bool(data.get("allows_multiple", False)),
+                          close_date=close_date)
+    if not poll_id:
+        await q.answer("❌ Poll banane me error.", show_alert=True)
+        return
+    # 🐛 v152 FIX: broadcast in BACKGROUND so the callback returns instantly
+    # (old code awaited it → blocked 4-5 min → bot looked stuck).
+    import asyncio as _aio
+    try:
+        _aio.create_task(_broadcast_poll_task(c.bot, poll_id, ADMIN_ID))
+    except Exception:
+        pass
+    try:
+        await q.edit_message_text(
+            f"✅ *Poll bana diya!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"🧾 ID: `#{poll_id}`\n"
+            f"📤 *Background me sab users ko send ho raha hai...*\n\n"
+            f"Complete hone par summary message aayegi. Votes 📊 Polls → "
+            f"View Results me dekho, aur users apne chat me bhi results "
+            f"dekhenge.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📊 View Results", callback_data="poll_results")],
+                [InlineKeyboardButton("🔙 Polls", callback_data="admin_polls")],
+            ]))
+    except Exception:
+        pass
+    try:
+        await q.answer("📢 Broadcasting…", show_alert=False)
+    except Exception:
+        pass
+
+
+_POLL_BROADCASTING = set()  # poll_ids currently broadcasting (anti double-send)
+
+
+async def _broadcast_poll_task(bot, poll_id, notify_uid=None):
+    """Background broadcast with rate-limit safety. Sends a summary message
+    to the admin when done (and per-user results stay native in each chat)."""
+    import asyncio as _aio
+    if poll_id in _POLL_BROADCASTING:
+        return
+    _POLL_BROADCASTING.add(poll_id)
+    try:
+        sent, failed = await _broadcast_poll_to_users(bot, poll_id)
+        if notify_uid:
+            try:
+                await bot.send_message(
+                    notify_uid,
+                    f"✅ *Poll Broadcast Complete*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"🧾 Poll `#{poll_id}`\n"
+                    f"📤 Sent: *{sent}* users | ❌ Failed: *{failed}*\n\n"
+                    f"Votes 📊 Polls → View Results me dekho.",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📊 View Results", callback_data="poll_results")],
+                    ]))
+            except Exception:
+                pass
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"[PollBroadcast] task error: {e}")
+        if notify_uid:
+            try:
+                await bot.send_message(notify_uid, f"⚠️ Poll broadcast error: `{str(e)[:120]}`",
+                                       parse_mode="Markdown")
+            except Exception:
+                pass
+    finally:
+        _POLL_BROADCASTING.discard(poll_id)
 
 
 async def poll_question_received(u, c):
@@ -9261,8 +9466,11 @@ async def _broadcast_poll_to_users(bot, poll_id):
     close_dt = None
     if poll.get("close_date"):
         try:
-            from datetime import datetime
+            from datetime import datetime, timezone
             close_dt = datetime.strptime(poll["close_date"], "%Y-%m-%d %H:%M:%S")
+            # Telegram requires tz-aware UTC; naive would be interpreted wrong
+            if close_dt.tzinfo is None:
+                close_dt = close_dt.replace(tzinfo=timezone.utc)
         except Exception:
             close_dt = None
     try:
@@ -9290,7 +9498,9 @@ async def _broadcast_poll_to_users(bot, poll_id):
                 pass
         except Exception:
             failed += 1
-        await _aio.sleep(0.05)
+        # 🐛 v152 FIX: 0.12s sleep = ~8 msgs/sec — stays under Telegram's
+        # bot rate limit (avoids 429 flood that spammed the logs before).
+        await _aio.sleep(0.12)
     if tg_ids:
         try:
             add_tg_poll_ids(poll_id, tg_ids)
