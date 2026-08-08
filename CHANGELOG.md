@@ -8,6 +8,49 @@
 
 ---
 
+# 🚀 v156 (2026-08-08) — BOT STARTUP CRASH FIXED + Broadcast progress animation
+
+## 🐛 CRITICAL FIX: Bot was NOT starting (NameError at boot)
+- **Root cause:** the old poll wizard (v148) had two callbacks
+  (`poll_anon_callback`, `poll_duration_callback`) registered in bot.py. When
+  the wizard was replaced by the forward-flow (v152), those functions were
+  removed from handlers_admin.py but their REGISTRATIONS stayed in bot.py →
+  every startup crashed with `NameError: name 'poll_anon_callback' is not
+  defined` → **bot never ran**.
+- **Fix:** removed the stale registrations. Verified: `main()` boots clean —
+  "✅ Running!", polling + all jobs start, getMe/deleteWebhook/getUpdates OK.
+
+## ✨ NEW: Broadcast progress animation (poll / pinned / global)
+- New `utils.BroadcastProgress` — a live, self-editing progress message:
+  ```
+  🎯 *Poll Broadcast*
+  ━━━━━━━━━━━━━━━━━━━━
+  ██████░░░░░░ 50%
+  📤 Sent: 450 / 900
+  _Live — har user pe update ho raha hai..._
+  ```
+- The emoji cycles (🎯📡📤⏳🚀✨) + bar fills + count climbs → feels like the
+  bot is counting in real time. Refreshes at most every ~1.2s (rate-limit safe).
+- Wired into:
+  - **Poll broadcasts** (`_broadcast_poll_task`) — title "Poll Broadcast",
+    finishes with sent/failed + link to View Results.
+  - **Global broadcasts** (`_send_global_broadcast_now` →
+    `_broadcast_payload_to_all_users`) — title "Global Broadcast".
+  - **Pinned-post pushes** (`broadcast_and_pin`) — title "📌 Pinned Broadcast",
+    finish shows sent + pinned counts.
+- LIVE verified: start → updates → finish all edit the same message on the
+  real bot.
+
+## 📦 Restore-ready DB (admin's latest — 041211)
+- 907 users | 337 orders | 51 products | 168 ext-products | 7 suppliers |
+  force-join 3 | polls tables (with v155 entities/voters columns) | maint=0 —
+  ZERO data loss (60→62 tables, only the 2 poll tables added).
+
+## 🧪 Tests
+- `_test_v152_pollfwd.py` extended (+3 v156 tests: BroadcastProgress API,
+  stale registrations gone, progress wired). All 17 in-repo suites pass;
+  `main()` boots clean; BroadcastProgress live-tested on the real bot.
+
 # 🚀 v155 (2026-08-08) — Poll: premium emojis preserved + WHO voted in results (v154 chooser reverted)
 
 ## 🔄 REVERT (owner request — "main ne sirf poocha tha, update nahi karna tha")

@@ -1603,6 +1603,16 @@ async def broadcast_and_pin(bot, pin_id: int) -> tuple:
         msg_map = {}
 
     users = get_all_users() or []
+    # 🆕 v156: live progress counter for pinned-post push
+    _prog = None
+    try:
+        from utils import BroadcastProgress
+        from config import ADMIN_ID
+        _prog = BroadcastProgress(bot, ADMIN_ID, title="📌 Pinned Broadcast",
+                                  total=len(users or []))
+        await _prog.start()
+    except Exception:
+        _prog = None
     sent = pinned = failed = 0
     for u in users:
         uid = u["user_id"] if hasattr(u, "__getitem__") else u.get("user_id")
@@ -1625,6 +1635,11 @@ async def broadcast_and_pin(bot, pin_id: int) -> tuple:
         except Exception as _e:
             failed += 1
             logger.debug(f"[pin_broadcast] send failed uid={uid}: {_e}")
+        if _prog is not None:
+            try:
+                await _prog.bump()
+            except Exception:
+                pass
 
     # Persist the map + mark as broadcasted
     try:
@@ -1635,6 +1650,13 @@ async def broadcast_and_pin(bot, pin_id: int) -> tuple:
     except Exception as e:
         logger.warning(f"[pin_broadcast] persist msg_map failed: {e}")
 
+    if _prog is not None:
+        try:
+            await _prog.finish(
+                f"✅ *📌 Pinned Broadcast — Complete!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📤 Sent: *{sent:,}* | 📌 Pinned: *{pinned:,}* | ❌ Failed: *{failed:,}*")
+        except Exception:
+            pass
     return sent, pinned, failed
 
 

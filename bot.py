@@ -2138,8 +2138,6 @@ def main():
         # 🆕 v148: Polls (create / results / manage / answers)
         ("^admin_polls$", admin_polls_callback),
         ("^poll_create$", poll_create_start_callback),
-        ("^poll_anon_", poll_anon_callback),
-        ("^poll_dur_", poll_duration_callback),
         # 🆕 v152: forwarded-poll confirm (background broadcast)
         ("^fwd_poll_yes$", fwd_poll_yes_callback),
         ("^fwd_poll_no$", fwd_poll_no_callback),

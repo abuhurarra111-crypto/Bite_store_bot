@@ -1100,3 +1100,99 @@ def payment_method_label(method):
     if 'point' in m:
         return "💎 Points"
     return (method or 'Payment').title()
+
+
+# ════════════════════════════════════════════════════════════════
+# 📣 v156: BROADCAST PROGRESS — live counting animation for big sends
+# (poll broadcasts, pinned-post pushes, global broadcasts). The admin gets
+# a single message that keeps EDITING itself with a progress bar + live
+# count ("sent 123 / 900"), so it feels like the bot is counting in real
+# time. Rate-limit-safe: refreshes at most every ~1.2s.
+# ════════════════════════════════════════════════════════════════
+
+class BroadcastProgress:
+    """Live-updating progress message for long broadcasts.
+
+    Usage:
+        prog = BroadcastProgress(bot, chat_id, title="📣 Broadcasting", total=900)
+        await prog.start()
+        ...
+        await prog.bump()          # after each successful send
+        ...
+        await prog.finish(done_msg="✅ Broadcast complete!")
+    """
+
+    def __init__(self, bot, chat_id, title="📣 Broadcasting", total=0):
+        self.bot = bot
+        self.chat_id = chat_id
+        self.title = title
+        self.total = max(1, int(total or 0))
+        self.done = 0
+        self.msg_id = None
+        self._last_refresh = 0.0
+        self._refresh_gap = 1.2  # seconds — safe for Telegram edit limits
+        self._emoji_cycle = ["🎯", "📡", "📤", "⏳", "🚀", "✨"]
+        self._cycle_i = 0
+
+    def _bar(self):
+        pct = min(1.0, (self.done / self.total) if self.total else 0)
+        filled = int(pct * 12)
+        return "█" * filled + "░" * (12 - filled)
+
+    def _render(self):
+        pct = int((self.done / self.total) * 100) if self.total else 0
+        emo = self._emoji_cycle[self._cycle_i % len(self._emoji_cycle)]
+        return (
+            f"{emo} *{self.title}*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"`{self._bar()}` *{pct}%*\n"
+            f"📤 Sent: *{self.done:,}* / {self.total:,}\n"
+            f"_Live — har user pe update ho raha hai..._"
+        )
+
+    async def start(self):
+        try:
+            m = await self.bot.send_message(self.chat_id, self._render(),
+                                            parse_mode="Markdown")
+            self.msg_id = m.message_id
+        except Exception:
+            self.msg_id = None
+
+    async def _refresh(self):
+        import time as _t
+        now = _t.time()
+        if now - self._last_refresh < self._refresh_gap:
+            return
+        self._last_refresh = now
+        self._cycle_i += 1
+        if self.msg_id:
+            try:
+                await self.bot.edit_message_text(
+                    chat_id=self.chat_id, message_id=self.msg_id,
+                    text=self._render(), parse_mode="Markdown")
+            except Exception:
+                pass
+
+    async def bump(self, n=1):
+        self.done += int(n or 0)
+        await self._refresh()
+
+    async def finish(self, done_msg=None):
+        if self.msg_id:
+            try:
+                final = done_msg or (
+                    f"✅ *{self.title} — Complete!*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📤 Sent: *{self.done:,}* / {self.total:,} ✅")
+                await self.bot.edit_message_text(
+                    chat_id=self.chat_id, message_id=self.msg_id,
+                    text=final, parse_mode="Markdown")
+                self.msg_id = None
+            except Exception:
+                pass
+        elif done_msg:
+            try:
+                await self.bot.send_message(self.chat_id, done_msg,
+                                            parse_mode="Markdown")
+            except Exception:
+                pass

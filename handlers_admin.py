@@ -1642,15 +1642,36 @@ async def _send_payload(bot, chat_id, payload, reply_markup=None):
     return await bot.send_message(chat_id, text, parse_mode=mode, reply_markup=reply_markup, disable_web_page_preview=True)
 
 
-async def _broadcast_payload_to_all_users(bot, payload, reply_markup=None):
+async def _broadcast_payload_to_all_users(bot, payload, reply_markup=None, notify_uid=None, title="Broadcast"):
+    """🆕 v156: global broadcast with a LIVE progress counter for the admin."""
+    from utils import BroadcastProgress
     users = get_all_users_for_broadcast() if 'get_all_users_for_broadcast' in globals() else get_all_users()
+    prog = None
+    if notify_uid:
+        try:
+            prog = BroadcastProgress(bot, notify_uid, title=title, total=len(users or []))
+            await prog.start()
+        except Exception:
+            prog = None
     s = f = 0
     for usr in users:
         try:
-            await _send_payload(bot, usr['user_id'], payload, reply_markup=reply_markup)
+            await _send_payload(bot, row_uid(usr), payload, reply_markup=reply_markup)
             s += 1
         except Exception:
             f += 1
+        if prog is not None:
+            try:
+                await prog.bump()
+            except Exception:
+                pass
+    if prog is not None:
+        try:
+            await prog.finish(
+                f"✅ *{title} — Complete!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📤 Sent: *{s:,}* | ❌ Failed: *{f:,}*")
+        except Exception:
+            pass
     return s, f
 
 
@@ -1684,8 +1705,16 @@ async def _send_global_broadcast_now(update, context):
         except Exception:
             markup = _admin_button_from_state(context, '')
     context.user_data.pop('broadcast_button', None)
-    s, f = await _broadcast_payload_to_all_users(context.bot, payload, reply_markup=markup)
-    await update.effective_message.reply_text(f"✅ Broadcast sent: {s} | ❌ Failed: {f}", reply_markup=admin_menu_keyboard())
+    # 🆕 v156: live progress animation on the admin's chat
+    s, f = await _broadcast_payload_to_all_users(context.bot, payload,
+                                                 reply_markup=markup,
+                                                 notify_uid=ADMIN_ID,
+                                                 title="Global Broadcast")
+    try:
+        await update.effective_message.reply_text(f"✅ Broadcast sent: {s} | ❌ Failed: {f}",
+                                                  reply_markup=admin_menu_keyboard())
+    except Exception:
+        pass
 
 
 async def broadcast_button_choice_callback(update, context):
@@ -9323,15 +9352,28 @@ async def _broadcast_poll_task(bot, poll_id, notify_uid=None):
         return
     _POLL_BROADCASTING.add(poll_id)
     try:
-        sent, failed = await _broadcast_poll_to_users(bot, poll_id)
+        # 🆕 v156: live progress animation for the admin
+        from utils import BroadcastProgress
+        _prog = None
+        try:
+            from database import get_all_users_for_broadcast
+            _total = len(get_all_users_for_broadcast() or [])
+        except Exception:
+            _total = 0
+        _prog = BroadcastProgress(bot, notify_uid, title="Poll Broadcast", total=_total)
+        await _prog.start()
+        sent, failed = await _broadcast_poll_to_users(bot, poll_id, progress=_prog)
+        if _prog is not None:
+            await _prog.finish(
+                f"✅ *Poll Broadcast Complete*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"🧾 Poll `#{poll_id}`\n"
+                f"📤 Sent: *{sent}* users | ❌ Failed: *{failed}*\n\n"
+                f"Votes (incl. who voted): 📊 Polls → View Results.")
         if notify_uid:
             try:
                 await bot.send_message(
                     notify_uid,
-                    f"✅ *Poll Broadcast Complete*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"🧾 Poll `#{poll_id}`\n"
-                    f"📤 Sent: *{sent}* users | ❌ Failed: *{failed}*\n\n"
-                    f"Votes (incl. who voted): 📊 Polls → View Results.",
+                    f"🧾 Poll `#{poll_id}` — results dekhne ke liye 📊 Polls → View Results.",
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("📊 View Results", callback_data="poll_results")],
@@ -9351,8 +9393,9 @@ async def _broadcast_poll_task(bot, poll_id, notify_uid=None):
         _POLL_BROADCASTING.discard(poll_id)
 
 
-async def _broadcast_poll_to_users(bot, poll_id):
-    """Send the native Telegram poll to every registered user. Returns (sent, failed)."""
+async def _broadcast_poll_to_users(bot, poll_id, progress=None):
+    """Send the native Telegram poll to every registered user. Returns (sent, failed).
+    🆕 v156: optional `progress` (BroadcastProgress) → live counting animation."""
     from database import get_poll, get_all_users_for_broadcast, add_tg_poll_ids
     import json as _json, asyncio as _aio
     poll = get_poll(poll_id)
@@ -9418,6 +9461,12 @@ async def _broadcast_poll_to_users(bot, poll_id):
                 pass
         except Exception:
             failed += 1
+        # 🆕 v156: live progress counter
+        if progress is not None:
+            try:
+                await progress.bump()
+            except Exception:
+                pass
         # 🐛 v152 FIX: 0.12s sleep = ~8 msgs/sec — stays under Telegram's
         # bot rate limit (avoids 429 flood that spammed the logs before).
         await _aio.sleep(0.12)
