@@ -463,10 +463,16 @@ async def send_to_all_users(bot, message: str, parse_mode="Markdown"):
 
     success = 0
     fail = 0
+    # 🐛 v153 FIX: row_uid handles DictRow — old code sent to the auto-increment
+    # id column instead of the real Telegram user_id.
+    try:
+        from database import row_uid as _row_uid
+    except Exception:
+        _row_uid = None
 
     for user in users:
         try:
-            uid = user["user_id"] if isinstance(user, dict) else user[0]
+            uid = _row_uid(user) if _row_uid else (user["user_id"] if isinstance(user, dict) else user[1])
 
             try:
                 await bot.send_message(

@@ -649,6 +649,36 @@ def get_all_users():
     c.execute("SELECT * FROM users WHERE user_id < 9000000000 ORDER BY joined_at DESC")
     u = c.fetchall(); conn.close(); return u
 
+def row_uid(row):
+    """🐛 v153 FIX: safely extract the Telegram user_id from any DB row.
+    Rows come back as DictRow (sqlite3.Row subclass — NOT dict), so the old
+    `isinstance(row, dict) else row[0]` pattern returned the auto-increment
+    `id` column instead of the real `user_id` (e.g. 4836 vs 5757645822) —
+    breaking EVERY per-user broadcast (polls, fake activity, stock alerts)
+    with 'chat not found' errors. This helper handles dict, DictRow, tuple."""
+    try:
+        if isinstance(row, dict):
+            return row.get("user_id")
+        return row["user_id"]
+    except Exception:
+        try:
+            return row[1]
+        except Exception:
+            return None
+
+
+def all_user_ids():
+    """All real Telegram user_ids (user_id < 9e9) as plain ints."""
+    try:
+        conn = get_connection(); c = conn.cursor()
+        c.execute("SELECT user_id FROM users WHERE user_id < 9000000000")
+        ids = [int(r[0]) for r in c.fetchall()]
+        conn.close()
+        return ids
+    except Exception:
+        return []
+
+
 def get_all_users_for_broadcast():
     """Returns real users only — safe to send Telegram messages to."""
     conn = get_connection(); c = conn.cursor()

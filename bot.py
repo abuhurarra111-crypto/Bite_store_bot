@@ -1373,12 +1373,63 @@ async def _activity_hook_text(update, context):
     return None  # continue to the real handler
 
 
+def _patch_ptb_poll_parsing():
+    """🐛 v153 FIX: PTB 22.8 (Bot API 9.6) REQUIRES fields that real Telegram
+    poll updates sometimes omit (PollAnswer.option_persistent_ids,
+    PollOption.persistent_id, Poll.allows_revoting). When missing, PTB raises
+    TypeError while parsing the update → every user vote logged an error and
+    the vote was NEVER recorded (no live results). This patch makes those
+    fields default to safe values so parsing never crashes."""
+    try:
+        import telegram as _tg
+
+        try:
+            _orig_pa = _tg.PollAnswer.__init__
+            def _pa_init(self, *a, **kw):
+                if kw.get("option_persistent_ids") is None:
+                    kw["option_persistent_ids"] = ()
+                return _orig_pa(self, *a, **kw)
+            _tg.PollAnswer.__init__ = _pa_init
+        except Exception:
+            pass
+
+        try:
+            _orig_po = _tg.PollOption.__init__
+            def _po_init(self, *a, **kw):
+                if kw.get("persistent_id") is None:
+                    kw["persistent_id"] = ""
+                return _orig_po(self, *a, **kw)
+            _tg.PollOption.__init__ = _po_init
+        except Exception:
+            pass
+
+        try:
+            _orig_p = _tg.Poll.__init__
+            def _p_init(self, *a, **kw):
+                if kw.get("allows_revoting") is None:
+                    kw["allows_revoting"] = False
+                if kw.get("members_only") is None:
+                    kw["members_only"] = False
+                return _orig_p(self, *a, **kw)
+            _tg.Poll.__init__ = _p_init
+        except Exception:
+            pass
+        print("[PollPatch] PTB poll parsing tolerance installed")
+    except Exception as e:
+        print(f"[PollPatch] not installed: {e}")
+
+
 def main():
     print("=" * 50)
     print("🤖 BITE STORE")
     print("=" * 50)
     # Fail fast with a clear message instead of silently using leaked/default secrets.
     validate_required_config()
+    # 🐛 v153: PTB poll parsing tolerance (must run before app starts polling)
+    try:
+        _patch_ptb_poll_parsing()
+    except Exception as _pe:
+        print(f"[PollPatch] error: {_pe}")
     # 🆕 v151: bot boots FRESH — no bundled DB. The admin restores their own
     # database via Admin → 💾 Backup & Restore whenever they want.
     _apply_startup_maintenance()

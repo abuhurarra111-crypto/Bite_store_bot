@@ -512,7 +512,7 @@ async def _process_referral_attribution(context, new_user, referrer_id, is_new_u
             })
             for usr in get_all_users_for_broadcast():
                 try:
-                    uid_b = usr["user_id"] if isinstance(usr, dict) else usr[0]
+                    uid_b = row_uid(usr)
                     await context.bot.send_message(uid_b, real_msg, parse_mode="Markdown")
                 except Exception:
                     pass

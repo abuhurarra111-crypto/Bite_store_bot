@@ -9101,18 +9101,17 @@ async def admin_polls_callback(u, c):
     text = (
         "📊 *Polls — User Demand / Opinion*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "*Aise banao (naya tareeqa — asaan):*\n"
-        "1️⃣ Telegram me *khud poll banao* (kisi b chat me) ya kisi se "
-        "forward karo\n"
-        "2️⃣ Us poll ko is bot ke *DM me bhejo / forward karo*\n"
-        "3️⃣ Bot confirm karega → ✅ dabao → poll *sab users ke inbox* "
-        "me chala jayega\n"
-        "4️⃣ Users vote karenge — aap 📊 View Results me live votes dekho, "
-        "users bhi apne chat me results dekhenge\n\n"
+        "*How it works (easy):*\n"
+        "1️⃣ Create the *poll yourself in Telegram* (any chat) or forward "
+        "one from someone\n"
+        "2️⃣ Send / forward that poll to *this bot's DM*\n"
+        "3️⃣ Bot asks to confirm → tap ✅ → poll goes to *every user's inbox*\n"
+        "4️⃣ Users vote — see live results in 📊 View Results; users also "
+        "see results in their own chat\n\n"
         f"*Total polls:* {len(polls)}\n"
     )
     kb = [
-        [InlineKeyboardButton("📤 Poll Bhejo / Forward Karein", callback_data="poll_create")],
+        [InlineKeyboardButton("📤 Send / Forward a Poll", callback_data="poll_create")],
         [InlineKeyboardButton("📊 View Results", callback_data="poll_results")],
     ]
     if polls:
@@ -9134,19 +9133,19 @@ async def poll_create_start_callback(u, c):
     await q.answer()
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Polls", callback_data="admin_polls")]])
     await _safe_edit(q,
-        "📤 *Poll Forward Karein*\n"
+        "📤 *Send / Forward a Poll*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "1. Telegram me *khud ek poll banao* (kisi b chat/group me) — ya "
-        "kisi aur se banwa kar *forward* karo\n"
-        "2. Us poll ko *yahan is bot ke DM me bhejo / forward karo*\n"
-        "3. Bot poochega \"Sab users ko bhejna hai?\" → ✅ Yes dabao\n"
-        "4. Poll *sab users ke inbox* me chala jayega (background me, "
-        "bot stuck nahi hoga)\n"
-        "5. Users vote karenge — votes aap 📊 Polls → View Results me "
-        "dekh sakte ho, aur users apne chat me bhi results dekhenge\n\n"
-        "_Poll type: regular poll (anonymous/public + multiple answers jaisa "
-        "aapne banaya hai, waisa hi jayega)._\n\n"
-        "👉 *Ab poll bhejo / forward karo:*",
+        "1. Create the *poll yourself in Telegram* (any chat/group) — or "
+        "forward one from someone\n"
+        "2. Send / forward it to *this bot's DM*\n"
+        "3. Bot asks \"Send to all users?\" → tap ✅ Yes\n"
+        "4. Poll goes to *every user's inbox* (in background — bot never "
+        "gets stuck)\n"
+        "5. Users vote — see results in 📊 Polls → View Results; users also "
+        "see results in their own chat\n\n"
+        "_Regular polls only (anonymous/public + multiple answers carry over "
+        "exactly as you made them)._\n\n"
+        "👉 *Now send / forward the poll:*",
         parse_mode="Markdown", reply_markup=kb)
 
 
@@ -9191,7 +9190,7 @@ async def handle_admin_poll_message(update, context):
                 options.append(t[:100])
         if len(options) < 2:
             try:
-                await msg.reply_text("⚠️ Poll me kam se kam 2 options hone chahiye.")
+                await msg.reply_text("⚠️ Poll must have at least 2 options.")
             except Exception:
                 pass
             return True
@@ -9205,14 +9204,14 @@ async def handle_admin_poll_message(update, context):
         }
         prev = (str(question) or "Poll")[:60]
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Yes, sab users ko bhejo", callback_data="fwd_poll_yes")],
+            [InlineKeyboardButton("✅ Yes, send to all users", callback_data="fwd_poll_yes")],
             [InlineKeyboardButton("❌ No, cancel", callback_data="fwd_poll_no")],
         ])
         await msg.reply_text(
-            f"📊 *Poll pakra gaya!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"📊 *Poll captured!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
             f"❓ {prev}\n"
             f"🔢 Options: {len(options)}\n\n"
-            f"Ye poll *sab users ke inbox* me bhejna hai?",
+            f"Send this poll to *every user's inbox*?",
             parse_mode="Markdown", reply_markup=kb)
         return True
     except Exception as e:
@@ -9244,7 +9243,7 @@ async def fwd_poll_yes_callback(u, c):
     if not data:
         await q.answer("Poll data nahi mila — dobara poll bhejo.", show_alert=True)
         try:
-            await q.edit_message_text("❌ Poll data missing. Dobara poll forward karo.",
+            await q.edit_message_text("❌ Poll data missing. Please forward the poll again.",
                                       reply_markup=InlineKeyboardMarkup(
                                           [[InlineKeyboardButton("🔙 Polls", callback_data="admin_polls")]]))
         except Exception:
@@ -9278,9 +9277,9 @@ async def fwd_poll_yes_callback(u, c):
         pass
     try:
         await q.edit_message_text(
-            f"✅ *Poll bana diya!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"✅ *Poll created!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
             f"🧾 ID: `#{poll_id}`\n"
-            f"📤 *Background me sab users ko send ho raha hai...*\n\n"
+            f"📤 *Sending to all users in the background...*\n\n"
             f"Complete hone par summary message aayegi. Votes 📊 Polls → "
             f"View Results me dekho, aur users apne chat me bhi results "
             f"dekhenge.",
@@ -9316,7 +9315,7 @@ async def _broadcast_poll_task(bot, poll_id, notify_uid=None):
                     f"✅ *Poll Broadcast Complete*\n━━━━━━━━━━━━━━━━━━━━\n\n"
                     f"🧾 Poll `#{poll_id}`\n"
                     f"📤 Sent: *{sent}* users | ❌ Failed: *{failed}*\n\n"
-                    f"Votes 📊 Polls → View Results me dekho.",
+                    f"Votes: 📊 Polls → View Results.",
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([
                         [InlineKeyboardButton("📊 View Results", callback_data="poll_results")],
@@ -9480,7 +9479,7 @@ async def _broadcast_poll_to_users(bot, poll_id):
     sent = failed = 0
     tg_ids = []
     for usr in users:
-        uid = usr["user_id"] if isinstance(usr, dict) else usr[0]
+        uid = row_uid(usr)
         try:
             m = await bot.send_poll(
                 chat_id=uid,
@@ -9610,7 +9609,7 @@ async def _stop_poll_in_chats(bot, poll_id):
         from database import get_all_users_for_broadcast
         users = get_all_users_for_broadcast() or []
         for usr in users:
-            uid = usr["user_id"] if isinstance(usr, dict) else usr[0]
+            uid = row_uid(usr)
             try:
                 # find the message id: we don't store per-user message ids, so
                 # use get_user_chat_poll_message if available; otherwise skip.

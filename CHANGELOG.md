@@ -8,6 +8,49 @@
 
 ---
 
+# 🚀 v153 (2026-08-08) — POLL BROADCAST & LIVE RESULTS REALLY FIXED + English UI
+
+## 🐛 FIX 1 (ROOT CAUSE): polls never reached users — wrong chat_id in broadcasts
+- **Root cause (live-proved):** `get_all_users_for_broadcast()` returns DictRow
+  (a sqlite3.Row subclass — NOT dict). Every broadcast loop used
+  `usr["user_id"] if isinstance(usr, dict) else usr[0]` — since DictRow isn't a
+  dict, it fell to `usr[0]` which is the AUTO-INCREMENT `id` column (e.g. 4836),
+  NOT the Telegram `user_id` (e.g. 5757645822). So every poll was sent to
+  chat_id 1,2,3... → "chat not found" ×900 → 0 delivered + a log error per user.
+  This bug also silently broke ALL per-user broadcasts (fake activity, stock
+  alerts, announcements).
+- **Fix:** new `database.row_uid(row)` helper (handles dict/DictRow/tuple) used
+  in every broadcast loop (fake_engagement.send_to_all_users,
+  handlers_admin poll + custom broadcast, handlers_start join broadcast).
+  Verified live: polls now reach real users and tg poll ids are recorded.
+
+## 🐛 FIX 2 (ROOT CAUSE): votes never recorded → "no live results"
+- **Root cause (reproduced):** PTB 22.8 (Bot API 9.6) raises TypeError while
+  PARSING a `poll_answer` update when Telegram omits
+  `option_persistent_ids` (and similarly Poll/PollOption fields). Every user
+  vote → PTB parse crash → vote dropped + repeated log error.
+- **Fix:** `_patch_ptb_poll_parsing()` at startup monkey-patches
+  PollAnswer/Poll/PollOption to default missing required fields to safe values.
+  Verified: poll_answer now parses and `handle_poll_answer` records the vote →
+  📊 View Results shows live counts.
+
+## 🐛 FIX 3: broadcast blocked the callback (still felt "stuck")
+- Already backgrounded in v152; v153 keeps it and adds a done-summary message.
+
+## ✨ FIX 4: Poll UI now ENGLISH (user request)
+- All poll panel text/buttons translated from Roman Urdu to English
+  ("Send / Forward a Poll", "Yes, send to all users", "Poll captured!", etc.).
+
+## 📦 Restore-ready DB (admin's latest — bite_store_backup_20260808_030706)
+- 906 users | 335 orders | 51 products | 167 ext-products | 7 suppliers |
+  force-join 3 | polls tables ready | maint_enabled=0 — ZERO data loss
+  (60→62 tables, only the 2 poll tables added). Pending #334 (Binance 2.0).
+
+## 🧪 Tests
+- `_test_v152_pollfwd.py` extended (row_uid, PTB patch, English UI) — 9 tests;
+  all 17 in-repo suites pass; LIVE end-to-end verified: broadcast to real
+  users delivered, poll_answer parsed, vote recorded, results query works.
+
 # 🚀 v152 (2026-08-08) — POLL FIX + NEW POLL SYSTEM (forward your own poll)
 
 ## 🐛 FIX 1: Poll wizard "stuck at time options" + repeated log errors
