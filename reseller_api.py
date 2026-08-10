@@ -304,14 +304,6 @@ def _product_payload(pd: dict, key=None) -> dict:
     is ever exposed — only product data."""
     raw_name = pd.get("name") or "Product"
     emoji_char, emoji_id = _extract_emoji(raw_name)
-    fmt = ""
-    fmt_label = ""
-    try:
-        from templates_bundle import normalize_product_format, format_label
-        fmt = normalize_product_format(pd.get("product_format") or "")
-        fmt_label = format_label(fmt)
-    except Exception:
-        pass
     return {
         "id": str(pd.get("id")),
         "name": _clean_name(raw_name),
@@ -323,8 +315,6 @@ def _product_payload(pd: dict, key=None) -> dict:
         "sold": _sold_count(pd),
         "categoryId": pd.get("category_id"),
         "deliveryType": _delivery_type(pd),
-        "format": fmt,
-        "formatLabel": fmt_label,
         "emoji": emoji_char,
         "emoji_id": emoji_id,
         "currency": "USD",
@@ -761,23 +751,15 @@ if _FASTAPI_OK:
     async def _api_docs():
         return RedirectResponse("/docs")
 
-    @app.get("/static/reseller_logo.png", include_in_schema=False)
-    async def _logo():
+    @app.get("/static/reseller_docs_logo.png", include_in_schema=False)
+    async def _docs_logo():
         try:
-            _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reseller_logo.png")
+            _p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "reseller_docs_logo.png")
             with open(_p, "rb") as _f:
                 return Response(content=_f.read(), media_type="image/png")
         except Exception:
-            raise HTTPException(status_code=404)
-
-    @app.get("/static/reseller_favicon.png", include_in_schema=False)
-    async def _favicon():
-        try:
-            _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reseller_favicon.png")
-            with open(_p, "rb") as _f:
-                return Response(content=_f.read(), media_type="image/png")
-        except Exception:
-            raise HTTPException(status_code=404)
+            raise HTTPException(status_code=404, detail="logo not found")
 
     @app.get("/docs", include_in_schema=False)
     async def _docs():
@@ -789,7 +771,6 @@ if _FASTAPI_OK:
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Bite Store — Reseller API Docs</title>
-<link rel="icon" href="/static/reseller_favicon.png"/>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css"/>
 <style>
   :root {
@@ -835,31 +816,39 @@ if _FASTAPI_OK:
   .swagger-ui .info h2, .swagger-ui .info p { color:#333; }
   .swagger-ui .model-box { background:#f8fafc; }
   a { color: var(--g4); }
-
-  .logo { width:64px; height:64px; border-radius:14px; margin-bottom:10px; box-shadow:0 4px 14px rgba(0,0,0,.35); display:block; }
-  .formats-card {
-    max-width:1000px; margin:0 auto 24px; background:rgba(255,255,255,.96);
-    border-radius:16px; box-shadow:0 18px 50px rgba(0,0,0,.35); padding:22px 24px;
+  .hero .logo {
+    width: 96px; height: auto; border-radius: 18px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.4); margin-bottom: 12px;
+    background: #fff; padding: 6px;
   }
-  .formats-card h2 { margin:0 0 4px; color:#0f172a; font-size:22px; }
-  .formats-card .fmt-sub { margin:0 0 14px; color:#475569; font-size:13.5px; }
-  .fmt-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px; }
-  .fmt-item { border:1px solid #e2e8f0; border-left:4px solid var(--g3); border-radius:10px; padding:10px 12px; background:#f8fafc; }
-  .fmt-item .f-t { font-weight:700; color:#0f172a; font-size:14px; }
-  .fmt-item .f-h { color:#475569; font-size:12.5px; margin-top:2px; }
-  .fmt-item .f-e { font-family:ui-monospace,Menlo,Consolas,monospace; color:#0369a1; font-size:11.5px; background:#eef6ff; border-radius:6px; padding:3px 8px; display:inline-block; margin-top:6px; }
-  @media (max-width:640px){ .formats-card{ padding:16px 14px; } }
-
+  .formats {
+    max-width: 1000px; margin: 26px auto 0; background: rgba(255,255,255,.97);
+    border-radius: 16px; box-shadow: 0 18px 50px rgba(0,0,0,.35);
+    overflow: hidden;
+  }
+  .formats-top { height: 6px; background: linear-gradient(90deg, var(--g1), var(--g2), var(--g3), var(--g4)); }
+  .formats-body { padding: 18px 22px 26px; color: #0f172a; }
+  .formats-body h2 { margin: 0 0 4px; font-size: 21px; }
+  .formats-body p { margin: 0 0 14px; color: #475569; font-size: 14px; }
+  .fmt-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .fmt-table th { text-align: left; padding: 9px 10px; background: linear-gradient(90deg, var(--g1), var(--g2), var(--g3), var(--g4)); color: #fff; font-weight: 600; }
+  .fmt-table td { padding: 9px 10px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+  .fmt-table tr:nth-child(even) td { background: #f8fafc; }
+  .fmt-table code { background: #f1f5f9; padding: 2px 7px; border-radius: 6px; font-size: 12.5px; color: #0f172a; }
+  .fmt-table .badge-fmt { display:inline-block; background: rgba(67,160,71,.12); color: #1b5e20; border:1px solid rgba(67,160,71,.4); padding:2px 9px; border-radius:999px; font-size:11.5px; margin-left:6px; }
+  .prod-note { background: #f8fafc; border-left: 4px solid var(--g4); border-radius: 8px; padding: 12px 16px; margin-top: 16px; font-size: 13.5px; color:#334155; }
+  .prod-note code { background:#e2e8f0; padding:2px 7px; border-radius:6px; }
   @media (max-width: 640px) {
     .hero h1 { font-size: 23px; }
     .swagger-ui { padding: 6px 10px 20px; }
+    .fmt-table { font-size: 12px; }
   }
 </style>
 </head>
 <body>
   <div class="page">
     <div class="hero">
-      <img src="/static/reseller_logo.png" class="logo" alt="Bite Store logo"/>
+      <img src="/static/reseller_docs_logo.png" alt="Bite Store" class="logo"/>
       <h1>🔗 Bite Store — Reseller API</h1>
       <p>Sell our products in your own bot — everything auto-delivered.</p>
       <div class="badges">
@@ -869,14 +858,39 @@ if _FASTAPI_OK:
         <span class="badge">🔒 No supplier info exposed</span>
       </div>
     </div>
-    <div class="formats-card">
-      <h2>📦 Delivery Formats</h2>
-      <p class="fmt-sub">Jab aap order karte ho to product isi format mein delivery hota hai — har line ek delivery item hai.</p>
-      <!--FORMATS-->
-    </div>
     <div class="swagger-wrap">
       <div class="swagger-top"></div>
       <div id="swagger-ui" class="swagger-ui"></div>
+    </div>
+
+    <div class="formats">
+      <div class="formats-top"></div>
+      <div class="formats-body">
+        <h2>📦 Delivery Formats (13)</h2>
+        <p>Every product is delivered in one of these formats. <code>deliveredKeys</code> always follows the product's format.</p>
+        <table class="fmt-table">
+          <tr><th>Format</th><th>Spec</th><th>Example</th></tr>
+          <tr><td>📧 Email + Password</td><td>Email | Password</td><td><code>demo@gmail.com|MyPass123</code></td></tr>
+          <tr><td>🔐 Email + Password + 2FA</td><td>Email | Password | 2FA</td><td><code>demo@gmail.com|MyPass123|JBSWY3DPEHPK3PXP</code></td></tr>
+          <tr><td>🎯 Email + Password + Token + Client ID</td><td>Email | Password | Refresh Token | Client ID</td><td><code>demo@hotmail.com|MyPass123|rtoken|client_id</code></td></tr>
+          <tr><td>🛡️ Email + Password + Recovery</td><td>Email | Password | Recovery</td><td><code>demo@gmail.com|MyPass123|recovery@x.com</code></td></tr>
+          <tr><td>🧩 Email + Password + Cookies</td><td>Email | Password | Cookie</td><td><code>demo@gmail.com|MyPass123|cookie_here</code></td></tr>
+          <tr><td>👤 Username + Password</td><td>Username | Password</td><td><code>user123|MyPass123</code></td></tr>
+          <tr><td>🔗 Redeem Link / Activation URL</td><td>Link</td><td><code>https://redeem.example.com/claim/ABC123</code></td></tr>
+          <tr><td>🎁 Coupon / Redemption Code</td><td>Code</td><td><code>BITE-STORE-2026-PRO</code></td></tr>
+          <tr><td>🗝️ License / Serial Key</td><td>Key</td><td><code>XXXXX-XXXXX-XXXXX-XXXXX</code></td></tr>
+          <tr><td>📱 Phone Number (PVA)</td><td>Phone</td><td><code>+14155552671</code></td></tr>
+          <tr><td>🍪 Cookies / Session</td><td>Cookie</td><td><code>sessionid=abc; token=xyz</code></td></tr>
+          <tr><td>🔑 API Token / Bearer Key</td><td>Token</td><td><code>sk-abcdef1234567890</code></td></tr>
+          <tr><td>📝 Raw Text (any format)</td><td>Content</td><td><code>any-delivery-text</code></td></tr>
+        </table>
+        <div class="prod-note">
+          <strong>🪙 Emoji rendering:</strong> each product returns <code>name</code> (plain text with the emoji char),
+          <code>name_html</code> (premium emoji markup — send with <code>parse_mode=HTML</code>),
+          and <code>emoji</code> / <code>emoji_id</code> for custom emoji. Descriptions are clean plain text
+          (<code>description</code>) — no HTML tags, no <code>[[HTML]]</code> sentinels, so any bot can render them.
+        </div>
+      </div>
     </div>
   </div>
   <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
@@ -894,22 +908,6 @@ if _FASTAPI_OK:
 </body>
 </html>
 """
-
-    # 🆕 v161.8: fill the <!--FORMATS--> placeholder with the live delivery
-    # formats list (from templates_bundle) so resellers see what to expect.
-    try:
-        from templates_bundle import FORMAT_META
-        _fmt_items = []
-        for _fmt, _meta in FORMAT_META.items():
-            _fmt_items.append(
-                f'<div class="fmt-item"><div class="f-t">{_meta.get("icon","")} '
-                f'{_meta.get("label", _fmt)}</div>'
-                f'<div class="f-h">{_meta.get("hint","")}</div>'
-                f'<div class="f-e">{_meta.get("example","")}</div></div>')
-        _DOCS_HTML = _DOCS_HTML.replace("<!--FORMATS-->",
-                                        '<div class="fmt-grid">' + "".join(_fmt_items) + "</div>")
-    except Exception:
-        _DOCS_HTML = _DOCS_HTML.replace("<!--FORMATS-->", "")
 
     @app.get("/v1/products", summary="List resellable products (live stock, pagination, search)",
              description=(
