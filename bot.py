@@ -2398,6 +2398,12 @@ def main():
         ("^reseller_prod_toggle_\\d+$", reseller_prod_toggle_callback),
         ("^reseller_prod_price_\\d+$", reseller_prod_price_callback),
         ("^reseller_prod_page_\\d+$", reseller_prod_page_callback),
+        # 🆕 v161.6: reseller tracking (per-key orders, top-up, webhook log, export)
+        ("^reseller_orders_key_\\d+$", reseller_orders_key_callback),
+        ("^reseller_topup_\\d+$", reseller_topup_callback),
+        ("^reseller_webhooks_panel$", reseller_webhooks_callback),
+        ("^reseller_export_panel$", reseller_export_callback),
+        ("^reseller_export_key_\\d+$", reseller_export_key_callback),
         # 🆕 v161.4: user-facing ProdSeller-style API Access panel (any user)
         ("^reseller_api_user$", reseller_api_user_callback),
         ("^reseller_api_show$", reseller_api_show_callback),

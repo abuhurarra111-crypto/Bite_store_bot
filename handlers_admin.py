@@ -10845,30 +10845,38 @@ async def admin_reseller_callback(update, context):
     await q.answer()
     try:
         from reseller_api import list_reseller_keys
-        from database import reseller_stats
+        from database import reseller_stats, reseller_top_keys, reseller_key_tracking, get_user
         st = reseller_stats()
+        top = reseller_top_keys(limit=5)
     except Exception as e:
         await q.edit_message_text(f"❌ {e}")
         return
-    keys = list_reseller_keys()
     text = (
-        "🔗 *Reseller API Panel*\n"
+        "📊 *Reseller Panel*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"🔑 Keys: *{st.get('total_keys',0)}* (🟢 {st.get('active_keys',0)} active)\n"
         f"📦 Orders: *{st.get('total_orders',0)}* (✅ {st.get('delivered',0)} · ⏳ {st.get('pending',0)} · ❌ {st.get('failed',0)})\n"
         f"💰 Revenue: *${st.get('revenue_usd',0):,.2f}*\n\n"
-        "📌 Advance commands:\n"
-        "`/resellerkeycfg <kid> <pct> [cost|price]`\n"
-        "`/resellerspend <kid> <usd>` · `/resellerip <kid> ips`\n"
-        "`/resellerproducts <kid> pids` · `/resellerwebhook <kid> url`"
+        "*🏆 Top Resellers:*\n"
     )
+    if top:
+        for t in top[:5]:
+            try:
+                u = get_user(int(t.get("user_id") or 0))
+                uname = (u.get("first_name") if u else None) or str(t.get("user_id"))
+            except Exception:
+                uname = str(t.get("user_id"))
+            text += f"• {uname}: ${float(t.get('rev') or 0):,.2f} ({t.get('orders')} orders)\n"
+    else:
+        text += "• (koi orders nahi abhi)\n"
     kb = [
         [InlineKeyboardButton("🔑 Generate Key", callback_data="reseller_gen_panel")],
-        [InlineKeyboardButton("📋 Keys & Config", callback_data="reseller_keys_panel"),
+        [InlineKeyboardButton("📋 Resellers", callback_data="reseller_keys_panel"),
          InlineKeyboardButton("📦 Orders", callback_data="reseller_orders_panel")],
-        [InlineKeyboardButton("💲 Global Pricing", callback_data="reseller_pricing_panel"),
+        [InlineKeyboardButton("💲 Pricing", callback_data="reseller_pricing_panel"),
          InlineKeyboardButton("🗂️ Products", callback_data="reseller_admin_products")],
-        [InlineKeyboardButton("📊 Stats", callback_data="reseller_stats_panel")],
+        [InlineKeyboardButton("🔔 Webhooks Log", callback_data="reseller_webhooks_panel"),
+         InlineKeyboardButton("📥 Export Record", callback_data="reseller_export_panel")],
         [InlineKeyboardButton("🔙 Back", callback_data="admin_panel")],
     ]
     await q.edit_message_text(text, parse_mode="Markdown",
@@ -10927,30 +10935,47 @@ async def reseller_keycfg_panel_callback(update, context):
     await q.answer()
     try:
         kid = int(q.data.replace("reseller_keycfg_panel_", ""))
-        from database import get_api_key_row, reseller_key_stats, get_user
+        from database import get_api_key_row, reseller_key_stats, reseller_key_tracking, get_user, get_user_points, get_setting
         k = get_api_key_row(kid)
         ks = reseller_key_stats(kid)
+        tr = reseller_key_tracking(kid)
         u = get_user(int(k.get("owner_id") or 0))
         uname = (u.get("first_name") if u else None) or str(k.get("owner_id"))
+        ppd = 10
+        try:
+            ppd = float(get_setting("reseller_points_per_dollar") or 10)
+        except Exception:
+            pass
+        bal = float(get_user_points(int(k.get("owner_id") or 0)) or 0) / ppd if ppd else 0
     except Exception as e:
         await q.edit_message_text(f"❌ {e}"); return
     base = k.get("reseller_base_mode") or "global"
     markup = k.get("reseller_markup")
     markup_txt = f"{markup:g}%" if markup is not None else "global"
     text = (
-        f"🔑 Key `{k.get('key_prefix')}`\n"
+        f"👤 *{uname}* — Reseller Detail\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 {uname} (`{k.get('owner_id')}`)\n"
-        f"🟢 {'Active' if k.get('is_active') else 'Revoked'}\n"
-        f"💲 Markup: *{markup_txt}* · Base: *{base}*\n"
-        f"💳 Spend limit: ${float(k.get('spend_limit_usd') or 0):g}\n"
-        f"🗂️ Products: {k.get('allowed_products') or 'ALL'}\n"
-        f"🌐 IPs: {k.get('ip_whitelist') or 'ALL'}\n"
-        f"🔔 Webhook: {('ON' if k.get('webhook_url') else 'OFF')}\n"
-        f"📦 {ks.get('orders',0)} orders · ${ks.get('spent_usd',0):.2f} spent\n\n"
-        "Tap to change (value text me send karo):"
+        f"🔑 Key: `{k.get('key_prefix')}` · 🟢 {'Active' if k.get('is_active') else 'Revoked'}\n"
+        f"🆔 User: `{k.get('owner_id')}`\n"
+        f"💳 Wallet: *${bal:.2f}*\n"
+        f"💲 Markup: *{markup_txt}%* · Base: *{base}*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"📦 Orders: *{tr.get('orders',0)}* (✅ {tr.get('delivered',0)} · ⏳ {tr.get('pending',0)} · ❌ {tr.get('failed',0)})\n"
+        f"💰 Revenue: *${tr.get('revenue_usd',0):,.2f}*\n"
+        f"📈 Profit (est): *${tr.get('profit_usd',0):,.2f}*\n"
+        f"💎 Points spent: {tr.get('points_spent',0):g}\n"
+        f"🕐 Last order: {str(tr.get('last_order') or '—')[:16]}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Limits: spend ${0:g} · products {1} · IP {2} · webhook {3}".format(
+            float(k.get('spend_limit_usd') or 0),
+            k.get('allowed_products') or 'ALL',
+            k.get('ip_whitelist') or 'ALL',
+            'ON' if k.get('webhook_url') else 'OFF')
     )
     kb = [
+        [InlineKeyboardButton("📦 Their Orders", callback_data=f"reseller_orders_key_{kid}"),
+         InlineKeyboardButton("💳 Top-up", callback_data=f"reseller_topup_{kid}")],
+        [InlineKeyboardButton("📥 Record (.txt)", callback_data=f"reseller_export_key_{kid}")],
         [InlineKeyboardButton("💲 Markup %", callback_data=f"reseller_keyaction_{kid}_markup"),
          InlineKeyboardButton("🏷️ Base cost", callback_data=f"reseller_keyaction_{kid}_base_cost"),
          InlineKeyboardButton("🏷️ Base price", callback_data=f"reseller_keyaction_{kid}_base_price")],
@@ -10962,6 +10987,180 @@ async def reseller_keycfg_panel_callback(update, context):
         [InlineKeyboardButton("🔙 Back", callback_data="reseller_keys_panel")],
     ]
     await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def reseller_orders_key_callback(update, context):
+    """Per-reseller orders list."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        kid = int(q.data.replace("reseller_orders_key_", ""))
+        from database import reseller_key_orders, get_api_key_row
+        rows = reseller_key_orders(kid, limit=15)
+        k = get_api_key_row(kid)
+    except Exception as e:
+        await q.edit_message_text(f"❌ {e}"); return
+    if not rows:
+        await q.edit_message_text(f"📦 Key `{k.get('key_prefix')}` — no orders yet.",
+                                  parse_mode="Markdown",
+                                  reply_markup=InlineKeyboardMarkup(
+                                      [[InlineKeyboardButton("🔙 Back", callback_data=f"reseller_keycfg_panel_{kid}")]]))
+        return
+    lines = [f"📦 *Orders — {k.get('key_prefix')}*\n"]
+    kb = []
+    for r in rows:
+        st = {"delivered": "✅", "pending": "⏳", "processing": "🔄", "failed": "❌"}.get(r.get("status"), "❔")
+        lines.append(f"{st} #{r['id']} · {str(r.get('product_name'))[:22]} ×{r.get('qty')} · ${float(r.get('usd_amount') or 0):.2f} · {r.get('status')} · {str(r.get('created_at'))[:10]}")
+        if r.get("status") in ("pending", "processing"):
+            kb.append([InlineKeyboardButton(f"📤 Deliver #{r['id']}", callback_data=f"reseller_deliver_panel_{r['id']}")])
+    kb.append([InlineKeyboardButton("🔙 Back", callback_data=f"reseller_keycfg_panel_{kid}")])
+    await q.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def reseller_topup_callback(update, context):
+    """Top-up wizard: ask points amount for a key's owner."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        kid = int(q.data.replace("reseller_topup_", ""))
+        from database import get_api_key_row
+        k = get_api_key_row(kid)
+    except Exception as e:
+        await q.edit_message_text(f"❌ {e}"); return
+    context.user_data["rs_step"] = {"action": "topup", "key_id": kid}
+    await q.edit_message_text(
+        f"💳 Top-up for key `{k.get('key_prefix')}`\n\n"
+        "Send *points* amount (e.g. `500`):\n"
+        "_(1 point = $0.10 default)_\n\n_(/cancel to cancel)_",
+        parse_mode="Markdown")
+
+
+async def reseller_webhooks_callback(update, context):
+    """Webhook delivery log."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        conn = get_connection(); c = conn.cursor()
+        c.execute("SELECT id, key_id, event, status, attempts, created_at FROM reseller_webhook_events ORDER BY id DESC LIMIT 15")
+        rows = [dict(r) for r in c.fetchall()]; conn.close()
+    except Exception as e:
+        await q.edit_message_text(f"❌ {e}"); return
+    if not rows:
+        await q.edit_message_text("🔔 *Webhooks Log*\n\n(koi events nahi abhi)",
+                                  parse_mode="Markdown",
+                                  reply_markup=InlineKeyboardMarkup(
+                                      [[InlineKeyboardButton("🔙 Back", callback_data="reseller_panel")]]))
+        return
+    lines = ["🔔 *Webhooks Log (last 15):*\n"]
+    for r in rows:
+        st = {"sent": "✅", "pending": "⏳"}.get(r.get("status"), "❌")
+        lines.append(f"{st} key {r.get('key_id')} · {r.get('event')} · attempts {r.get('attempts')} · {str(r.get('created_at'))[:16]}")
+    kb = [[InlineKeyboardButton("🔙 Back", callback_data="reseller_panel")]]
+    await q.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def reseller_export_callback(update, context):
+    """Export all reseller records as .txt."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        from reseller_api import list_reseller_keys
+        from database import reseller_key_tracking, reseller_orders, get_user, get_user_points, get_setting
+        keys = list_reseller_keys()
+        lines = ["BITE STORE — RESELLER RECORD", "=" * 40, ""]
+        total_rev = 0.0
+        total_profit = 0.0
+        for k in keys:
+            kid = int(k.get("id") or 0)
+            uid = int(k.get("owner_id") or 0)
+            tr = reseller_key_tracking(kid)
+            try:
+                u = get_user(uid)
+                uname = (u.get("first_name") if u else None) or str(uid)
+            except Exception:
+                uname = str(uid)
+            lines.append(f"[{k.get('key_prefix')}] {uname} (id {uid})")
+            lines.append(f"  Status: {'Active' if k.get('is_active') else 'Revoked'} | Created: {str(k.get('created_at') or '')[:10]}")
+            lines.append(f"  Orders: {tr.get('orders',0)} (delivered {tr.get('delivered',0)}, pending {tr.get('pending',0)}, failed {tr.get('failed',0)})")
+            lines.append(f"  Revenue: ${tr.get('revenue_usd',0):,.2f} | Profit(est): ${tr.get('profit_usd',0):,.2f} | Points spent: {tr.get('points_spent',0):g}")
+            lines.append(f"  Requests: {int(k.get('request_count') or 0)} | Last used: {str(k.get('last_used_at') or '—')[:16]}")
+            lines.append(f"  Markup: {k.get('reseller_markup') or 'global'} | Base: {k.get('reseller_base_mode') or 'global'}")
+            lines.append(f"  Webhook: {'ON' if k.get('webhook_url') else 'OFF'}")
+            lines.append("")
+            total_rev += tr.get("revenue_usd", 0)
+            total_profit += tr.get("profit_usd", 0)
+        lines.append("=" * 40)
+        lines.append(f"TOTAL REVENUE: ${total_rev:,.2f} | TOTAL PROFIT(est): ${total_profit:,.2f}")
+        txt = "\n".join(lines)
+        import io
+        bio = io.BytesIO(txt.encode("utf-8"))
+        bio.name = "resellers_record.txt"
+        await context.bot.send_document(chat_id=ADMIN_ID, document=bio,
+                                        caption="📊 Reseller record export")
+    except Exception as e:
+        try:
+            await q.edit_message_text(f"❌ {e}")
+        except Exception:
+            pass
+        return
+    try:
+        await q.edit_message_text("✅ Reseller record bhej diya (file).",
+                                  reply_markup=InlineKeyboardMarkup(
+                                      [[InlineKeyboardButton("🔙 Back", callback_data="reseller_panel")]]))
+    except Exception:
+        pass
+
+
+async def reseller_export_key_callback(update, context):
+    """Export ONE reseller's full order record as .txt."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        kid = int(q.data.replace("reseller_export_key_", ""))
+        from reseller_api import list_reseller_keys
+        from database import reseller_key_tracking, reseller_key_orders, get_api_key_row, get_user
+        k = get_api_key_row(kid)
+        tr = reseller_key_tracking(kid)
+        rows = reseller_key_orders(kid, limit=200)
+        u = get_user(int(k.get("owner_id") or 0))
+        uname = (u.get("first_name") if u else None) or str(k.get("owner_id"))
+        lines = [f"RESELLER RECORD — {k.get('key_prefix')} ({uname}, id {k.get('owner_id')})",
+                 "=" * 40, ""]
+        lines.append(f"Status: {'Active' if k.get('is_active') else 'Revoked'} | Created: {str(k.get('created_at') or '')[:10]}")
+        lines.append(f"Orders: {tr.get('orders',0)} | Revenue: ${tr.get('revenue_usd',0):,.2f} | Profit(est): ${tr.get('profit_usd',0):,.2f}")
+        lines.append("")
+        lines.append("ORDERS:")
+        for r in rows:
+            lines.append(f"  #{r['id']} | {r.get('product_name')} x{r.get('qty')} | ${float(r.get('usd_amount') or 0):.2f} | {r.get('status')} | {str(r.get('created_at'))[:16]}")
+        lines.append("")
+        lines.append("=" * 40)
+        import io
+        bio = io.BytesIO("\n".join(lines).encode("utf-8"))
+        bio.name = f"reseller_{k.get('key_prefix')}.txt"
+        await context.bot.send_document(chat_id=ADMIN_ID, document=bio,
+                                        caption=f"📊 {k.get('key_prefix')} record")
+    except Exception as e:
+        try:
+            await q.edit_message_text(f"❌ {e}")
+        except Exception:
+            pass
+        return
+    try:
+        await q.edit_message_text("✅ Record bhej diya (file).",
+                                  reply_markup=InlineKeyboardMarkup(
+                                      [[InlineKeyboardButton("🔙 Back", callback_data=f"reseller_keycfg_panel_{kid}")]]))
+    except Exception:
+        pass
 
 
 async def reseller_keyaction_callback(update, context):
@@ -11232,6 +11431,25 @@ async def reseller_wizard_text(update, context):
             await update.message.reply_text(
                 f"✅ Reseller price for #{pid} → *${price:g}*" if n else "❌ Product not found",
                 parse_mode="Markdown")
+        elif action == "topup":
+            kid = int(step.get("key_id") or 0)
+            pts = float(text)
+            if pts <= 0:
+                await update.message.reply_text("❌ Amount must be > 0")
+            else:
+                from database import get_api_key_row, add_points, get_user
+                k = get_api_key_row(kid)
+                uid = int(k.get("owner_id") or 0)
+                add_points(uid, pts, tx_type="credit",
+                           description=f"Reseller top-up (key {k.get('key_prefix')})")
+                try:
+                    u = get_user(uid)
+                    uname = (u.get("first_name") if u else None) or str(uid)
+                except Exception:
+                    uname = str(uid)
+                await update.message.reply_text(
+                    f"✅ *{pts:g} points* added to {uname} (`{uid}`) wallet.\n"
+                    "Ledger mein record ho gaya.", parse_mode="Markdown")
         else:
             await update.message.reply_text("❓ Unknown wizard step — send /cancel")
     except Exception as e:

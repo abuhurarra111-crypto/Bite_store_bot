@@ -294,6 +294,12 @@ BUTTONS = {
         "large": "💬 AI Assistant", "xl": "💬 AI Admin Assistant — Ask anything",
         "callback": "admin_ai",
     },
+    "admin_reseller": {
+        "group": "admin", "essential": False,
+        "short": "📊", "medium": "📊 Reseller Panel",
+        "large": "📊 Reseller Panel", "xl": "📊 Reseller Panel — Track & manage resellers",
+        "callback": "reseller_panel",
+    },
     "admin_reset": {
         "group": "admin", "essential": False,
         "short": "🔄", "medium": "🔄 Reset",

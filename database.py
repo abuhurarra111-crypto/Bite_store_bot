@@ -6469,3 +6469,80 @@ def reseller_key_stats(key_id: int) -> dict:
         try: conn.close()
         except Exception: pass
     return out
+
+
+# ────────────────────────────────────────────────────────────
+# 🆕 v161.6 — RESELLER TRACKING (revenue / profit / records)
+# ────────────────────────────────────────────────────────────
+
+def reseller_order_profit(order_row) -> float:
+    """Estimated profit for one delivered reseller order:
+    reseller paid (usd_amount) − supplier cost (products.cost_price × qty)."""
+    try:
+        pid = int(order_row.get("product_id") or 0)
+        qty = int(order_row.get("qty") or 1)
+        revenue = float(order_row.get("usd_amount") or 0)
+        if not pid:
+            return round(revenue, 2)
+        p = get_product(pid)
+        if not p:
+            return round(revenue, 2)
+        cost = float(dict(p).get("cost_price") or 0)
+        if cost <= 0:
+            cost = float(dict(p).get("price") or 0)
+        return round(max(0.0, revenue - cost * qty), 2)
+    except Exception:
+        return 0.0
+
+
+def reseller_key_tracking(key_id: int) -> dict:
+    """Full per-key tracking record."""
+    out = {"orders": 0, "delivered": 0, "failed": 0, "pending": 0,
+           "revenue_usd": 0.0, "profit_usd": 0.0, "points_spent": 0.0,
+           "first_order": "", "last_order": ""}
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("""SELECT * FROM reseller_orders WHERE key_id=? ORDER BY id DESC""",
+                  (int(key_id),))
+        rows = [dict(r) for r in c.fetchall()]
+        for r in rows:
+            out["orders"] += 1
+            st = r.get("status")
+            if st == "delivered":
+                out["delivered"] += 1
+                out["revenue_usd"] += float(r.get("usd_amount") or 0)
+                out["profit_usd"] += reseller_order_profit(r)
+            elif st == "failed":
+                out["failed"] += 1
+            elif st in ("pending", "processing"):
+                out["pending"] += 1
+            out["points_spent"] += float(r.get("points_amount") or 0)
+            if not out["first_order"]:
+                out["first_order"] = str(r.get("created_at") or "")
+            out["last_order"] = str(r.get("created_at") or "")
+        out["revenue_usd"] = round(out["revenue_usd"], 2)
+        out["profit_usd"] = round(out["profit_usd"], 2)
+        out["points_spent"] = round(out["points_spent"], 2)
+    except Exception:
+        pass
+    finally:
+        try: conn.close()
+        except Exception: pass
+    return out
+
+
+def reseller_top_keys(limit=5) -> list:
+    """Top reseller keys by delivered revenue."""
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("""SELECT key_id, user_id, COUNT(*) AS orders,
+                            SUM(CASE WHEN status='delivered' THEN usd_amount ELSE 0 END) AS rev
+                     FROM reseller_orders
+                     GROUP BY key_id ORDER BY rev DESC LIMIT ?""", (int(limit),))
+        rows = [dict(r) for r in c.fetchall()]
+    except Exception:
+        rows = []
+    finally:
+        try: conn.close()
+        except Exception: pass
+    return rows
