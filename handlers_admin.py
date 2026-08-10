@@ -11273,24 +11273,79 @@ async def reseller_orders_panel_callback(update, context):
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
     await q.answer()
+    await _render_reseller_orders_panel(update, context, q)
+
+
+async def reseller_orders_filter_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
     try:
-        from database import list_reseller_orders
-        rows = list_reseller_orders(limit=12)
+        kind, val = q.data.replace("reseller_orders_filter_", "").split("_", 1)
+    except Exception:
+        return
+    flt = dict(context.user_data.get("rs_orders") or {"status": "all", "range": "all"})
+    if kind == "status":
+        flt["status"] = val
+    elif kind == "range":
+        flt["range"] = val
+    context.user_data["rs_orders"] = flt
+    await _render_reseller_orders_panel(update, context, q)
+
+
+async def _render_reseller_orders_panel(update, context, q):
+    """Reseller orders list with status + date filters (v161.6)."""
+    try:
+        from database import list_reseller_orders, get_connection
     except Exception as e:
         await q.edit_message_text(f"❌ {e}"); return
+    flt = dict(context.user_data.get("rs_orders") or {"status": "all", "range": "all"})
+    status = flt.get("status", "all")
+    rng = flt.get("range", "all")
+    try:
+        rows = list_reseller_orders(limit=200)
+    except Exception as e:
+        await q.edit_message_text(f"❌ {e}"); return
+    # filter by status
+    if status == "delivered":
+        rows = [r for r in rows if r.get("status") == "delivered"]
+    elif status == "pending":
+        rows = [r for r in rows if r.get("status") in ("pending", "processing")]
+    elif status == "failed":
+        rows = [r for r in rows if r.get("status") == "failed"]
+    # filter by date range
+    if rng == "24h":
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+        rows = [r for r in rows if str(r.get("created_at") or "") >= cutoff]
+    elif rng == "7d":
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+        rows = [r for r in rows if str(r.get("created_at") or "") >= cutoff]
+    rows = rows[:12]
+    lines = [f"📦 *Reseller Orders* — status `{status}` · range `{rng}`\n"]
     if not rows:
-        await q.edit_message_text("📦 No reseller orders yet.",
-                                  reply_markup=InlineKeyboardMarkup(
-                                      [[InlineKeyboardButton("🔙 Back", callback_data="reseller_panel")]]))
-        return
-    lines = ["📦 *Reseller Orders (last 12):*\n"]
+        lines.append("(koi orders nahi is filter mein)")
     kb = []
     for r in rows:
         st = {"delivered": "✅", "pending": "⏳", "processing": "🔄", "failed": "❌"}.get(r.get("status"), "❔")
-        lines.append(f"{st} #{r['id']} · {str(r.get('product_name'))[:22]} ×{r.get('qty')} · ${float(r.get('usd_amount') or 0):.2f} · {r.get('status')}")
+        lines.append(f"{st} #{r['id']} · {str(r.get('product_name'))[:20]} ×{r.get('qty')} · ${float(r.get('usd_amount') or 0):.2f} · {str(r.get('created_at'))[:10]}")
         if r.get("status") in ("pending", "processing"):
             kb.append([InlineKeyboardButton(f"📤 Deliver #{r['id']}",
                                             callback_data=f"reseller_deliver_panel_{r['id']}")])
+    # filter buttons
+    kb.append([
+        InlineKeyboardButton("📋 All", callback_data="reseller_orders_filter_status_all"),
+        InlineKeyboardButton("✅ Del", callback_data="reseller_orders_filter_status_delivered"),
+        InlineKeyboardButton("⏳ Pend", callback_data="reseller_orders_filter_status_pending"),
+        InlineKeyboardButton("❌ Fail", callback_data="reseller_orders_filter_status_failed"),
+    ])
+    kb.append([
+        InlineKeyboardButton("🕐 24h", callback_data="reseller_orders_filter_range_24h"),
+        InlineKeyboardButton("📅 7d", callback_data="reseller_orders_filter_range_7d"),
+        InlineKeyboardButton("🗓️ All", callback_data="reseller_orders_filter_range_all"),
+    ])
     kb.append([InlineKeyboardButton("🔙 Back", callback_data="reseller_panel")])
     await q.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -11527,6 +11582,23 @@ async def reseller_api_user_callback(update, context):
         bal = float(get_user_points(uid) or 0) / ppd if ppd else 0
     except Exception:
         bal = 0.0
+    # 🆕 v161.6: show the key's limits + pricing so the reseller knows them
+    try:
+        _spend = float(key.get("spend_limit_usd") or 0)
+        _rate = int(key.get("rate_limit") or 60)
+        _prods = (key.get("allowed_products") or "").strip()
+        _ips = (key.get("ip_whitelist") or "").strip()
+        _mk = key.get("reseller_markup")
+        _base = (key.get("reseller_base_mode") or "").strip() or "global"
+        limits_lines = (
+            f"💳 Spend limit: *{('$' + format(_spend, 'g')) if _spend else 'Unlimited'}*\n"
+            f"📊 Rate limit: *{_rate}/min*\n"
+            f"🗂️ Products: *{'ALL' if not _prods or _prods.lower() == 'all' else _prods}*\n"
+            f"🌐 IP whitelist: *{'ALL' if not _ips or _ips.lower() == 'all' else _ips}*\n"
+            f"💲 Your markup: *{('%g' % _mk) if _mk is not None else 'global'}%* · base: *{_base}*"
+        )
+    except Exception:
+        limits_lines = ""
     text = (
         "🔗 *API Access*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
@@ -11534,7 +11606,9 @@ async def reseller_api_user_callback(update, context):
         f"🔑 *Your API Key:*\n`{prefix}....`\n\n"
         f"💳 Balance: *${bal:.2f}*\n"
         f"📨 Total requests: *{reqs}*\n"
-        f"📅 Created: *{created}*"
+        f"📅 Created: *{created}*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        + (limits_lines + "\n" if limits_lines else "")
     )
     kb = [
         [InlineKeyboardButton("👁️ Show Full Key", callback_data="reseller_api_show"),

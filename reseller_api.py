@@ -30,7 +30,7 @@ import threading
 
 try:
     from fastapi import FastAPI, Request, Header, HTTPException, Depends, Query
-    from fastapi.responses import JSONResponse, RedirectResponse, Response
+    from fastapi.responses import JSONResponse, RedirectResponse, Response, HTMLResponse
     from pydantic import BaseModel
     _FASTAPI_OK = True
 except Exception as _fe:  # allow import in non-API environments
@@ -650,6 +650,8 @@ def _notify_admin(text: str):
 # ────────────────────────────────────────────────────────────
 
 if _FASTAPI_OK:
+    # 🆕 v161.6: custom gradient-themed docs page (red→green→blue) — default
+    # FastAPI /docs is disabled; we serve our own styled Swagger UI instead.
     app = FastAPI(
         title="Bite Store — Reseller API",
         description=(
@@ -699,9 +701,9 @@ if _FASTAPI_OK:
             "Send header `Idempotency-Key: <unique>` with orders — if the same order is\n"
             "re-sent, you get the same result back instead of a duplicate delivery."
         ),
-        version="1.2.0",
-        docs_url="/docs",
-        redoc_url="/redoc",
+        version="1.6.0",
+        docs_url=None,
+        redoc_url=None,
     )
 
     class _OrderBody(BaseModel):
@@ -748,6 +750,101 @@ if _FASTAPI_OK:
     @app.get("/api-docs/", include_in_schema=False)
     async def _api_docs():
         return RedirectResponse("/docs")
+
+    @app.get("/docs", include_in_schema=False)
+    async def _docs():
+        return HTMLResponse(_DOCS_HTML, status_code=200)
+
+    _DOCS_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Bite Store — Reseller API Docs</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css"/>
+<style>
+  :root {
+    --g1:#e53935; --g2:#fb8c00; --g3:#43a047; --g4:#1e88e5;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin:0; padding:0; min-height:100%;
+    background: linear-gradient(135deg, var(--g1) 0%, var(--g2) 30%, var(--g3) 65%, var(--g4) 100%);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .page { padding: 28px 16px 60px; }
+  .hero {
+    max-width: 1000px; margin: 0 auto 24px; color: #fff;
+    text-shadow: 0 2px 8px rgba(0,0,0,.35);
+  }
+  .hero h1 { margin: 0 0 6px; font-size: 30px; letter-spacing: .3px; }
+  .hero p { margin: 0; font-size: 15px; opacity: .95; }
+  .badges { margin-top: 10px; }
+  .badge {
+    display:inline-block; background: rgba(255,255,255,.22);
+    border: 1px solid rgba(255,255,255,.45); backdrop-filter: blur(4px);
+    padding: 3px 12px; border-radius: 999px; font-size: 12.5px; margin-right: 6px;
+  }
+  .swagger-wrap {
+    max-width: 1000px; margin: 0 auto; background: #fff;
+    border-radius: 16px; box-shadow: 0 18px 50px rgba(0,0,0,.35);
+    overflow: hidden;
+  }
+  .swagger-top {
+    height: 6px; background: linear-gradient(90deg, var(--g1), var(--g2), var(--g3), var(--g4));
+  }
+  .swagger-ui { padding: 10px 22px 30px; }
+  .swagger-ui .topbar { display:none; }
+  /* Gradient theming of swagger elements */
+  .swagger-ui .btn.authorize { border-color: var(--g3); color: var(--g3); }
+  .swagger-ui .btn.authorize svg { fill: var(--g3); }
+  .swagger-ui .opblock-tag { border-bottom: 2px solid var(--g3); }
+  .swagger-ui .opblock.opblock-get { border-color: var(--g3); background: rgba(67,160,71,.06); }
+  .swagger-ui .opblock.opblock-post { border-color: var(--g4); background: rgba(30,136,229,.06); }
+  .swagger-ui .opblock-summary-method { background: linear-gradient(135deg, var(--g2), var(--g3)); }
+  .swagger-ui .info .title { color: #111; }
+  .swagger-ui .scheme-container { background: #f8fafc; border-radius: 10px; }
+  .swagger-ui .info h2, .swagger-ui .info p { color:#333; }
+  .swagger-ui .model-box { background:#f8fafc; }
+  a { color: var(--g4); }
+  @media (max-width: 640px) {
+    .hero h1 { font-size: 23px; }
+    .swagger-ui { padding: 6px 10px 20px; }
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="hero">
+      <h1>🔗 Bite Store — Reseller API</h1>
+      <p>Sell our products in your own bot — everything auto-delivered.</p>
+      <div class="badges">
+        <span class="badge">🔑 X-API-Key auth</span>
+        <span class="badge">📦 Auto-delivery</span>
+        <span class="badge">🪙 Points wallet</span>
+        <span class="badge">🔒 No supplier info exposed</span>
+      </div>
+    </div>
+    <div class="swagger-wrap">
+      <div class="swagger-top"></div>
+      <div id="swagger-ui" class="swagger-ui"></div>
+    </div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    window.onload = function() {
+      window.ui = SwaggerUIBundle({
+        url: '/openapi.json',
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        presets: [SwaggerUIBundle.presets.apis],
+        layout: 'BaseLayout'
+      });
+    };
+  </script>
+</body>
+</html>
+"""
 
     @app.get("/v1/products", summary="List resellable products (live stock, pagination, search)",
              description=(

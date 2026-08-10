@@ -2392,6 +2392,7 @@ def main():
         ("^reseller_price_markup$", reseller_price_markup_callback),
         ("^reseller_base_mode_(cost|price)$", reseller_base_mode_callback),
         ("^reseller_orders_panel$", reseller_orders_panel_callback),
+        ("^reseller_orders_filter_(status|range)_(.+)$", reseller_orders_filter_callback),
         ("^reseller_deliver_panel_\\d+$", reseller_deliver_panel_callback),
         ("^reseller_stats_panel$", reseller_stats_panel_callback),
         ("^reseller_admin_products$", reseller_admin_products_callback),
