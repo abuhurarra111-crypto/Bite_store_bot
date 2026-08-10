@@ -3315,10 +3315,28 @@ def pop_pending_tier_upgrades():
 # ── 🆕 Real-purchase broadcast queue (drained by a job → fake-activity dest) ──
 _PENDING_PURCHASE_BROADCASTS = []
 
-def _queue_purchase_broadcast(product_id, product_name, qty=1):
-    _PENDING_PURCHASE_BROADCASTS.append({
+def _queue_purchase_broadcast(product_id, product_name, qty=1, kind="normal", **extra):
+    item = {
         "product_id": product_id, "product_name": product_name, "qty": qty,
-    })
+        "kind": kind,
+    }
+    item.update(extra)
+    _PENDING_PURCHASE_BROADCASTS.append(item)
+
+def queue_bulk_hype_broadcasts(product_id, product_name, base_price, tier_qty,
+                               tier_price, count=3):
+    """🆕 v161.12: when admin sets a bulk-discount tier, queue `count` hype
+    alerts (drained by the 15s job) so it looks like people are buying because
+    of the bulk discount."""
+    for _ in range(max(1, int(count))):
+        _queue_purchase_broadcast(product_id, product_name, qty=int(tier_qty),
+                                  kind="bulk", base_price=float(base_price or 0),
+                                  tier_price=float(tier_price or 0))
+
+def queue_reseller_broadcast(product_id, product_name, qty, amount, key_prefix):
+    """🆕 v161.12: reseller API purchase → real alert to the destination."""
+    _queue_purchase_broadcast(product_id, product_name, qty=qty, kind="reseller",
+                              amount=float(amount or 0), key_prefix=str(key_prefix or ""))
 
 def pop_pending_purchase_broadcasts():
     """Return and clear pending real-purchase broadcasts."""
@@ -6546,3 +6564,77 @@ def reseller_top_keys(limit=5) -> list:
         try: conn.close()
         except Exception: pass
     return rows
+
+
+# ────────────────────────────────────────────────────────────
+# 🆕 v161.12 — COMBINED POINTS (points + ref_points spendable)
+# Users earn ref_points from referrals; now they can ALSO spend them
+# via "Pay with Points" (points deducted first, then ref_points).
+# ────────────────────────────────────────────────────────────
+
+def get_combined_points(uid):
+    """Total spendable points = normal points + ref_points."""
+    try:
+        return _points_float(get_user_points(uid)) + _points_float(get_ref_points(uid))
+    except Exception:
+        return _points_float(get_user_points(uid))
+
+
+def deduct_points_if_enough_combined(user_id, amount, tx_type='debit',
+                                     description='', event_id='', order_id=0):
+    """Atomically spend `amount` from points FIRST, then ref_points.
+    Returns True when the combined balance covered the full amount.
+    Both debits are written to points_ledger so history is complete.
+    """
+    amount = _points_float(amount)
+    conn = get_connection(); c = conn.cursor()
+    try:
+        user_id = int(user_id)
+    except Exception:
+        conn.close(); return False
+    try:
+        ensure_points_ledger_table(c)
+        c.execute("BEGIN IMMEDIATE")
+        if event_id:
+            c.execute("SELECT 1 FROM points_ledger WHERE event_id=? LIMIT 1", (str(event_id),))
+            if c.fetchone():
+                conn.rollback(); conn.close(); return False
+        c.execute("SELECT COALESCE(points,0), COALESCE(ref_points,0) FROM users WHERE user_id=?",
+                  (user_id,))
+        row = c.fetchone()
+        pts_before = _points_float(row[0]) if row else 0.0
+        ref_before = _points_float(row[1]) if row else 0.0
+        combined = pts_before + ref_before
+        if combined + 1e-9 < amount:
+            conn.rollback(); conn.close(); return False
+
+        # Deduct points first
+        take_pts = min(pts_before, amount)
+        if take_pts > 0:
+            c.execute("UPDATE users SET points=? WHERE user_id=?",
+                      (round(pts_before - take_pts, 4), user_id))
+            c.execute("""INSERT OR IGNORE INTO points_ledger
+                         (user_id, amount, balance_before, balance_after,
+                          tx_type, description, event_id, order_id)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                      (user_id, -abs(take_pts), pts_before, round(pts_before - take_pts, 4),
+                       str(tx_type or 'debit'), str(description or ''), str(event_id or ''), int(order_id or 0)))
+        # Then ref_points
+        remain = amount - take_pts
+        if remain > 1e-9:
+            c.execute("UPDATE users SET ref_points=? WHERE user_id=?",
+                      (round(ref_before - remain, 4), user_id))
+            c.execute("""INSERT OR IGNORE INTO points_ledger
+                         (user_id, amount, balance_before, balance_after,
+                          tx_type, description, event_id, order_id)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                      (user_id, -abs(remain), ref_before, round(ref_before - remain, 4),
+                       str(tx_type or 'debit'), str(description or '') + " (ref points)",
+                       str(event_id or '') + "-ref", int(order_id or 0)))
+        conn.commit(); conn.close(); return True
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
+        return False

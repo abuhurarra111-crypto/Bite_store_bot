@@ -721,6 +721,38 @@ TEMPLATES = [
         "sample":  {"product": "ChatGPT Plus Apple Pay Vietnamese card Gmail 1M - 15D warranty",
                      "added": "18", "stock": "24", "price": "4.57"},
     },
+    # 🆕 v161.12: Bulk-discount hype (fires when admin sets a tier)
+    {
+        "id":      "bc_bulk_discount",
+        "name":    "🔥 Bulk Discount Hype",
+        "section": "📢 Fake Broadcast",
+        "vars":    "{product}, {qty}, {price}, {old_price}, {base_price}",
+        "default": (
+            "🔥 *Bulk Discount Alert!* 🎉\n\n"
+            "📦 {product}\n"
+            "💰 {qty}+ qty → *${price} each* (was ${old_price})\n\n"
+            "⚡ People are grabbing bulk deals right now!\n"
+            "_Buy more, save more — hurry!_ 🛒"
+        ),
+        "sample":  {"product": "🤖 Gemini Pro", "qty": "10", "price": "0.89",
+                    "old_price": "1.00", "base_price": "1.00"},
+    },
+    # 🆕 v161.12: Reseller API purchase / hype
+    {
+        "id":      "bc_reseller",
+        "name":    "🔗 Reseller API Purchase",
+        "section": "📢 Fake Broadcast",
+        "vars":    "{product}, {qty}, {amount}, {key_prefix}",
+        "default": (
+            "🔗 *Reseller API Sale!* 📈\n\n"
+            "📦 {product} × {qty}\n"
+            "💰 ${amount}\n"
+            "🤖 Delivered instantly via Reseller API\n\n"
+            "_Sell our products on your own bot — get your API key today!_"
+        ),
+        "sample":  {"product": "ChatGPT Plus", "qty": "2", "amount": "10.00",
+                    "key_prefix": "bsk_xxx"},
+    },
     {
         "id":      "bc_review",
         "name":    "🗣 Review Broadcast",

@@ -124,6 +124,8 @@ S_TYPE_NEWUSER   = "pua_type_newuser"     # 🎉 New user joined
 S_TYPE_FLASH     = "pua_type_flash"       # 🛍 Flash sale (real events only)
 S_TYPE_NEWPROD   = "pua_type_newprod"     # 🆕 New product (real + fake)
 S_TYPE_PRICE_DROP= "pua_type_price_drop"  # 🆕 v66 Big Price Drop alerts
+S_TYPE_RESELLER = "pua_type_reseller"   # 🆕 v161.12 Reseller API hype
+S_TYPE_BULK     = "pua_type_bulk"       # 🆕 v161.12 Bulk-discount hype
 S_TYPE_FREECLAIM = "pua_type_freeclaim"   # 🆕 v110 Fake Free-via-Referrals claim broadcasts
 
 
@@ -218,7 +220,9 @@ def is_type_on(type_key):
         "newuser":   S_TYPE_NEWUSER,
         "flash":     S_TYPE_FLASH,
         "newprod":   S_TYPE_NEWPROD,
-        "price_drop": S_TYPE_PRICE_DROP,   # 🆕 v66
+        "price_drop": S_TYPE_PRICE_DROP,
+        "reseller":   S_TYPE_RESELLER,
+        "bulk":       S_TYPE_BULK,   # 🆕 v66
         "freeclaim":  S_TYPE_FREECLAIM,    # 🆕 v110
     }
     k = key_map.get(type_key)
@@ -484,6 +488,9 @@ async def build_fake_message(bot, user_id: int) -> tuple[str, any]:
         # + admin's custom text / picked template, so it looks IDENTICAL to
         # a real claim broadcast (color, emoji, size, all preserved).
         ("freeclaim", 8),
+        # 🆕 v161.12: reseller API hype + bulk-discount hype
+        ("reseller", 5),
+        ("bulk",     5),
         # NOTE: 'flash' is NOT in the random pool — flash sale only broadcasts
         # for REAL flash sales the admin sets (its toggle gates that broadcast).
     ]
@@ -928,6 +935,63 @@ async def build_fake_message(bot, user_id: int) -> tuple[str, any]:
                 kb = InlineKeyboardMarkup([[_btn]])
                 return msg, kb
         chosen = "discount"  # fallback if no product
+
+    # ── 🆕 v161.12: RESELLER API HYPE (fake) ────────
+    if chosen == "reseller":
+        product = _get_random_product()
+        if product:
+            pid, pname, price = product
+            qty = random.choices([1, 1, 2, 3, 5], weights=[50, 25, 15, 7, 3])[0]
+            amount = round(price * qty, 2)
+            try:
+                from fake_engagement import make_reseller_msg
+                msg = make_reseller_msg(pname, qty, amount,
+                                        key_prefix=f"bsk_{_mask_name(name)[:3].lower() or 'api'}")
+            except Exception:
+                msg = ""
+            if msg:
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                try:
+                    bot_me = await bot.get_me(); bot_username = bot_me.username
+                except Exception:
+                    bot_username = "BiteStoreBot"
+                _url = f"https://t.me/{bot_username}?start=buy_{pid}"
+                try:
+                    from button_system import build_button as _bb
+                    _btn = _bb("bc_reseller", "🛒 Buy Now", url=_url)
+                except Exception:
+                    _btn = InlineKeyboardButton("🛒 Buy Now", url=_url)
+                kb = InlineKeyboardMarkup([[_btn]])
+                return msg, kb
+        chosen = "deposit"
+
+    # ── 🆕 v161.12: BULK DISCOUNT HYPE (fake) ──────
+    if chosen == "bulk":
+        product = _get_random_product()
+        if product:
+            pid, pname, price = product
+            qty = random.choice([10, 20, 30, 50])
+            tier_price = round(price * random.uniform(0.75, 0.92), 2)
+            try:
+                from fake_engagement import make_bulk_discount_msg
+                msg = make_bulk_discount_msg(pname, qty, tier_price, price)
+            except Exception:
+                msg = ""
+            if msg:
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                try:
+                    bot_me = await bot.get_me(); bot_username = bot_me.username
+                except Exception:
+                    bot_username = "BiteStoreBot"
+                _url = f"https://t.me/{bot_username}?start=buy_{pid}"
+                try:
+                    from button_system import build_button as _bb
+                    _btn = _bb("bc_bulk_discount", "🛒 Buy Now", url=_url)
+                except Exception:
+                    _btn = InlineKeyboardButton("🛒 Buy Now", url=_url)
+                kb = InlineKeyboardMarkup([[_btn]])
+                return msg, kb
+        chosen = "deposit"
 
     # ── 🆕 NEW PRODUCT (fake random) ──────────────
     if chosen == "newprod":

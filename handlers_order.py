@@ -4815,21 +4815,23 @@ async def pay_pts_callback(update, context):
     # deduct_points_if_enough() does check+debit inside BEGIN IMMEDIATE and
     # returns False when the balance is insufficient OR the debit failed — only
     # on True do we create the order and fulfill it.
-    from database import get_user, deduct_points_if_enough, create_order, get_order
+    # 🆕 v161.12: Pay with Points now spends BOTH normal points AND referral
+    # points (points first, then ref_points) — referral rewards are usable.
+    from database import (get_user, create_order, get_order,
+                          get_combined_points,
+                          deduct_points_if_enough_combined)
     from config import POINTS_PER_DOLLAR, ADMIN_ID
     
-    user = get_user(q.from_user.id)
-    balance = user['points'] if (user is not None and 'points' in user.keys()) else 0
+    balance = get_combined_points(q.from_user.id)
     
     cost_usd = _get_eff_price(p) * qty
     cost_pts = points_from_usd(cost_usd)
 
-    if not deduct_points_if_enough(q.from_user.id, cost_pts, tx_type='purchase',
-                                   description=f"Product #{pid}"):
+    if not deduct_points_if_enough_combined(q.from_user.id, cost_pts, tx_type='purchase',
+                                            description=f"Product #{pid}"):
         # Refresh balance for accurate messaging (it may have changed under us).
         try:
-            fresh = get_user(q.from_user.id)
-            balance = fresh['points'] if (fresh is not None and 'points' in fresh.keys()) else 0
+            balance = get_combined_points(q.from_user.id)
         except Exception:
             pass
         missing = max(0.0, cost_pts - balance)

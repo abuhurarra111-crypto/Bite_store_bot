@@ -206,6 +206,43 @@ def make_new_stock_msg(product, stock, price_usd, pkr_rate=280):
     )
 
 
+def make_bulk_discount_msg(product, qty, price, old_price):
+    """🔥 Bulk Discount Hype — admin-editable template (bc_bulk_discount)."""
+    try:
+        from customization import render_template
+        return render_template("bc_bulk_discount", {
+            "product": product,
+            "qty": str(qty),
+            "price": f"{price:.2f}",
+            "old_price": f"{old_price:.2f}",
+            "base_price": f"{old_price:.2f}",
+        })
+    except Exception:
+        return (f"🔥 *Bulk Discount Alert!* 🎉\n\n"
+                f"📦 {product}\n"
+                f"💰 {qty}+ qty → *${price:.2f} each* (was ${old_price:.2f})\n\n"
+                f"⚡ People are grabbing bulk deals right now!\n"
+                f"_Buy more, save more — hurry!_ 🛒")
+
+
+def make_reseller_msg(product, qty, amount, key_prefix=""):
+    """🔗 Reseller API Sale — admin-editable template (bc_reseller)."""
+    try:
+        from customization import render_template
+        return render_template("bc_reseller", {
+            "product": product,
+            "qty": str(qty),
+            "amount": f"{amount:.2f}",
+            "key_prefix": str(key_prefix or "bsk_•••"),
+        })
+    except Exception:
+        return (f"🔗 *Reseller API Sale!* 📈\n\n"
+                f"📦 {product} × {qty}\n"
+                f"💰 ${amount:.2f}\n"
+                f"🤖 Delivered instantly via Reseller API\n\n"
+                f"_Sell our products on your own bot — get your API key today!_")
+
+
 def make_discount_msg(product, old_price, new_price):
     """🔥 Discount — uses admin-editable template."""
     try:
@@ -304,6 +341,10 @@ SETTING_TYPE_TIER      = "fbc_type_tier"          # "1" or "0" — send fake tie
 SETTING_TYPE_STOCK     = "fbc_type_stock"         # "1" or "0" — send real new stock alerts?
 SETTING_TYPE_DISCOUNT  = "fbc_type_discount"      # "1" or "0" — send fake discount alerts?
 SETTING_TYPE_FREECLAIM = "fbc_type_freeclaim"     # 🆕 v110: fake free-via-referrals claims (uses per-product fc_btn)
+SETTING_TYPE_RESELLER = "fbc_type_reseller"     # 🆕 v161.12: fake reseller API hype
+SETTING_TYPE_BULK     = "fbc_type_bulk"         # 🆕 v161.12: fake bulk-discount hype
+SETTING_BUYNOW_SUFFIX = "fake_buynow_suffix"    # 🆕 v161.12: Buy Now button label suffix
+SETTING_BUYNOW_COLOR  = "fake_buynow_color"     # 🆕 v161.12: Buy Now button color (primary/success/danger)
 SETTING_NAME_STYLE     = "fbc_name_style"         # "stars" / "initials" / "random"
 SETTING_LOG_ENABLED    = "fbc_log_enabled"        # "1" or "0" — save broadcast log to DB?
 
@@ -584,6 +625,9 @@ async def run_fake_broadcast(bot, force_type=None):
         # least one enabled + in-stock free-claim product; auto-eligibility
         # filter happens below in the availability check.
         "freeclaim": 15,
+        # 🆕 v161.12: reseller API hype + bulk-discount hype
+        "reseller": 8,
+        "bulk":     6,
     }
 
     if is_test:
@@ -644,6 +688,31 @@ async def run_fake_broadcast(bot, force_type=None):
         if new_price >= old_price:
             new_price = round(old_price - 0.5, 1)
         msg = make_discount_msg(product_name, old_price, new_price)
+
+    elif chosen_type == "reseller":
+        # 🆕 v161.12: fake reseller API hype — a "reseller" bought via API
+        qty = random_qty()
+        amount = round(product_price * qty, 2)
+        msg = make_reseller_msg(product_name, qty, amount,
+                                key_prefix=f"bsk_{user[:4]}")
+
+    elif chosen_type == "bulk":
+        # 🆕 v161.12: fake bulk-discount hype — pick a real tier if the
+        # product has one, else a generic qty/price.
+        qty = random.choice([5, 10, 20, 30, 50])
+        try:
+            from database import get_product_tiers
+            tiers = get_product_tiers(int(product.get("id")) if isinstance(product, dict) else 0)
+        except Exception:
+            tiers = []
+        price = None
+        if tiers:
+            t = random.choice(tiers)
+            qty = int(t["min_qty"])
+            price = float(t["unit_price"])
+        if not price:
+            price = round(product_price * (1 - random.choice([0.1, 0.15, 0.2])), 2)
+        msg = make_bulk_discount_msg(product_name, qty, price, product_price)
 
     elif chosen_type == "freeclaim":
         # 🆕 v110: Fake free-via-referrals claim broadcast.
@@ -1643,6 +1712,8 @@ async def fake_broadcast_panel_callback(update, context):
     t_discount = is_type_enabled("discount")
     t_stock    = is_type_enabled("stock")
     t_freeclaim = is_type_enabled("freeclaim")  # 🆕 v110
+    t_reseller  = is_type_enabled("reseller")   # 🆕 v161.12
+    t_bulk      = is_type_enabled("bulk")       # 🆕 v161.12
 
     # ── Get user counts ──
     try:
@@ -1675,7 +1746,9 @@ async def fake_broadcast_panel_callback(update, context):
         f"  {_toggle_icon(t_tier)} Tier Upgrades\n"
         f"  {_toggle_icon(t_discount)} Discount Alerts\n"
         f"  {_toggle_icon(t_stock)} Real Stock Alerts *(auto)*\n"
-        f"  {_toggle_icon(t_freeclaim)} Fake Free-Claims *(uses per-product fc button)*\n\n"
+        f"  {_toggle_icon(t_freeclaim)} Fake Free-Claims *(uses per-product fc button)*\n"
+        f"  {_toggle_icon(t_reseller)} Reseller API Hype *(fake)*\n"
+        f"  {_toggle_icon(t_bulk)} Bulk Discount Hype *(fake)*\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📋 *How it works:*\n"
         f"• Fake msgs fire every {min_m}–{max_m} min randomly\n"
@@ -1705,6 +1778,11 @@ async def fake_broadcast_panel_callback(update, context):
         [
             InlineKeyboardButton(f"{_toggle_icon(t_freeclaim)} Fake Free-Claims", callback_data="fbc_type_freeclaim"),
         ],
+        # 🆕 v161.12: Reseller + Bulk hype toggles
+        [
+            InlineKeyboardButton(f"{_toggle_icon(t_reseller)} Reseller API Hype", callback_data="fbc_type_reseller"),
+            InlineKeyboardButton(f"{_toggle_icon(t_bulk)} Bulk Discount Hype",     callback_data="fbc_type_bulk"),
+        ],
         [InlineKeyboardButton("━━━━━ Settings ━━━━━", callback_data="fbc_noop")],
         [
             InlineKeyboardButton(f"⏱️ Set Interval ({min_m}–{max_m} min)", callback_data="fbc_set_interval"),
@@ -1724,6 +1802,10 @@ async def fake_broadcast_panel_callback(update, context):
         [
             InlineKeyboardButton("🧪 Test: Send NOW (Referral)",    callback_data="fbc_test_referral"),
             InlineKeyboardButton("🧪 Test: Random Type",            callback_data="fbc_test_random"),
+        ],
+        [
+            InlineKeyboardButton("🧪 Test: Reseller Hype",  callback_data="fbc_test_reseller"),
+            InlineKeyboardButton("🧪 Test: Bulk Hype",      callback_data="fbc_test_bulk"),
         ],
         [InlineKeyboardButton("📋 View Broadcast Log (Last 20)",    callback_data="fbc_log")],
         [InlineKeyboardButton("━━━━━ User Counter ━━━━━", callback_data="fbc_noop")],
@@ -1786,6 +1868,8 @@ _TYPE_MAP = {
     "discount": SETTING_TYPE_DISCOUNT,
     "stock":    SETTING_TYPE_STOCK,
     "freeclaim": SETTING_TYPE_FREECLAIM,  # 🆕 v110
+    "reseller": SETTING_TYPE_RESELLER,    # 🆕 v161.12
+    "bulk":     SETTING_TYPE_BULK,        # 🆕 v161.12
 }
 
 _TYPE_LABELS = {
@@ -1796,6 +1880,8 @@ _TYPE_LABELS = {
     "discount": "Discount Alerts",
     "stock":    "Real Stock Alerts",
     "freeclaim": "Fake Free-Claims",  # 🆕 v110
+    "reseller": "Reseller API Hype",  # 🆕 v161.12
+    "bulk":     "Bulk Discount Hype", # 🆕 v161.12
 }
 
 
@@ -3481,30 +3567,16 @@ def _product_buy_emoji(pid):
 def _buy_now_label(pid, default_suffix="🛒 Buy Now") -> str:
     """Return the Buy Now button label.
 
-    🆕 v96 FORMAT: "{leading_emoji} {first_2_words} Buy Now"
-      - leading_emoji: extracted from product name start (both regular emoji
-        AND premium <tg-emoji> markup; for premium the visible fallback char
-        is used in the button text since Telegram premium emojis inside
-        button labels are not supported by the API — the visible char is
-        the best UX we can do).
-      - first_2_words: first two whitespace-separated tokens from the
-        emoji-stripped product name (title-cased for polish).
-
-    Examples:
-      "🎮 Chatgpt Plus icloud mail nw"  →  "🎮 Chatgpt Plus Buy Now"
-      "[[HTML]]<tg-emoji emoji-id='5' >🎮</tg-emoji> Netflix Premium 1 Month"
-                                        →  "🎮 Netflix Premium Buy Now"
-      "Spotify"                          →  "Spotify Buy Now"
-      "" or missing product              →  "🛒 Buy Now"
-
-    Cleans [[HTML]]/<tg-emoji> markup + truncates to Telegram button
-    soft cap (~60 chars).
-
-    v96 change: `default_suffix` is now used as the trailing text only
-    (no dash separator). Old callers passing "🛒 Buy Now" get a nicer,
-    shorter, product-branded button. Legacy full-name behavior removed
-    per user request (2026-07-20).
+    🆕 v161.12: the trailing text is editable — the global setting
+    `fake_buynow_suffix` (default "🛒 Buy Now") overrides the default.
     """
+    try:
+        from database import get_setting
+        _suf = (get_setting("fake_buynow_suffix", "") or "").strip()
+        if _suf:
+            default_suffix = _suf
+    except Exception:
+        pass
     import re as _re
 
     try:
@@ -3686,6 +3758,14 @@ async def _buy_now_keyboard(bot, pid, btn_key="sb_buy_generic"):
     # 🆕 v94: build product-prefixed label
     prefixed = _buy_now_label(pid, "🛒 Buy Now")
     color = _get_broadcast_global_color(tpl_id)
+    # 🆕 v161.12: editable Buy Now color override
+    try:
+        from database import get_setting
+        _c = (get_setting("fake_buynow_color", "") or "").strip()
+        if _c in ("primary", "success", "danger"):
+            color = _c
+    except Exception:
+        pass
 
     # 🆕 v102 / 🐛 v147 FIX (Bug6): extract the product's premium emoji_id —
     # supplier-linked products use the FIXED emoji from ext_products, own

@@ -10244,6 +10244,16 @@ async def bdisc_price_received(update, context):
         return True
     from database import set_product_tier
     set_product_tier(pid, qty, price)
+    # 🆕 v161.12: bulk discount set → queue hype alerts ("people buying").
+    # 3 alerts drain over ~45s via the 15s purchase-broadcast job.
+    try:
+        from database import queue_bulk_hype_broadcasts, get_product
+        _p = get_product(pid)
+        _base = float((dict(_p).get("price") or 0) if _p else 0)
+        queue_bulk_hype_broadcasts(pid, (dict(_p).get("name") or "Product") if _p else "Product",
+                                   _base, qty, price, count=3)
+    except Exception as _bh:
+        print(f"[BulkHype] queue failed: {_bh}")
     context.user_data.pop('bdisc_step', None)
     context.user_data.pop('bdisc_qty', None)
     context.user_data.pop('bdisc_pid', None)

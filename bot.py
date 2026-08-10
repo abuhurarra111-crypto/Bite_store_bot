@@ -270,6 +270,7 @@ from ui_extras import (
     act_stop_all_callback, act_start_all_callback,
     act_noop_callback, ACT_SPEED, ACT_DELAY,
     act_set_offset_callback, act_offset_received, act_offset_random_callback, ACT_OFFSET,
+    act_buynow_label_callback, act_buynow_label_received, act_buynow_color_callback,
 )
 # 🆕 Location Customizer + Template Editor
 from customization import (
@@ -714,14 +715,43 @@ async def _flash_expiry_job(context):
 async def _purchase_broadcast_job(context):
     if _jobs_paused_for_maintenance():
         return
-    """🆕 Drain queued REAL purchases → broadcast to fake-activity destination."""
+    """🆕 Drain queued REAL purchases → broadcast to fake-activity destination.
+    Supports kinds: normal (real purchase), bulk (bulk-discount hype),
+    reseller (reseller API sale). All attach a Buy Now button."""
     try:
-        from database import pop_pending_purchase_broadcasts
-        from fake_engagement import build_real_purchase_message, broadcast_store_message
+        from database import pop_pending_purchase_broadcasts, get_product
+        from fake_engagement import (build_real_purchase_message,
+                                     make_bulk_discount_msg, make_reseller_msg,
+                                     broadcast_store_message)
         for item in pop_pending_purchase_broadcasts():
             try:
-                text = build_real_purchase_message(item["product_name"], item.get("qty", 1), pid=item["product_id"])
-                await broadcast_store_message(context.bot, text, pid=item["product_id"])
+                kind = item.get("kind", "normal")
+                pid = item.get("product_id")
+                pname = item.get("product_name") or "Product"
+                qty = int(item.get("qty") or 1)
+                if kind == "bulk":
+                    base = float(item.get("base_price") or 0)
+                    tier = float(item.get("tier_price") or 0)
+                    if not tier and pid:
+                        try:
+                            _p = dict(get_product(pid) or {})
+                            tier = float(_p.get("price") or 0)
+                        except Exception:
+                            pass
+                    text = make_bulk_discount_msg(pname, item.get("qty") or qty,
+                                                  tier or base, base or tier)
+                    await broadcast_store_message(context.bot, text, pid=pid,
+                                                  tpl_id="bc_bulk_discount")
+                elif kind == "reseller":
+                    amt = float(item.get("amount") or 0)
+                    text = make_reseller_msg(pname, qty, amt,
+                                             item.get("key_prefix") or "")
+                    await broadcast_store_message(context.bot, text, pid=pid,
+                                                  tpl_id="bc_reseller")
+                else:
+                    text = build_real_purchase_message(pname, qty, pid=pid)
+                    await broadcast_store_message(context.bot, text, pid=pid,
+                                                  tpl_id="bc_purchase")
             except Exception as e:
                 print(f"[PurchaseBroadcast] item failed: {e}")
     except Exception:
@@ -1821,6 +1851,9 @@ def main():
     # User: main-menu "🔗 Reseller API Key" button → ProdSeller-style panel.
     # Admin: Admin panel → "🔗 Reseller API" → full management panel.
     app.add_handler(MessageHandler(filters.TEXT, reseller_wizard_text), group=-50)
+    # 🆕 v161.12: Buy Now label text input (Fake Activity panel)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,
+                                   act_buynow_label_received), group=-51)
 
     # 🆕 v75: /api command REMOVED (Worker deployment, no REST endpoints).
 
@@ -2556,6 +2589,9 @@ def main():
         ("^act_stop_all$",      act_stop_all_callback),
         ("^act_start_all$",     act_start_all_callback),
         ("^act_noop$",          act_noop_callback),
+        # 🆕 v161.12: Buy Now button settings
+        ("^act_buynow_label$",  act_buynow_label_callback),
+        ("^act_buynow_color$",  act_buynow_color_callback),
         # 🆕 Location Customizer handlers
         ("^lc_panel$",    location_customizer_panel_callback),
         ("^lc_noop$",     lc_noop_callback),

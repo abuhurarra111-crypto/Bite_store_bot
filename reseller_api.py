@@ -528,6 +528,18 @@ def _apply_fulfill_result(oid, ok, items, status, err, file_ref, key_row):
             "deliveredKeys": items or [],
             "deliveredFileRef": str(oid) if file_ref else "",
             "amount": amount})
+        # 🆕 v161.12: reseller API sale → alert to the fake-activity destination
+        # (creates hype around the Reseller API program).
+        try:
+            from database import queue_reseller_broadcast, get_product
+            _rord = get_reseller_order(oid) or {}
+            _pid = int(_rord.get("product_id") or 0)
+            _pname = str(_rord.get("product_name") or "Product")
+            _qty = int(_rord.get("qty") or 1)
+            _kpfx = str((key_row or {}).get("key_prefix") or "")
+            queue_reseller_broadcast(_pid, _pname, _qty, amount, _kpfx)
+        except Exception as _rb:
+            pass
         return out
     if ok and status == "pending":
         update_reseller_order(oid, status="pending")
