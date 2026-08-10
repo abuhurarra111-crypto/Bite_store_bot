@@ -1000,9 +1000,8 @@ async def post_init(app):
             app.job_queue.run_repeating(usdt_deposit_background_job, interval=45, first=15, name="usdt_deposit_checker")
             # 🟡 Bybit Pay + Bybit USDT deposit checker
             app.job_queue.run_repeating(bybit_deposit_background_job, interval=45, first=20, name="bybit_deposit_checker")
-            # 🆕 v161.3: Reseller pending-order reminders (admin) + API health alert
-            app.job_queue.run_repeating(_reseller_pending_reminder_job, interval=900, first=120, name="reseller_pending_reminder")
-            app.job_queue.run_repeating(_reseller_api_health_job, interval=300, first=150, name="reseller_api_health")
+            # 🆕 v161.3: Pending reseller order reminder to admin
+            app.job_queue.run_repeating(_reseller_pending_reminder_job, interval=900, first=300, name="reseller_pending_reminder")
     except Exception:
         pass
     # Fake Broadcast + Fake Reviews schedulers removed (use 🎭 Fake Activity instead)
@@ -1432,6 +1431,44 @@ def _patch_ptb_poll_parsing():
         print(f"[PollPatch] not installed: {e}")
 
 
+async def _reseller_pending_reminder_job(context):
+    """🆕 v161.3: remind admin about pending/processing reseller orders (30+ min)."""
+    try:
+        from database import get_connection, get_setting
+        conn = get_connection(); c = conn.cursor()
+        try:
+            c.execute("""SELECT id, product_name, qty, usd_amount, created_at, status
+                         FROM reseller_orders
+                         WHERE status IN ('pending','processing')
+                           AND datetime(created_at) <= datetime('now','-30 minutes')
+                         ORDER BY id DESC LIMIT 10""")
+            rows = [dict(r) for r in c.fetchall()]
+        except Exception:
+            rows = []
+        finally:
+            try: conn.close()
+            except Exception: pass
+        if not rows:
+            return
+        noted = set(context.bot_data.get("rs_pending_notified", []))
+        fresh = [r for r in rows if int(r.get("id") or 0) not in noted]
+        if not fresh:
+            return
+        lines = ["⏳ *Reseller orders pending manual delivery (30+ min):*\n"]
+        for r in fresh[:6]:
+            lines.append(f"• #{r['id']} · {str(r.get('product_name'))[:22]} ×{r.get('qty')} · {r.get('status')}")
+        if len(fresh) > 6:
+            lines.append(f"… +{len(fresh)-6} more")
+        try:
+            await context.bot.send_message(int(os.getenv("ADMIN_ID", "0") or 0),
+                                           "\n".join(lines), parse_mode="Markdown")
+        except Exception:
+            pass
+        context.bot_data["rs_pending_notified"] = list(noted | {int(r.get("id")) for r in fresh})[-100:]
+    except Exception:
+        pass
+
+
 def main():
     print("=" * 50)
     print("🤖 BITE STORE")
@@ -1797,32 +1834,9 @@ def main():
     app.add_handler(CommandHandler("resellerproducts", reseller_products_command))
     app.add_handler(CommandHandler("resellerip", reseller_ip_command))
     app.add_handler(CommandHandler("resellerwebhook", reseller_webhook_command))
-    # 🆕 v161.3: Reseller API admin PANEL (buttons) + value conversations
-    _reseller_conv = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(reseller_gen_start, pattern="^rs_gen$"),
-            CallbackQueryHandler(reseller_cfg_value_start, pattern="^rs_cfgval_"),
-            CallbackQueryHandler(reseller_pricing_value_start, pattern="^rs_pricingval_"),
-            CallbackQueryHandler(reseller_deliver_start, pattern="^rs_deliver_"),
-        ],
-        states={1: [MessageHandler(filters.TEXT & ~filters.COMMAND, _reseller_input_router)]},
-        fallbacks=[
-            CommandHandler("cancel", cancel_conversation),
-            CallbackQueryHandler(reseller_panel_callback, pattern="^rs_panel$"),
-            CallbackQueryHandler(reseller_pricing_callback, pattern="^rs_pricing$"),
-        ],
-        name="reseller_panel_conv", allow_reentry=True,
-    )
-    app.add_handler(_reseller_conv)
-    app.add_handler(CallbackQueryHandler(reseller_panel_callback, pattern="^reseller_panel$"))
-    app.add_handler(CallbackQueryHandler(reseller_list_callback, pattern="^rs_list$"))
-    # revoke list BEFORE generic revoke pattern
-    app.add_handler(CallbackQueryHandler(reseller_revoke_list_callback, pattern="^rs_revoke_list$"))
-    app.add_handler(CallbackQueryHandler(reseller_revoke_callback, pattern="^rs_revoke_"))
-    app.add_handler(CallbackQueryHandler(reseller_key_config_callback, pattern="^rs_cfg_"))
-    app.add_handler(CallbackQueryHandler(reseller_pricing_callback, pattern="^rs_pricing$"))
-    app.add_handler(CallbackQueryHandler(reseller_orders_callback, pattern="^rs_orders$"))
-    app.add_handler(CallbackQueryHandler(reseller_stats_callback, pattern="^rs_stats$"))
+    # 🆕 v161.3: self-serve key (any user) + reseller panel wizard text input
+    app.add_handler(CommandHandler("myresellerkey", my_reseller_key_command))
+    app.add_handler(MessageHandler(filters.TEXT, reseller_wizard_text), group=-50)
 
     # 🆕 v75: /api command REMOVED (Worker deployment, no REST endpoints).
 
@@ -2384,6 +2398,18 @@ def main():
         ("^admin_tier_reset_do$",           admin_tier_reset_do_callback),
         # 🆕 v37: Analytics Dashboard
         ("^admin_analytics$", analytics_callback),
+        # 🆕 v161.3: Reseller API admin panel (buttons)
+        ("^reseller_panel$", admin_reseller_callback),
+        ("^reseller_gen_panel$", reseller_gen_panel_callback),
+        ("^reseller_keys_panel$", reseller_keys_panel_callback),
+        ("^reseller_keycfg_panel_\\d+$", reseller_keycfg_panel_callback),
+        ("^reseller_keyaction_\\d+_[a-z_]+$", reseller_keyaction_callback),
+        ("^reseller_pricing_panel$", reseller_pricing_panel_callback),
+        ("^reseller_price_markup$", reseller_price_markup_callback),
+        ("^reseller_base_mode_(cost|price)$", reseller_base_mode_callback),
+        ("^reseller_orders_panel$", reseller_orders_panel_callback),
+        ("^reseller_deliver_panel_\\d+$", reseller_deliver_panel_callback),
+        ("^reseller_stats_panel$", reseller_stats_panel_callback),
         ("^an_p_", analytics_period_callback),
         ("^an_top_prod_", analytics_top_products_callback),
         ("^an_top_cust_", analytics_top_customers_callback),
@@ -2948,74 +2974,6 @@ def main():
         # creates a fresh Application and fresh event loop.
         print("🤖 Bot running via polling (Render Background Worker safe)")
         app.run_polling(drop_pending_updates=True, close_loop=False)
-
-
-# ════════════════════════════════════════════════════════════════
-# 🆕 v161.3: Reseller panel jobs + conversation input router
-# ════════════════════════════════════════════════════════════════
-
-_API_DOWN_NOTIFIED = False
-
-
-async def _reseller_pending_reminder_job(context):
-    """Notify admin about pending reseller orders older than 20 min (once each)."""
-    try:
-        from database import get_pending_reseller_orders, mark_reseller_reminded
-        pending = get_pending_reseller_orders(minutes_old=20)
-        if not pending:
-            return
-        lines = [f"⏳ *{len(pending)} pending reseller orders (manual delivery needed):*"]
-        for o in pending[:12]:
-            lines.append(
-                f"#{o['id']} u{o.get('user_id')} · {str(o.get('product_name'))[:25]} "
-                f"×{o.get('qty')} · ${float(o.get('usd_amount') or 0):.2f}")
-        await context.bot.send_message(
-            int(ADMIN_ID), "\n".join(lines), parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
-                "📦 Deliver Now", callback_data="rs_orders")]]))
-        for o in pending:
-            try:
-                mark_reseller_reminded(o["id"])
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-
-async def _reseller_api_health_job(context):
-    """Alert the admin if the reseller API server stops responding."""
-    global _API_DOWN_NOTIFIED
-    try:
-        if os.getenv("RESELLER_API_ENABLED", "1") == "0":
-            return
-        from reseller_api import api_last_ping
-        import time as _t
-        last = api_last_ping()
-        down = (last == 0) or (_t.time() - last > 180)
-        if down and not _API_DOWN_NOTIFIED:
-            _API_DOWN_NOTIFIED = True
-            await context.bot.send_message(
-                int(ADMIN_ID),
-                "⚠️ *Reseller API seems DOWN*\nAPI thread ne heartbeat dena band kar diya. "
-                "Auto-restart try karega — agar ye dobara aaye to dashboard check karo.",
-                parse_mode="Markdown")
-        elif (not down) and _API_DOWN_NOTIFIED:
-            _API_DOWN_NOTIFIED = False
-            await context.bot.send_message(
-                int(ADMIN_ID), "✅ *Reseller API wapas UP*", parse_mode="Markdown")
-    except Exception:
-        pass
-
-
-async def _reseller_input_router(update, context):
-    """Route conversation text to the right reseller flow."""
-    if "rs_cfg" in context.user_data:
-        return await reseller_cfg_value_received(update, context)
-    if "rs_pricing" in context.user_data:
-        return await reseller_pricing_value_received(update, context)
-    if "rs_deliver" in context.user_data:
-        return await reseller_deliver_received(update, context)
-    return await reseller_gen_received(update, context)
 
 
 if __name__ == "__main__":

@@ -76,27 +76,24 @@
 - **Docs:** `/api-docs/` (Swagger) + `RESELLER_CONNECT_GUIDE.md` — full English, easy.
 - Tests: 28 + 20 = **48 checks PASS** (emoji, no-leak, generic errors, refund).
 
-## 🚀 v161.3 (same day) — admin panel UI + async fulfillment + webhook retry/HMAC + images + alerts — DEPLOYED LIVE
-- **Admin Panel UI:** Admin menu mein 🔗 Reseller API button (button registry) →
-  panel: Generate Key (conversation), Keys & Config (per-key markup/base/spend/
-  rate/products/ip/webhook — buttons + value input), Pricing (global markup/base),
-  Orders (pending deliver buttons), Stats (per-key table), Revoke.
-- **Async fulfillment:** supplier orders ab background mein fulfill hote hain —
-  15s tak instant `deliveredKeys` (fast suppliers), warna `status:"processing"`
-  + webhook/poll se delivery. Reseller ke bot ka timeout kabhi nahi lagega.
-- **Webhook reliability + security:** events DB queue mein jate hain (retry ×5
-  with backoff, background loop) + **HMAC-SHA256 signature** header
-  (`X-Bite-Signature`) jab webhook_secret set ho.
-- **Products UX:** har product mein `deliveryType` (supplier/text/accounts/file/
-  manual) + `photoRef`; naya `GET /v1/images/{product_id}` product photo bytes.
-- **Per-key rate limit override** (`rate_limit` column; `/resellerkeycfg` ya panel).
-- **Analytics:** `reseller_key_stats` + `all_reseller_key_stats` (orders, spend,
-  delivered/pending/failed per key) — panel 📊 Stats.
-- **Pending reminders:** job har 15 min — 20+ min purane pending reseller orders
-  pe admin ko Telegram notification + "Deliver Now" button.
-- **API health alerts:** job har 5 min heartbeat check — API down ho to admin ko
-  alert; wapas up ho to bhi notify. API thread auto-restart pehle se.
-- Tests: 90 reseller checks (28+20+24+18) + 29 pytest + boot + live URL. Deploy `8c8a9bfd` SUCCESS.
+## 🎯 v161.3 (same day) — self-serve keys + admin panel UI + async fulfillment + webhook retries (DEPLOYED)
+- **Self-serve:** koi bhi user `/myresellerkey` se apni reseller API key khud bana sakta hai
+  (uske points = uski wallet). Admin approval zaroori nahi; admin revoke/limit kar sakta hai.
+- **Admin Panel UI:** Admin menu mein "🔗 Reseller API" button → full panel:
+  Generate Key (wizard), Keys & Config (per-key markup/base/spend/products/IP/webhook/revoke),
+  Global Pricing (markup + base), Orders (with 📤 Deliver), Stats.
+- **Async fulfillment:** supplier products ab instant `status: "processing"` return karte hain,
+  fulfillment background mein hota hai → webhook + `GET /v1/orders/{id}` se delivery.
+  (Slow suppliers ka timeout masla khatam.)
+- **Webhook reliability:** events ab DB queue mein jate hain (`reseller_webhook_events`),
+  worker 20s loop se bhejta hai, 3 attempts tak retry, **HMAC-SHA256 signature**
+  (`X-Bite-Signature` header, secret = key ka webhook_secret).
+- **Per-key rate limit:** `rate_limit` column (default 60) — premium resellers ko zyada.
+- **Product display:** payload mein `deliveryType` (supplier/text/file/accounts/manual) +
+  `GET /v1/products/{id}/image` (product photo bytes).
+- **Ops:** pending reseller orders ka admin reminder (15-min job, 30-min old orders),
+  API crash pe owner ko Telegram alert (max 1/10min).
+- Tests: 87 checks PASS (28+20+24+15) + boot + pytest (1 stale pre-existing fail only).
 
 ## 🚀 v161.2 (same day) — per-key control + webhooks + files + manual delivery + DEPLOYED LIVE
 - **LIVE on Railway:** public URL `https://bite-store-bot-production.up.railway.app`

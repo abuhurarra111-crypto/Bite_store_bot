@@ -6139,24 +6139,20 @@ def migrate_reseller_tables():
         ensure_column(c, "api_keys", "spend_limit_usd",    "REAL DEFAULT 0")   # 0 = unlimited
         ensure_column(c, "api_keys", "allowed_products",   "TEXT DEFAULT ''")  # comma ids | '' = all
         ensure_column(c, "api_keys", "ip_whitelist",       "TEXT DEFAULT ''")  # comma ips | '' = all
-        # v161.3: per-key rate limit override + webhook HMAC secret
-        ensure_column(c, "api_keys", "rate_limit",         "INTEGER DEFAULT 0")  # 0 = default 60/min
+        ensure_column(c, "api_keys", "rate_limit",         "INTEGER DEFAULT 60")
         ensure_column(c, "api_keys", "webhook_secret",     "TEXT DEFAULT ''")
-        # v161.3: pending-order reminder tracking
-        ensure_column(c, "reseller_orders", "reminder_sent", "INTEGER DEFAULT 0")
-        # v161.3: webhook delivery queue (retry-able)
-        c.execute("""CREATE TABLE IF NOT EXISTS reseller_webhook_queue (
+        c.execute("""CREATE TABLE IF NOT EXISTS reseller_webhook_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             key_id INTEGER DEFAULT 0,
-            order_id INTEGER DEFAULT 0,
             event TEXT DEFAULT '',
             payload TEXT DEFAULT '',
+            signature TEXT DEFAULT '',
             attempts INTEGER DEFAULT 0,
             status TEXT DEFAULT 'pending',
-            created_at TEXT DEFAULT '',
-            last_attempt TEXT DEFAULT ''
+            next_retry_at TEXT DEFAULT '',
+            created_at TEXT DEFAULT ''
         )""")
-        c.execute("CREATE INDEX IF NOT EXISTS idx_whq_status ON reseller_webhook_queue(status)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_rwh_pending ON reseller_webhook_events(status, next_retry_at)")
         # default global reseller markup (0 = sell at cost / product price)
         c.execute("INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('reseller_markup_pct', '0')")
         c.execute("INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('reseller_points_per_dollar', '10')")
@@ -6346,47 +6342,81 @@ def mark_reseller_webhook_sent(order_id: int) -> None:
 
 
 # ────────────────────────────────────────────────────────────
-# 🆕 v161.3 — WEBHOOK QUEUE + STATS + REMINDERS
+# 🆕 v161.3 — WEBHOOK QUEUE + RATE LIMIT + ANALYTICS HELPERS
 # ────────────────────────────────────────────────────────────
 
-def enqueue_reseller_webhook(key_id, order_id, event, payload: dict):
-    """Insert a webhook event into the retry queue."""
-    import json as _json
-    from datetime import datetime
+def get_or_create_webhook_secret(key_id: int) -> str:
+    """Return the key's webhook HMAC secret (create one if missing)."""
+    import secrets as _secrets
     conn = get_connection(); c = conn.cursor()
     try:
-        c.execute("""INSERT INTO reseller_webhook_queue
-                     (key_id, order_id, event, payload, status, created_at)
-                     VALUES (?,?,?,?,'pending',?)""",
-                  (int(key_id or 0), int(order_id or 0), str(event or "")[:60],
-                   _json.dumps(payload or {})[:4000],
-                   datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-        qid = c.lastrowid
+        c.execute("SELECT webhook_secret FROM api_keys WHERE id=?", (int(key_id),))
+        r = c.fetchone()
+        if r and r["webhook_secret"]:
+            return r["webhook_secret"]
+        sec = _secrets.token_urlsafe(24)
+        c.execute("UPDATE api_keys SET webhook_secret=? WHERE id=?", (sec, int(key_id)))
         conn.commit()
+        return sec
     except Exception:
-        qid = None
+        return ""
     finally:
         try: conn.close()
         except Exception: pass
-    return qid
 
 
-def fetch_pending_webhooks(limit=20) -> list:
+def sign_webhook_payload(secret: str, payload_json: str) -> str:
+    import hashlib, hmac as _hmac
+    try:
+        return _hmac.new(str(secret).encode(), str(payload_json).encode(),
+                         hashlib.sha256).hexdigest()
+    except Exception:
+        return ""
+
+
+def enqueue_webhook_event(key_id: int, event: str, payload: dict, secret: str):
+    """Persist a webhook event for the retry worker."""
+    from datetime import datetime
+    import json as _json
+    try:
+        payload_json = _json.dumps(payload, ensure_ascii=False)
+        sig = sign_webhook_payload(secret, payload_json)
+        conn = get_connection(); c = conn.cursor()
+        c.execute("""INSERT INTO reseller_webhook_events
+            (key_id, event, payload, signature, status, next_retry_at, created_at)
+            VALUES (?,?,?,?, 'pending', ?, ?)""",
+            (int(key_id), str(event)[:60], payload_json, sig,
+             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+             datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        conn.commit(); conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def get_due_webhook_events(limit=10):
+    """Pending webhook events due for delivery (next_retry_at <= now)."""
+    from datetime import datetime
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn = get_connection(); c = conn.cursor()
-    c.execute("""SELECT * FROM reseller_webhook_queue
-                 WHERE status='pending' ORDER BY id LIMIT ?""", (int(limit),))
+    c.execute("""SELECT * FROM reseller_webhook_events
+                 WHERE status='pending' AND next_retry_at <= ?
+                 ORDER BY id ASC LIMIT ?""", (now, int(limit)))
     rows = [dict(r) for r in c.fetchall()]; conn.close()
     return rows
 
 
-def webhook_queue_bump(qid, attempts, status, last_attempt):
+def mark_webhook_event(event_id: int, ok: bool, attempts: int):
     from datetime import datetime
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     conn = get_connection(); c = conn.cursor()
     try:
-        c.execute("""UPDATE reseller_webhook_queue
-                     SET attempts=?, status=?, last_attempt=?
-                     WHERE id=?""",
-                  (int(attempts), str(status), str(last_attempt), int(qid)))
+        if ok:
+            c.execute("UPDATE reseller_webhook_events SET status='sent', attempts=? WHERE id=?",
+                      (int(attempts), int(event_id)))
+        else:
+            c.execute("UPDATE reseller_webhook_events SET attempts=?, next_retry_at=? WHERE id=?",
+                      (int(attempts), now, int(event_id)))
         conn.commit()
     except Exception:
         try: conn.rollback()
@@ -6394,80 +6424,47 @@ def webhook_queue_bump(qid, attempts, status, last_attempt):
     finally:
         try: conn.close()
         except Exception: pass
+
+
+def reseller_stats() -> dict:
+    """Global reseller analytics for the admin panel."""
+    conn = get_connection(); c = conn.cursor()
+    out = {}
+    try:
+        out["total_keys"] = c.execute("SELECT COUNT(*) FROM api_keys WHERE bot_name='Reseller'").fetchone()[0]
+        out["active_keys"] = c.execute("SELECT COUNT(*) FROM api_keys WHERE bot_name='Reseller' AND is_active=1").fetchone()[0]
+        out["total_orders"] = c.execute("SELECT COUNT(*) FROM reseller_orders").fetchone()[0]
+        out["delivered"] = c.execute("SELECT COUNT(*) FROM reseller_orders WHERE status='delivered'").fetchone()[0]
+        out["pending"] = c.execute("SELECT COUNT(*) FROM reseller_orders WHERE status IN ('pending','processing')").fetchone()[0]
+        out["failed"] = c.execute("SELECT COUNT(*) FROM reseller_orders WHERE status='failed'").fetchone()[0]
+        r = c.execute("SELECT COALESCE(SUM(usd_amount),0) FROM reseller_orders WHERE status='delivered'").fetchone()
+        out["revenue_usd"] = round(float(r[0] or 0), 2)
+        r = c.execute("SELECT COALESCE(SUM(points_amount),0) FROM reseller_orders WHERE status='delivered'").fetchone()
+        out["revenue_points"] = round(float(r[0] or 0), 2)
+    except Exception:
+        pass
+    finally:
+        try: conn.close()
+        except Exception: pass
+    return out
 
 
 def reseller_key_stats(key_id: int) -> dict:
-    """Per-key analytics: orders, spend, statuses."""
+    """Per-key analytics."""
     conn = get_connection(); c = conn.cursor()
+    out = {}
     try:
-        c.execute("""SELECT COUNT(*) as total,
-                            COALESCE(SUM(usd_amount),0) as spent_usd,
-                            COALESCE(SUM(points_amount),0) as spent_points,
-                            SUM(CASE WHEN status='delivered' THEN 1 ELSE 0 END) as delivered,
-                            SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) as pending,
-                            SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) as failed
-                     FROM reseller_orders WHERE key_id=?""", (int(key_id),))
-        r = dict(c.fetchone())
+        out["orders"] = c.execute("SELECT COUNT(*) FROM reseller_orders WHERE key_id=?", (int(key_id),)).fetchone()[0]
+        out["delivered"] = c.execute("SELECT COUNT(*) FROM reseller_orders WHERE key_id=? AND status='delivered'", (int(key_id),)).fetchone()[0]
+        out["failed"] = c.execute("SELECT COUNT(*) FROM reseller_orders WHERE key_id=? AND status='failed'", (int(key_id),)).fetchone()[0]
+        out["pending"] = c.execute("SELECT COUNT(*) FROM reseller_orders WHERE key_id=? AND status IN ('pending','processing')", (int(key_id),)).fetchone()[0]
+        r = c.execute("SELECT COALESCE(SUM(usd_amount),0) FROM reseller_orders WHERE key_id=? AND status='delivered'", (int(key_id),)).fetchone()
+        out["spent_usd"] = round(float(r[0] or 0), 2)
+        r = c.execute("SELECT COALESCE(SUM(points_amount),0) FROM reseller_orders WHERE key_id=? AND status='delivered'", (int(key_id),)).fetchone()
+        out["spent_points"] = round(float(r[0] or 0), 2)
     except Exception:
-        r = {"total": 0, "spent_usd": 0, "spent_points": 0,
-             "delivered": 0, "pending": 0, "failed": 0}
+        pass
     finally:
         try: conn.close()
         except Exception: pass
-    return r
-
-
-def all_reseller_key_stats() -> list:
-    """Stats for every reseller key (admin analytics)."""
-    conn = get_connection(); c = conn.cursor()
-    try:
-        c.execute("""SELECT k.id, k.key_prefix, k.owner_id, k.is_active, k.label,
-                            k.reseller_markup, k.reseller_base_mode, k.webhook_url,
-                            k.spend_limit_usd, k.rate_limit,
-                            COALESCE(SUM(o.usd_amount),0) as spent_usd,
-                            SUM(CASE WHEN o.status='delivered' THEN 1 ELSE 0 END) as delivered,
-                            SUM(CASE WHEN o.status='pending' THEN 1 ELSE 0 END) as pending,
-                            SUM(CASE WHEN o.status='failed' THEN 1 ELSE 0 END) as failed,
-                            COUNT(o.id) as orders
-                     FROM api_keys k
-                     LEFT JOIN reseller_orders o ON o.key_id = k.id
-                     WHERE k.bot_name='Reseller'
-                     GROUP BY k.id ORDER BY k.id DESC""")
-        rows = [dict(r) for r in c.fetchall()]
-    except Exception:
-        rows = []
-    finally:
-        try: conn.close()
-        except Exception: pass
-    return rows
-
-
-def get_pending_reseller_orders(minutes_old: float = 20.0) -> list:
-    """Pending reseller orders older than N minutes, not yet reminded."""
-    conn = get_connection(); c = conn.cursor()
-    try:
-        c.execute("""SELECT * FROM reseller_orders
-                     WHERE status='pending' AND COALESCE(reminder_sent,0)=0
-                       AND datetime(created_at) <= datetime('now', ?)
-                     ORDER BY id LIMIT 50""",
-                  (f"-{int(minutes_old)} minutes",))
-        rows = [dict(r) for r in c.fetchall()]
-    except Exception:
-        rows = []
-    finally:
-        try: conn.close()
-        except Exception: pass
-    return rows
-
-
-def mark_reseller_reminded(order_id: int) -> None:
-    conn = get_connection(); c = conn.cursor()
-    try:
-        c.execute("UPDATE reseller_orders SET reminder_sent=1 WHERE id=?", (int(order_id),))
-        conn.commit()
-    except Exception:
-        try: conn.rollback()
-        except Exception: pass
-    finally:
-        try: conn.close()
-        except Exception: pass
+    return out

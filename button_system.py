@@ -300,13 +300,6 @@ BUTTONS = {
         "large": "💾 Backup & Restore", "xl": "💾 Backup / Restore Database",
         "callback": "admin_backup",
     },
-    # 🆕 v161.3: Reseller API panel (keys, pricing, orders, stats)
-    "reseller_panel": {
-        "group": "admin", "essential": False,
-        "short": "🔗", "medium": "🔗 Reseller API",
-        "large": "🔗 Reseller API", "xl": "🔗 Reseller API Panel",
-        "callback": "reseller_panel",
-    },
     # 🆕 v46: previously-hardcoded Admin Panel buttons now registered so they
     # appear in Manage Buttons and support rename / color / hide.
     "admin_deposits": {

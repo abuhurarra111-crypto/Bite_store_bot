@@ -45,14 +45,12 @@ from database import (
     create_reseller_order, update_reseller_order, get_reseller_order,
     list_reseller_orders, migrate_reseller_tables,
     get_api_key_row, reseller_key_total_spent, complete_reseller_order,
-    mark_reseller_webhook_sent, enqueue_reseller_webhook,
-    fetch_pending_webhooks, webhook_queue_bump,
+    mark_reseller_webhook_sent,
+    get_or_create_webhook_secret, enqueue_webhook_event,
+    get_due_webhook_events, mark_webhook_event, sign_webhook_payload,
     _hash_api_key, setup_api_tables,
 )
 from config import POINTS_PER_DOLLAR as _CFG_PPD
-
-# API liveness heartbeat (bot job checks this to alert if the server died)
-_API_LAST_PING = 0.0
 
 # ────────────────────────────────────────────────────────────
 # KEY MANAGEMENT
@@ -252,27 +250,19 @@ def _extract_emoji(value) -> tuple:
 
 
 def _delivery_type(pd: dict) -> str:
-    """Tell the reseller how the delivery arrives:
-    supplier | text | accounts | file | manual | none"""
+    """How the product is delivered: supplier | text | file | accounts | manual."""
     try:
         if (pd.get("ext_product_id") or 0) and (pd.get("ext_supplier_id") or 0):
             return "supplier"
-        if (pd.get("delivery_file_id") or "").strip():
+        if str(pd.get("delivery_file_id") or "").strip():
             return "file"
-        if (pd.get("delivery_text") or "").strip():
+        if str(pd.get("delivery_text") or "").strip():
             return "text"
-        if (pd.get("req_account_type") or "") not in ("", "none"):
-            return "accounts"
-        try:
-            if int(count_product_accounts(pd.get("id"), "available") or 0) > 0:
-                return "accounts"
-        except Exception:
-            pass
         if str(pd.get("delivery_mode") or "") == "manual":
             return "manual"
-        return "none"
+        return "accounts"
     except Exception:
-        return "none"
+        return "text"
 
 
 def _product_payload(pd: dict, key=None) -> dict:
@@ -291,7 +281,6 @@ def _product_payload(pd: dict, key=None) -> dict:
         "sold": _sold_count(pd),
         "categoryId": pd.get("category_id"),
         "deliveryType": _delivery_type(pd),
-        "photoRef": str(pd.get("id")) if (pd.get("photo_id") or "").strip() else "",
         "emoji": emoji_char,
         "emoji_id": emoji_id,
         "currency": "USD",
@@ -478,14 +467,15 @@ def _fulfill_reseller_order(pd: dict, qty: int, user_id: int, reseller_oid: int)
         return False, [], "failed", "internal_error", None
 
 
-_FULFILL_EVENTS = {}   # order_id -> threading.Event (async fulfillment)
-
-
-def _apply_fulfill_result(oid, pd, qty, uid, key_row, points, event_id, result):
-    """Apply a fulfillment result: DB update + webhook + refund-on-fail.
-    Returns 'delivered' | 'pending' | 'failed'."""
-    ok, items, status, err, file_ref = result
-    now = _time.strftime("%Y-%m-%d %H:%M:%S")
+def _apply_fulfill_result(oid, ok, items, status, err, file_ref, key_row):
+    """Persist fulfillment result + send webhook. Returns response dict."""
+    out = {"status": status or "failed", "items": items or [], "error": err,
+           "file_ref": file_ref, "refunded_points": 0}
+    try:
+        order = get_reseller_order(oid) or {}
+        amount = round(float(order.get("usd_amount") or 0), 2)
+    except Exception:
+        amount = 0.0
     if ok and status == "delivered":
         if file_ref:
             update_reseller_order(oid, status="delivered", delivery_text="",
@@ -493,190 +483,132 @@ def _apply_fulfill_result(oid, pd, qty, uid, key_row, points, event_id, result):
                                   delivery_file_id=file_ref.get("file_id", ""),
                                   delivery_file_name=file_ref.get("file_name", ""),
                                   delivery_file_type=file_ref.get("file_type", ""),
-                                  delivered_at=now)
+                                  delivered_at=_time.strftime("%Y-%m-%d %H:%M:%S"))
         else:
             update_reseller_order(oid, status="delivered",
-                                  delivery_text="\n".join(str(i) for i in items),
-                                  delivered_keys=json.dumps(items),
-                                  delivered_at=now)
+                                  delivery_text="\n".join(str(i) for i in (items or [])),
+                                  delivered_keys=json.dumps(items or []),
+                                  delivered_at=_time.strftime("%Y-%m-%d %H:%M:%S"))
         _send_webhook(key_row, "order.delivered", {
             "orderId": str(oid), "status": "delivered",
-            "deliveredKeys": items,
+            "deliveredKeys": items or [],
             "deliveredFileRef": str(oid) if file_ref else "",
-            "amount": round(reseller_price_for(pd, key_row) * qty, 2)}, order_id=oid)
-        return "delivered"
+            "amount": amount})
+        return out
     if ok and status == "pending":
         update_reseller_order(oid, status="pending")
         _send_webhook(key_row, "order.pending", {
-            "orderId": str(oid), "status": "pending",
-            "amount": round(reseller_price_for(pd, key_row) * qty, 2)}, order_id=oid)
-        return "pending"
-    # failed → auto-refund points
+            "orderId": str(oid), "status": "pending", "amount": amount})
+        return out
+    # failed → auto-refund
     try:
-        add_points(uid, points, tx_type="refund",
-                   description=f"Reseller API refund: order #{oid}",
-                   event_id=event_id + "-refund")
+        pts = float((get_reseller_order(oid) or {}).get("points_amount") or 0)
+        uid = int((get_reseller_order(oid) or {}).get("user_id") or 0)
+    except Exception:
+        pts, uid = 0.0, 0
+    try:
+        if pts > 0 and uid:
+            add_points(uid, pts, tx_type="refund",
+                       description=f"Reseller API refund: order #{oid}",
+                       event_id=f"rs-refund-{oid}")
     except Exception:
         pass
     update_reseller_order(oid, status="failed", error=str(err or "fulfillment_failed"))
+    out["refunded_points"] = pts
     _send_webhook(key_row, "order.failed", {
         "orderId": str(oid), "status": "failed",
-        "error": str(err or "fulfillment_failed"),
-        "refundedPoints": points}, order_id=oid)
-    return "failed"
+        "error": str(err or "fulfillment_failed"), "refundedPoints": pts})
+    return out
 
 
-def _start_async_fulfill(oid, pd, qty, uid, key_row, points, event_id):
-    """Fulfill in a background thread; signal the event when done."""
-    ev = threading.Event()
-    _FULFILL_EVENTS[oid] = ev
-
-    def _worker():
+def _fulfill_async(pd, qty, uid, oid, points, event_id, amount, key):
+    """Background fulfillment for slow supplier orders (async path)."""
+    try:
+        ok, items, status, err, file_ref = _fulfill_reseller_order(pd, qty, uid, oid)
+        _apply_fulfill_result(oid, ok, items, status, err, file_ref, key)
+    except Exception:
         try:
-            res = _fulfill_reseller_order(pd, qty, uid, oid)
-            _apply_fulfill_result(oid, pd, qty, uid, key_row, points, event_id, res)
+            update_reseller_order(oid, status="failed", error="internal_error")
+            if points and uid:
+                add_points(uid, points, tx_type="refund",
+                           description=f"Reseller API refund: order #{oid}",
+                           event_id=f"rs-refund-{oid}-bg")
+            _send_webhook(key, "order.failed", {
+                "orderId": str(oid), "status": "failed", "error": "internal_error",
+                "refundedPoints": points})
         except Exception:
-            try:
-                update_reseller_order(oid, status="failed", error="internal_error")
-            except Exception:
-                pass
-        finally:
-            try:
-                ev.set()
-            except Exception:
-                pass
-            _FULFILL_EVENTS.pop(oid, None)
-
-    threading.Thread(target=_worker, daemon=True, name=f"reseller-fulfill-{oid}").start()
-    return ev
+            pass
 
 
 # ────────────────────────────────────────────────────────────
 # WEBHOOKS (fire-and-forget push to the reseller's server)
 # ────────────────────────────────────────────────────────────
 
-def _webhook_signature(key_row, body_bytes: bytes) -> str:
-    """HMAC-SHA256 of the JSON body using the key's webhook_secret (if set)."""
+def _send_webhook(key_row, event: str, payload: dict):
+    """Queue a webhook event (persisted + HMAC-signed + auto-retried)."""
     try:
-        import hashlib, hmac as _hmac
-        secret = ((key_row or {}).get("webhook_secret") or "").strip()
-        if not secret:
-            return ""
-        return _hmac.new(secret.encode(), body_bytes, hashlib.sha256).hexdigest()
-    except Exception:
-        return ""
-
-
-def _send_webhook(key_row, event: str, payload: dict, order_id: int = 0):
-    """POST {event, ...payload} to the key's webhook_url with HMAC signature.
-    Event is queued for retry (5 attempts, backoff) if the first send fails."""
-    try:
-        kid = int((key_row or {}).get("id") or 0)
         url = ((key_row or {}).get("webhook_url") or "").strip()
         if not url:
             return
+        kid = int((key_row or {}).get("id") or 0)
+        secret = get_or_create_webhook_secret(kid) if kid else ""
         body = {"event": event}
         if isinstance(payload, dict):
             body.update(payload)
-        qid = enqueue_reseller_webhook(kid, int(order_id or 0), event, body)
-
-        def _post():
-            try:
-                import requests as _rq
-                data = json.dumps(body).encode()
-                headers = {"Content-Type": "application/json"}
-                sig = _webhook_signature(key_row, data)
-                if sig:
-                    headers["X-Bite-Signature"] = sig
-                    headers["X-Bite-Key"] = str((key_row or {}).get("key_prefix") or "")
-                r = _rq.post(url, data=data, headers=headers, timeout=8)
-                ok = r.status_code < 300
-            except Exception:
-                ok = False
-            if ok:
-                try:
-                    webhook_queue_bump(qid, 5, "sent", _time.strftime("%Y-%m-%d %H:%M:%S"))
-                except Exception:
-                    pass
-            else:
-                try:
-                    from database import get_api_key_row as _gar
-                    k = _gar(kid)
-                    if k:
-                        _retry_single_webhook(qid, k, url, body, attempt=1)
-                except Exception:
-                    pass
-        threading.Thread(target=_post, daemon=True, name="reseller-webhook").start()
+        enqueue_webhook_event(kid, event, body, secret)
     except Exception:
         pass
 
 
-def _retry_single_webhook(qid, key_row, url, body, attempt=1):
-    """Retry a single webhook with backoff (max 5 attempts)."""
-    try:
-        import requests as _rq
-        if attempt > 5:
-            webhook_queue_bump(qid, attempt, "failed", _time.strftime("%Y-%m-%d %H:%M:%S"))
-            return
-        _time.sleep(min(60, 5 * attempt))
-        data = json.dumps(body).encode()
-        headers = {"Content-Type": "application/json"}
-        sig = _webhook_signature(key_row, data)
-        if sig:
-            headers["X-Bite-Signature"] = sig
-        try:
-            r = _rq.post(url, data=data, headers=headers, timeout=8)
-            ok = r.status_code < 300
-        except Exception:
-            ok = False
-        if ok:
-            webhook_queue_bump(qid, attempt, "sent", _time.strftime("%Y-%m-%d %H:%M:%S"))
-        else:
-            _retry_single_webhook(qid, key_row, url, body, attempt + 1)
-    except Exception:
-        pass
-
-
-def _webhook_retry_loop():
-    """Background loop: retries stale queued webhooks every 60s (starts a
-    single retry chain per pending item, keeps DB 'pending' until done)."""
+def _webhook_worker_loop():
+    """Background retry worker: sends due webhook events with HMAC header."""
+    import requests as _rq
+    from datetime import datetime, timedelta
     while True:
         try:
-            pending = fetch_pending_webhooks(limit=10)
-            for row in pending:
+            for ev in get_due_webhook_events(limit=10):
+                eid = int(ev.get("id") or 0)
+                kid = int(ev.get("key_id") or 0)
+                url = ""
                 try:
-                    from database import get_api_key_row as _gar
-                    k = _gar(row.get("key_id") or 0)
-                    if not k or not (k.get("webhook_url") or "").strip():
-                        webhook_queue_bump(row["id"], 5, "failed",
-                                           _time.strftime("%Y-%m-%d %H:%M:%S"))
-                        continue
-                    import json as _json
-                    body = _json.loads(row.get("payload") or "{}")
-                    url = k["webhook_url"]
-                    # in-flight → mark first attempt
-                    webhook_queue_bump(row["id"], max(1, int(row.get("attempts") or 1)),
-                                       "pending", _time.strftime("%Y-%m-%d %H:%M:%S"))
-                    def _retry_chain(qid=r["id"], krow=k, u=url, b=body):
-                        try:
-                            import requests as _rq
-                            data = json.dumps(b).encode()
-                            headers = {"Content-Type": "application/json"}
-                            sig = _webhook_signature(krow, data)
-                            if sig:
-                                headers["X-Bite-Signature"] = sig
-                            r = _rq.post(u, data=data, headers=headers, timeout=8)
-                            ok = r.status_code < 300
-                            if ok:
-                                webhook_queue_bump(qid, 5, "sent", _time.strftime("%Y-%m-%d %H:%M:%S"))
-                        except Exception:
-                            pass
-                    threading.Thread(target=_retry_chain, daemon=True).start()
+                    krow = get_api_key_row(kid)
+                    url = ((krow or {}).get("webhook_url") or "").strip()
                 except Exception:
+                    url = ""
+                if not url:
+                    mark_webhook_event(eid, False, int(ev.get("attempts") or 0) + 1)
                     continue
+                try:
+                    payload = ev.get("payload")
+                    try:
+                        payload = json.loads(payload)
+                    except Exception:
+                        pass
+                    r = _rq.post(url, json=payload,
+                                 headers={"Content-Type": "application/json",
+                                          "X-Bite-Signature": str(ev.get("signature") or "")},
+                                 timeout=8)
+                    ok = r.status_code < 300
+                except Exception:
+                    ok = False
+                attempts = int(ev.get("attempts") or 0) + 1
+                mark_webhook_event(eid, ok, attempts)
         except Exception:
             pass
-        _time.sleep(60)
+        _time.sleep(20)
+
+
+def _notify_admin(text: str):
+    """Send a Telegram alert to the store owner (used for API health)."""
+    try:
+        import requests as _rq
+        token = os.getenv("BOT_TOKEN", "").strip()
+        aid = os.getenv("ADMIN_ID", "").strip()
+        if token and aid:
+            _rq.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                     json={"chat_id": int(aid), "text": text}, timeout=10)
+    except Exception:
+        pass
 
 
 # ────────────────────────────────────────────────────────────
@@ -754,15 +686,13 @@ if _FASTAPI_OK:
         client_ip = request.client.host if request.client else ""
         if not _ip_allowed(row, client_ip):
             raise HTTPException(status_code=403, detail="IP not allowed for this key")
-        # Rate limit: per-key override else default 60/min
         try:
-            rl = int(row.get("rate_limit") or 0)
-        except Exception:
-            rl = 0
-        limit = rl if rl > 0 else 60
-        try:
-            if count_api_requests_recent(row.get("id"), 60) >= limit:
-                raise HTTPException(status_code=429, detail=f"rate limit exceeded ({limit} req/min)")
+            rl = int(row.get("rate_limit") or 60)
+            if rl <= 0:
+                rl = 60
+            if count_api_requests_recent(row.get("id"), 60) >= rl:
+                raise HTTPException(status_code=429,
+                                    detail=f"rate limit exceeded ({rl} req/min)")
         except HTTPException:
             raise
         except Exception:
@@ -771,8 +701,6 @@ if _FASTAPI_OK:
             log_api_request(row.get("id"), request.url.path, 200, client_ip)
         except Exception:
             pass
-        global _API_LAST_PING
-        _API_LAST_PING = _time.time()
         return row
 
     @app.get("/", include_in_schema=False)
@@ -949,55 +877,41 @@ if _FASTAPI_OK:
             status="pending",
             idem_key=str(idempotency_key).strip()[:64] if idempotency_key else "")
 
-        # SUPPLIER-LINKED products: async fulfillment (max 15s wait).
-        # Fast suppliers → instant deliveredKeys; slow ones → "processing"
-        # (background thread finishes + webhooks/poll deliver the result).
         is_supplier = bool((pd.get("ext_product_id") or 0) and (pd.get("ext_supplier_id") or 0))
 
+        # ── ASYNC PATH: supplier products (slow upstream API) → return
+        #    orderId instantly ("processing"), fulfill in background, then
+        #    webhook + reseller polls GET /v1/orders/{id} for the delivery.
         if is_supplier:
-            ev = _start_async_fulfill(oid, pd, qty, uid, key, points, event_id)
-            if not ev.wait(15):
-                return {"ok": True, "orderId": str(oid), "deliveredKeys": [],
-                        "deliveredKey": "", "deliveredFileRef": "",
-                        "amount": round(price_usd * qty, 2), "status": "processing",
-                        "note": "delivery will arrive shortly — poll GET /v1/orders/{id} or wait for webhook"}
-            r = get_reseller_order(oid)
-            st = (r or {}).get("status")
-            if st == "delivered":
-                items = _parse_keys((r or {}).get("delivered_keys"))
-                return {"ok": True, "orderId": str(oid), "deliveredKeys": items,
-                        "deliveredKey": items[0] if items else "",
-                        "deliveredFileRef": str(oid) if (r or {}).get("delivery_file_id") else "",
-                        "amount": round(price_usd * qty, 2), "status": "delivered"}
-            if st == "failed":
-                return JSONResponse(status_code=502, content={
-                    "ok": False, "orderId": str(oid),
-                    "error": (r or {}).get("error") or "fulfillment_failed",
-                    "refundedPoints": points})
+            update_reseller_order(oid, status="processing")
+            _ctx = {"pd": pd, "qty": qty, "uid": uid, "oid": oid,
+                    "points": points, "event_id": event_id,
+                    "amount": round(price_usd * qty, 2), "key": dict(key)}
+            try:
+                threading.Thread(target=_fulfill_async, kwargs=_ctx,
+                                 daemon=True, name=f"rs-order-{oid}").start()
+            except Exception:
+                _fulfill_async(**_ctx)
             return {"ok": True, "orderId": str(oid), "deliveredKeys": [],
                     "deliveredKey": "", "deliveredFileRef": "",
-                    "amount": round(price_usd * qty, 2), "status": st or "pending"}
+                    "amount": round(price_usd * qty, 2), "status": "processing"}
 
-        # NON-supplier: synchronous fulfillment (static / accounts / file / manual)
-        outcome = _apply_fulfill_result(
-            oid, pd, qty, uid, key, points, event_id,
-            _fulfill_reseller_order(pd, qty, uid, oid))
-        if outcome == "delivered":
-            r = get_reseller_order(oid)
-            items = _parse_keys((r or {}).get("delivered_keys"))
-            return {"ok": True, "orderId": str(oid), "deliveredKeys": items,
-                    "deliveredKey": items[0] if items else "",
-                    "deliveredFileRef": str(oid) if (r or {}).get("delivery_file_id") else "",
+        # ── SYNC PATH: instant products (text / accounts / file / manual)
+        ok, items, status, err, file_ref = _fulfill_reseller_order(pd, qty, uid, oid)
+        result = _apply_fulfill_result(oid, ok, items, status, err, file_ref, key)
+        if result["status"] == "delivered":
+            return {"ok": True, "orderId": str(oid), "deliveredKeys": result["items"],
+                    "deliveredKey": result["items"][0] if result["items"] else "",
+                    "deliveredFileRef": str(oid) if result["file_ref"] else "",
                     "amount": round(price_usd * qty, 2), "status": "delivered"}
-        if outcome == "pending":
+        if result["status"] == "pending":
             return {"ok": True, "orderId": str(oid), "deliveredKeys": [],
                     "deliveredKey": "", "deliveredFileRef": "",
                     "amount": round(price_usd * qty, 2), "status": "pending"}
-        r = get_reseller_order(oid)
+        # failed → refund already applied in _apply_fulfill_result
         return JSONResponse(status_code=502, content={
-            "ok": False, "orderId": str(oid),
-            "error": (r or {}).get("error") or "fulfillment_failed",
-            "refundedPoints": points,
+            "ok": False, "orderId": str(oid), "error": result["error"],
+            "refundedPoints": result["refunded_points"],
         })
 
     @app.get("/v1/orders/{order_id}", summary="Order status / delivery")
@@ -1056,33 +970,29 @@ if _FASTAPI_OK:
                         headers={"Content-Disposition":
                                  f'attachment; filename="{fname}"; filename*=UTF-8\'\'{quote(fname)}"'})
 
-    @app.get("/v1/images/{product_id}", summary="Product photo bytes",
+    @app.get("/v1/products/{product_id}/image", summary="Product image bytes",
              description=(
-                 "Returns the product photo as bytes so your bot can show an\n"
-                 "image (Telegram file IDs don't work across bots). Scoped to\n"
-                 "products enabled for resellers."
+                 "Returns the product's photo bytes (from the store bot) so your\n"
+                 "bot can show it. `photo_id`-based; scoped to a valid API key.\n"
+                 "404 when the product has no photo."
              ))
     async def _product_image(product_id: int, key=Depends(_require_key)):
         pd = get_product(product_id)
         if not pd:
             raise HTTPException(status_code=404, detail="product not found")
-        pd = dict(pd)
-        if not pd.get("is_active") or int(pd.get("is_hidden") or 0):
-            raise HTTPException(status_code=404, detail="product not available")
-        if int(pd.get("reseller_enabled") if pd.get("reseller_enabled") is not None else 1) != 1:
-            raise HTTPException(status_code=403, detail="product not enabled for resellers")
-        photo_id = (pd.get("photo_id") or "").strip()
-        if not photo_id:
-            raise HTTPException(status_code=404, detail="no photo for this product")
+        photo = str(dict(pd).get("photo_id") or "").strip()
+        if not photo:
+            raise HTTPException(status_code=404, detail="no image for this product")
         try:
             import requests as _rq
             token = os.getenv("BOT_TOKEN", "").strip()
             j = _rq.post(f"https://api.telegram.org/bot{token}/getFile",
-                         json={"file_id": photo_id}, timeout=20).json()
+                         json={"file_id": photo}, timeout=20).json()
             if not j.get("ok"):
                 raise HTTPException(status_code=502, detail="image source unavailable")
             path = j["result"]["file_path"]
-            data = _rq.get(f"https://api.telegram.org/file/bot{token}/{path}", timeout=40)
+            data = _rq.get(f"https://api.telegram.org/file/bot{token}/{path}",
+                           timeout=40)
             if data.status_code != 200:
                 raise HTTPException(status_code=502, detail="image source unavailable")
         except HTTPException:
@@ -1090,7 +1000,7 @@ if _FASTAPI_OK:
         except Exception:
             raise HTTPException(status_code=502, detail="image source unavailable")
         return Response(content=data.content,
-                        media_type=data.headers.get("content-type", "image/jpeg"))
+                        media_type=_guess_mime(path) or "image/jpeg")
 
     def _guess_mime(fname: str) -> str:
         import mimetypes
@@ -1120,8 +1030,8 @@ if _FASTAPI_OK:
 
 def start_reseller_api_server(port: int):
     """Start the FastAPI app on 0.0.0.0:port in a background thread with
-    auto-restart (if the server dies it comes back after 8s). Also starts a
-    heartbeat + webhook-retry loop. Never crashes the bot."""
+    auto-restart + health alert to the owner + webhook retry worker.
+    Never crashes the bot — logs a warning on failure."""
     if not _FASTAPI_OK:
         print("⚠️ Reseller API disabled — install fastapi+uvicorn to enable")
         return None
@@ -1131,27 +1041,28 @@ def start_reseller_api_server(port: int):
         print(f"⚠️ Reseller API disabled — uvicorn not installed ({e})")
         return None
 
+    # Webhook retry worker (one per process)
+    try:
+        threading.Thread(target=_webhook_worker_loop, daemon=True,
+                         name="reseller-webhook-worker").start()
+    except Exception:
+        pass
+
+    _last_alert = {"ts": 0.0}
+
     def _run():
         while True:
             try:
                 uvicorn.run(app, host="0.0.0.0", port=int(port), log_level="warning")
             except Exception as e:
                 print(f"⚠️ Reseller API server error: {e} — restarting in 8s")
+            now = _time.time()
+            if now - _last_alert["ts"] > 600:  # max one alert / 10 min
+                _last_alert["ts"] = now
+                _notify_admin("⚠️ *Reseller API* restarted on Railway (server crash/restart).")
             _time.sleep(8)
 
-    def _heartbeat():
-        global _API_LAST_PING
-        while True:
-            _API_LAST_PING = _time.time()
-            _time.sleep(30)
-
-    threading.Thread(target=_run, daemon=True, name="reseller-api").start()
-    threading.Thread(target=_heartbeat, daemon=True, name="reseller-api-heartbeat").start()
-    threading.Thread(target=_webhook_retry_loop, daemon=True, name="reseller-webhook-retry").start()
+    t = threading.Thread(target=_run, daemon=True, name="reseller-api")
+    t.start()
     print(f"🔗 Reseller API running on 0.0.0.0:{port} (docs: /api-docs/, products: /v1/products)")
-    return True
-
-
-def api_last_ping() -> float:
-    """When the API server last proved it was alive (seconds since epoch)."""
-    return _API_LAST_PING
+    return t
