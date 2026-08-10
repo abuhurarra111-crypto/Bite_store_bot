@@ -1817,25 +1817,9 @@ def main():
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("deliver", deliver_command))
 
-    # 🆕 v161: Reseller API admin commands (ProdSeller-compatible reseller system)
-    app.add_handler(CommandHandler("resellerkey", reseller_key_command))
-    app.add_handler(CommandHandler("resellerkeys", reseller_keys_command))
-    app.add_handler(CommandHandler("resellerrevoke", reseller_revoke_command))
-    app.add_handler(CommandHandler("resellermarkup", reseller_markup_command))
-    app.add_handler(CommandHandler("resellerprice", reseller_price_command))
-    app.add_handler(CommandHandler("reselleron", reseller_on_command))
-    app.add_handler(CommandHandler("reselleroff", reseller_off_command))
-    app.add_handler(CommandHandler("resellerorders", reseller_orders_command))
-    # 🆕 v161.2: manual delivery + per-key pricing/security/webhook commands
-    app.add_handler(CommandHandler("resellerdeliver", reseller_deliver_command))
-    app.add_handler(CommandHandler("resellerkeycfg", reseller_keycfg_command))
-    app.add_handler(CommandHandler("resellerbase", reseller_base_command))
-    app.add_handler(CommandHandler("resellerspend", reseller_spend_command))
-    app.add_handler(CommandHandler("resellerproducts", reseller_products_command))
-    app.add_handler(CommandHandler("resellerip", reseller_ip_command))
-    app.add_handler(CommandHandler("resellerwebhook", reseller_webhook_command))
-    # 🆕 v161.3: self-serve key (any user) + reseller panel wizard text input
-    app.add_handler(CommandHandler("myresellerkey", my_reseller_key_command))
+    # 🆕 v161.4: reseller system is BUTTON-DRIVEN (no commands).
+    # User: main-menu "🔗 Reseller API Key" button → ProdSeller-style panel.
+    # Admin: Admin panel → "🔗 Reseller API" → full management panel.
     app.add_handler(MessageHandler(filters.TEXT, reseller_wizard_text), group=-50)
 
     # 🆕 v75: /api command REMOVED (Worker deployment, no REST endpoints).
@@ -2410,6 +2394,14 @@ def main():
         ("^reseller_orders_panel$", reseller_orders_panel_callback),
         ("^reseller_deliver_panel_\\d+$", reseller_deliver_panel_callback),
         ("^reseller_stats_panel$", reseller_stats_panel_callback),
+        ("^reseller_admin_products$", reseller_admin_products_callback),
+        ("^reseller_prod_toggle_\\d+$", reseller_prod_toggle_callback),
+        ("^reseller_prod_price_\\d+$", reseller_prod_price_callback),
+        ("^reseller_prod_page_\\d+$", reseller_prod_page_callback),
+        # 🆕 v161.4: user-facing ProdSeller-style API Access panel (any user)
+        ("^reseller_api_user$", reseller_api_user_callback),
+        ("^reseller_api_show$", reseller_api_show_callback),
+        ("^reseller_api_regenerate$", reseller_api_regenerate_callback),
         ("^an_p_", analytics_period_callback),
         ("^an_top_prod_", analytics_top_products_callback),
         ("^an_top_cust_", analytics_top_customers_callback),

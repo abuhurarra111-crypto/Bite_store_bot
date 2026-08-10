@@ -10867,7 +10867,8 @@ async def admin_reseller_callback(update, context):
         [InlineKeyboardButton("📋 Keys & Config", callback_data="reseller_keys_panel"),
          InlineKeyboardButton("📦 Orders", callback_data="reseller_orders_panel")],
         [InlineKeyboardButton("💲 Global Pricing", callback_data="reseller_pricing_panel"),
-         InlineKeyboardButton("📊 Stats", callback_data="reseller_stats_panel")],
+         InlineKeyboardButton("🗂️ Products", callback_data="reseller_admin_products")],
+        [InlineKeyboardButton("📊 Stats", callback_data="reseller_stats_panel")],
         [InlineKeyboardButton("🔙 Back", callback_data="admin_panel")],
     ]
     await q.edit_message_text(text, parse_mode="Markdown",
@@ -11222,9 +11223,276 @@ async def reseller_wizard_text(update, context):
             else:
                 update_api_key_fields(kid, webhook_url=val)
                 await update.message.reply_text(f"✅ Key #{kid} webhook → *{'OFF' if not val else val}*", parse_mode="Markdown")
+        elif action == "prod_price":
+            pid = int(step.get("product_id") or 0)
+            price = float(text)
+            conn = get_connection(); c = conn.cursor()
+            c.execute("UPDATE products SET reseller_price=? WHERE id=?", (price, pid))
+            n = c.rowcount; conn.commit(); conn.close()
+            await update.message.reply_text(
+                f"✅ Reseller price for #{pid} → *${price:g}*" if n else "❌ Product not found",
+                parse_mode="Markdown")
         else:
             await update.message.reply_text("❓ Unknown wizard step — send /cancel")
     except Exception as e:
         await update.message.reply_text(f"❌ {e}")
     context.user_data.pop("rs_step", None)
     raise ApplicationHandlerStop
+
+
+# ════════════════════════════════════════════════════════════════
+# 🆕 v161.4: USER-FACING "Reseller API Key" PANEL (ProdSeller-style)
+# Buttons: [Show Full Key] [Regenerate] [API Documentation] [Back]
+# ════════════════════════════════════════════════════════════════
+
+def _reseller_docs_url() -> str:
+    try:
+        from database import get_setting
+        u = (get_setting("reseller_docs_url") or "").strip()
+        if u:
+            return u
+    except Exception:
+        pass
+    return "https://bite-store-bot-production.up.railway.app/api-docs/"
+
+
+async def reseller_api_user_callback(update, context):
+    """🔗 Reseller API Key (main menu button) — any user."""
+    q = update.callback_query
+    try:
+        await q.answer()
+    except Exception:
+        pass
+    uid = int(q.from_user.id)
+    try:
+        from reseller_api import (get_user_reseller_key, generate_reseller_key,
+                                  reveal_reseller_key)
+        from database import get_user_points, get_setting
+    except Exception as e:
+        try:
+            await q.edit_message_text(f"❌ {e}")
+        except Exception:
+            pass
+        return
+    key = get_user_reseller_key(uid)
+    docs_url = _reseller_docs_url()
+    kb_back = [[InlineKeyboardButton("🔙 Back", callback_data="main_menu")]]
+
+    if not key:
+        plaintext, _prefix = generate_reseller_key(uid, f"Reseller {uid}")
+        kb = []
+        if docs_url:
+            kb.append([InlineKeyboardButton("📚 API Documentation", url=docs_url)])
+        kb.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
+        try:
+            await q.edit_message_text(
+                "🔑 *New API Key Generated!*\n\n"
+                f"🔑 *Your Key:*\n`{plaintext}`\n\n"
+                "⚠️ Save this key now — it will be masked next time.\n\n"
+                f"Use header: `X-API-Key: {plaintext}`\n\n"
+                "Use it to sell our products on your own bot or website.",
+                parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        except Exception as e:
+            try:
+                await q.message.reply_text(f"❌ {e}")
+            except Exception:
+                pass
+        return
+
+    # ── API Access panel ──
+    kid = int(key.get("id") or 0)
+    prefix = str(key.get("key_prefix") or "")
+    reqs = int(key.get("request_count") or 0)
+    created = str(key.get("created_at") or "")[:10]
+    try:
+        ppd = float(get_setting("reseller_points_per_dollar") or 10)
+        bal = float(get_user_points(uid) or 0) / ppd if ppd else 0
+    except Exception:
+        bal = 0.0
+    text = (
+        "🔗 *API Access*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Use your API key to sell products on your own bot or website.\n\n"
+        f"🔑 *Your API Key:*\n`{prefix}....`\n\n"
+        f"💳 Balance: *${bal:.2f}*\n"
+        f"📨 Total requests: *{reqs}*\n"
+        f"📅 Created: *{created}*"
+    )
+    kb = [
+        [InlineKeyboardButton("👁️ Show Full Key", callback_data="reseller_api_show"),
+         InlineKeyboardButton("🔄 Regenerate", callback_data="reseller_api_regenerate")],
+    ]
+    if docs_url:
+        kb.append([InlineKeyboardButton("📚 API Documentation", url=docs_url)])
+    kb.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
+    try:
+        await q.edit_message_text(text, parse_mode="Markdown",
+                                  reply_markup=InlineKeyboardMarkup(kb))
+    except Exception:
+        pass
+
+
+async def reseller_api_show_callback(update, context):
+    q = update.callback_query
+    try:
+        await q.answer()
+    except Exception:
+        pass
+    uid = int(q.from_user.id)
+    try:
+        from reseller_api import get_user_reseller_key, reveal_reseller_key
+        key = get_user_reseller_key(uid)
+        if not key:
+            raise Exception("No active key")
+        plaintext = reveal_reseller_key(int(key.get("id") or 0))
+    except Exception as e:
+        try:
+            await q.edit_message_text(f"❌ {e}")
+        except Exception:
+            pass
+        return
+    if not plaintext:
+        kb = [[InlineKeyboardButton("🔄 Regenerate", callback_data="reseller_api_regenerate"),
+               InlineKeyboardButton("🔙 Back", callback_data="reseller_api_user")]]
+        try:
+            await q.edit_message_text(
+                "🔑 *Your Full Key*\n\n"
+                "⚠️ Is key ka plaintext recoverable nahi tha (security).\n"
+                "*Regenerate* karke nayi key banao.",
+                parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        except Exception:
+            pass
+        return
+    try:
+        await q.edit_message_text(
+            "🔑 *Your Full Key*\n\n"
+            f"`{plaintext}`\n\n"
+            f"Use header: `X-API-Key: {plaintext}`",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("🔙 Back", callback_data="reseller_api_user")]]))
+    except Exception:
+        pass
+
+
+async def reseller_api_regenerate_callback(update, context):
+    q = update.callback_query
+    try:
+        await q.answer()
+    except Exception:
+        pass
+    uid = int(q.from_user.id)
+    try:
+        from reseller_api import (get_user_reseller_key, revoke_reseller_key,
+                                  generate_reseller_key)
+        key = get_user_reseller_key(uid)
+        if key:
+            revoke_reseller_key(int(key.get("id") or 0))
+        plaintext, _p = generate_reseller_key(uid, f"Reseller {uid}")
+    except Exception as e:
+        try:
+            await q.edit_message_text(f"❌ {e}")
+        except Exception:
+            pass
+        return
+    docs_url = _reseller_docs_url()
+    kb = []
+    if docs_url:
+        kb.append([InlineKeyboardButton("📚 API Documentation", url=docs_url)])
+    kb.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
+    try:
+        await q.edit_message_text(
+            "🔄 *New API Key Generated!* (old key revoked)\n\n"
+            f"🔑 `{plaintext}`\n\n"
+            "⚠️ Save now — shown only ONCE.\n\n"
+            f"Use header: `X-API-Key: {plaintext}`",
+            parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    except Exception:
+        pass
+
+
+# ════════════════════════════════════════════════════════════════
+# ADMIN: RESELLER PRODUCTS (per-product price + visibility) — panel
+# ════════════════════════════════════════════════════════════════
+
+async def reseller_admin_products_callback(update, context, page=0):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        from database import get_connection
+        conn = get_connection(); c = conn.cursor()
+        c.execute("SELECT id, name, reseller_enabled, COALESCE(reseller_price,0) AS rp "
+                  "FROM products WHERE is_active=1 ORDER BY id LIMIT 12 OFFSET ?", (page * 12,))
+        rows = [dict(r) for r in c.fetchall()]; conn.close()
+        c2 = get_connection(); c3 = c2.cursor()
+        total = c3.execute("SELECT COUNT(*) FROM products WHERE is_active=1").fetchone()[0]
+        c2.close()
+    except Exception as e:
+        await q.edit_message_text(f"❌ {e}"); return
+    lines = ["🗂️ *Reseller Products* (page {}/{}):\n".format(page + 1, max(1, (total + 11) // 12))]
+    kb = []
+    for r in rows:
+        on = "✅" if int(r.get("reseller_enabled") or 1) == 1 else "⛔"
+        price = f"${float(r.get('rp') or 0):g}" if float(r.get("rp") or 0) > 0 else "auto"
+        lines.append(f"{on} #{r['id']} · {str(r.get('name'))[:24]}")
+        kb.append([
+            InlineKeyboardButton(f"{on}", callback_data=f"reseller_prod_toggle_{r['id']}"),
+            InlineKeyboardButton(f"💰 {price}", callback_data=f"reseller_prod_price_{r['id']}"),
+        ])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️", callback_data=f"reseller_prod_page_{page-1}"))
+    nav.append(InlineKeyboardButton("🔙 Back", callback_data="reseller_panel"))
+    if (page + 1) * 12 < total:
+        nav.append(InlineKeyboardButton("➡️", callback_data=f"reseller_prod_page_{page+1}"))
+    kb.append(nav)
+    await q.edit_message_text("\n".join(lines), parse_mode="Markdown",
+                              reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def reseller_prod_toggle_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        pid = int(q.data.replace("reseller_prod_toggle_", ""))
+        from database import get_connection, get_product
+        p = dict(get_product(pid))
+        cur = int(p.get("reseller_enabled") if p.get("reseller_enabled") is not None else 1)
+        new = 0 if cur == 1 else 1
+        conn = get_connection(); c = conn.cursor()
+        c.execute("UPDATE products SET reseller_enabled=? WHERE id=?", (new, pid))
+        conn.commit(); conn.close()
+    except Exception as e:
+        await q.edit_message_text(f"❌ {e}"); return
+    await reseller_admin_products_callback(update, context)
+
+
+async def reseller_prod_price_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        pid = int(q.data.replace("reseller_prod_price_", ""))
+        from database import get_product
+        p = dict(get_product(pid))
+    except Exception as e:
+        await q.edit_message_text(f"❌ {e}"); return
+    context.user_data["rs_step"] = {"action": "prod_price", "product_id": pid}
+    await q.edit_message_text(
+        f"💲 Reseller price for *#{pid} {str(p.get('name'))[:30]}*\n\n"
+        "Send price in USD (`0` = auto cost×markup):\n\n_(/cancel to cancel)_",
+        parse_mode="Markdown")
+
+
+async def reseller_prod_page_callback(update, context):
+    q = update.callback_query
+    try:
+        page = int(q.data.replace("reseller_prod_page_", ""))
+    except Exception:
+        return
+    await reseller_admin_products_callback(update, context, page=page)

@@ -63,6 +63,12 @@ BUTTONS = {
         "large": "📊 My Account", "xl": "📊 My Account — Profile & balance",
         "callback": "my_account",
     },
+    "main_reseller_api": {
+        "group": "main", "essential": False,
+        "short": "🔗", "medium": "🔗 Reseller API",
+        "large": "🔗 Reseller API Key", "xl": "🔗 Reseller API Key — Sell our products on your own bot",
+        "callback": "reseller_api_user",
+    },
     "main_orders": {
         "group": "main", "essential": False,
         "short": "📜", "medium": "📜 Orders",

@@ -76,6 +76,23 @@
 - **Docs:** `/api-docs/` (Swagger) + `RESELLER_CONNECT_GUIDE.md` — full English, easy.
 - Tests: 28 + 20 = **48 checks PASS** (emoji, no-leak, generic errors, refund).
 
+## 🖱️ v161.4 (same day) — BUTTON-DRIVEN reseller UI (ProdSeller-style, commands REMOVED)
+- **Commands system HATA diya** — `/reseller*` + `/myresellerkey` ab register NAHI hote.
+- **User side — ProdSeller jaisa interface:** main menu mein **"🔗 Reseller API Key"** button:
+  - Pehli dafa → "🔑 New API Key Generated!" full key + "Use header: X-API-Key: ..." +
+    [📚 API Documentation] [Back] (screenshots jaisa).
+  - Baad mein → "🔗 API Access" panel: masked key (`bsk_xxx....`), 💳 balance,
+    📨 total requests, 📅 created + buttons **[👁️ Show Full Key] [🔄 Regenerate]
+    [📚 API Documentation] [🔙 Back]** — exactly ProdSeller jaisa.
+  - **Show Full Key** kaam karta hai: plaintext ab **Fernet-encrypted** store hota hai
+    (`api_keys.key_encrypted`, key = API_SECRET_ENCRYPTION_KEY/BOT_TOKEN) — at-rest secure,
+    display-time decrypt.
+  - **Regenerate** → purani key revoke, nayi key ek dafa.
+  - **API Documentation** = URL button → `/api-docs/`.
+- **Admin side (sab buttons):** Admin panel → "🔗 Reseller API" → Generate / Keys & Config /
+  Global Pricing / 🗂️ Products (per-product reseller price + on/off toggle) / Orders (Deliver) / Stats.
+- Tests: 87 checks PASS + key flow tests (generate/reveal/revoke/regenerate). DB: api_keys.key_encrypted.
+
 ## 🎯 v161.3 (same day) — self-serve keys + admin panel UI + async fulfillment + webhook retries (DEPLOYED)
 - **Self-serve:** koi bhi user `/myresellerkey` se apni reseller API key khud bana sakta hai
   (uske points = uski wallet). Admin approval zaroori nahi; admin revoke/limit kar sakta hai.

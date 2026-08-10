@@ -58,20 +58,54 @@ from config import POINTS_PER_DOLLAR as _CFG_PPD
 
 def generate_reseller_key(user_id: int, label: str = "") -> tuple:
     """Generate a bsk_... key linked to the reseller's user_id.
-    Returns (plaintext_key, prefix). Plaintext shown exactly once."""
+    Plaintext is Fernet-encrypted at rest (key_encrypted) so the owner/user can
+    "Show Full Key" later — matching the ProdSeller interface. Plaintext is
+    returned exactly once for display."""
     import secrets
     migrate_reseller_tables()
     raw = secrets.token_urlsafe(32)
     plaintext = f"bsk_{raw}"
     prefix = plaintext[:14]
     key_hash = _hash_api_key(plaintext)
+    enc = ""
+    try:
+        from database import _encrypt_secret
+        enc = _encrypt_secret(plaintext)
+    except Exception:
+        enc = ""
     conn = get_connection(); c = conn.cursor()
     c.execute("""INSERT INTO api_keys
-        (api_key, bot_name, owner_id, is_active, key_hash, key_prefix, label)
-        VALUES (?, ?, ?, 1, ?, ?, ?)""",
-        (key_hash, "Reseller", int(user_id or 0), key_hash, prefix, str(label or "")[:60]))
+        (api_key, bot_name, owner_id, is_active, key_hash, key_prefix, label, key_encrypted)
+        VALUES (?, ?, ?, 1, ?, ?, ?, ?)""",
+        (key_hash, "Reseller", int(user_id or 0), key_hash, prefix, str(label or "")[:60], enc))
     conn.commit(); conn.close()
     return plaintext, prefix
+
+
+def get_user_reseller_key(user_id: int):
+    """Active reseller key row for a user (or None)."""
+    migrate_reseller_tables()
+    conn = get_connection(); c = conn.cursor()
+    c.execute("""SELECT * FROM api_keys
+                 WHERE owner_id=? AND bot_name='Reseller' AND is_active=1
+                 ORDER BY id DESC LIMIT 1""", (int(user_id),))
+    r = c.fetchone(); conn.close()
+    return dict(r) if r else None
+
+
+def reveal_reseller_key(key_id: int):
+    """Decrypt and return the plaintext key ('' when not recoverable)."""
+    try:
+        from database import _decrypt_secret
+        row = get_api_key_row(int(key_id))
+        if not row:
+            return ""
+        enc = str(row.get("key_encrypted") or "").strip()
+        if enc:
+            return _decrypt_secret(enc)
+    except Exception:
+        pass
+    return ""
 
 
 def list_reseller_keys(user_id: int = None) -> list:

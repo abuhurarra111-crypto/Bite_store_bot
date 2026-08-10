@@ -6141,6 +6141,7 @@ def migrate_reseller_tables():
         ensure_column(c, "api_keys", "ip_whitelist",       "TEXT DEFAULT ''")  # comma ips | '' = all
         ensure_column(c, "api_keys", "rate_limit",         "INTEGER DEFAULT 60")
         ensure_column(c, "api_keys", "webhook_secret",     "TEXT DEFAULT ''")
+        ensure_column(c, "api_keys", "key_encrypted",      "TEXT DEFAULT ''")  # Fernet-encrypted plaintext (Show Full Key)
         c.execute("""CREATE TABLE IF NOT EXISTS reseller_webhook_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             key_id INTEGER DEFAULT 0,
