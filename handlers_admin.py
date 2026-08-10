@@ -10919,8 +10919,19 @@ async def reseller_keys_panel_callback(update, context):
             uname = (u.get("first_name") if u else None) or str(k.get("owner_id"))
         except Exception:
             uname = str(k.get("owner_id"))
-        ks = reseller_key_stats(int(k.get("id") or 0))
-        lines.append(f"{st_} `{k.get('key_prefix')}` · {uname} · ${ks.get('spent_usd',0):.2f} · {ks.get('orders',0)} orders")
+        # 🆕 v161.6: full record per key — user id, username, created (date/year), balance, profit
+        try:
+            ppd = float(get_setting("reseller_points_per_dollar") or 10)
+            _bal = float(get_user_points(int(k.get("owner_id") or 0)) or 0) / ppd if ppd else 0
+        except Exception:
+            _bal = 0.0
+        tr = reseller_key_tracking(int(k.get("id") or 0))
+        created = str(k.get("created_at") or "")[:16]
+        lines.append(
+            f"{st_} `{k.get('key_prefix')}`\n"
+            f"   👤 {uname} (id {k.get('owner_id')})\n"
+            f"   🕐 {created} · 💳 ${_bal:.2f} · 📦 {tr.get('orders',0)} · 📈 ${tr.get('profit_usd',0):,.2f}"
+        )
         kb.append([InlineKeyboardButton(f"{st_} {k.get('key_prefix')} (id {k.get('id')})",
                                         callback_data=f"reseller_keycfg_panel_{k.get('id')}")])
     kb.append([InlineKeyboardButton("🔙 Back", callback_data="reseller_panel")])
@@ -10936,6 +10947,7 @@ async def reseller_keycfg_panel_callback(update, context):
     try:
         kid = int(q.data.replace("reseller_keycfg_panel_", ""))
         from database import get_api_key_row, reseller_key_stats, reseller_key_tracking, get_user, get_user_points, get_setting
+        from reseller_api import reveal_reseller_key
         k = get_api_key_row(kid)
         ks = reseller_key_stats(kid)
         tr = reseller_key_tracking(kid)
@@ -10947,15 +10959,17 @@ async def reseller_keycfg_panel_callback(update, context):
         except Exception:
             pass
         bal = float(get_user_points(int(k.get("owner_id") or 0)) or 0) / ppd if ppd else 0
+        full_key = reveal_reseller_key(kid)
     except Exception as e:
         await q.edit_message_text(f"❌ {e}"); return
     base = k.get("reseller_base_mode") or "global"
     markup = k.get("reseller_markup")
     markup_txt = f"{markup:g}%" if markup is not None else "global"
+    key_line = f"`{full_key}`" if full_key else f"`{k.get('key_prefix')}...` (key recoverable nahi)"
     text = (
         f"👤 *{uname}* — Reseller Detail\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"🔑 Key: `{k.get('key_prefix')}` · 🟢 {'Active' if k.get('is_active') else 'Revoked'}\n"
+        f"🔑 Key: {key_line}\n"
         f"🆔 User: `{k.get('owner_id')}`\n"
         f"💳 Wallet: *${bal:.2f}*\n"
         f"💲 Markup: *{markup_txt}%* · Base: *{base}*\n"
@@ -11170,7 +11184,7 @@ async def reseller_keyaction_callback(update, context):
     await q.answer()
     try:
         parts = q.data.replace("reseller_keyaction_", "").split("_")
-        kid = int(parts[0]); action = parts[1]
+        kid = int(parts[0]); action = "_".join(parts[1:])  # 🔧 v161.6: multi-word actions (base_cost/base_price)
     except Exception:
         await q.edit_message_text("❌ Invalid action"); return
     try:
@@ -11583,6 +11597,7 @@ async def reseller_api_user_callback(update, context):
     except Exception:
         bal = 0.0
     # 🆕 v161.6: show the key's limits so the reseller knows them
+    # (markup/base intentionally NOT shown — that's the owner's margin)
     try:
         _spend = float(key.get("spend_limit_usd") or 0)
         _rate = int(key.get("rate_limit") or 60)
@@ -11725,7 +11740,13 @@ async def reseller_admin_products_callback(update, context, page=0):
     for r in rows:
         on = "✅" if int(r.get("reseller_enabled") or 1) == 1 else "⛔"
         price = f"${float(r.get('rp') or 0):g}" if float(r.get("rp") or 0) > 0 else "auto"
-        lines.append(f"{on} #{r['id']} · {str(r.get('name'))[:24]}")
+        # 🔧 v161.6: clean premium-emoji HTML from the name (no [[HTML]]/tg-emoji tags)
+        try:
+            from utils import html_strip_tags
+            _nm = html_strip_tags(r.get("name") or "") or f"#{r['id']}"
+        except Exception:
+            _nm = str(r.get("name") or f"#{r['id']}")
+        lines.append(f"{on} #{r['id']} · {_nm[:24]}")
         kb.append([
             InlineKeyboardButton(f"{on}", callback_data=f"reseller_prod_toggle_{r['id']}"),
             InlineKeyboardButton(f"💰 {price}", callback_data=f"reseller_prod_price_{r['id']}"),
