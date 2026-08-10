@@ -1174,6 +1174,18 @@ def _render_recipe(layout, is_admin=False, user_id=None):
         pass  # admin in hero, don't add to footer later
     core_ids = [b for b in all_core if b not in excluded]
 
+    # 🆕 v161.5: append ANY registry main button missing from a curated layout's
+    # core_order, so newly-added buttons (e.g. main_reseller_api) always render
+    # instead of silently disappearing on old saved layouts. Hidden buttons are
+    # still skipped later by _rb(). Curated buttons keep their order — new ones
+    # flow at the end.
+    try:
+        from button_system import get_ordered_button_ids as _gobi
+        _reg = [b for b in _gobi("main") if b != "main_admin" and b not in excluded]
+        core_ids = core_ids + [b for b in _reg if b not in core_ids]
+    except Exception:
+        pass
+
     # If admin is user and admin button is not in hero/footer, add to footer
     if is_admin and "main_admin" not in hero_ids and "main_admin" not in footer_ids:
         footer_ids = list(footer_ids) + ["main_admin"]
