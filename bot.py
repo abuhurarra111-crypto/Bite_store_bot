@@ -114,7 +114,8 @@ from handlers_support import (support_menu_callback, st_list_callback, st_view_c
                                adm_st_reply_callback, adm_reply_received,
                                adm_warranty_callback, adm_wr_list_callback,
                                adm_wr_view_callback, adm_wr_approve_callback,
-                               adm_wr_reject_callback,
+                               adm_wr_reject_callback, adm_wr_reject_do_callback,
+                               adm_wr_reject_cancel_callback, adm_wr_reject_reason_received,
                                adm_pending_delivery_callback, adm_delivery_mode_callback, adm_restock_reqs_callback,
                                adm_deliver_callback, adm_delivery_text_received)
 from handlers_admin import admin_deposit_history_callback, admin_deposit_page_callback, admin_deposit_detail_callback, admin_responses_category_callback, bybit_test_callback  # 📊 Deposit + ✏️ Responses
@@ -643,6 +644,9 @@ async def handle_text(update, context):
     # 🐛 v157: replacement rejection reason input
     if context.user_data.get('rej_reason_oid'):
         if await admin_replace_reject_reason_received(update, context): return
+    # 🆕 v161.12: warranty/refund rejection reason input
+    if context.user_data.get('wr_reject_wid'):
+        if await adm_wr_reject_reason_received(update, context): return
     # 🆕 v148: Poll creation text steps (question → options)
     if context.user_data.get('poll_step') == 'poll_q':
         if await poll_question_received(update, context): return
@@ -2336,7 +2340,10 @@ def main():
         ("^adm_wr_all$", adm_wr_list_callback),
         ("^adm_wr_view_", adm_wr_view_callback),
         ("^adm_wr_approve_", adm_wr_approve_callback),
-        ("^adm_wr_reject_", adm_wr_reject_callback),
+        # 🆕 v161.12: specific reject-reason buttons BEFORE the generic reject
+        ("^adm_wr_reject_do_\\d+$", adm_wr_reject_do_callback),
+        ("^adm_wr_reject_cancel_\\d+$", adm_wr_reject_cancel_callback),
+        ("^adm_wr_reject_\\d+$", adm_wr_reject_callback),
         # 📦 Manual Delivery (admin side)
         ("^adm_pending_delivery$", adm_pending_delivery_callback),
         ("^adm_restock_reqs$", adm_restock_reqs_callback),

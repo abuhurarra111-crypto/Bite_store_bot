@@ -2902,7 +2902,18 @@ def _bybit_recent_amount_fallback(rows, expected, order=None, window_min=0):
             hits.append(d)
         except Exception:
             continue
-    return hits[0] if len(hits) == 1 else None
+    if len(hits) == 1:
+        return hits[0]
+    if len(hits) > 1:
+        # 🆕 v161.12: multiple same-amount internal deposits after the order
+        # (e.g. an abandoned attempt + the real one) — prefer the NEWEST one,
+        # which is overwhelmingly the current payment. All hits already passed
+        # amount + internal + after-order + not-used filters (fraud-safe).
+        try:
+            return max(hits, key=lambda d: int(d.get('time_ms') or 0))
+        except Exception:
+            return None
+    return None
 
 
 def _norm_digits(value):
@@ -2936,7 +2947,7 @@ def _deep_find_id(record, key_norm):
     return False
 
 
-def _find_matching_bybit_payment(order, lookback_hours=96):
+def _find_matching_bybit_payment(order, lookback_hours=168):
     """Find a Bybit deposit matching the order.
 
     🔧 AUDIT-FIX v112 (2026-07-31): returns a *diagnostic* reason string instead
@@ -2976,7 +2987,9 @@ def _find_matching_bybit_payment(order, lookback_hours=96):
             cust_uid = str((order or {}).get('customer_bybit_uid') or '').strip()
         except Exception:
             cust_uid = ''
+        uid_mode = False  # 🆕 v161.12
         if cust_uid:
+            uid_mode = True  # 🆕 v161.12: remember we had a UID to report better
             try:
                 uid_rows = get_bybit_internal_deposits('USDT', lookback_hours=lookback_hours)
             except Exception:
@@ -2993,14 +3006,11 @@ def _find_matching_bybit_payment(order, lookback_hours=96):
                     return d, 'matched'
                 except Exception:
                     continue
-            # 🔧 v122: when the customer's UID is known, only a deposit FROM that
-            # UID can credit this order — a same-amount deposit from someone else
-            # must NOT match (avoids cross-crediting when many users deposit the
-            # same nominal amount). No generic fallback in this mode.
-            if not rows:
-                return None, 'no_records'
-            return None, 'uid_amount_not_found'
-            # (falls through below only for legacy orders without stored UID)
+            # 🆕 v161.12 BUGFIX: NO early return here! Bybit's deposit API can
+            # lag or omit from_member_id on fresh internal transfers — falling
+            # straight back to the generic scan + amount fallback lets the SAME
+            # deposit still be matched by amount/internal/recency, instead of
+            # failing with a bare 'no_records' that blocks auto-credit.
         # First try exact ID query, then always scan recent list. Bybit UI may
         # show an ID that does not return with the exact txID filter, while the
         # same ID exists in the recent payload — the full scan covers that.
@@ -3065,6 +3075,10 @@ def _find_matching_bybit_payment(order, lookback_hours=96):
         if fb:
             return fb, 'matched'
         if not rows:
+            if uid_mode:
+                # 🆕 v161.12: deposit not yet visible to the API (Bybit lag) or
+                # from_member_id absent — tell admin clearly, keep order pending.
+                return None, 'uid_amount_not_found'
             return None, f"no_records:internal={diag['internal_count']},onchain={diag['onchain_count']}"
         return None, f"hash_not_found:{len(rows)}"
     if method in ('bybit_usdt_trc20','bybit_usdt_bep20'):
@@ -3348,7 +3362,7 @@ async def bybit_deposit_background_job(context):
         orders = []
     for o in orders:
         try:
-            dep, reason = _find_matching_bybit_payment(o, lookback_hours=120)
+            dep, reason = _find_matching_bybit_payment(o, lookback_hours=168)
             if dep:
                 ok, msg = await _complete_bybit_order(context.bot, o, dep)
                 if ok:

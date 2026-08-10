@@ -1262,31 +1262,100 @@ async def adm_wr_approve_callback(update, context):
 
 
 async def adm_wr_reject_callback(update, context):
-    """Admin rejects warranty/refund"""
+    """Admin rejects warranty/refund — 🆕 v161.12: asks for a REASON first
+    (no direct reject), mirrors the replacement reject flow."""
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
-    await q.answer("❌ Rejected!")
+    await q.answer()
 
     wid = int(q.data.replace("adm_wr_reject_", ""))
     w = get_warranty_request(wid)
     if not w:
+        await q.answer("❌ Not found", show_alert=True)
         return
 
-    update_warranty_request(wid, status='rejected', admin_notes='Rejected by admin')
+    type_label = "🛡️ Warranty" if w['request_type'] == 'warranty' else "💰 Refund"
+    context.user_data['wr_reject_wid'] = wid
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⏭ Skip Reason", callback_data=f"adm_wr_reject_do_{wid}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data=f"adm_wr_reject_cancel_{wid}")],
+    ])
+    await _safe_edit(q,
+        f"❌ *Reject {type_label} Request*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📦 Order #{w['order_id']}\n\n"
+        f"*Reject ka reason likho* — ye customer ko dikhega aur request mein "
+        f"save hoga.\n\n"
+        f"_(Reason likh kar bhejo, ya ⏭ Skip Reason tap karo)_",
+        parse_mode="Markdown", reply_markup=kb)
+
+
+async def adm_wr_reject_reason_received(update, context):
+    """Text handler: reason for warranty/refund reject."""
+    if update.effective_user.id != ADMIN_ID:
+        return False
+    wid = context.user_data.pop('wr_reject_wid', None)
+    if not wid:
+        return False
+    reason = (update.message.text or '').strip()[:200] or 'Rejected by admin'
+    await _do_wr_reject(update, context, wid, reason)
+    return True
+
+
+async def adm_wr_reject_do_callback(update, context):
+    """Skip-reason button → reject with default note."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        wid = int(q.data.replace("adm_wr_reject_do_", ""))
+    except Exception:
+        return
+    context.user_data.pop('wr_reject_wid', None)
+    await _do_wr_reject(update, context, wid, 'Rejected by admin')
+
+
+async def adm_wr_reject_cancel_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    context.user_data.pop('wr_reject_wid', None)
+    try:
+        wid = int(q.data.replace("adm_wr_reject_cancel_", ""))
+        await q.edit_message_text("❌ Reject cancel kar diya.",
+                                  reply_markup=InlineKeyboardMarkup(
+                                      [[InlineKeyboardButton("🔙 Back", callback_data=f"adm_wr_view_{wid}")]]))
+    except Exception:
+        pass
+
+
+async def _do_wr_reject(update, context, wid, reason):
+    """Execute warranty/refund reject with the given reason."""
+    q = update.callback_query
+    w = get_warranty_request(wid)
+    if not w:
+        return
+
+    update_warranty_request(wid, status='rejected', admin_notes=reason or 'Rejected by admin')
 
     type_label = "🛡️ Warranty" if w['request_type'] == 'warranty' else "💰 Refund"
     try:
         await context.bot.send_message(w['user_id'],
             f"❌ *{type_label} Request Rejected*\n━━━━━━━━━━━━━━━━━━━━\n\n"
             f"📦 Order #{w['order_id']}\n\n"
-            f"Your request was not approved. Contact support for more info.",
+            f"📋 *Reason:* {reason}\n\n"
+            f"If you have any questions, contact support.",
             parse_mode="Markdown")
-    except:
+    except Exception:
         pass
 
-    set_cb_data(update, f"adm_wr_view_{wid}"); u = update
-    await adm_wr_view_callback(u, context)
+    try:
+        set_cb_data(update, f"adm_wr_view_{wid}")
+        await adm_wr_view_callback(update, context)
+    except Exception:
+        pass
 
 
 # ════════════════════════════════════════════
