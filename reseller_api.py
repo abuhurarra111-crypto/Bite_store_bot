@@ -761,6 +761,20 @@ if _FASTAPI_OK:
         except Exception:
             raise HTTPException(status_code=404, detail="logo not found")
 
+    @app.get("/static/reseller_docs_favicon.png", include_in_schema=False)
+    async def _docs_favicon():
+        try:
+            _p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "reseller_docs_favicon.png")
+            with open(_p, "rb") as _f:
+                return Response(content=_f.read(), media_type="image/png")
+        except Exception:
+            raise HTTPException(status_code=404, detail="favicon not found")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def _favicon_ico():
+        return await _docs_favicon()
+
     @app.get("/docs", include_in_schema=False)
     async def _docs():
         return HTMLResponse(_DOCS_HTML, status_code=200)
@@ -771,6 +785,7 @@ if _FASTAPI_OK:
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Bite Store — Reseller API Docs</title>
+<link rel="icon" type="image/png" href="/static/reseller_docs_favicon.png"/>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css"/>
 <style>
   :root {
@@ -817,9 +832,9 @@ if _FASTAPI_OK:
   .swagger-ui .model-box { background:#f8fafc; }
   a { color: var(--g4); }
   .hero .logo {
-    width: 96px; height: auto; border-radius: 18px;
-    box-shadow: 0 10px 30px rgba(0,0,0,.4); margin-bottom: 12px;
-    background: #fff; padding: 6px;
+    width: 96px; height: 96px; object-fit: contain; border-radius: 50%;
+    box-shadow: 0 10px 30px rgba(0,0,0,.45); margin-bottom: 12px;
+    background: rgba(255,255,255,.92);
   }
   .formats {
     max-width: 1000px; margin: 26px auto 0; background: rgba(255,255,255,.97);
