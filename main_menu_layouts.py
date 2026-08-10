@@ -60,6 +60,7 @@ _CORE_BASE = [
     "main_shop", "main_points", "main_price_list", "main_account",
     "main_orders", "main_transactions", "main_referral", "main_support",
     "main_warranty", "main_reviews", "main_loyalty", "main_language",
+    "main_reseller_api",  # 🆕 v161.5: reseller API key button in every layout's core
 ]
 _ADMIN = ["main_admin"]
 
