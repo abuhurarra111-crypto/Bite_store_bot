@@ -2407,6 +2407,7 @@ def main():
         ("^reseller_export_key_\\d+$", reseller_export_key_callback),
         # 🆕 v161.4: user-facing ProdSeller-style API Access panel (any user)
         ("^reseller_api_user$", reseller_api_user_callback),
+        ("^reseller_api_generate$", reseller_api_generate_callback),
         ("^reseller_api_show$", reseller_api_show_callback),
         ("^reseller_api_regenerate$", reseller_api_regenerate_callback),
         ("^an_p_", analytics_period_callback),

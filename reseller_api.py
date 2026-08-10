@@ -788,97 +788,139 @@ if _FASTAPI_OK:
 <link rel="icon" type="image/png" href="/static/reseller_docs_favicon.png"/>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css"/>
 <style>
-  :root {
-    --g1:#e53935; --g2:#fb8c00; --g3:#43a047; --g4:#1e88e5;
-  }
+  :root { --g1:#e53935; --g2:#fb8c00; --g3:#43a047; --g4:#1e88e5; --ink:#0f172a; }
   * { box-sizing: border-box; }
-  html, body {
+  html { scroll-behavior: smooth; }
+  body {
     margin:0; padding:0; min-height:100%;
-    background: linear-gradient(135deg, var(--g1) 0%, var(--g2) 30%, var(--g3) 65%, var(--g4) 100%);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink);
+    background: linear-gradient(135deg, var(--g1) 0%, var(--g2) 30%, var(--g3) 65%, var(--g4) 100%);
+    background-attachment: fixed;
   }
-  .page { padding: 28px 16px 60px; }
+  /* sticky top nav */
+  .topnav {
+    position: sticky; top:0; z-index: 50;
+    display:flex; align-items:center; gap:12px;
+    padding: 10px 18px; backdrop-filter: blur(10px);
+    background: rgba(255,255,255,.14); border-bottom:1px solid rgba(255,255,255,.25);
+  }
+  .topnav img { width: 34px; height:34px; border-radius:50%; box-shadow:0 4px 12px rgba(0,0,0,.3); background:#fff; }
+  .topnav .brand { color:#fff; font-weight:700; font-size:16px; text-shadow:0 1px 6px rgba(0,0,0,.4); }
+  .topnav .spacer { flex:1; }
+  .topnav a { color:#fff; text-decoration:none; font-size:13px; padding:6px 12px; border-radius:999px; background:rgba(255,255,255,.18); transition:.2s; }
+  .topnav a:hover { background:rgba(255,255,255,.32); }
+  .page { padding: 30px 16px 70px; }
+  /* glass hero */
   .hero {
-    max-width: 1000px; margin: 0 auto 24px; color: #fff;
-    text-shadow: 0 2px 8px rgba(0,0,0,.35);
+    max-width: 1040px; margin: 0 auto 26px; color:#fff;
+    background: rgba(255,255,255,.16); border:1px solid rgba(255,255,255,.35);
+    border-radius: 22px; padding: 26px 28px; backdrop-filter: blur(10px);
+    box-shadow: 0 18px 50px rgba(0,0,0,.28);
   }
-  .hero h1 { margin: 0 0 6px; font-size: 30px; letter-spacing: .3px; }
-  .hero p { margin: 0; font-size: 15px; opacity: .95; }
-  .badges { margin-top: 10px; }
-  .badge {
-    display:inline-block; background: rgba(255,255,255,.22);
-    border: 1px solid rgba(255,255,255,.45); backdrop-filter: blur(4px);
-    padding: 3px 12px; border-radius: 999px; font-size: 12.5px; margin-right: 6px;
+  .hero-top { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  .hero img.logo { width: 84px; height:84px; border-radius:50%; background:#fff; padding:4px; box-shadow:0 10px 30px rgba(0,0,0,.35); }
+  .hero h1 { margin:0 0 4px; font-size:30px; letter-spacing:.3px; text-shadow:0 2px 10px rgba(0,0,0,.4); }
+  .hero p { margin:0; font-size:15px; opacity:.97; }
+  .badges { margin-top:14px; }
+  .badge { display:inline-block; background:rgba(255,255,255,.2); border:1px solid rgba(255,255,255,.5); padding:4px 13px; border-radius:999px; font-size:12.5px; margin-right:7px; transition:.2s; }
+  .badge:hover { transform: translateY(-2px); background:rgba(255,255,255,.3); }
+  /* quick start cards */
+  .quick { max-width:1040px; margin:0 auto 26px; display:grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap:14px; }
+  .qcard {
+    background: rgba(255,255,255,.94); border-radius:14px; padding:14px 16px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.22); border-top:4px solid var(--g4);
   }
-  .swagger-wrap {
-    max-width: 1000px; margin: 0 auto; background: #fff;
-    border-radius: 16px; box-shadow: 0 18px 50px rgba(0,0,0,.35);
-    overflow: hidden;
-  }
-  .swagger-top {
-    height: 6px; background: linear-gradient(90deg, var(--g1), var(--g2), var(--g3), var(--g4));
-  }
-  .swagger-ui { padding: 10px 22px 30px; }
+  .qcard h3 { margin:0 0 8px; font-size:14px; color:var(--ink); }
+  .qcard code { display:block; background:#0f172a; color:#e2e8f0; padding:9px 11px; border-radius:8px; font-size:11.5px; overflow-x:auto; white-space:pre; }
+  .qcard .m { font-size:12px; color:#64748b; margin-top:6px; }
+  /* swagger card */
+  .swagger-wrap { max-width:1040px; margin:0 auto; background:rgba(255,255,255,.98); border-radius:18px; box-shadow:0 22px 60px rgba(0,0,0,.4); overflow:hidden; }
+  .swagger-top { height:7px; background: linear-gradient(90deg,var(--g1),var(--g2),var(--g3),var(--g4)); }
+  .swagger-ui { padding:12px 22px 34px; color:var(--ink); }
   .swagger-ui .topbar { display:none; }
-  .swagger-ui .btn.authorize { border-color: var(--g3); color: var(--g3); }
-  .swagger-ui .btn.authorize svg { fill: var(--g3); }
-  .swagger-ui .opblock-tag { border-bottom: 2px solid var(--g3); }
-  .swagger-ui .opblock.opblock-get { border-color: var(--g3); background: rgba(67,160,71,.06); }
-  .swagger-ui .opblock.opblock-post { border-color: var(--g4); background: rgba(30,136,229,.06); }
-  .swagger-ui .opblock-summary-method { background: linear-gradient(135deg, var(--g2), var(--g3)); }
-  .swagger-ui .info .title { color: #111; }
-  .swagger-ui .scheme-container { background: #f8fafc; border-radius: 10px; }
-  .swagger-ui .info h2, .swagger-ui .info p { color:#333; }
-  .swagger-ui .model-box { background:#f8fafc; }
-  a { color: var(--g4); }
-  .hero .logo {
-    width: 96px; height: 96px; object-fit: contain; border-radius: 50%;
-    box-shadow: 0 10px 30px rgba(0,0,0,.45); margin-bottom: 12px;
-    background: rgba(255,255,255,.92);
-  }
-  .formats {
-    max-width: 1000px; margin: 26px auto 0; background: rgba(255,255,255,.97);
-    border-radius: 16px; box-shadow: 0 18px 50px rgba(0,0,0,.35);
-    overflow: hidden;
-  }
-  .formats-top { height: 6px; background: linear-gradient(90deg, var(--g1), var(--g2), var(--g3), var(--g4)); }
-  .formats-body { padding: 18px 22px 26px; color: #0f172a; }
-  .formats-body h2 { margin: 0 0 4px; font-size: 21px; }
-  .formats-body p { margin: 0 0 14px; color: #475569; font-size: 14px; }
-  .fmt-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-  .fmt-table th { text-align: left; padding: 9px 10px; background: linear-gradient(90deg, var(--g1), var(--g2), var(--g3), var(--g4)); color: #fff; font-weight: 600; }
-  .fmt-table td { padding: 9px 10px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
-  .fmt-table tr:nth-child(even) td { background: #f8fafc; }
-  .fmt-table code { background: #f1f5f9; padding: 2px 7px; border-radius: 6px; font-size: 12.5px; color: #0f172a; }
-  .fmt-table .badge-fmt { display:inline-block; background: rgba(67,160,71,.12); color: #1b5e20; border:1px solid rgba(67,160,71,.4); padding:2px 9px; border-radius:999px; font-size:11.5px; margin-left:6px; }
-  .prod-note { background: #f8fafc; border-left: 4px solid var(--g4); border-radius: 8px; padding: 12px 16px; margin-top: 16px; font-size: 13.5px; color:#334155; }
+  .swagger-ui .btn.authorize { border-color:var(--g3); color:var(--g3); }
+  .swagger-ui .btn.authorize svg { fill:var(--g3); }
+  .swagger-ui .opblock-tag { border-bottom:2px solid var(--g3); }
+  .swagger-ui .opblock.opblock-get { border-color:var(--g3); background:rgba(67,160,71,.05); }
+  .swagger-ui .opblock.opblock-post { border-color:var(--g4); background:rgba(30,136,229,.05); }
+  .swagger-ui .opblock-summary-method { background:linear-gradient(135deg,var(--g2),var(--g3)); }
+  .swagger-ui .scheme-container { background:#f1f5f9; border-radius:10px; }
+  .swagger-ui .info .title { color:var(--ink); }
+  .swagger-ui .info h2, .swagger-ui .info p, .swagger-ui .info .markdown { color:#334155; }
+  .swagger-ui .info .markdown table { color:#334155; }
+  .swagger-ui .model-box { background:#f1f5f9; }
+  .swagger-ui a { color:var(--g4); }
+  /* formats */
+  .formats { max-width:1040px; margin:26px auto 0; background:rgba(255,255,255,.97); border-radius:16px; box-shadow:0 18px 50px rgba(0,0,0,.35); overflow:hidden; }
+  .formats-top { height:6px; background:linear-gradient(90deg,var(--g1),var(--g2),var(--g3),var(--g4)); }
+  .formats-body { padding:18px 22px 26px; color:var(--ink); }
+  .formats-body h2 { margin:0 0 4px; font-size:21px; }
+  .formats-body p { margin:0 0 14px; color:#475569; font-size:14px; }
+  .fmt-table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  .fmt-table th { text-align:left; padding:9px 10px; background:linear-gradient(90deg,var(--g1),var(--g2),var(--g3),var(--g4)); color:#fff; font-weight:600; }
+  .fmt-table td { padding:9px 10px; border-bottom:1px solid #e2e8f0; vertical-align:top; }
+  .fmt-table tr:nth-child(even) td { background:#f8fafc; }
+  .fmt-table code { background:#f1f5f9; padding:2px 7px; border-radius:6px; font-size:12.5px; }
+  .prod-note { background:#f8fafc; border-left:4px solid var(--g4); border-radius:8px; padding:12px 16px; margin-top:16px; font-size:13.5px; color:#334155; }
   .prod-note code { background:#e2e8f0; padding:2px 7px; border-radius:6px; }
-  @media (max-width: 640px) {
-    .hero h1 { font-size: 23px; }
-    .swagger-ui { padding: 6px 10px 20px; }
-    .fmt-table { font-size: 12px; }
+  footer { text-align:center; margin-top:24px; font-size:12.5px; color:rgba(255,255,255,.9); text-shadow:0 1px 6px rgba(0,0,0,.5); }
+  @media (max-width:640px) {
+    .hero h1 { font-size:23px; } .hero { padding:18px 16px; }
+    .swagger-ui { padding:8px 10px 22px; } .fmt-table { font-size:12px; }
+    .topnav a { display:none; } .topnav .brand { font-size:14px; }
   }
 </style>
 </head>
 <body>
+  <div class="topnav">
+    <img src="/static/reseller_docs_logo.png" alt="Bite Store"/>
+    <span class="brand">Bite Store — Reseller API</span>
+    <span class="spacer"></span>
+    <a href="#endpoints">Endpoints</a>
+    <a href="#formats">Formats</a>
+  </div>
   <div class="page">
     <div class="hero">
-      <img src="/static/reseller_docs_logo.png" alt="Bite Store" class="logo"/>
-      <h1>🔗 Bite Store — Reseller API</h1>
-      <p>Sell our products in your own bot — everything auto-delivered.</p>
-      <div class="badges">
-        <span class="badge">🔑 X-API-Key auth</span>
-        <span class="badge">📦 Auto-delivery</span>
-        <span class="badge">🪙 Points wallet</span>
-        <span class="badge">🔒 No supplier info exposed</span>
+      <div class="hero-top">
+        <img class="logo" src="/static/reseller_docs_logo.png" alt="Bite Store"/>
+        <div>
+          <h1>🔗 Reseller API</h1>
+          <p>Sell our products in your own bot — everything auto-delivered.</p>
+          <div class="badges">
+            <span class="badge">🔑 X-API-Key auth</span>
+            <span class="badge">📦 Auto-delivery</span>
+            <span class="badge">🪙 Points wallet</span>
+            <span class="badge">🔒 No supplier info exposed</span>
+          </div>
+        </div>
       </div>
     </div>
-    <div class="swagger-wrap">
+
+    <div class="quick">
+      <div class="qcard">
+        <h3>🛍️ List products</h3>
+        <code>curl -H "X-API-Key: bsk_..." \\<br/>  /v1/products</code>
+        <div class="m">Real live stock + premium emoji.</div>
+      </div>
+      <div class="qcard">
+        <h3>💳 Balance</h3>
+        <code>curl -H "X-API-Key: bsk_..." \\<br/>  /v1/balance</code>
+        <div class="m">Wallet in USD + points.</div>
+      </div>
+      <div class="qcard">
+        <h3>🛒 Place order</h3>
+        <code>POST /v1/orders<br/>{"productId":"87","quantity":2}</code>
+        <div class="m">Auto-delivered as deliveredKeys.</div>
+      </div>
+    </div>
+
+    <div class="swagger-wrap" id="endpoints">
       <div class="swagger-top"></div>
       <div id="swagger-ui" class="swagger-ui"></div>
     </div>
 
-    <div class="formats">
+    <div class="formats" id="formats">
       <div class="formats-top"></div>
       <div class="formats-body">
         <h2>📦 Delivery Formats (13)</h2>
@@ -902,22 +944,17 @@ if _FASTAPI_OK:
         <div class="prod-note">
           <strong>🪙 Emoji rendering:</strong> each product returns <code>name</code> (plain text with the emoji char),
           <code>name_html</code> (premium emoji markup — send with <code>parse_mode=HTML</code>),
-          and <code>emoji</code> / <code>emoji_id</code> for custom emoji. Descriptions are clean plain text
-          (<code>description</code>) — no HTML tags, no <code>[[HTML]]</code> sentinels, so any bot can render them.
+          and <code>emoji</code> / <code>emoji_id</code> for custom emoji. Descriptions are clean plain text —
+          no HTML tags, no <code>[[HTML]]</code> sentinels.
         </div>
       </div>
     </div>
+    <footer>Bite Store Reseller API · Auto-delivery · Live stock · v1.6</footer>
   </div>
   <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
   <script>
     window.onload = function() {
-      window.ui = SwaggerUIBundle({
-        url: '/openapi.json',
-        dom_id: '#swagger-ui',
-        deepLinking: true,
-        presets: [SwaggerUIBundle.presets.apis],
-        layout: 'BaseLayout'
-      });
+      window.ui = SwaggerUIBundle({ url:'/openapi.json', dom_id:'#swagger-ui', deepLinking:true, presets:[SwaggerUIBundle.presets.apis], layout:'BaseLayout' });
     };
   </script>
 </body>

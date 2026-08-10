@@ -1366,6 +1366,8 @@ async def _show_responses_category(u, c, category="all", page=1):
         # 🆕 v95: NEW category for tier / freeclaim / refund groups (were missing)
         "tier": {"name": "🏆 Loyalty & Tiers", "keys": [k for k in all_keys if k.startswith("tier_")]},
         "freeclaim": {"name": "🎁 Free Claim", "keys": [k for k in all_keys if k.startswith("freeclaim_")]},
+        # 🆕 v161.11: Reseller API responses (editable)
+        "reseller": {"name": "🔗 Reseller API", "keys": [k for k in all_keys if k.startswith("reseller_api_")]},
         "other": {"name": "📞 Support & Other", "keys": ["support_text", "terms", "order_rejected", "new_user_notification", "binance_instructions", "refund_processed"]},
     }
 
@@ -11563,21 +11565,26 @@ async def reseller_api_user_callback(update, context):
         return
     key = get_user_reseller_key(uid)
     docs_url = _reseller_docs_url()
-    kb_back = [[InlineKeyboardButton("🔙 Back", callback_data="main_menu")]]
 
+    # 🔧 v161.11: NO auto-generate. If the user has no key, show a landing
+    # screen with a "Generate API Key" button — key is only created on tap.
     if not key:
-        plaintext, _prefix = generate_reseller_key(uid, f"Reseller {uid}")
-        kb = []
+        kb = [
+            [InlineKeyboardButton("🛠️ Generate API Key", callback_data="reseller_api_generate")],
+        ]
         if docs_url:
             kb.append([InlineKeyboardButton("📚 API Documentation", url=docs_url)])
         kb.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
         try:
-            await q.edit_message_text(
-                "🔑 *New API Key Generated!*\n\n"
-                f"🔑 *Your Key:*\n`{plaintext}`\n\n"
-                "⚠️ Save this key now — it will be masked next time.\n\n"
-                f"Use header: `X-API-Key: {plaintext}`\n\n"
-                "Use it to sell our products on your own bot or website.",
+            _txt = get_response_with_auto_register(
+                "reseller_api_landing",
+                "🔗 *Reseller API*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                "👉 Sell our products on your own bot or website!\n\n"
+                "🔑 Tap **Generate API Key** to create your personal key.\n"
+                "💳 Your key is linked to your wallet (💎 Buy Points to top up).\n"
+                "📦 Every order is auto-delivered to your bot.\n\n"
+                "_Your key is shown only ONCE after generating — save it!_")
+            await q.edit_message_text(_txt,
                 parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         except Exception as e:
             try:
@@ -11634,6 +11641,50 @@ async def reseller_api_user_callback(update, context):
                                   reply_markup=InlineKeyboardMarkup(kb))
     except Exception:
         pass
+
+
+async def reseller_api_generate_callback(update, context):
+    """🛠️ Generate API Key — on button tap (not auto)."""
+    q = update.callback_query
+    try:
+        await q.answer()
+    except Exception:
+        pass
+    uid = int(q.from_user.id)
+    try:
+        from reseller_api import (get_user_reseller_key, generate_reseller_key)
+    except Exception as e:
+        try:
+            await q.edit_message_text(f"❌ {e}")
+        except Exception:
+            pass
+        return
+    # safety: if a key already exists (double-tap), don't create another
+    existing = get_user_reseller_key(uid)
+    if existing:
+        return await reseller_api_user_callback(update, context)
+    plaintext, _p = generate_reseller_key(uid, f"Reseller {uid}")
+    docs_url = _reseller_docs_url()
+    kb = []
+    if docs_url:
+        kb.append([InlineKeyboardButton("📚 API Documentation", url=docs_url)])
+    kb.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
+    try:
+        _txt = get_response_with_auto_register(
+            "reseller_api_generated",
+            "✅ *New API Key Generated!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            "🔑 *Your Key:*\n`{api_key}`\n\n"
+            "⚠️ *Save this key now — it will be masked next time.*\n\n"
+            "📡 Use header: `X-API-Key: {api_key}`\n"
+            "🛒 Use it to sell our products on your own bot or website.")
+        _txt = _txt.replace("{api_key}", plaintext)
+        await q.edit_message_text(_txt,
+            parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    except Exception as e:
+        try:
+            await q.message.reply_text(f"❌ {e}")
+        except Exception:
+            pass
 
 
 async def reseller_api_show_callback(update, context):

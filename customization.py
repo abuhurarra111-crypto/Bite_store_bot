@@ -2060,6 +2060,7 @@ MAIN_SCREENS = [
     ("reviews_screen", "⭐ Reviews"),
     ("loyalty_screen", "🏆 Loyalty"),
     ("language_screen", "🌐 Language"),
+    ("reseller_api_screen", "🔗 Reseller API"),  # 🆕 v161.11
     ("freeclaim_screens", "🎁 Free Claim"),
     ("terms_screen", "📜 Terms"),
     # Payment flows
@@ -2080,6 +2081,7 @@ BTN_TARGET_SCREEN = {
     "main_referral": "referral_screen", "main_price_list": "shop_screen",
     "main_loyalty": "loyalty_screen", "main_language": "language_screen",
     "main_reviews": "reviews_screen", "main_warranty": "warranty_screen",
+    "main_reseller_api": "reseller_api_screen",  # 🆕 v161.11
     "pay_binance": "binance_flow_screen", "pay_usdt_trc20": "crypto_usdt_flow_screen",
     "pay_usdt_bep20": "crypto_usdt_flow_screen", "pay_bybit_pay": "bybit_flow_screen",
     "pay_bybit_usdt_trc20": "bybit_flow_screen", "pay_bybit_usdt_bep20": "bybit_flow_screen",
@@ -2680,6 +2682,8 @@ SCREEN_TREE = {
             {"id": "main_reviews",      "kind": "registry"},
             {"id": "main_loyalty",      "kind": "registry"},
             {"id": "main_language",     "kind": "registry"},
+            # 🆕 v161.11: Reseller API button (editable in Screen Editor)
+            {"id": "main_reseller_api", "kind": "registry"},
         ],
         "children": [
             "force_join_screen",
@@ -2694,7 +2698,27 @@ SCREEN_TREE = {
             "reviews_screen",
             "loyalty_screen",
             "language_screen",
+            "reseller_api_screen",   # 🆕 v161.11
         ],
+    },
+
+    # ═══════════════════════════════════════════════════════════
+    # 🆕 v161.11: RESELLER API SCREEN (editable texts in Screen Editor)
+    "reseller_api_screen": {
+        "icon": "🔗",
+        "title": "Reseller API",
+        "description": "User taps '🔗 Reseller API Key' from main menu",
+        "texts": [
+            ("reseller_api_landing",    "📝 Landing (no key yet)"),
+            ("reseller_api_generated",  "✅ Key Generated"),
+            ("reseller_api_panel",      "🔗 API Access Panel"),
+            ("reseller_api_fullkey",    "🔑 Show Full Key"),
+            ("reseller_api_regenerate", "🔄 Regenerate"),
+        ],
+        "buttons": [
+            {"id": "main_reseller_api", "kind": "registry"},
+        ],
+        "children": [],
     },
 
     # ═══════════════════════════════════════════════════════════

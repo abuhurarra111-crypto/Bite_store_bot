@@ -465,3 +465,56 @@ DEFAULT_RESPONSES.update({
         "Your order was cancelled. No amount was charged."
     ),
 })
+
+
+# ════════════════════════════════════════════════════════════════
+# 🆕 v161.11: RESELLER API — EDITABLE RESPONSES (English + emojis)
+# (Auto-registered into bot_responses via migrate_all; editable in
+#  Admin → Settings → Edit Responses, and Customization → Screen Editor)
+# ════════════════════════════════════════════════════════════════
+DEFAULT_RESPONSES.update({
+    # ── Landing screen (user taps 🔗 Reseller API Key, no key yet) ──
+    "reseller_api_landing": (
+        "🔗 *Reseller API*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "👉 Sell our products on your own bot or website!\n\n"
+        "🔑 Tap **Generate API Key** to create your personal key.\n"
+        "💳 Your key is linked to your wallet (💎 Buy Points to top up).\n"
+        "📦 Every order is auto-delivered to your bot.\n\n"
+        "_Your key is shown only ONCE after generating — save it!_"
+    ),
+    # ── Key generated screen ──
+    "reseller_api_generated": (
+        "✅ *New API Key Generated!*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🔑 *Your Key:*\n`{api_key}`\n\n"
+        "⚠️ *Save this key now — it will be masked next time.*\n\n"
+        "📡 Use header: `X-API-Key: {api_key}`\n"
+        "🛒 Use it to sell our products on your own bot or website."
+    ),
+    # ── API Access panel (existing key) ──
+    "reseller_api_panel": (
+        "🔗 *API Access*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "Use your API key to sell products on your own bot or website.\n\n"
+        "🔑 *Your API Key:*\n`{prefix}....`\n\n"
+        "💳 Balance: *${balance:.2f}*\n"
+        "📨 Total requests: *{requests}*\n"
+        "📅 Created: *{created}*"
+    ),
+    # ── Show Full Key screen ──
+    "reseller_api_fullkey": (
+        "🔑 *Your Full Key*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "`{api_key}`\n\n"
+        "📡 Use header: `X-API-Key: {api_key}`"
+    ),
+    # ── Regenerate screen ──
+    "reseller_api_regenerate": (
+        "🔄 *New API Key Generated!* (old key revoked)\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🔑 `{api_key}`\n\n"
+        "⚠️ *Save now — shown only ONCE.*\n\n"
+        "📡 Use header: `X-API-Key: {api_key}`"
+    ),
+})
