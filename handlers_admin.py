@@ -11582,20 +11582,17 @@ async def reseller_api_user_callback(update, context):
         bal = float(get_user_points(uid) or 0) / ppd if ppd else 0
     except Exception:
         bal = 0.0
-    # 🆕 v161.6: show the key's limits + pricing so the reseller knows them
+    # 🆕 v161.6: show the key's limits so the reseller knows them
     try:
         _spend = float(key.get("spend_limit_usd") or 0)
         _rate = int(key.get("rate_limit") or 60)
         _prods = (key.get("allowed_products") or "").strip()
         _ips = (key.get("ip_whitelist") or "").strip()
-        _mk = key.get("reseller_markup")
-        _base = (key.get("reseller_base_mode") or "").strip() or "global"
         limits_lines = (
             f"💳 Spend limit: *{('$' + format(_spend, 'g')) if _spend else 'Unlimited'}*\n"
             f"📊 Rate limit: *{_rate}/min*\n"
             f"🗂️ Products: *{'ALL' if not _prods or _prods.lower() == 'all' else _prods}*\n"
-            f"🌐 IP whitelist: *{'ALL' if not _ips or _ips.lower() == 'all' else _ips}*\n"
-            f"💲 Your markup: *{('%g' % _mk) if _mk is not None else 'global'}%* · base: *{_base}*"
+            f"🌐 IP whitelist: *{'ALL' if not _ips or _ips.lower() == 'all' else _ips}*"
         )
     except Exception:
         limits_lines = ""
