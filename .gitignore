@@ -1,0 +1,8 @@
+# Secrets — never commit these!
+.env
+shop.db
+__pycache__/
+*.pyc
+
+# v151: no bundled DB — bot boots fresh, admin restores manually
+latest_shop.db

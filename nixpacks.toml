@@ -1,0 +1,6 @@
+# Nixpacks fallback (agar Dockerfile na chale)
+[phases.setup]
+nixPkgs = ["python312"]
+
+[start]
+cmd = "python bot.py"
