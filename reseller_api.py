@@ -751,16 +751,6 @@ if _FASTAPI_OK:
     async def _api_docs():
         return RedirectResponse("/docs")
 
-    @app.get("/static/reseller_docs_bg.jpg", include_in_schema=False)
-    async def _docs_bg():
-        try:
-            _p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              "reseller_docs_bg.jpg")
-            with open(_p, "rb") as _f:
-                return Response(content=_f.read(), media_type="image/jpeg")
-        except Exception:
-            raise HTTPException(status_code=404, detail="bg not found")
-
     @app.get("/docs", include_in_schema=False)
     async def _docs():
         return HTMLResponse(_DOCS_HTML, status_code=200)
@@ -773,104 +763,58 @@ if _FASTAPI_OK:
 <title>Bite Store — Reseller API Docs</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css"/>
 <style>
-  :root { --g1:#e53935; --g2:#fb8c00; --g3:#43a047; --g4:#1e88e5; }
+  :root {
+    --g1:#e53935; --g2:#fb8c00; --g3:#43a047; --g4:#1e88e5;
+  }
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
-  body {
+  html, body {
     margin:0; padding:0; min-height:100%;
+    background: linear-gradient(135deg, var(--g1) 0%, var(--g2) 30%, var(--g3) 65%, var(--g4) 100%);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    color:#f1f5f9;
   }
-  /* background image + animated gradient overlay */
-  .bg {
-    position: fixed; inset: 0; z-index: -2;
-    background: url('/static/reseller_docs_bg.jpg') no-repeat center center fixed;
-    background-size: cover;
+  .page { padding: 28px 16px 60px; }
+  .hero {
+    max-width: 1000px; margin: 0 auto 24px; color: #fff;
+    text-shadow: 0 2px 8px rgba(0,0,0,.35);
   }
-  .overlay {
-    position: fixed; inset: 0; z-index: -1;
-    background: linear-gradient(135deg,
-      rgba(229,57,53,.55), rgba(251,140,0,.42),
-      rgba(67,160,71,.5), rgba(30,136,229,.55));
-    background-size: 400% 400%;
-    animation: gradShift 16s ease infinite;
-  }
-  @keyframes gradShift {
-    0% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
-    100% { background-position: 0% 50%; }
-  }
-  /* floating gradient blobs */
-  .blob { position: fixed; border-radius: 50%; filter: blur(70px); opacity:.45; z-index:-1; animation: float 18s ease-in-out infinite; }
-  .blob.b1 { width:340px; height:340px; background:radial-gradient(circle,#e53935,transparent 70%); top:8%; left:4%; }
-  .blob.b2 { width:300px; height:300px; background:radial-gradient(circle,#43a047,transparent 70%); bottom:10%; right:6%; animation-delay:-6s; }
-  .blob.b3 { width:260px; height:260px; background:radial-gradient(circle,#1e88e5,transparent 70%); top:55%; left:60%; animation-delay:-11s; }
-  @keyframes float {
-    0%,100% { transform: translate(0,0) scale(1); }
-    33% { transform: translate(40px,-30px) scale(1.1); }
-    66% { transform: translate(-25px,25px) scale(.95); }
-  }
-  /* scroll progress bar */
-  .progress { position: fixed; top:0; left:0; height:4px; width:0%;
-    background: linear-gradient(90deg,var(--g1),var(--g2),var(--g3),var(--g4));
-    z-index: 99; box-shadow: 0 0 12px rgba(67,160,71,.7); }
-  .page { padding: 40px 16px 80px; }
-  /* reveal-on-scroll */
-  .reveal { opacity:0; transform: translateY(34px); transition: opacity .8s cubic-bezier(.2,.7,.3,1), transform .8s cubic-bezier(.2,.7,.3,1); }
-  .reveal.visible { opacity:1; transform:none; }
-  .reveal.d1 { transition-delay:.08s; } .reveal.d2 { transition-delay:.16s; } .reveal.d3 { transition-delay:.24s; }
-  .hero { max-width:1000px; margin:0 auto 26px; color:#fff; text-shadow:0 2px 10px rgba(0,0,0,.5); }
-  .hero h1 {
-    margin:0 0 8px; font-size:34px; letter-spacing:.4px;
-    background: linear-gradient(90deg,#fff,#ffe0b2,#c8e6c9,#bbdefb,#fff);
-    background-size:300% auto; -webkit-background-clip:text; background-clip:text; color:transparent;
-    animation: shine 5s linear infinite;
-  }
-  @keyframes shine { to { background-position:300% center; } }
-  .hero p { margin:0 0 6px; font-size:15.5px; opacity:.97; }
-  .badges { margin-top:12px; }
+  .hero h1 { margin: 0 0 6px; font-size: 30px; letter-spacing: .3px; }
+  .hero p { margin: 0; font-size: 15px; opacity: .95; }
+  .badges { margin-top: 10px; }
   .badge {
-    display:inline-block; background:rgba(255,255,255,.18); border:1px solid rgba(255,255,255,.5);
-    backdrop-filter: blur(6px); padding:4px 13px; border-radius:999px; font-size:12.5px; margin-right:7px;
-    transition: transform .25s ease, background .25s ease;
+    display:inline-block; background: rgba(255,255,255,.22);
+    border: 1px solid rgba(255,255,255,.45); backdrop-filter: blur(4px);
+    padding: 3px 12px; border-radius: 999px; font-size: 12.5px; margin-right: 6px;
   }
-  .badge:hover { transform: translateY(-3px) scale(1.05); background:rgba(255,255,255,.3); }
   .swagger-wrap {
-    max-width:1000px; margin:0 auto; background:rgba(255,255,255,.97);
-    border-radius:18px; box-shadow:0 22px 60px rgba(0,0,0,.45);
-    overflow:hidden; backdrop-filter: blur(8px);
+    max-width: 1000px; margin: 0 auto; background: #fff;
+    border-radius: 16px; box-shadow: 0 18px 50px rgba(0,0,0,.35);
+    overflow: hidden;
   }
-  .swagger-top { height:7px; background: linear-gradient(90deg,var(--g1),var(--g2),var(--g3),var(--g4)); background-size:300% 100%; animation:shine 6s linear infinite; }
-  .swagger-ui { padding:12px 22px 34px; color:#0f172a; }
+  .swagger-top {
+    height: 6px; background: linear-gradient(90deg, var(--g1), var(--g2), var(--g3), var(--g4));
+  }
+  .swagger-ui { padding: 10px 22px 30px; }
   .swagger-ui .topbar { display:none; }
-  .swagger-ui .btn.authorize { border-color:var(--g3); color:var(--g3); }
-  .swagger-ui .btn.authorize svg { fill:var(--g3); }
-  .swagger-ui .opblock-tag { border-bottom:2px solid var(--g3); }
-  .swagger-ui .opblock.opblock-get { border-color:var(--g3); background:rgba(67,160,71,.05); }
-  .swagger-ui .opblock.opblock-post { border-color:var(--g4); background:rgba(30,136,229,.05); }
-  .swagger-ui .opblock-summary-method { background:linear-gradient(135deg,var(--g2),var(--g3)); }
-  .swagger-ui .scheme-container { background:#f1f5f9; border-radius:10px; }
-  .swagger-ui .info .title { color:#0f172a; }
-  .swagger-ui .info h2, .swagger-ui .info p, .swagger-ui .info .description, .swagger-ui .info .markdown { color:#334155; }
-  .swagger-ui .info .markdown table { color:#334155; }
-  .swagger-ui .model-box { background:#f1f5f9; }
-  .swagger-ui a { color:var(--g4); }
-  .swagger-ui .parameter__name, .swagger-ui .response-col_status { color:#0f172a; }
-  .swagger-ui .opblock-description-wrapper p, .swagger-ui .opblock-title { color:#334155; }
-  footer { text-align:center; margin-top:26px; font-size:12.5px; color:rgba(255,255,255,.85); text-shadow:0 1px 6px rgba(0,0,0,.5); }
-  @media (max-width:640px) {
-    .hero h1 { font-size:24px; }
-    .swagger-ui { padding:8px 10px 22px; }
+  .swagger-ui .btn.authorize { border-color: var(--g3); color: var(--g3); }
+  .swagger-ui .btn.authorize svg { fill: var(--g3); }
+  .swagger-ui .opblock-tag { border-bottom: 2px solid var(--g3); }
+  .swagger-ui .opblock.opblock-get { border-color: var(--g3); background: rgba(67,160,71,.06); }
+  .swagger-ui .opblock.opblock-post { border-color: var(--g4); background: rgba(30,136,229,.06); }
+  .swagger-ui .opblock-summary-method { background: linear-gradient(135deg, var(--g2), var(--g3)); }
+  .swagger-ui .info .title { color: #111; }
+  .swagger-ui .scheme-container { background: #f8fafc; border-radius: 10px; }
+  .swagger-ui .info h2, .swagger-ui .info p { color:#333; }
+  .swagger-ui .model-box { background:#f8fafc; }
+  a { color: var(--g4); }
+  @media (max-width: 640px) {
+    .hero h1 { font-size: 23px; }
+    .swagger-ui { padding: 6px 10px 20px; }
   }
 </style>
 </head>
 <body>
-  <div class="progress" id="progress"></div>
-  <div class="bg"></div>
-  <div class="overlay"></div>
-  <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
   <div class="page">
-    <div class="hero reveal">
+    <div class="hero">
       <h1>🔗 Bite Store — Reseller API</h1>
       <p>Sell our products in your own bot — everything auto-delivered.</p>
       <div class="badges">
@@ -880,25 +824,21 @@ if _FASTAPI_OK:
         <span class="badge">🔒 No supplier info exposed</span>
       </div>
     </div>
-    <div class="swagger-wrap reveal d1">
+    <div class="swagger-wrap">
       <div class="swagger-top"></div>
       <div id="swagger-ui" class="swagger-ui"></div>
     </div>
-    <footer class="reveal d3">Bite Store Reseller API · Auto-delivery · Live stock · v1.6</footer>
   </div>
   <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
   <script>
     window.onload = function() {
-      window.ui = SwaggerUIBundle({ url:'/openapi.json', dom_id:'#swagger-ui', deepLinking:true, presets:[SwaggerUIBundle.presets.apis], layout:'BaseLayout' });
-      // scroll progress bar
-      var pr = document.getElementById('progress');
-      function onScroll(){ var h = document.documentElement; var p = (h.scrollTop / (h.scrollHeight - h.clientHeight)) * 100; pr.style.width = p + '%'; }
-      window.addEventListener('scroll', onScroll, {passive:true}); onScroll();
-      // reveal-on-scroll animations
-      var io = new IntersectionObserver(function(entries){
-        entries.forEach(function(e){ if(e.isIntersecting){ e.target.classList.add('visible'); io.unobserve(e.target); } });
-      }, {threshold:0.12});
-      document.querySelectorAll('.reveal').forEach(function(el){ io.observe(el); });
+      window.ui = SwaggerUIBundle({
+        url: '/openapi.json',
+        dom_id: '#swagger-ui',
+        deepLinking: true,
+        presets: [SwaggerUIBundle.presets.apis],
+        layout: 'BaseLayout'
+      });
     };
   </script>
 </body>
