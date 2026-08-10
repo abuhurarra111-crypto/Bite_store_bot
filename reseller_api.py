@@ -501,6 +501,34 @@ def _fulfill_reseller_order(pd: dict, qty: int, user_id: int, reseller_oid: int)
         return False, [], "failed", "internal_error", None
 
 
+def _fire_reseller_alert(order_row):
+    """🆕 v161.12: send a Reseller-API purchase hype alert to the configured
+    fake-activity destination (raw Telegram HTTP — no PTB bot needed here)."""
+    try:
+        import threading as _th
+        def _worker():
+            try:
+                from fake_engagement import notify_reseller_purchase_raw, is_type_enabled
+                # only when the reseller-hype type is enabled (default ON)
+                try:
+                    if not is_type_enabled("reseller"):
+                        return
+                except Exception:
+                    pass
+                notify_reseller_purchase_raw(
+                    product_name=(order_row or {}).get("product_name") or "Product",
+                    qty=int((order_row or {}).get("qty") or 1),
+                    amount_usd=float((order_row or {}).get("usd_amount") or 0),
+                    pid=int((order_row or {}).get("product_id") or 0),
+                    reseller_label="",  # masked fake reseller used inside
+                )
+            except Exception:
+                pass
+        _th.Thread(target=_worker, daemon=True, name="reseller-alert").start()
+    except Exception:
+        pass
+
+
 def _apply_fulfill_result(oid, ok, items, status, err, file_ref, key_row):
     """Persist fulfillment result + send webhook. Returns response dict."""
     out = {"status": status or "failed", "items": items or [], "error": err,
@@ -511,6 +539,11 @@ def _apply_fulfill_result(oid, ok, items, status, err, file_ref, key_row):
     except Exception:
         amount = 0.0
     if ok and status == "delivered":
+        # 🆕 v161.12: real reseller order → hype alert to destination
+        try:
+            _fire_reseller_alert(get_reseller_order(oid))
+        except Exception:
+            pass
         if file_ref:
             update_reseller_order(oid, status="delivered", delivery_text="",
                                   delivered_keys="[]",
@@ -528,18 +561,6 @@ def _apply_fulfill_result(oid, ok, items, status, err, file_ref, key_row):
             "deliveredKeys": items or [],
             "deliveredFileRef": str(oid) if file_ref else "",
             "amount": amount})
-        # 🆕 v161.12: reseller API sale → alert to the fake-activity destination
-        # (creates hype around the Reseller API program).
-        try:
-            from database import queue_reseller_broadcast, get_product
-            _rord = get_reseller_order(oid) or {}
-            _pid = int(_rord.get("product_id") or 0)
-            _pname = str(_rord.get("product_name") or "Product")
-            _qty = int(_rord.get("qty") or 1)
-            _kpfx = str((key_row or {}).get("key_prefix") or "")
-            queue_reseller_broadcast(_pid, _pname, _qty, amount, _kpfx)
-        except Exception as _rb:
-            pass
         return out
     if ok and status == "pending":
         update_reseller_order(oid, status="pending")

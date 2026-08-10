@@ -705,6 +705,37 @@ TEMPLATES = [
         "sample":  {"product": "ChatGPT Plus", "old_price": "8.0", "new_price": "6.5"},
     },
     {
+        "id":      "bc_bulkdeal",
+        "name":    "📊 Bulk Deal Hype",
+        "section": "📢 Fake Broadcast",
+        "vars":    "{user}, {product}, {qty}, {price}, {base_price}, {saving}",
+        "default": (
+            "📊 *Bulk Deal Alert!* 🎉\n\n"
+            "👤 {user} just grabbed {product} at bulk price!\n"
+            "🛒 {qty}+ qty → 💵 ${price} each\n"
+            "❌ Base: ${base_price} | 💸 Save ${saving} per unit\n\n"
+            "🔥 Buy more, save more — tap below!"
+        ),
+        "sample":  {"user": "b***l", "product": "🤖 Gemini Pro", "qty": "10",
+                    "price": "0.89", "base_price": "1.00", "saving": "0.11"},
+    },
+    {
+        "id":      "bc_reseller",
+        "name":    "🔗 Reseller Purchase",
+        "section": "📢 Fake Broadcast",
+        "vars":    "{user}, {product}, {qty}, {amount}, {reseller}",
+        "default": (
+            "🔗 *Reseller Purchase!* 🚀\n\n"
+            "👤 Reseller: {reseller}\n"
+            "📦 Product: {product}\n"
+            "🔢 QTY: {qty}\n"
+            "💰 Amount: ${amount}\n\n"
+            "⚡ Auto-delivered via Reseller API!"
+        ),
+        "sample":  {"user": "r***r", "product": "Acc ChatGPT", "qty": "2",
+                    "amount": "13.40", "reseller": "AlexShop"},
+    },
+    {
         "id":      "bc_stock",
         "name":    "🔔 Restock Alert (Auto)",
         "section": "📢 Fake Broadcast",
@@ -720,38 +751,6 @@ TEMPLATES = [
         ),
         "sample":  {"product": "ChatGPT Plus Apple Pay Vietnamese card Gmail 1M - 15D warranty",
                      "added": "18", "stock": "24", "price": "4.57"},
-    },
-    # 🆕 v161.12: Bulk-discount hype (fires when admin sets a tier)
-    {
-        "id":      "bc_bulk_discount",
-        "name":    "🔥 Bulk Discount Hype",
-        "section": "📢 Fake Broadcast",
-        "vars":    "{product}, {qty}, {price}, {old_price}, {base_price}",
-        "default": (
-            "🔥 *Bulk Discount Alert!* 🎉\n\n"
-            "📦 {product}\n"
-            "💰 {qty}+ qty → *${price} each* (was ${old_price})\n\n"
-            "⚡ People are grabbing bulk deals right now!\n"
-            "_Buy more, save more — hurry!_ 🛒"
-        ),
-        "sample":  {"product": "🤖 Gemini Pro", "qty": "10", "price": "0.89",
-                    "old_price": "1.00", "base_price": "1.00"},
-    },
-    # 🆕 v161.12: Reseller API purchase / hype
-    {
-        "id":      "bc_reseller",
-        "name":    "🔗 Reseller API Purchase",
-        "section": "📢 Fake Broadcast",
-        "vars":    "{product}, {qty}, {amount}, {key_prefix}",
-        "default": (
-            "🔗 *Reseller API Sale!* 📈\n\n"
-            "📦 {product} × {qty}\n"
-            "💰 ${amount}\n"
-            "🤖 Delivered instantly via Reseller API\n\n"
-            "_Sell our products on your own bot — get your API key today!_"
-        ),
-        "sample":  {"product": "ChatGPT Plus", "qty": "2", "amount": "10.00",
-                    "key_prefix": "bsk_xxx"},
     },
     {
         "id":      "bc_review",
@@ -967,6 +966,36 @@ TEMPLATE_VARIANTS = {
         "📣 Real Feedback!\n\n👤 {user} {stars}\n{product}\n💬 {review}",
         "🎉 5-Star Vibes!\n\n👤 {user}\n📦 {product} {stars}\n💬 {review}",
         "👍 Recommended!\n\n👤 {user} {stars}\n📦 {product}\n💬 {review}",
+    ],
+    # 🆕 v161.12: BULK DISCOUNT HYPE (fake) — fired when admin adds a tier +
+    # periodically for products that have bulk tiers.
+    # Placeholders: {user}, {product}, {qty}, {price}, {base_price}, {saving}
+    "bc_bulkdeal": [
+        "📊 *Bulk Deal Alert!* 🎉\n\n👤 {user} just grabbed {product} at bulk price!\n🛒 {qty}+ qty → 💵 ${price} each\n❌ Base: ${base_price} | 💸 Save ${saving} per unit\n\n🔥 Buy more, save more — tap below!",
+        "🚀 *Bulk Buying is LIVE!*\n\n👤 {user} ordered {qty}+ units of {product}\n💰 Unit price: ${price} (was ${base_price})\n💎 You save ${saving} each!\n\n🛍️ Grab your bulk deal now!",
+        "🔥 *Hot Bulk Deal!*\n\n📦 {product}\n🎯 {qty}+ qty → ${price} each\n❌ Normal: ${base_price}\n💸 Save ${saving}/unit\n\n👤 {user} & many more already buying!",
+        "💥 *Quantity Discount!*\n\n{product}\n🛒 Buy {qty}+ → only ${price} each\n❌ Regular price: ${base_price}\n💎 Save ${saving} per item\n\n⚡ Stocks moving fast — order now!",
+        "🎉 *People Are Bulk-Buying!*\n\n📦 {product}\n👤 {user} just bought {qty} units\n💰 Bulk price: ${price} (normal ${base_price})\n\n🛒 Tap Buy Now & save ${saving}/unit!",
+        "📢 *Mega Bulk Offer!*\n\n{product}\n🛒 {qty}+ qty → 💵 ${price} each\n❌ Was ${base_price}\n💸 Save ${saving} per unit\n\n🔥 Join the rush — limited bulk stock!",
+        "⚡ *Bulk Sale Spreading!*\n\n👤 {user} ordered {qty}+ of {product}\n🏷️ Only ${price} each (base ${base_price})\n💎 Save ${saving}/unit\n\n🛍️ Don't miss the bulk price!",
+        "💎 *Smart Buyers Know This Deal!*\n\n📦 {product}\n🎯 {qty}+ qty → ${price} each\n❌ Normal: ${base_price}\n💸 Save ${saving}/unit\n\n👤 {user} just stocked up!",
+        "🛒 *Bulk Discount Running!*\n\n{product}\n📊 {qty}+ qty → 💵 ${price} each\n❌ Regular ${base_price} | 💎 Save ${saving}\n\n🔥 Many orders coming in — grab yours!",
+        "🎊 *Big Buy Alert!*\n\n👤 {user} purchased {qty} units of {product}\n💰 Bulk price: ${price} each\n❌ Base: ${base_price}\n💸 Save ${saving}/unit — Buy Now!",
+    ],
+    # 🆕 v161.12: RESELLER API PURCHASE (fake + real hype) — fired when an order
+    # comes through the Reseller API, plus periodic fake ones to hype the API.
+    # Placeholders: {user}, {product}, {qty}, {amount}, {reseller}
+    "bc_reseller": [
+        "🔗 *Reseller Purchase!* 🚀\n\n👤 Reseller: {reseller}\n📦 Product: {product}\n🔢 QTY: {qty}\n💰 Amount: ${amount}\n\n⚡ Auto-delivered via Reseller API!",
+        "💼 *API Order In!*\n\n🛒 {product} x{qty}\n👤 Via reseller {reseller}\n💰 ${amount}\n\n✅ Delivered instantly through the API!",
+        "🤝 *Reseller Sold!*\n\n📦 {product} (x{qty})\n👤 Reseller: {reseller}\n💰 ${amount}\n\n🔗 Powered by Bite Store Reseller API!",
+        "🛍️ *New Reseller Order!*\n\n👤 {reseller} sold {product}\n🔢 Qty: {qty} | 💵 ${amount}\n\n⚡ Auto-fulfilled by our suppliers — instantly!",
+        "💎 *Reseller Growth!*\n\n{reseller} just delivered {product} x{qty}\n💰 ${amount}\n\n🔗 Sell our products on YOUR bot too!",
+        "🚀 *API Selling Live!*\n\n{product} x{qty} sold via API\n👤 Reseller: {reseller}\n💰 ${amount}\n\n⚡ Instant delivery — no manual work!",
+        "💰 *Passive Reseller Income!*\n\n👤 {reseller}\n📦 {product} x{qty}\n💵 ${amount}\n\n🔗 Want your own store? Get an API key!",
+        "📦 *Wholesale Order!*\n\n{product} (x{qty})\n👤 Reseller {reseller}\n💰 ${amount}\n\n✅ Auto-delivered via Reseller API!",
+        "🎉 *Reseller Success!*\n\n{reseller} just earned from {product} x{qty}\n💰 ${amount}\n\n🔗 Join the Reseller API and sell too!",
+        "⚡ *Instant API Delivery!*\n\n📦 {product} x{qty}\n👤 Reseller: {reseller}\n💰 ${amount}\n\n🛒 Fully automated by Bite Store!",
     ],
 }
 

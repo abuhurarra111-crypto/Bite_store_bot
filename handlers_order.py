@@ -4815,20 +4815,20 @@ async def pay_pts_callback(update, context):
     # deduct_points_if_enough() does check+debit inside BEGIN IMMEDIATE and
     # returns False when the balance is insufficient OR the debit failed — only
     # on True do we create the order and fulfill it.
-    # 🆕 v161.12: Pay with Points now spends BOTH normal points AND referral
-    # points (points first, then ref_points) — referral rewards are usable.
-    from database import (get_user, create_order, get_order,
-                          get_combined_points,
-                          deduct_points_if_enough_combined)
+    from database import get_user, deduct_points_if_enough, create_order, get_order, get_combined_points
     from config import POINTS_PER_DOLLAR, ADMIN_ID
     
-    balance = get_combined_points(q.from_user.id)
+    user = get_user(q.from_user.id)
+    balance = get_combined_points(q.from_user.id)  # 🆕 v161.12: wallet + referral points
     
     cost_usd = _get_eff_price(p) * qty
     cost_pts = points_from_usd(cost_usd)
 
-    if not deduct_points_if_enough_combined(q.from_user.id, cost_pts, tx_type='purchase',
-                                            description=f"Product #{pid}"):
+    # 🆕 v161.12: referral points (ref_points) are NOW spendable in the normal
+    # "Pay with Points" checkout too — combined wallet checkout.
+    from database import deduct_combined_points
+    if not deduct_combined_points(q.from_user.id, cost_pts, tx_type='purchase',
+                                   description=f"Product #{pid}"):
         # Refresh balance for accurate messaging (it may have changed under us).
         try:
             balance = get_combined_points(q.from_user.id)
@@ -4841,7 +4841,8 @@ async def pay_pts_callback(update, context):
                f"💰 Required: *{fmt_points(cost_pts)} 💎*\n"
                f"💳 Your Balance: *{fmt_points(balance)} 💎*\n"
                f"📉 Short by: *{fmt_points(missing)} 💎*\n\n"
-               f"_Top up your points balance to complete this purchase._")
+               f"_Wallet + referral points count together._\n"
+               f"Top up your points balance to complete this purchase.")
         
         kb = [
             [InlineKeyboardButton("💎 Buy More Points", callback_data="buy_points")],

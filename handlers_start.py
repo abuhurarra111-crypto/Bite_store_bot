@@ -1040,6 +1040,14 @@ async def my_account_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         pass
     _uname = _live_uname or _db_uname
     _uname_disp = escape_md(_uname) if _uname else '—'
+    from database import get_combined_points  # 🆕 v161.12
+    total_pts = get_combined_points(u.id)
+    w_pts, r_pts = 0, 0
+    try:
+        from database import get_wallet_vs_referral
+        w_pts, r_pts = get_wallet_vs_referral(u.id)
+    except Exception:
+        pass
     fmt_dict = dict(
         name=escape_md(u.first_name or 'N/A'),
         user_id=u.id,
@@ -1047,6 +1055,9 @@ async def my_account_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         points=get_user_points(u.id),
         referrals=get_referral_count(u.id),
         ref_points=get_ref_points(u.id),
+        total_points=total_pts,          # 🆕 v161.12: combined balance
+        wallet_points=w_pts,
+        referral_points=r_pts,
         joined=format_date(db['joined_at'] if db else None)
     )
     tpl = _r("my_account", user_id=u.id)
@@ -1060,8 +1071,10 @@ async def my_account_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             text = tpl.format_map(_SafeDict(**fmt_dict))
         except Exception:
             text = tpl
-    # If admin hasn't included {ref_points} placeholder, append a one-line balance hint
-    if "{ref_points}" not in tpl and "Referral Points" not in tpl:
+    # 🆕 v161.12: always show combined balance line (wallet + referral usable together)
+    if "{total_points}" not in tpl and "Total Balance" not in tpl:
+        text += f"\n💰 Total Balance: *{fmt_points(total_pts)}* (💳 {fmt_points(w_pts)} + 🎁 {fmt_points(r_pts)})"
+    elif "{ref_points}" not in tpl and "Referral Points" not in tpl:
         text += f"\n🎁 Referral Points: *{get_ref_points(u.id)}*"
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=back_btn(location="my_account"))
 

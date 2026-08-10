@@ -1058,8 +1058,6 @@ async def _show_panel(q):
     t_flash     = is_type_on("flash")
     t_newprod   = is_type_on("newprod")
     t_price_drop = is_type_on("price_drop")   # 🆕 v66
-    t_reseller  = is_type_on("reseller")    # 🆕 v161.12
-    t_bulk      = is_type_on("bulk")        # 🆕 v161.12
 
     status_icon = "🟢 *ACTIVE*" if enabled else "🔴 *INACTIVE*"
     try:
@@ -1102,9 +1100,7 @@ async def _show_panel(q):
         f"  {_ico(t_newuser)} 🎉 New User Joined\n"
         f"  {_ico(t_flash)} 🛍 Flash Sale  "
         f"  {_ico(t_newprod)} 🆕 New Product\n"
-        f"  {_ico(t_price_drop)} 📉 Big Price Drop\n"
-        f"  {_ico(t_reseller)} 🔗 Reseller API Hype   "
-        f"  {_ico(t_bulk)} 🔥 Bulk Discount Hype\n\n"
+        f"  {_ico(t_price_drop)} 📉 Big Price Drop\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"*How it works:*\n"
         f"• User does /start → fake activity begins\n"
@@ -1160,12 +1156,6 @@ async def _show_panel(q):
             InlineKeyboardButton(f"{_ico(t_price_drop)} 📉 Big Price Drop",
                                  callback_data="act_type_price_drop"),
         ],
-        [
-            InlineKeyboardButton(f"{_ico(t_reseller)} 🔗 Reseller API",
-                                 callback_data="act_type_reseller"),
-            InlineKeyboardButton(f"{_ico(t_bulk)} 🔥 Bulk Discount",
-                                 callback_data="act_type_bulk"),
-        ],
         [InlineKeyboardButton("━━━ Simulated Community ━━━", callback_data="act_noop")],
         [
             InlineKeyboardButton(f"👥 Set Members ({fake_offset} offset)", callback_data="act_set_offset"),
@@ -1198,12 +1188,6 @@ async def _show_panel(q):
         [InlineKeyboardButton("📝 Edit Templates",    callback_data="tpl_panel")],
         [InlineKeyboardButton("📤 Where to Send? (Bot / Group / Both)", callback_data="dest_panel")],
         [InlineKeyboardButton("🛰️ Test Broadcast (check destination)", callback_data="admin_bcast_test")],
-        # 🆕 v161.12: Buy Now button settings (fake alerts ke sath wala button)
-        [InlineKeyboardButton("━━━ 🛒 Buy Now Button ━━━", callback_data="act_noop")],
-        [
-            InlineKeyboardButton(f"✏️ Label: {_g('fake_buynow_suffix', '🛒 Buy Now')}", callback_data="act_buynow_label"),
-            InlineKeyboardButton(f"🎨 Color: {_g('fake_buynow_color', 'auto')}", callback_data="act_buynow_color"),
-        ],
         [InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_panel")],
     ]
     await _edit(q, text, kb)
@@ -1270,8 +1254,6 @@ _TYPE_MAP = {
     "price_drop": ("pua_type_price_drop", "📉 Price Drop"),
     # 🆕 v110: Fake Free-via-Referrals claim broadcasts (uses per-product fc_btn)
     "freeclaim":  ("pua_type_freeclaim", "🎁 Free-Claim (Fake)"),
-    "reseller":   ("pua_type_reseller", "🔗 Reseller API Hype"),
-    "bulk":       ("pua_type_bulk", "🔥 Bulk Discount Hype"),
 }
 
 
@@ -3501,69 +3483,3 @@ async def send_activity_message(bot, user_id: int, message: str, reply_markup=No
 
     return sent_any
 
-
-
-# ════════════════════════════════════════════════════════════════
-# 🆕 v161.12: BUY NOW BUTTON SETTINGS (label + color)
-# Applied to every fake/real alert Buy Now button via fake_buynow_suffix
-# and fake_buynow_color settings (read in fake_engagement._buy_now_label
-# and _buy_now_keyboard).
-# ════════════════════════════════════════════════════════════════
-
-async def act_buynow_label_callback(update, context):
-    """Ask admin to type the new Buy Now button label."""
-    q = update.callback_query
-    if not _is_admin(q.from_user.id):
-        await q.answer("❌ Admin only!", show_alert=True)
-        return
-    await q.answer()
-    cur = _g("fake_buynow_suffix", "🛒 Buy Now")
-    context.user_data["act_buynow_label"] = True
-    kb = [[InlineKeyboardButton("❌ Cancel", callback_data="act_panel")]]
-    await _edit(q,
-        f"✏️ *Buy Now Button Label*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Current: `{cur}`\n\n"
-        f"Type the new button text (e.g. `🛒 Buy Now`, `⚡ Grab It`, `🛍️ Order Now`).\n"
-        f"Premium emoji allowed.\n\n"
-        f"_(Send /cancel to cancel)_",
-        kb)
-
-
-async def act_buynow_label_received(update, context):
-    if not _is_admin(update.effective_user.id) or not context.user_data.get("act_buynow_label"):
-        return False
-    context.user_data.pop("act_buynow_label", None)
-    val = (update.message.text or "").strip()
-    if not val or val == "-":
-        _s("fake_buynow_suffix", "")
-        await update.message.reply_text("✅ Buy Now label reset to default `🛒 Buy Now`.",
-                                        parse_mode="Markdown",
-                                        reply_markup=InlineKeyboardMarkup(
-                                            [[InlineKeyboardButton("🔙 Fake Activity", callback_data="act_panel")]]))
-        return True
-    _s("fake_buynow_suffix", val[:40])
-    await update.message.reply_text(f"✅ Buy Now label → *{val}*", parse_mode="Markdown",
-                                    reply_markup=InlineKeyboardMarkup(
-                                        [[InlineKeyboardButton("🔙 Fake Activity", callback_data="act_panel")]]))
-    return True
-
-
-async def act_buynow_color_callback(update, context):
-    """Cycle Buy Now button color: auto → blue → green → red → auto."""
-    q = update.callback_query
-    if not _is_admin(q.from_user.id):
-        await q.answer("❌ Admin only!", show_alert=True)
-        return
-    await q.answer()
-    cur = _g("fake_buynow_color", "")
-    order = ["", "primary", "success", "danger"]
-    try:
-        idx = order.index(cur)
-    except ValueError:
-        idx = 0
-    new = order[(idx + 1) % len(order)]
-    _s("fake_buynow_color", new)
-    nice = {"primary": "🔵 Blue", "success": "🟢 Green", "danger": "🔴 Red", "": "Auto (default)"}.get(new, new)
-    await q.answer(f"Buy Now color → {nice}", show_alert=False)
-    await _show_panel(q)

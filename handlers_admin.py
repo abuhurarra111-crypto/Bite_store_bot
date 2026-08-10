@@ -10244,16 +10244,6 @@ async def bdisc_price_received(update, context):
         return True
     from database import set_product_tier
     set_product_tier(pid, qty, price)
-    # 🆕 v161.12: bulk discount set → queue hype alerts ("people buying").
-    # 3 alerts drain over ~45s via the 15s purchase-broadcast job.
-    try:
-        from database import queue_bulk_hype_broadcasts, get_product
-        _p = get_product(pid)
-        _base = float((dict(_p).get("price") or 0) if _p else 0)
-        queue_bulk_hype_broadcasts(pid, (dict(_p).get("name") or "Product") if _p else "Product",
-                                   _base, qty, price, count=3)
-    except Exception as _bh:
-        print(f"[BulkHype] queue failed: {_bh}")
     context.user_data.pop('bdisc_step', None)
     context.user_data.pop('bdisc_qty', None)
     context.user_data.pop('bdisc_pid', None)
@@ -10263,6 +10253,40 @@ async def bdisc_price_received(update, context):
         name = html_strip_tags(str(p['name'] if p else ''))
     except Exception:
         name = str(p['name'] if p else '')
+
+    # 🆕 v161.12: bulk discount laga to fake "people buying" hype fire karo —
+    # destination (selected in Fake Activity) pe Buy Now button ke sath.
+    try:
+        from fake_engagement import _get_lowest_tier, broadcast_store_message
+        _t = _get_lowest_tier(pid)
+        if _t:
+            _tq, _tp = _t
+            _base = float(dict(p).get("price") or _tp) if p else float(_tp)
+            _save = round(max(0.0, _base - _tp), 2)
+            from fake_engagement import generate_fake_username, get_name_style, is_type_enabled
+            _user = generate_fake_username(get_name_style())
+            try:
+                from customization import render_template as _rt
+                _msg = _rt("bc_bulkdeal", {
+                    "user": _user, "product": name, "qty": str(_tq),
+                    "price": f"{_tp:.2f}", "base_price": f"{_base:.2f}",
+                    "saving": f"{_save:.2f}"})
+            except Exception:
+                _msg = None
+            if not _msg:
+                _msg = (f"📊 *Bulk Deal Alert!* 🎉\n\n"
+                        f"👤 {_user} just grabbed {name} at bulk price!\n"
+                        f"🛒 {_tq}+ qty → 💵 ${_tp:.2f} each\n"
+                        f"❌ Base: ${_base:.2f} | 💸 Save ${_save:.2f} per unit\n\n"
+                        f"🔥 Buy more, save more — tap below!")
+            try:
+                import asyncio as _aio
+                _aio.create_task(broadcast_store_message(
+                    context.bot, _msg, pid=pid, tpl_id="bc_bulkdeal"))
+            except Exception:
+                pass
+    except Exception as _bd_err:
+        print(f"[BulkDealAlert] {_bd_err}")
     await update.message.reply_text(
         f"✅ *Tier Added!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📦 {name[:50]}\n"
