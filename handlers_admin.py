@@ -11620,8 +11620,11 @@ async def reseller_api_user_callback(update, context):
                 "💳 Your key is linked to your wallet (💎 Buy Points to top up).\n"
                 "📦 Every order is auto-delivered to your bot.\n\n"
                 "_Your key is shown only ONCE after generating — save it!_")
-            await q.edit_message_text(_txt,
-                parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+            # 🆕 v161.14 FIX: [[HTML]]/premium-emoji aware — smart_text_and_mode
+            # switches to HTML when the saved response contains <tg-emoji>.
+            _st, _sm = smart_text_and_mode(_txt, "Markdown")
+            await q.edit_message_text(_st,
+                parse_mode=_sm, reply_markup=InlineKeyboardMarkup(kb))
         except Exception as e:
             try:
                 await q.message.reply_text(f"❌ {e}")
@@ -11693,10 +11696,20 @@ async def reseller_api_user_callback(update, context):
         kb.append([_d] if _d else [InlineKeyboardButton("📚 API Documentation", url=docs_url)])
     kb.append([_rb("nav_prod_home") or InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
     try:
-        await q.edit_message_text(text, parse_mode="Markdown",
+        # 🆕 v161.14 FIX: premium-emoji/HTML aware + never leaves it stuck.
+        _st, _sm = smart_text_and_mode(text, "Markdown")
+        await q.edit_message_text(_st, parse_mode=_sm,
                                   reply_markup=InlineKeyboardMarkup(kb))
     except Exception:
-        pass
+        # fallback: plain text so the button always responds
+        try:
+            await q.edit_message_text(
+                f"🔗 *API Access*\n━━━━━━━━━━━━━━━━━━━━\n"
+                f"🔑 Key: `{prefix}....`\n💳 Balance: *${bal:.2f}*\n"
+                f"📨 Requests: {reqs}\n📅 Created: {created}",
+                parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        except Exception:
+            pass
 
 
 async def reseller_api_generate_callback(update, context):
@@ -11742,8 +11755,10 @@ async def reseller_api_generate_callback(update, context):
             "📡 Use header: `X-API-Key: {api_key}`\n"
             "🛒 Use it to sell our products on your own bot or website.")
         _txt = _txt.replace("{api_key}", plaintext)
-        await q.edit_message_text(_txt,
-            parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        # 🆕 v161.14 FIX: premium-emoji/HTML aware
+        _st, _sm = smart_text_and_mode(_txt, "Markdown")
+        await q.edit_message_text(_st,
+            parse_mode=_sm, reply_markup=InlineKeyboardMarkup(kb))
     except Exception as e:
         try:
             await q.message.reply_text(f"❌ {e}")
@@ -11790,7 +11805,9 @@ async def reseller_api_show_callback(update, context):
             "`{api_key}`\n\n"
             "📡 Use header: `X-API-Key: {api_key}`")
         _txt = _txt.replace("{api_key}", plaintext)
-        await q.edit_message_text(_txt, parse_mode="Markdown",
+        # 🆕 v161.14 FIX: premium-emoji/HTML aware
+        _st, _sm = smart_text_and_mode(_txt, "Markdown")
+        await q.edit_message_text(_st, parse_mode=_sm,
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🔙 Back", callback_data="reseller_api_user")]]))
     except Exception:
@@ -11840,7 +11857,9 @@ async def reseller_api_regenerate_callback(update, context):
             "⚠️ *Save now — shown only ONCE.*\n\n"
             "📡 Use header: `X-API-Key: {api_key}`")
         _txt = _txt.replace("{api_key}", plaintext)
-        await q.edit_message_text(_txt, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        # 🆕 v161.14 FIX: premium-emoji/HTML aware
+        _st, _sm = smart_text_and_mode(_txt, "Markdown")
+        await q.edit_message_text(_st, parse_mode=_sm, reply_markup=InlineKeyboardMarkup(kb))
     except Exception:
         pass
 
