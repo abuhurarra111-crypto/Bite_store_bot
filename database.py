@@ -730,24 +730,17 @@ def get_wallet_balance(uid):
     u = get_user(uid); return u['wallet_balance'] if u else 0.0
 
 def get_user_points(uid):
-    # 🆕 v161.15: REFERRAL POINTS ARE WALLET POINTS. User demand (repeated):
-    # a member who earned referral points must SEE them in their wallet
-    # balance too. Return wallet + ref_points combined everywhere, so
-    # My Account / Buy Points / balance / insufficient messages all show the
-    # spendable total. Deduction uses deduct_combined_points (wallet first,
-    # then referral) so it never double-counts.
+    # 🆕 v161.16: referral points ARE wallet points (single balance). add_ref_points
+    # credits BOTH points (wallet) and ref_points (tracker), and migrate merges
+    # legacy ref_points into points. So the wallet balance already includes every
+    # referral point — no combining needed (would double-count).
     u = get_user(uid)
     if not u:
         return 0
     try:
-        pts = float(u.get("points") or 0)
-        ref = float(u.get("ref_points") or 0)
-        return round(pts + ref, 2)
+        return float(u.get("points") or 0)
     except Exception:
-        try:
-            return u['points'] or 0
-        except Exception:
-            return 0
+        return 0
 
 # ════════════════════════════════════════════════════════════════
 # v128: POINTS LEDGER + REFERRAL PENDING APPROVAL
@@ -4942,6 +4935,17 @@ def setup_ref_points_and_log():
             print("✅ v48 ref_points backfill complete")
         except Exception as _e:
             print(f"⚠️ v48 backfill failed: {_e}")
+    # 🆕 v161.16: REFERRAL POINTS = WALLET POINTS — merge legacy ref_points
+    # into the wallet once (idempotent). User demand: referral earnings must
+    # show in the wallet and be spendable with Pay-with-Points.
+    try:
+        merged = c.execute("SELECT value FROM bot_settings WHERE key='v16116_refpoints_merged'").fetchone()
+        if not merged:
+            c.execute("UPDATE users SET points = COALESCE(points,0) + COALESCE(ref_points,0)")
+            c.execute("INSERT OR REPLACE INTO bot_settings(key, value) VALUES('v16116_refpoints_merged','1')")
+            print("✅ v161.16 ref_points merged into wallet")
+    except Exception as _e:
+        print(f"⚠️ v161.16 ref merge failed: {_e}")
     # Referral audit log
     c.execute("""
         CREATE TABLE IF NOT EXISTS referral_log (
@@ -4981,36 +4985,81 @@ def get_ref_points(uid):
 
 
 def add_ref_points(uid, amount):
-    """Add ref_points to a user. amount can be negative to deduct
-    (but use deduct_ref_points for safety clamping).
+    """Add referral points — they ARE wallet points (v161.16, user demand).
+    Credits BOTH `points` (wallet, with ledger entry) and `ref_points`
+    (legacy tracker kept for free-claim compatibility) so the user can spend
+    referral earnings with Pay-with-Points on ANY product.
 
-    🔧 v133: supports DECIMAL amounts (e.g. 0.1). The old int(amount) made
-    int(0.1) = 0 — sub-1 referral rewards silently never added. SQLite stores
-    the decimal fine even in an INTEGER-affinity column (becomes REAL)."""
+    🔧 v133: supports DECIMAL amounts (e.g. 0.1)."""
     try:
         amount = float(amount)
     except Exception:
         amount = 0.0
-    if amount == 0: return
+    if amount == 0:
+        return
+    uid = int(uid)
     conn = get_connection(); c = conn.cursor()
-    ensure_column(c, "users", "ref_points", "INTEGER DEFAULT 0")
-    c.execute("UPDATE users SET ref_points = COALESCE(ref_points,0) + ? WHERE user_id = ?",
-              (amount, int(uid)))
-    conn.commit(); conn.close()
+    try:
+        ensure_column(c, "users", "ref_points", "INTEGER DEFAULT 0")
+        ensure_points_ledger_table(c)
+        # 1) wallet (points) — the real spendable balance
+        c.execute("SELECT COALESCE(points,0) FROM users WHERE user_id=?", (uid,))
+        row = c.fetchone()
+        before = _points_float(row[0]) if row else 0.0
+        after = round(before + amount, 2)
+        c.execute("UPDATE users SET points=? WHERE user_id=?", (after, uid))
+        c.execute("""INSERT OR IGNORE INTO points_ledger
+                     (user_id, amount, balance_before, balance_after,
+                      tx_type, description, event_id, order_id)
+                     VALUES (?, ?, ?, ?, 'referral', 'Referral reward', ?, 0)""",
+                  (uid, amount, before, after,
+                   f"ref_reward_{uid}_{int(_stime.time()*1000)}"))
+        # 2) legacy tracker (free-claim)
+        c.execute("UPDATE users SET ref_points = COALESCE(ref_points,0) + ? WHERE user_id = ?",
+                  (amount, uid))
+        conn.commit()
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+    finally:
+        try: conn.close()
+        except Exception: pass
 
 
 def deduct_ref_points(uid, amount):
-    """Deduct ref_points safely (clamps at 0, never goes negative).
-    Returns True if successful, False if balance insufficient."""
+    """Deduct referral points safely (clamps at 0, never goes negative).
+    v161.16: referral points live in the wallet too — so deduct from BOTH
+    `points` (wallet) and `ref_points` (tracker). Returns True on success,
+    False when the referral balance is insufficient."""
     amount = float(amount)
     if amount <= 0: return True
     bal = get_ref_points(uid)
     if bal < amount: return False
+    uid = int(uid)
     conn = get_connection(); c = conn.cursor()
-    ensure_column(c, "users", "ref_points", "INTEGER DEFAULT 0")
-    c.execute("UPDATE users SET ref_points = MAX(0, COALESCE(ref_points,0) - ?) WHERE user_id = ?",
-              (amount, int(uid)))
-    conn.commit(); conn.close()
+    try:
+        ensure_column(c, "users", "ref_points", "INTEGER DEFAULT 0")
+        ensure_points_ledger_table(c)
+        c.execute("SELECT COALESCE(points,0) FROM users WHERE user_id=?", (uid,))
+        row = c.fetchone()
+        pts_before = _points_float(row[0]) if row else 0.0
+        pts_after = round(max(0.0, pts_before - amount), 2)
+        c.execute("UPDATE users SET ref_points = MAX(0, COALESCE(ref_points,0) - ?) WHERE user_id = ?",
+                  (amount, uid))
+        c.execute("UPDATE users SET points=? WHERE user_id=?", (pts_after, uid))
+        c.execute("""INSERT OR IGNORE INTO points_ledger
+                     (user_id, amount, balance_before, balance_after,
+                      tx_type, description, event_id, order_id)
+                     VALUES (?, ?, ?, ?, 'debit', 'Free claim (referral points)', ?, 0)""",
+                  (uid, -abs(amount), pts_before, pts_after,
+                   f"ref_claim_{uid}_{int(_stime.time()*1000)}"))
+        conn.commit()
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+    finally:
+        try: conn.close()
+        except Exception: pass
     return True
 
 
@@ -6573,21 +6622,8 @@ def reseller_top_keys(limit=5) -> list:
 # ────────────────────────────────────────────────────────────
 
 def get_combined_points(uid) -> float:
-    """Wallet points + referral points combined."""
-    u = get_user(uid)
-    if not u:
-        return 0.0
-    pts = 0.0
-    try:
-        pts = float(u.get("points") or 0)
-    except Exception:
-        pts = 0.0
-    ref = 0.0
-    try:
-        ref = float(u.get("ref_points") or 0)
-    except Exception:
-        ref = 0.0
-    return round(pts + ref, 2)
+    """Wallet balance — referral points are already in the wallet (v161.16)."""
+    return get_user_points(uid)
 
 
 def get_wallet_vs_referral(uid) -> tuple:
@@ -6609,48 +6645,11 @@ def get_wallet_vs_referral(uid) -> tuple:
 
 
 def deduct_combined_points(user_id, amount, tx_type='debit', description='', event_id='', order_id=0):
-    """Atomic wallet checkout using BOTH wallet points and referral points.
-    Deducts wallet points first, then referral points. Returns True on success,
-    False when combined balance is insufficient or the operation failed."""
-    amount = _points_float(amount)
-    if amount <= 0:
-        return True
-    conn = get_connection(); c = conn.cursor()
-    try:
-        user_id = int(user_id)
-    except Exception:
-        conn.close(); return False
-    try:
-        ensure_points_ledger_table(c)
-        ensure_column(c, "users", "ref_points", "INTEGER DEFAULT 0")
-        c.execute("BEGIN IMMEDIATE")
-        if event_id:
-            c.execute("SELECT 1 FROM points_ledger WHERE event_id=? LIMIT 1", (str(event_id),))
-            if c.fetchone():
-                conn.rollback(); conn.close(); return False
-        c.execute("SELECT COALESCE(points,0), COALESCE(ref_points,0) FROM users WHERE user_id=?", (user_id,))
-        row = c.fetchone()
-        pts = _points_float(row[0]) if row else 0.0
-        ref = _points_float(row[1]) if row else 0.0
-        combined = pts + ref
-        if combined < amount:
-            conn.rollback(); conn.close(); return False
-        from_pts = min(pts, amount)
-        from_ref = round(amount - from_pts, 2)
-        new_pts = round(pts - from_pts, 2)
-        new_ref = round(ref - from_ref, 2)
-        c.execute("UPDATE users SET points=?, ref_points=? WHERE user_id=?", (new_pts, new_ref, user_id))
-        c.execute("""INSERT OR IGNORE INTO points_ledger
-                     (user_id, amount, balance_before, balance_after,
-                      tx_type, description, event_id, order_id)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                  (user_id, -abs(amount), combined, round(combined - amount, 2),
-                   str(tx_type or 'debit'), str(description or '')[:200],
-                   str(event_id or ''), int(order_id or 0)))
-        conn.commit(); conn.close(); return True
-    except Exception:
-        try: conn.rollback()
-        except Exception: pass
-        try: conn.close()
-        except Exception: pass
-        return False
+    """Atomic wallet checkout — v161.16: referral points ARE wallet points, so a
+    single wallet deduction covers them. Returns True on success, False when
+    balance is insufficient or the operation failed."""
+    # referral points are already inside `points` (add_ref_points credits the
+    # wallet) → normal atomic wallet debit is correct and never double-counts.
+    return deduct_points_if_enough(user_id, amount, tx_type=tx_type,
+                                   description=description, event_id=event_id,
+                                   order_id=order_id)

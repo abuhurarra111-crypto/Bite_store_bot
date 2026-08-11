@@ -297,7 +297,7 @@ async def _send_product_referral_notifications(context, referrer_id, new_user,
 
 
 async def _process_referral_attribution(context, new_user, referrer_id, is_new_user,
-                                        product_id=0, approve_now=False):
+                                        product_id=0, approve_now=True):
     """Process a referral attempt instantly. Always logs to referral_log.
 
     🆕 v102: `product_id` param. When set (>0), this is a "free-via-referrals"
@@ -418,19 +418,10 @@ async def _process_referral_attribution(context, new_user, referrer_id, is_new_u
         try:
             add_pending_referral(referrer_id, new_user.id, int(product_id or 0), 'start_complete')
             log_referral_attempt(referrer_id, new_user.id, 'pending', f'pending_pid_{int(product_id or 0)}')
-            # Schedule 30-second active approval as fallback; opening Shop also approves immediately.
+            # 🆕 v161.16: fast 5s fallback (was 30s × 5 rounds = 2.5 min lock).
             try:
                 if getattr(context, 'job_queue', None):
-                    context.job_queue.run_once(_pending_referral_job, 30, data={'uid': int(new_user.id)}, name=f'pending_ref_{int(new_user.id)}')
-            except Exception:
-                pass
-            try:
-                await notify_admin(context.bot,
-                    f"⏳ *Referral Pending*\n"
-                    f"Referrer: `{referrer_id}`\n"
-                    f"New user: `{new_user.id}` ({escape_md(new_user.first_name or 'N/A')})\n"
-                    f"Product: `{int(product_id or 0)}`\n"
-                    f"Reward will be approved when user opens Shop or stays active 30s.")
+                    context.job_queue.run_once(_pending_referral_job, 5, data={'uid': int(new_user.id)}, name=f'pending_ref_{int(new_user.id)}')
             except Exception:
                 pass
         except Exception:
@@ -551,9 +542,10 @@ async def approve_pending_referral_for_user(context, user_id, reason='activity')
 
 
 async def _pending_referral_job(context):
-    """🆕 v134: 30-second observation job. Only approves when the referred
-    user showed real activity (>=1 action). Otherwise keeps observing
-    (up to 5 more 30s rounds), so a silent bot never unlocks the reward."""
+    """🆕 v134 → v161.16: referral approval is now IMMEDIATE (approve_now=True
+    default). This job is only a tiny safety net for legacy approve_now=False
+    callers: approves after ONE fast round (5s), no observation lock, so a
+    burst of referrals can never stall the bot."""
     try:
         uid = int((context.job.data or {}).get('uid') or 0)
     except Exception:
@@ -561,34 +553,14 @@ async def _pending_referral_job(context):
     if not uid:
         return
     try:
-        from database import get_pending_referral_for_user, bump_pending_referral_activity
+        from database import get_pending_referral_for_user
         row = get_pending_referral_for_user(uid)
         if not row:
             return
-        if int(row['activity_count'] or 0) >= 1:
-            await approve_pending_referral_for_user(context, uid, reason='30s_active')
-            return
-        tries = int(row['observe_tries'] or 0)
-        # Mark + reschedule: still observing (max 5 rounds ≈ 2.5 min)
-        conn = None
-        try:
-            from database import get_connection, ensure_column
-            conn = get_connection(); c = conn.cursor(); ensure_column(c, "pending_referrals", "observe_tries", "INTEGER DEFAULT 0")
-            c.execute("UPDATE pending_referrals SET observe_tries=? WHERE referred_id=? AND status='pending'",
-                      (tries + 1, uid))
-            conn.commit()
-        except Exception:
-            pass
-        finally:
-            try:
-                if conn: conn.close()
-            except Exception:
-                pass
-        if tries + 1 < 5 and getattr(context, 'job_queue', None):
-            context.job_queue.run_once(_pending_referral_job, 30,
-                                       data={'uid': uid}, name=f'pending_ref_{uid}')
+        # Approve on first round — no multi-round observation.
+        await approve_pending_referral_for_user(context, uid, reason='fast_approval')
     except Exception as e:
-        logging.getLogger(__name__).debug(f"[pending-ref] observe job: {e}")
+        logging.getLogger(__name__).debug(f"[pending-ref] fast job: {e}")
 
 
 # ════════════════════════════════════════════════════════════════
