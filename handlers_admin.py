@@ -11603,12 +11603,14 @@ async def reseller_api_user_callback(update, context):
     # 🔧 v161.11: NO auto-generate. If the user has no key, show a landing
     # screen with a "Generate API Key" button — key is only created on tap.
     if not key:
-        kb = [
-            [InlineKeyboardButton("🛠️ Generate API Key", callback_data="reseller_api_generate")],
-        ]
+        # 🆕 v161.13: editable buttons (Customization → Buttons Editor → Reseller API)
+        kb = []
+        _g = _rb("reseller_api_generate_btn")
+        kb.append([_g] if _g else [InlineKeyboardButton("🛠️ Generate API Key", callback_data="reseller_api_generate")])
         if docs_url:
-            kb.append([InlineKeyboardButton("📚 API Documentation", url=docs_url)])
-        kb.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
+            _d = _rb("reseller_api_docs_btn", url=docs_url)
+            kb.append([_d] if _d else [InlineKeyboardButton("📚 API Documentation", url=docs_url)])
+        kb.append([_rb("nav_prod_home") or InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
         try:
             _txt = get_response_with_auto_register(
                 "reseller_api_landing",
@@ -11652,24 +11654,44 @@ async def reseller_api_user_callback(update, context):
         )
     except Exception:
         limits_lines = ""
-    text = (
+    # 🆕 v161.13: panel text is EDITABLE via Edit Responses / Screen Editor
+    # (reseller_api_panel). Placeholders: {prefix}, {balance}, {requests},
+    # {created}, {limits}
+    text = get_response_with_auto_register(
+        "reseller_api_panel",
         "🔗 *API Access*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "Use your API key to sell products on your own bot or website.\n\n"
-        f"🔑 *Your API Key:*\n`{prefix}....`\n\n"
-        f"💳 Balance: *${bal:.2f}*\n"
-        f"📨 Total requests: *{reqs}*\n"
-        f"📅 Created: *{created}*\n"
+        "🔑 *Your API Key:*\n`{prefix}....`\n\n"
+        "💳 Balance: *${balance:.2f}*\n"
+        "📨 Total requests: *{requests}*\n"
+        "📅 Created: *{created}*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        + (limits_lines + "\n" if limits_lines else "")
+        "{limits}"
     )
-    kb = [
-        [InlineKeyboardButton("👁️ Show Full Key", callback_data="reseller_api_show"),
-         InlineKeyboardButton("🔄 Regenerate", callback_data="reseller_api_regenerate")],
-    ]
+    try:
+        text = text.replace("{prefix}", str(prefix))
+        text = text.replace("{balance}", f"{bal:.2f}")
+        text = text.replace("{requests}", str(reqs))
+        text = text.replace("{created}", str(created))
+        text = text.replace("{limits}", limits_lines)
+        text = text.replace("**${balance:.2f}**", f"**${bal:.2f}**")  # safety
+        text = text.replace("{balance:.2f}", f"{bal:.2f}")
+    except Exception:
+        pass
+    # 🆕 v161.13: editable buttons (Customization → Buttons Editor → Reseller API)
+    kb = []
+    _s = _rb("reseller_api_show_btn")
+    _r = _rb("reseller_api_regenerate_btn")
+    if _s and _r:
+        kb.append([_s, _r])
+    else:
+        kb.append([InlineKeyboardButton("👁️ Show Full Key", callback_data="reseller_api_show"),
+                   InlineKeyboardButton("🔄 Regenerate", callback_data="reseller_api_regenerate")])
     if docs_url:
-        kb.append([InlineKeyboardButton("📚 API Documentation", url=docs_url)])
-    kb.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
+        _d = _rb("reseller_api_docs_btn", url=docs_url)
+        kb.append([_d] if _d else [InlineKeyboardButton("📚 API Documentation", url=docs_url)])
+    kb.append([_rb("nav_prod_home") or InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
     try:
         await q.edit_message_text(text, parse_mode="Markdown",
                                   reply_markup=InlineKeyboardMarkup(kb))
@@ -11698,11 +11720,19 @@ async def reseller_api_generate_callback(update, context):
     if existing:
         return await reseller_api_user_callback(update, context)
     plaintext, _p = generate_reseller_key(uid, f"Reseller {uid}")
+    # 🆕 v161.13: admin alert on key generation (English, full details)
+    try:
+        from reseller_api import _notify_admin_key_generated
+        _notify_admin_key_generated(uid, "Self-serve")
+    except Exception:
+        pass
     docs_url = _reseller_docs_url()
+    # 🆕 v161.13: editable buttons
     kb = []
     if docs_url:
-        kb.append([InlineKeyboardButton("📚 API Documentation", url=docs_url)])
-    kb.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
+        _d = _rb("reseller_api_docs_btn", url=docs_url)
+        kb.append([_d] if _d else [InlineKeyboardButton("📚 API Documentation", url=docs_url)])
+    kb.append([_rb("nav_prod_home") or InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
     try:
         _txt = get_response_with_auto_register(
             "reseller_api_generated",
@@ -11753,11 +11783,14 @@ async def reseller_api_show_callback(update, context):
             pass
         return
     try:
-        await q.edit_message_text(
-            "🔑 *Your Full Key*\n\n"
-            f"`{plaintext}`\n\n"
-            f"Use header: `X-API-Key: {plaintext}`",
-            parse_mode="Markdown",
+        # 🆕 v161.13: editable full-key text (reseller_api_fullkey, {api_key})
+        _txt = get_response_with_auto_register(
+            "reseller_api_fullkey",
+            "🔑 *Your Full Key*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            "`{api_key}`\n\n"
+            "📡 Use header: `X-API-Key: {api_key}`")
+        _txt = _txt.replace("{api_key}", plaintext)
+        await q.edit_message_text(_txt, parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🔙 Back", callback_data="reseller_api_user")]]))
     except Exception:
@@ -11778,6 +11811,12 @@ async def reseller_api_regenerate_callback(update, context):
         if key:
             revoke_reseller_key(int(key.get("id") or 0))
         plaintext, _p = generate_reseller_key(uid, f"Reseller {uid}")
+        # 🆕 v161.13: admin alert on regenerate
+        try:
+            from reseller_api import _notify_admin_key_generated
+            _notify_admin_key_generated(uid, "Regenerate")
+        except Exception:
+            pass
     except Exception as e:
         try:
             await q.edit_message_text(f"❌ {e}")
@@ -11785,17 +11824,23 @@ async def reseller_api_regenerate_callback(update, context):
             pass
         return
     docs_url = _reseller_docs_url()
+    # 🆕 v161.13: editable buttons
     kb = []
     if docs_url:
-        kb.append([InlineKeyboardButton("📚 API Documentation", url=docs_url)])
-    kb.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
+        _d = _rb("reseller_api_docs_btn", url=docs_url)
+        kb.append([_d] if _d else [InlineKeyboardButton("📚 API Documentation", url=docs_url)])
+    kb.append([_rb("nav_prod_home") or InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
     try:
-        await q.edit_message_text(
-            "🔄 *New API Key Generated!* (old key revoked)\n\n"
-            f"🔑 `{plaintext}`\n\n"
-            "⚠️ Save now — shown only ONCE.\n\n"
-            f"Use header: `X-API-Key: {plaintext}`",
-            parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        # 🆕 v161.13: editable regenerate text (reseller_api_regenerate, {api_key})
+        _txt = get_response_with_auto_register(
+            "reseller_api_regenerate",
+            "🔄 *New API Key Generated!* (old key revoked)\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "🔑 `{api_key}`\n\n"
+            "⚠️ *Save now — shown only ONCE.*\n\n"
+            "📡 Use header: `X-API-Key: {api_key}`")
+        _txt = _txt.replace("{api_key}", plaintext)
+        await q.edit_message_text(_txt, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
     except Exception:
         pass
 

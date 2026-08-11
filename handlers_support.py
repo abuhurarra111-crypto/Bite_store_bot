@@ -1351,9 +1351,23 @@ async def _do_wr_reject(update, context, wid, reason):
     except Exception:
         pass
 
+    # 🔧 v161.12: text-reason path has NO callback_query — never crash; just
+    # acknowledge to the admin via reply instead of trying to edit a query.
     try:
-        set_cb_data(update, f"adm_wr_view_{wid}")
-        await adm_wr_view_callback(update, context)
+        if q is not None:
+            set_cb_data(update, f"adm_wr_view_{wid}")
+            await adm_wr_view_callback(update, context)
+        else:
+            try:
+                await update.effective_message.reply_text(
+                    f"✅ *{type_label} Request Rejected*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"📦 Order #{w['order_id']}\n"
+                    f"📋 Reason: *{reason}*\n\n"
+                    f"User notified.",
+                    parse_mode="Markdown")
+            except Exception:
+                pass
     except Exception:
         pass
 

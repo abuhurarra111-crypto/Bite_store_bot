@@ -3083,13 +3083,34 @@ def _find_matching_bybit_payment(order, lookback_hours=168):
         return None, f"hash_not_found:{len(rows)}"
     if method in ('bybit_usdt_trc20','bybit_usdt_bep20'):
         rows=get_bybit_deposit_records('USDT', lookback_hours=lookback_hours, txid=note) if note else get_bybit_deposit_records('USDT', lookback_hours=lookback_hours)
+        # 🔧 v161.12: also scan the full recent list when a txid filter came back
+        # empty (Bybit indexing lag) — never trust a single filtered query.
+        if note:
+            try:
+                rows.extend(get_bybit_deposit_records('USDT', lookback_hours=lookback_hours))
+            except Exception:
+                pass
         for d in rows:
             txid=d.get('txid') or ''
             if not txid or is_txid_used(txid): continue
-            if not _bybit_hash_matches(d, note): continue
+            # 🆕 v161.12: TXID optional — if the customer didn't paste one (or
+            # Bybit lags), match by network + address + amount + after-order,
+            # exactly like the internal fallback. Amount is the primary anchor.
+            if note:
+                if not _bybit_hash_matches(d, note): continue
             if not _usdt_network_ok(d.get('network'), cfg): continue
             if not _usdt_address_ok(d.get('address'), cfg): continue
-            if _usdt_amount_match(d.get('amount'), expected, anchored=True): return d, 'matched'
+            if not _usdt_amount_match(d.get('amount'), expected, anchored=bool(note)):
+                continue
+            # after-order recency guard (only when order has a timestamp)
+            try:
+                order_ts = _parse_order_created_epoch(order)
+                dep_ts = int(d.get('time_ms') or 0)
+                if order_ts and dep_ts and dep_ts < order_ts:
+                    continue
+            except Exception:
+                pass
+            return d, 'matched'
         if not rows:
             return None, 'no_records'
         return None, 'not_found'

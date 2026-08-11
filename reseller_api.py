@@ -544,6 +544,11 @@ def _apply_fulfill_result(oid, ok, items, status, err, file_ref, key_row):
             _fire_reseller_alert(get_reseller_order(oid))
         except Exception:
             pass
+        # 🆕 v161.13: admin notification with full order details
+        try:
+            _notify_admin_order(get_reseller_order(oid))
+        except Exception:
+            pass
         if file_ref:
             update_reseller_order(oid, status="delivered", delivery_text="",
                                   delivered_keys="[]",
@@ -674,6 +679,98 @@ def _notify_admin(text: str):
         if token and aid:
             _rq.post(f"https://api.telegram.org/bot{token}/sendMessage",
                      json={"chat_id": int(aid), "text": text}, timeout=10)
+    except Exception:
+        pass
+
+
+def _notify_admin_order(order_row):
+    """🆕 v161.13: Admin notification when a RESELLER API order completes.
+    Same style as normal order notifications — full details so the owner can
+    see which reseller is bringing the most sales."""
+    try:
+        import threading as _th
+        def _worker():
+            try:
+                oid = int((order_row or {}).get("id") or 0)
+                uid = int((order_row or {}).get("user_id") or 0)
+                pname = str((order_row or {}).get("product_name") or "Product")
+                qty = int((order_row or {}).get("qty") or 1)
+                usd = float((order_row or {}).get("usd_amount") or 0)
+                status = str((order_row or {}).get("status") or "delivered")
+                # reseller label/username
+                rlabel = ""
+                runame = ""
+                try:
+                    from database import get_api_key_row, get_user
+                    krow = get_api_key_row(int((order_row or {}).get("key_id") or 0))
+                    if krow:
+                        rlabel = str(krow.get("key_prefix") or "")
+                    u = get_user(uid)
+                    if u:
+                        runame = str(u.get("first_name") or "")
+                except Exception:
+                    pass
+                try:
+                    from utils import html_strip_tags as _hst
+                    pname = _hst(pname)
+                except Exception:
+                    pass
+                st_icon = {"delivered": "✅", "pending": "⏳", "processing": "🔄", "failed": "❌"}.get(status, "❔")
+                msg = (
+                    "🔗 *Reseller API Order*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"{st_icon} Order: `#{oid}` · Status: *{status}*\n"
+                    f"👤 Reseller: {runame or uid} (`{uid}`)\n"
+                    f"🔑 Key: `{rlabel}`\n"
+                    f"📦 Product: {pname}\n"
+                    f"🔢 QTY: {qty}\n"
+                    f"💰 Amount: *${usd:.2f}*\n"
+                    f"🕐 Time: {_time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                    f"_Purchased through the Reseller API._"
+                )
+                _notify_admin(msg)
+            except Exception:
+                pass
+        _th.Thread(target=_worker, daemon=True, name="reseller-admin-order").start()
+    except Exception:
+        pass
+
+
+def _notify_admin_key_generated(uid, label=""):
+    """🆕 v161.13: Admin alert when ANY user generates a reseller API key."""
+    try:
+        import threading as _th
+        def _worker():
+            try:
+                runame = str(uid)
+                uname = ""
+                try:
+                    from database import get_user
+                    u = get_user(uid)
+                    if u:
+                        runame = str(u.get("first_name") or uid)
+                        uname = str(u.get("username") or "")
+                except Exception:
+                    pass
+                msg = (
+                    "🔑 *New Reseller API Key Generated*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"👤 Name: {runame}\n"
+                    f"🆔 User ID: `{uid}`\n"
+                    f"📛 Username: @{uname}" if uname else
+                    "🔑 *New Reseller API Key Generated*\n"
+                    "━━━━━━━━━━━━━━━━━━━━\n"
+                    f"👤 Name: {runame}\n"
+                    f"🆔 User ID: `{uid}`\n"
+                    f"📛 Username: (none)"
+                )
+                if label:
+                    msg += f"\n🏷️ Label: {label}"
+                msg += f"\n🕐 Time: {_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                _notify_admin(msg)
+            except Exception:
+                pass
+        _th.Thread(target=_worker, daemon=True, name="reseller-admin-key").start()
     except Exception:
         pass
 

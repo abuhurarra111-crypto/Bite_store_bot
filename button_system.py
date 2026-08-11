@@ -637,6 +637,32 @@ BUTTONS = {
         "large": "❌ Cancel Order", "xl": "❌ Cancel Order",
         "callback": "cancel_order",
     },
+    # 🆕 v161.13: RESELLER API FLOW BUTTONS — editable in Customization →
+    # Buttons Editor → Reseller API group (rename / color / premium emoji).
+    "reseller_api_generate_btn": {
+        "group": "reseller", "essential": False,
+        "short": "🛠️", "medium": "🛠️ Generate API Key",
+        "large": "🛠️ Generate API Key", "xl": "🛠️ Generate API Key",
+        "callback": "reseller_api_generate",
+    },
+    "reseller_api_show_btn": {
+        "group": "reseller", "essential": False,
+        "short": "👁️", "medium": "👁️ Show Full Key",
+        "large": "👁️ Show Full Key", "xl": "👁️ Show Full Key",
+        "callback": "reseller_api_show",
+    },
+    "reseller_api_regenerate_btn": {
+        "group": "reseller", "essential": False,
+        "short": "🔄", "medium": "🔄 Regenerate",
+        "large": "🔄 Regenerate", "xl": "🔄 Regenerate",
+        "callback": "reseller_api_regenerate",
+    },
+    "reseller_api_docs_btn": {
+        "group": "reseller", "essential": False,
+        "short": "📚", "medium": "📚 API Documentation",
+        "large": "📚 API Documentation", "xl": "📚 API Documentation",
+        "callback": "reseller_api_docs",
+    },
     "nav_order_home": {
         "group": "navigation", "essential": True,
         "short": "🏠", "medium": "🏠 Home",
@@ -767,6 +793,7 @@ GROUP_NAMES = {
     "points": "💎 Points Buy",
     "customization": "🎨 Customization",
     "navigation": "🔙 Navigation Buttons (Back / Home / Cancel / Prev / Next)",  # 🆕 v52
+    "reseller": "🔗 Reseller API Flow",  # 🆕 v161.13
 }
 
 

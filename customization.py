@@ -2777,7 +2777,12 @@ SCREEN_TREE = {
             ("reseller_api_regenerate", "🔄 Regenerate"),
         ],
         "buttons": [
-            {"id": "main_reseller_api", "kind": "registry"},
+            {"id": "main_reseller_api",      "kind": "registry"},
+            # 🆕 v161.13: full reseller API flow buttons (editable)
+            {"id": "reseller_api_generate_btn", "kind": "registry"},
+            {"id": "reseller_api_show_btn",     "kind": "registry"},
+            {"id": "reseller_api_regenerate_btn", "kind": "registry"},
+            {"id": "reseller_api_docs_btn",     "kind": "registry"},
         ],
         "children": [],
     },

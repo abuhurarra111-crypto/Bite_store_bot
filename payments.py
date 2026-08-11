@@ -844,7 +844,7 @@ def verify_payment_unified(
 BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "").strip()
 BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET", "").strip()
 BYBIT_API_BASE = os.getenv("BYBIT_API_BASE", "https://api.bybit.com").rstrip("/")
-BYBIT_RECV_WINDOW = "5000"
+BYBIT_RECV_WINDOW = "30000"
 BYBIT_PROXY_URL = os.getenv("BYBIT_PROXY_URL", "").strip()
 
 # 🔧 AUDIT-FIX v112 (2026-07-31): last Bybit API call diagnostics. Populated on
