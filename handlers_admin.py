@@ -6,6 +6,7 @@ import asyncio
 from config import *
 from database import *
 from keyboards import *
+from keyboards import _rb  # 🆕 v161.14 FIX: underscore names NOT in star-import → NameError crashed reseller callbacks
 from utils import escape_md, nav_push, set_cb_data, location_back_callback, smart_text_and_mode, has_premium_emoji, fmt_price, points_from_usd, fmt_points
 from templates_bundle import (
     FORMAT_EMAIL_PASS, FORMAT_REDEEM_LINK, FORMAT_COUPON_CODES,
