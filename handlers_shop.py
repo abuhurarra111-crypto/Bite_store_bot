@@ -921,10 +921,17 @@ async def carousel_nav_callback(update: Update, context: ContextTypes.DEFAULT_TY
 # ════════════════════════════════════════════
 # 📦 PRODUCT DETAIL (Raw mode — when user taps a list item)
 # ════════════════════════════════════════════
-async def product_detail_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def product_detail_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, pid=None):
     q = update.callback_query; await q.answer()
     nav_push(context, 'shop')  # 🔙 Back goes to shop
-    p = get_product(int(q.data.split("_")[1]))
+    # 🆕 v161.15: accept explicit pid (used by favorite toggle — q.data is
+    # read-only in PTB 22.8, so the old q.data mutation can't carry the pid).
+    if pid is None:
+        try:
+            pid = int(q.data.split("_")[1])
+        except Exception:
+            await q.edit_message_text("❌ Not found!", reply_markup=back_btn()); return
+    p = get_product(int(pid))
     if not p:
         await q.edit_message_text("❌ Not found!", reply_markup=back_btn()); return
 
@@ -1043,8 +1050,10 @@ async def favorite_toggle_callback(update, context):
     else:
         add_favorite(q.from_user.id, pid)
         await q.answer('Added to favorites ⭐', show_alert=False)
-    q.data = f'prod_{pid}'
-    await product_detail_callback(update, context)
+    # 🆕 v161.15 FIX: PTB 22.8 — q.data is READ-ONLY, cannot set it.
+    # Old code crashed here (AttributeError → "Temporary error"). Pass pid
+    # explicitly to re-open the product detail.
+    await product_detail_callback(update, context, pid=pid)
 
 
 async def favorites_callback(update, context):

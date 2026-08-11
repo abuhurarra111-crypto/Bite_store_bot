@@ -730,7 +730,24 @@ def get_wallet_balance(uid):
     u = get_user(uid); return u['wallet_balance'] if u else 0.0
 
 def get_user_points(uid):
-    u = get_user(uid); return u['points'] if u else 0
+    # 🆕 v161.15: REFERRAL POINTS ARE WALLET POINTS. User demand (repeated):
+    # a member who earned referral points must SEE them in their wallet
+    # balance too. Return wallet + ref_points combined everywhere, so
+    # My Account / Buy Points / balance / insufficient messages all show the
+    # spendable total. Deduction uses deduct_combined_points (wallet first,
+    # then referral) so it never double-counts.
+    u = get_user(uid)
+    if not u:
+        return 0
+    try:
+        pts = float(u.get("points") or 0)
+        ref = float(u.get("ref_points") or 0)
+        return round(pts + ref, 2)
+    except Exception:
+        try:
+            return u['points'] or 0
+        except Exception:
+            return 0
 
 # ════════════════════════════════════════════════════════════════
 # v128: POINTS LEDGER + REFERRAL PENDING APPROVAL

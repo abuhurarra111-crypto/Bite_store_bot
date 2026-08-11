@@ -3063,9 +3063,15 @@ def _find_matching_bybit_payment(order, lookback_hours=168):
             if not txid or is_txid_used(txid): continue
             # 🔧 v116/v118: match by hash, pasted Order ID, or stored Reference ID
             # found anywhere in the record (digits-normalized).
-            hash_ok = (_bybit_hash_matches(d, note)
-                       or (note_norm and _deep_find_id(d, note_norm))
-                       or (ref_norm and _deep_find_id(d, ref_norm)))
+            # 🆕 v161.15 FIX: with NO pasted ID, _bybit_hash_matches(d,"") returns
+            # True for EVERY record → the first old deposit triggered a bogus
+            # 'amount_mismatch' and blocked the amount-fallback. Only do hash
+            # matching when the customer actually pasted something.
+            hash_ok = False
+            if note or ref:
+                hash_ok = (_bybit_hash_matches(d, note)
+                           or (note_norm and _deep_find_id(d, note_norm))
+                           or (ref_norm and _deep_find_id(d, ref_norm)))
             if hash_ok and not _usdt_amount_match(d.get('amount'), expected, anchored=True):
                 return None, 'amount_mismatch'
             if hash_ok and _usdt_amount_match(d.get('amount'), expected, anchored=True):

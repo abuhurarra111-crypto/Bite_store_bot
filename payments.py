@@ -874,6 +874,46 @@ def _bybit_proxies():
     return {"http": BYBIT_PROXY_URL, "https": BYBIT_PROXY_URL}
 
 
+# 🆕 v161.15: Bybit server-time sync — Bybit rejects requests whose timestamp is
+# outside recv_window of ITS server clock. Host clocks drift (we saw 62s drift).
+# Fetch Bybit server time once per 5 min, compute offset, use it for signing.
+_bybit_time_offset = [0.0]
+_bybit_offset_fetched = [0.0]
+
+
+def _bybit_server_offset() -> float:
+    """Return ms offset (bybit_server - local_clock). Cached 300s.
+    Uses the same proxy pool + health rotation as signed calls."""
+    import time as _t
+    now = _t.time()
+    if now - _bybit_offset_fetched[0] < 300 and _bybit_offset_fetched[0] > 0:
+        return _bybit_time_offset[0]
+    offset = 0.0
+    try:
+        url = f"{BYBIT_API_BASE}/v5/market/time"
+        code, resp, _used = _request_with_rotation(
+            url, {"Content-Type": "application/json"}, 8,
+            last_good_key="bybit_proxy_last_good",
+        )
+        if code == 200:
+            j = resp.json()
+            if int(j.get("retCode", -1)) == 0:
+                srv = int(j.get("result", {}).get("timeSecond", 0))
+                if srv:
+                    offset = (srv * 1000) - (_t.time() * 1000)
+    except Exception:
+        offset = 0.0
+    _bybit_time_offset[0] = offset
+    _bybit_offset_fetched[0] = now
+    return offset
+
+
+def _bybit_now_ms() -> int:
+    """Local ms + server offset → clock-drift-proof timestamp."""
+    import time as _t
+    return int(_t.time() * 1000 + _bybit_server_offset())
+
+
 def _bybit_sign(ts: str, query: str = "") -> str:
     payload = f"{ts}{BYBIT_API_KEY}{BYBIT_RECV_WINDOW}{query}"
     return hmac.new(BYBIT_API_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
@@ -892,7 +932,7 @@ def _bybit_get(path: str, params: dict | None = None, timeout: int = 15):
         return -1, {"error": "BYBIT_API_KEY / BYBIT_API_SECRET not set"}
     params = {k: v for k, v in (params or {}).items() if v not in (None, "")}
     query = urlencode(params)
-    ts = str(int(time.time() * 1000))
+    ts = str(_bybit_now_ms())  # 🆕 v161.15: server-time synced (clock-drift proof)
     headers = {
         "X-BAPI-API-KEY": BYBIT_API_KEY,
         "X-BAPI-TIMESTAMP": ts,
@@ -1003,7 +1043,7 @@ def get_bybit_api_key_info() -> dict:
 
 
 def get_bybit_deposit_records(coin: str = "USDT", lookback_hours: int = 96, limit: int = 50, txid: str = ""):
-    end_ms = int(time.time() * 1000)
+    end_ms = _bybit_now_ms()   # 🆕 v161.15: server-time synced
     start_ms = int((time.time() - lookback_hours * 3600) * 1000)
     params = {"coin": coin.upper(), "startTime": start_ms, "endTime": end_ms, "limit": min(max(int(limit or 10), 1), 50)}
     if txid:
@@ -1049,7 +1089,7 @@ def get_bybit_deposit_records(coin: str = "USDT", lookback_hours: int = 96, limi
 
 
 def get_bybit_internal_deposits(coin: str = "USDT", lookback_hours: int = 96, limit: int = 50, txid: str = ""):
-    end_ms = int(time.time() * 1000)
+    end_ms = _bybit_now_ms()   # 🆕 v161.15: server-time synced
     start_ms = int((time.time() - lookback_hours * 3600) * 1000)
     params = {"coin": coin.upper(), "startTime": start_ms, "endTime": end_ms, "limit": min(max(int(limit or 10), 1), 50)}
     if txid:
