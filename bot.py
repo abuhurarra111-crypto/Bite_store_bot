@@ -1003,8 +1003,8 @@ async def post_init(app):
             app.job_queue.run_repeating(binance_note_background_job, interval=20, first=5, name="binance_note_checker")
             # 🪙 USDT TRC20/BEP20 on-chain deposit checker
             app.job_queue.run_repeating(usdt_deposit_background_job, interval=45, first=15, name="usdt_deposit_checker")
-            # 🟡 Bybit Pay + Bybit USDT deposit checker
-            app.job_queue.run_repeating(bybit_deposit_background_job, interval=20, first=10, name="bybit_deposit_checker")  # 🆕 v161.22: 45s→20s — faster auto-verify
+            # 🆕 v161.24: Bybit auto-check job REMOVED (user demand) — verification
+            # only happens when the customer taps 🔍 Check Payment.
             # 🆕 v161.3: Pending reseller order reminder to admin
             app.job_queue.run_repeating(_reseller_pending_reminder_job, interval=900, first=300, name="reseller_pending_reminder")
     except Exception:

@@ -4238,3 +4238,30 @@ nahi kar pa raha tha. 3 problems:
 - User 563918642 $1.0 payment MATCHED in 0.8s (txid 7efd6bc9-234f-4b77-9f30-0665c931).
 - Event-loop heartbeat test: max gap 51ms during scan → bot responsive.
 - Full bot boot OK.
+
+---
+
+# 🚀 v161.24 (2026-08-12) — BYBIT CHECK-PAYMENT-ONLY + NEW INSTRUCTIONS + SUPPLIER AUDIT
+
+## ✅ Bybit changes (user demand):
+1. **20s auto-detect system REMOVED** — Bybit verification ab SIRF tab hoti hai jab
+   customer 🔍 Check Payment par click kare (user: "user khud check payment py click kry tbhi ho").
+   `bybit_deposit_background_job` → no-op stub.
+2. **Extra "Bybit Payment Verified!" message REMOVED** — Deposit Successful! wala khubsurat
+   message rahta hai (points) ya product-delivery message; Check par sirf chhota toast
+   "✅ Verified!" dikhta hai. (Screenshot se confirm kiya).
+3. **Bybit Pay instructions UPDATED** (English + emojis) — naya flow:
+   Assets → Withdraw → Crypto Withdrawal → USDT → Internal Transfer 🔁 → UID → paste
+   bot's UID + exact amount → Withdraw → back to bot → 🔍 Check Payment.
+   ⚠️ Bybit Pay se mat bhejo — sirf Internal Transfer auto-detect hota hai.
+   - config.py: payment_bybit_pay, payment_bybit_pay_reference, bybit_deposit_instructions
+   - ui_extras.py: How-to-use guide_pay_bybit updated.
+
+## ✅ Supplier audit (sab LIVE verified):
+- TunVNMMO $8.60/12 ✅ | Shop Cron $6.00/13 ✅ | sinhle $7.80/33 ✅
+- MMOStore $9.21/24 ✅ | ProdSeller $11.86/16 ✅ | Ai Tools $9.50/24 ✅ | Akunding $9.51/19 ✅
+- ProdSeller docs_url fix: http://51.77.244.194/api-docs/ → https://prodseller.com/api-docs/
+
+## ✅ READY DB (nayi — user ki current): 1098 users / 513 orders / 16 products
+- bite_store_restore_ready.db — migrate 0 errors, order_deliveries ready,
+  ref_bonus_tiers=20:10, ProdSeller docs fixed. Functional tests passed.

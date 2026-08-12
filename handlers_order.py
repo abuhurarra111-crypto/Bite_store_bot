@@ -3353,7 +3353,15 @@ async def _verify_bybit_order_and_respond(target, context, oid):
     if dep:
         ok,msg=await _complete_bybit_order(context.bot,o,dep)
         if ok:
-            await _send_or_edit(target, f"✅ *Bybit Payment Verified!*\n━━━━━━━━━━━━━━━━━━━━\nOrder: `#{oid}`\nAmount: *{float(dep.get('amount') or 0):.4f} USDT*\nTXID: `{escape_md((dep.get('txid') or '')[:80])}`", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('📜 Order History', callback_data='my_orders')]])); return
+            # 🆕 v161.24 (user demand): extra "Bybit Payment Verified!" message
+            # REMOVED — the beautiful "Deposit Successful!" message (points) or
+            # the product-delivery message is ALREADY sent by _complete_bybit_order.
+            # The Check Payment screen just shows a small confirmation toast.
+            try:
+                await target.answer("✅ Verified! Check your deposit message above.")
+            except Exception:
+                pass
+            return
         reason=msg
     # 🔧 AUDIT-FIX v112: actionable admin alert (throttled to avoid spam when
     # the customer taps "Check Again" repeatedly). Customer still sees the
@@ -3382,53 +3390,12 @@ async def bybit_txid_received(update, context):
     return True
 
 async def bybit_deposit_background_job(context):
-    """🐛 v157 FIX (Bug1): Bybit payments now AUTO-VERIFY in the background.
-
-    v126 made this a no-op (click-only) which meant users' Bybit Pay payments
-    were never credited unless they tapped Check. The owner now wants AUTO
-    verification: every 45s the job scans bybit_waiting orders and matches a
-    deposit by sender-UID+amount (bybit_pay) or network+address+amount
-    (bybit_usdt_*). Same safe matching as the Check button; on success the
-    order is credited + user notified. On failure an admin alert is sent
-    (throttled) with a Mark Received & Credit button.
-
-    🆕 v161.22 FIX (bot SLOW): _find_matching_bybit_payment() performs SYNC
-    requests (proxy rotation) that can take 3-60s. Calling it directly inside
-    an async job froze the ENTIRE event loop — every user's clicks lagged while
-    the Bybit scan ran. Now each order's scan runs in asyncio.to_thread so the
-    loop never blocks.
+    """🆕 v161.24 (user demand): Bybit auto-detect job REMOVED.
+    Verification now ONLY happens when the customer taps 🔍 Check Payment
+    (see _verify_bybit_order_and_respond). This stub stays so old imports
+    never break — it does nothing.
     """
-    try:
-        from database import get_pending_bybit_orders
-        orders = get_pending_bybit_orders(limit=15)
-    except Exception:
-        orders = []
-    for o in orders:
-        try:
-            dep, reason = await asyncio.to_thread(_find_matching_bybit_payment, o, 720)
-            if dep:
-                ok, msg = await _complete_bybit_order(context.bot, o, dep)
-                if ok:
-                    try:
-                        await context.bot.send_message(
-                            o['user_id'],
-                            f"✅ *Bybit Payment Verified!*\\n"
-                            f"━━━━━━━━━━━━━━━━━━━━\\n"
-                            f"Order: `#{o['id']}`\\n"
-                            f"Amount: *${float(dep.get('amount') or 0):.4f} USDT*\\n"
-                            f"TXID: `{escape_md((dep.get('txid') or '')[:40])}`",
-                            parse_mode="Markdown")
-                    except Exception:
-                        pass
-            elif reason and reason.startswith("api_error"):
-                # only alert admins on real API errors (not just 'not found yet')
-                try:
-                    if not _bybit_failure_alerted_recently(o['id'], cooldown_min=30):
-                        await _notify_admin_bybit_failure(context.bot, o, reason)
-                except Exception:
-                    pass
-        except Exception:
-            continue
+
 
 async def _start_bybit_payment(update, context, method, *, is_points=False, amount=None, product=None, qty=1):
     from database import is_payment_enabled, get_payment_disable_msg

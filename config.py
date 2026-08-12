@@ -349,8 +349,8 @@ DEFAULT_RESPONSES.update({
     "payment_bybit_menu_text": """🟡 *Bybit Payment Methods*\n━━━━━━━━━━━━━━━━━━━━\nChoose how you want to pay via Bybit.\n\n• Bybit Pay — paste Transaction Hash after payment\n• USDT BEP20 — paste Transaction Hash after payment\n• USDT TRC20 — paste Transaction Hash after payment""",
     "payment_binance_pay_orderid": """🔶 *Binance Pay — Checkout*\n━━━━━━━━━━━━━━━━━━━━\n{title}\n💰 Amount: *{amount} USDT*\n📋 Binance Pay ID: `{pay_id}`\n👤 Holder: *{holder}*\n\n*How to pay:*\n1. Open Binance app.\n2. Go to Binance Pay.\n3. Send the exact amount shown above.\n4. After payment, copy the *Order ID* from Binance receipt.\n5. Paste the Order ID here in chat.\n\n⚠️ Send exact amount only. Wrong amount may not verify automatically.""",
     "payment_binance_usdt": """🪙 *Binance {method_label} — Order #{order_id}*\n━━━━━━━━━━━━━━━━━━━━\n💰 Amount: *{amount} USDT*\n🌐 Network: *{network_label}*\n\n📥 *Send to address*\n`{address}`\n\n*Important:*\n✅ Coin must be USDT\n✅ Network must be {network_label}\n✅ Send exact amount\n❌ Do not use another network or coin\n\n*After sending:*\n1️⃣ Open your wallet → find the transaction\n2️⃣ 🧾 *Copy the TXID (transaction hash)*\n3️⃣ 📨 *Paste the TXID here in chat*\n\n🤖 The bot checks the blockchain and adds your balance automatically.""",
-    "payment_bybit_pay": """🟡 *Bybit Pay — Order #{order_id}*\n━━━━━━━━━━━━━━━━━━━━\n💰 Amount: *{amount} USDT*\n📥 Bybit Pay ID / UID: `{pay_id}`\n\n*How to pay:*\n1. Open Bybit app → Bybit Pay → Send\n2. Send exactly *{amount} USDT* to the UID above\n3. Done — that's it! ✅\n\n🤖 Your payment is detected automatically from your Bybit account and credited within seconds.\n_No need to paste any ID or screenshot._""",
-    "payment_bybit_pay_reference": """🔖 *Optional — YOUR REFERENCE ID:* `{reference_id}`\n_Tip: paste it in the 'Reference' field when sending so we can match it instantly. Not required — payment is auto-detected either way._""",
+    "payment_bybit_pay": """🟡 *Bybit — Order #{order_id}*\n━━━━━━━━━━━━━━━━━━━━\n💰 Amount: *{amount} USDT*\n📥 Send to Bybit UID: `{pay_id}`\n\n📲 *How to pay (Internal Transfer only — NOT Bybit Pay):*\n1️⃣ Open Bybit App → *Assets* → *Withdraw*\n2️⃣ Withdrawal Method → *Crypto Withdrawal*\n3️⃣ Choose *USDT* (the coin you have)\n4️⃣ Transfer Type → *Internal Transfer* 🔁\n5️⃣ At the top select *UID*\n6️⃣ Paste this UID: `{pay_id}`\n7️⃣ Paste amount exactly: *{amount} USDT*\n8️⃣ Tap *Withdraw* ✅\n\n🔙 Back to bot → tap *🔍 Check Payment*\n\n✨ Balance is added automatically.\n\n⚠️ Do NOT send via Bybit Pay — only Internal Transfer works for auto-detection.""",
+    "payment_bybit_pay_reference": """🔖 *Your Reference ID:* `{reference_id}`\n_Tip: paste it in the *Reference/Note* field when sending so we can match it instantly. Not required — UID + exact amount is enough for auto-detection._""",
     "payment_bybit_usdt": """🟡 *{method_label} — Order #{order_id}*\n━━━━━━━━━━━━━━━━━━━━\n💰 Amount: *{amount} USDT*\n🌐 Network: *{network_label}*\n\n📥 *Send to address*\n`{address}`\n\n*Important:*\n✅ Coin must be USDT\n✅ Network must be {network_label}\n✅ Send exact amount\n❌ Wrong network/address will not verify\n\nAfter payment, paste the *Transaction Hash* here.""",
     "payment_not_found_txid": """⏳ *Transaction Not Found Yet*\n━━━━━━━━━━━━━━━━━━━━\nIf you already paid, wait a moment and paste the correct Transaction / Transfer ID again.\n\nPlease make sure:\n• amount is exact\n• correct network/payment method was used\n• the ID matches the one in your Bybit receipt\n\n📲 *Bybit Pay tip:* agar aap ne Bybit Pay se bheja hai to Bybit app mein *Bybit Pay → Receive* kholein — agar wahan koi *pending request* dikhe to usay *Accept* karein. Accept hone ke baad payment 20 second mein khud verify ho jayegi.\n\nIf it still doesn't verify, contact support — the store will check manually.""",
 })
@@ -396,15 +396,24 @@ DEFAULT_RESPONSES.update({
         "Minimum: $1"
     ),
     "bybit_deposit_instructions": (
-        "💸 *Bybit — internal transfer (UID)*\n"
+        "💸 *Send via Bybit Internal Transfer* (Bybit → Bybit)\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "1️⃣ Open the Bybit application ← Bybit Pay ← Send\n\n"
-        "2️⃣ Send to the UID:\n`{store_uid}`\n\n"
-        "3️⃣ Send USDT with this amount exactly:\n*{amount}*\n\n"
-        "✏️ Your reference id: `{reference_id}`\n\n"
-        "⚠️ The amount must be exactly the same — this is how we recognize your transfer.\n"
-        "⏰ Valid for: 30 minutes\n"
-        "✨ The balance is added automatically"
+        "💰 Amount: *{amount} USDT*\n"
+        "📥 Send to Bybit UID: `{store_uid}`\n\n"
+        "📲 *Step-by-step:*\n"
+        "1️⃣ Open Bybit App → *Assets*\n"
+        "2️⃣ Tap *Withdraw* → Withdrawal Method\n"
+        "3️⃣ Select *Crypto Withdrawal* 💱\n"
+        "4️⃣ Choose *USDT* (the coin you have)\n"
+        "5️⃣ Transfer Type → *Internal Transfer* 🔁\n"
+        "6️⃣ At the top select *UID* 🆔\n"
+        "7️⃣ Paste this UID: `{store_uid}`\n"
+        "8️⃣ Paste the amount exactly: *{amount}*\n\n"
+        "9️⃣ Tap *Withdraw* ✅ → confirm\n"
+        "🔟 Back to bot → tap *🔍 Check Payment*\n\n"
+        "⚠️ Do NOT use *Bybit Pay* — only *Internal Transfer* is auto-detected.\n"
+        "✏️ Optional reference: `{reference_id}`\n"
+        "⏰ Valid for: 30 minutes"
     ),
     "bybit_check_payment_ok": (
         "✅ *Bybit Payment Verified!*\n"
