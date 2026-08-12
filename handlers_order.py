@@ -264,7 +264,7 @@ async def buy_callback(update, context):
         
     is_manual = (dict(p) if p else {}).get('delivery_mode') == 'manual'
     if not is_manual and p['stock'] <= 0:
-        await _safe_send(q, context, _r("out_of_stock"), reply_markup=back_btn()); return
+        await _safe_send(q, context, _r("out_of_stock", user_id=q.from_user.id), reply_markup=back_btn()); return
 
     # 🆕 Minimum order quantity: if admin set a minimum > 1, the customer must
     # order at least that many → send them into the quantity flow instead of
@@ -352,7 +352,7 @@ async def buy_multiple_callback(update, context):
         
     is_manual = (dict(p) if p else {}).get('delivery_mode') == 'manual'
     if not is_manual and p['stock'] <= 0:
-        await _safe_send(q, context, _r("out_of_stock"), reply_markup=back_btn()); return
+        await _safe_send(q, context, _r("out_of_stock", user_id=q.from_user.id), reply_markup=back_btn()); return
         
     context.user_data['bulk_product_id'] = p['id']
     context.user_data['bulk_step'] = 'waiting_qty'

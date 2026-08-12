@@ -2456,6 +2456,9 @@ TEMPLATE_BUTTONS = {
     "bc_stock":            "🛒 Buy Now",
     "bc_bulkdeal":         "🛒 Buy Now",     # 🆕 v161.12 bulk-deal hype
     "bc_reseller":         "🛒 Buy Now",     # 🆕 v161.12 reseller purchase
+    "bc_newprod":          "🛒 Buy Now",     # 🆕 v161.19 new product
+    "sb_flash":            "🛒 Buy Now",     # 🆕 v161.19 flash sale
+    "bc_pricedrop":        "🛒 Buy Now",     # 🆕 v161.19 price drop
     "bc_newprod":          "🛒 Buy Now",     # if you add this template
     "bc_new_user":         None,             # no button
     "bc_deposit":          None,

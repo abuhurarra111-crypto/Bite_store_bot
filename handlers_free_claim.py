@@ -37,9 +37,18 @@ from templates_bundle import (
 logger = logging.getLogger(__name__)
 
 
-def _r(key, default=""):
-    """Editable response wrapper — admin can change these from Responses panel."""
+def _r(key, default="", user_id=None):
+    """Editable response wrapper — admin can change these from Responses panel.
+    🆕 v161.19: user_id → per-language translation first (falls back to admin text)."""
     try:
+        if user_id is not None:
+            try:
+                from i18n_responses import get_translated_response
+                tr = get_translated_response(key, user_id=user_id)
+                if tr is not None:
+                    return tr
+            except Exception:
+                pass
         from database import get_response_with_auto_register
         return get_response_with_auto_register(key, DEFAULT_RESPONSES.get(key, default))
     except Exception:
@@ -628,7 +637,7 @@ def _user_screen_text(user, prod, cfg, available_refs):
                  "👥 Required Referrals: *{required}*\n"
                  "✅ Your Available Referrals: *{available}*\n\n"
                  "🎉 *You're eligible!* Tap *Claim Now* to receive your product instantly.\n\n"
-                 "🔄 After claiming, this product's referral count resets so you can earn it again.")
+                 "🔄 After claiming, this product's referral count resets so you can earn it again.", user_id=user.id)
     else:
         msg = _r("freeclaim_not_enough",
                  "🎁 *Get this product FREE!*\n\n"
@@ -637,7 +646,7 @@ def _user_screen_text(user, prod, cfg, available_refs):
                  "📊 Your Available Referrals: *{available}*\n"
                  "📉 Need *{missing}* more referrals.\n\n"
                  "🔗 Share your referral link with friends — when they /start the bot, "
-                 "your referral count goes up!")
+                 "your referral count goes up!", user_id=user.id)
     try:
         msg = msg.format(
             product=pname,
@@ -879,7 +888,7 @@ async def freeclaim_do_callback(update: Update, context: ContextTypes.DEFAULT_TY
                  "📦 Product: *{product}*\n"
                  "👥 You completed *{refs} referrals*, so this product was delivered to you for FREE.\n\n"
                  "✅ Your reward has been delivered above.\n"
-                 "🔄 Want one more? Bring *{refs} more referrals* for this product and you can claim it again!")
+                 "🔄 Want one more? Bring *{refs} more referrals* for this product and you can claim it again!", user_id=uid)
     try:
         confirm = confirm.format(product=escape_md(prod["name"]), refs=required)
     except Exception:
@@ -944,7 +953,7 @@ async def freeclaim_share_callback(update: Update, context: ContextTypes.DEFAULT
         "1️⃣ Click my link\n"
         "2️⃣ Open the bot in Telegram\n"
         "3️⃣ Tap Start — and you're in!\n\n"
-        "👇 My link:\n{link}")
+        "👇 My link:\n{link}", user_id=uid)
     try:
         share_text = share_tpl.format(product=pname_clean, shop=SHOP_NAME, link=link)
     except Exception:
@@ -986,7 +995,7 @@ async def freeclaim_share_callback(update: Update, context: ContextTypes.DEFAULT
         "3️⃣ This product referral is approved when they open *Shop* or stay active for about 30 seconds.\n"
         "4️⃣ Product referrals count only for this product's free claim progress.\n\n"
         "📝 *Preview of share message:*\n"
-        "```\n{preview}\n```")
+        "```\n{preview}\n```", user_id=uid)
     cfg = get_product_free_config(pid)
     required = int(cfg.get("required_refs") or 5)
     available = count_eligible_unused_refs(uid)

@@ -109,7 +109,7 @@ async def support_menu_callback(update, context):
     from config import WHATSAPP_NUMBER
     # 🆕 v46: editable header (admin can change via Edit Responses)
     try:
-        text = _r("support_menu_header").format(
+        text = _r("support_menu_header", user_id=q.from_user.id).format(
             whatsapp=WHATSAPP_NUMBER, total=len(tickets), open=open_count)
     except Exception:
         text = (f"🎫 *Support Center*\n━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -434,12 +434,12 @@ async def warranty_menu_callback(update, context):
 
     if not delivered:
         await q.edit_message_text(
-            _r("warranty_no_orders"),
+            _r("warranty_no_orders", user_id=q.from_user.id),
             parse_mode="Markdown",
             reply_markup=back_btn(location="warranty"))
         return
 
-    text = _r("warranty_menu_header") + "\n"
+    text = _r("warranty_menu_header", user_id=q.from_user.id) + "\n"
     kb = []
     for o in delivered[:10]:
         label = f"📦 #{o['id']} {o['product_name'][:25]} — {fmt_price(o['price'])}"

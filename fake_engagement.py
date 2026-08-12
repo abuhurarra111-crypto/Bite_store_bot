@@ -306,6 +306,12 @@ SETTING_TYPE_DISCOUNT  = "fbc_type_discount"      # "1" or "0" — send fake dis
 SETTING_TYPE_FREECLAIM = "fbc_type_freeclaim"     # 🆕 v110: fake free-via-referrals claims (uses per-product fc_btn)
 SETTING_TYPE_BULKDEAL  = "fbc_type_bulkdeal"      # 🆕 v161.12: fake bulk-discount hype (products WITH tiers)
 SETTING_TYPE_RESELLER  = "fbc_type_reseller"      # 🆕 v161.12: reseller API purchase hype
+SETTING_TYPE_NEWUSER   = "fbc_type_newuser"       # 🆕 v161.19: new member joined
+SETTING_TYPE_NEWPROD   = "fbc_type_newprod"       # 🆕 v161.19: new product announcement
+SETTING_TYPE_FLASH     = "fbc_type_flash"         # 🆕 v161.19: flash sale hype
+SETTING_TYPE_PRICEDROP = "fbc_type_pricedrop"     # 🆕 v161.19: big price drop
+SETTING_TYPE_REVIEW    = "fbc_type_review"        # 🆕 v161.19: new product review
+SETTING_TYPE_MILESTONE = "fbc_type_milestone"     # 🆕 v161.19: referral milestone reached
 SETTING_NAME_STYLE     = "fbc_name_style"         # "stars" / "initials" / "random"
 SETTING_LOG_ENABLED    = "fbc_log_enabled"        # "1" or "0" — save broadcast log to DB?
 
@@ -518,6 +524,12 @@ def is_type_enabled(type_key):
         "freeclaim": SETTING_TYPE_FREECLAIM,  # 🆕 v110
         "bulkdeal": SETTING_TYPE_BULKDEAL,    # 🆕 v161.12
         "reseller": SETTING_TYPE_RESELLER,    # 🆕 v161.12
+        "newuser":   SETTING_TYPE_NEWUSER,    # 🆕 v161.19
+        "newprod":   SETTING_TYPE_NEWPROD,    # 🆕 v161.19
+        "flash":     SETTING_TYPE_FLASH,      # 🆕 v161.19
+        "pricedrop": SETTING_TYPE_PRICEDROP,  # 🆕 v161.19
+        "review":    SETTING_TYPE_REVIEW,     # 🆕 v161.19
+        "milestone": SETTING_TYPE_MILESTONE,  # 🆕 v161.19
     }
     key = setting_map.get(type_key)
     if not key:
@@ -709,6 +721,13 @@ async def run_fake_broadcast(bot, force_type=None):
         # 🆕 v161.12: fake bulk-deal hype (products WITH tiers) + reseller hype
         "bulkdeal": 10,
         "reseller": 6,
+        # 🆕 v161.19: extra hype types
+        "newuser":   4,
+        "newprod":   4,
+        "flash":     4,
+        "pricedrop": 5,
+        "review":    6,
+        "milestone": 4,
     }
 
     if is_test:
@@ -919,6 +938,160 @@ async def run_fake_broadcast(bot, force_type=None):
             return chosen_type, success, 0
         except Exception as _e:
             logger.exception(f"[FakeBroadcast] reseller failed: {_e}")
+            return None, 0, 0
+
+    # 🆕 v161.19: NEW MEMBER JOINED
+    if chosen_type == "newuser":
+        try:
+            from database import get_user_count as _guc
+            count = _guc() or 0
+            nm = generate_fake_username(name_style)
+            try:
+                from customization import render_template as _rt
+                n_msg = _rt("bc_new_user", {"name": nm, "count": str(count)})
+            except Exception:
+                n_msg = None
+            if not n_msg:
+                n_msg = f"🎉 New member joined Bite Store! 🛍️\n\n👤 {nm} just joined!\n👥 Members: {count}"
+            success = await broadcast_store_message(bot, n_msg, pid=None, tpl_id="bc_new_user")
+            _log_broadcast("newuser", n_msg, success)
+            return chosen_type, success, 0
+        except Exception as _e:
+            logger.exception(f"[FakeBroadcast] newuser failed: {_e}")
+            return None, 0, 0
+
+    # 🆕 v161.19: NEW PRODUCT ANNOUNCEMENT
+    if chosen_type == "newprod":
+        try:
+            _pid = None
+            if all_products:
+                _p = random.choice(all_products)
+                try:
+                    _pid = _p.get("id") if isinstance(_p, dict) else _p[0]
+                except Exception:
+                    _pid = None
+                _pn = (dict(_p).get("name", "Product") if _p else "Product")
+                _pr = float(dict(_p).get("price", 5.0) if _p else 5.0)
+            else:
+                _pn, _pr = "New Premium Product", 5.0
+            try:
+                from customization import render_template as _rt
+                n_msg = _rt("bc_newprod", {"product": _pn, "price": f"{_pr:.2f}"})
+            except Exception:
+                n_msg = None
+            if not n_msg:
+                n_msg = f"🆕 *New Product Available!*\n\n📦 {_pn}\n💰 ${_pr:.2f}\n\n🔥 Fresh stock — get yours now!"
+            success = await broadcast_store_message(bot, n_msg, pid=_pid, tpl_id="bc_newprod")
+            _log_broadcast("newprod", n_msg, success)
+            return chosen_type, success, 0
+        except Exception as _e:
+            logger.exception(f"[FakeBroadcast] newprod failed: {_e}")
+            return None, 0, 0
+
+    # 🆕 v161.19: FLASH SALE HYPE
+    if chosen_type == "flash":
+        try:
+            _pid = None
+            _pn, _pr = "Premium Product", 5.0
+            if all_products:
+                _p = random.choice(all_products)
+                try:
+                    _pid = _p.get("id") if isinstance(_p, dict) else _p[0]
+                except Exception:
+                    _pid = None
+                _pn = (dict(_p).get("name", "Product") if _p else "Product")
+                _pr = float(dict(_p).get("price", 5.0) if _p else 5.0)
+            flash_price = round(_pr * 0.6, 2)  # 40% off fake flash
+            try:
+                from customization import render_template as _rt
+                n_msg = _rt("sb_flash", {"product": _pn, "old_price": f"{_pr:.2f}", "new_price": f"{flash_price:.2f}"})
+            except Exception:
+                n_msg = None
+            if not n_msg:
+                n_msg = f"⚡ *FLASH SALE!* 🔥\n\n📦 {_pn}\n❌ Was ${_pr:.2f}\n💥 Now ${flash_price:.2f}\n\n⏰ Limited time only!"
+            success = await broadcast_store_message(bot, n_msg, pid=_pid, tpl_id="sb_flash")
+            _log_broadcast("flash", n_msg, success)
+            return chosen_type, success, 0
+        except Exception as _e:
+            logger.exception(f"[FakeBroadcast] flash failed: {_e}")
+            return None, 0, 0
+
+    # 🆕 v161.19: PRICE DROP HYPE
+    if chosen_type == "pricedrop":
+        try:
+            _pid = None
+            _pn, _pr = "Premium Product", 5.0
+            if all_products:
+                _p = random.choice(all_products)
+                try:
+                    _pid = _p.get("id") if isinstance(_p, dict) else _p[0]
+                except Exception:
+                    _pid = None
+                _pn = (dict(_p).get("name", "Product") if _p else "Product")
+                _pr = float(dict(_p).get("price", 5.0) if _p else 5.0)
+            old_price = round(_pr * 1.25, 2)
+            try:
+                from customization import render_template as _rt
+                n_msg = _rt("bc_pricedrop", {"product": _pn, "old_price": f"{old_price:.2f}", "new_price": f"{_pr:.2f}"})
+            except Exception:
+                n_msg = None
+            if not n_msg:
+                n_msg = f"💥 *PRICE DROP!* 📉\n\n📦 {_pn}\n❌ Was ${old_price:.2f}\n✅ Now ${_pr:.2f}\n\n🛒 Grab it before it goes back up!"
+            success = await broadcast_store_message(bot, n_msg, pid=_pid, tpl_id="bc_pricedrop")
+            _log_broadcast("pricedrop", n_msg, success)
+            return chosen_type, success, 0
+        except Exception as _e:
+            logger.exception(f"[FakeBroadcast] pricedrop failed: {_e}")
+            return None, 0, 0
+
+    # 🆕 v161.19: NEW REVIEW HYPE
+    if chosen_type == "review":
+        try:
+            _pid = None
+            _pn = "Premium Product"
+            if all_products:
+                _p = random.choice(all_products)
+                try:
+                    _pid = _p.get("id") if isinstance(_p, dict) else _p[0]
+                except Exception:
+                    _pid = None
+                _pn = (dict(_p).get("name", "Product") if _p else "Product")
+            nm = generate_fake_username(name_style)
+            stars = "⭐" * random.choice([4, 4, 5, 5, 5])
+            review = "Bohat acha product hai, highly recommended!"
+            try:
+                from customization import render_template as _rt
+                n_msg = _rt("bc_review", {"user": nm, "product": _pn, "stars": stars, "review": review})
+            except Exception:
+                n_msg = None
+            if not n_msg:
+                n_msg = f"⭐ *New Review!*\n\n👤 {nm} {stars}\n📦 {_pn}\n💬 {review}"
+            success = await broadcast_store_message(bot, n_msg, pid=_pid, tpl_id="bc_review")
+            _log_broadcast("review", n_msg, success)
+            return chosen_type, success, 0
+        except Exception as _e:
+            logger.exception(f"[FakeBroadcast] review failed: {_e}")
+            return None, 0, 0
+
+    # 🆕 v161.19: REFERRAL MILESTONE HYPE
+    if chosen_type == "milestone":
+        try:
+            nm = generate_fake_username(name_style)
+            refs = random.choice([10, 25, 50, 100])
+            reward = round(random.uniform(0.2, 1.5), 2)
+            total = round(reward * random.uniform(3, 12), 2)
+            try:
+                from customization import render_template as _rt
+                n_msg = _rt("bc_referral", {"user": nm, "referrals": str(refs), "reward": f"{reward:.2f}", "total_ref": f"{total:.2f}"})
+            except Exception:
+                n_msg = None
+            if not n_msg:
+                n_msg = f"🏆 *Referral Milestone!*\n\n👤 {nm}\n✅ Active Referrals: {refs}\n💰 Reward Earned: +${reward:.2f}"
+            success = await broadcast_store_message(bot, n_msg, pid=None, tpl_id="bc_referral")
+            _log_broadcast("milestone", n_msg, success)
+            return chosen_type, success, 0
+        except Exception as _e:
+            logger.exception(f"[FakeBroadcast] milestone failed: {_e}")
             return None, 0, 0
 
     if not msg:
@@ -1871,6 +2044,12 @@ async def fake_broadcast_panel_callback(update, context):
     t_freeclaim = is_type_enabled("freeclaim")  # 🆕 v110
     t_bulkdeal  = is_type_enabled("bulkdeal")   # 🆕 v161.12
     t_reseller  = is_type_enabled("reseller")   # 🆕 v161.12
+    t_newuser   = is_type_enabled("newuser")    # 🆕 v161.19
+    t_newprod   = is_type_enabled("newprod")    # 🆕 v161.19
+    t_flash     = is_type_enabled("flash")      # 🆕 v161.19
+    t_pricedrop = is_type_enabled("pricedrop")  # 🆕 v161.19
+    t_review    = is_type_enabled("review")     # 🆕 v161.19
+    t_milestone = is_type_enabled("milestone")  # 🆕 v161.19
 
     # ── Get user counts ──
     try:
@@ -1905,7 +2084,13 @@ async def fake_broadcast_panel_callback(update, context):
         f"  {_toggle_icon(t_stock)} Real Stock Alerts *(auto)*\n"
         f"  {_toggle_icon(t_freeclaim)} Fake Free-Claims *(uses per-product fc button)*\n"
         f"  {_toggle_icon(t_bulkdeal)} Bulk-Deal Hype *(products with tiers)*\n"
-        f"  {_toggle_icon(t_reseller)} Reseller Purchase Hype\n\n"
+        f"  {_toggle_icon(t_reseller)} Reseller Purchase Hype\n"
+        f"  {_toggle_icon(t_newuser)} New Member Joined\n"
+        f"  {_toggle_icon(t_newprod)} New Product\n"
+        f"  {_toggle_icon(t_flash)} Flash Sale\n"
+        f"  {_toggle_icon(t_pricedrop)} Price Drop\n"
+        f"  {_toggle_icon(t_review)} New Review\n"
+        f"  {_toggle_icon(t_milestone)} Referral Milestone\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📋 *How it works:*\n"
         f"• Fake msgs fire every {min_m}–{max_m} min randomly\n"
@@ -1939,6 +2124,19 @@ async def fake_broadcast_panel_callback(update, context):
         [
             InlineKeyboardButton(f"{_toggle_icon(t_bulkdeal)} Bulk-Deal Hype", callback_data="fbc_type_bulkdeal"),
             InlineKeyboardButton(f"{_toggle_icon(t_reseller)} Reseller Hype", callback_data="fbc_type_reseller"),
+        ],
+        # 🆕 v161.19: extra hype toggles
+        [
+            InlineKeyboardButton(f"{_toggle_icon(t_newuser)} New Member", callback_data="fbc_type_newuser"),
+            InlineKeyboardButton(f"{_toggle_icon(t_newprod)} New Product", callback_data="fbc_type_newprod"),
+        ],
+        [
+            InlineKeyboardButton(f"{_toggle_icon(t_flash)} Flash Sale", callback_data="fbc_type_flash"),
+            InlineKeyboardButton(f"{_toggle_icon(t_pricedrop)} Price Drop", callback_data="fbc_type_pricedrop"),
+        ],
+        [
+            InlineKeyboardButton(f"{_toggle_icon(t_review)} New Review", callback_data="fbc_type_review"),
+            InlineKeyboardButton(f"{_toggle_icon(t_milestone)} Milestone", callback_data="fbc_type_milestone"),
         ],
         [InlineKeyboardButton("━━━━━ Settings ━━━━━", callback_data="fbc_noop")],
         [
@@ -2023,6 +2221,12 @@ _TYPE_MAP = {
     "freeclaim": SETTING_TYPE_FREECLAIM,  # 🆕 v110
     "bulkdeal":  SETTING_TYPE_BULKDEAL,   # 🆕 v161.12
     "reseller":  SETTING_TYPE_RESELLER,   # 🆕 v161.12
+    "newuser":   SETTING_TYPE_NEWUSER,    # 🆕 v161.19
+    "newprod":   SETTING_TYPE_NEWPROD,    # 🆕 v161.19
+    "flash":     SETTING_TYPE_FLASH,      # 🆕 v161.19
+    "pricedrop": SETTING_TYPE_PRICEDROP,  # 🆕 v161.19
+    "review":    SETTING_TYPE_REVIEW,     # 🆕 v161.19
+    "milestone": SETTING_TYPE_MILESTONE,  # 🆕 v161.19
 }
 
 _TYPE_LABELS = {
@@ -2035,6 +2239,12 @@ _TYPE_LABELS = {
     "freeclaim": "Fake Free-Claims",  # 🆕 v110
     "bulkdeal":  "Bulk-Deal Hype",    # 🆕 v161.12
     "reseller":  "Reseller Hype",     # 🆕 v161.12
+    "newuser":   "New Member Joined", # 🆕 v161.19
+    "newprod":   "New Product",       # 🆕 v161.19
+    "flash":     "Flash Sale",        # 🆕 v161.19
+    "pricedrop": "Price Drop",        # 🆕 v161.19
+    "review":    "New Review",        # 🆕 v161.19
+    "milestone": "Referral Milestone",# 🆕 v161.19
 }
 
 

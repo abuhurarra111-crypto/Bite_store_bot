@@ -736,6 +736,47 @@ TEMPLATES = [
                     "amount": "13.40", "reseller": "AlexShop"},
     },
     {
+        "id":      "bc_newprod",
+        "name":    "🆕 New Product",
+        "section": "📢 Fake Broadcast",
+        "vars":    "{product}, {price}",
+        "default": (
+            "🆕 *New Product Available!*\n\n"
+            "📦 {product}\n"
+            "💰 ${price}\n\n"
+            "🔥 Fresh stock — get yours now!"
+        ),
+        "sample":  {"product": "🤖 Gemini Pro", "price": "2.50"},
+    },
+    {
+        "id":      "sb_flash",
+        "name":    "⚡ Flash Sale",
+        "section": "📢 Fake Broadcast",
+        "vars":    "{product}, {old_price}, {new_price}",
+        "default": (
+            "⚡ *FLASH SALE!* 🔥\n\n"
+            "📦 {product}\n"
+            "❌ Was ${old_price}\n"
+            "💥 Now ${new_price}\n\n"
+            "⏰ Limited time only!"
+        ),
+        "sample":  {"product": "Acc ChatGPT", "old_price": "8.00", "new_price": "4.80"},
+    },
+    {
+        "id":      "bc_pricedrop",
+        "name":    "💥 Price Drop",
+        "section": "📢 Fake Broadcast",
+        "vars":    "{product}, {old_price}, {new_price}",
+        "default": (
+            "💥 *PRICE DROP!* 📉\n\n"
+            "📦 {product}\n"
+            "❌ Was ${old_price}\n"
+            "✅ Now ${new_price}\n\n"
+            "🛒 Grab it before it goes back up!"
+        ),
+        "sample":  {"product": "Netflix 1M", "old_price": "6.25", "new_price": "5.00"},
+    },
+    {
         "id":      "bc_stock",
         "name":    "🔔 Restock Alert (Auto)",
         "section": "📢 Fake Broadcast",
@@ -966,6 +1007,43 @@ TEMPLATE_VARIANTS = {
         "📣 Real Feedback!\n\n👤 {user} {stars}\n{product}\n💬 {review}",
         "🎉 5-Star Vibes!\n\n👤 {user}\n📦 {product} {stars}\n💬 {review}",
         "👍 Recommended!\n\n👤 {user} {stars}\n📦 {product}\n💬 {review}",
+    ],
+    # 🆕 v161.19: new activity types
+    "bc_newprod": [
+        "🆕 *New Product!*\n\n📦 {product}\n💰 ${price}\n\n🔥 Fresh stock!",
+        "🎉 *Just Added!*\n\n📦 {product}\n💵 ${price}\n\n🛒 Grab it now!",
+        "🚀 *New Arrival!*\n\n{product}\n💰 ${price}\n\n⚡ Be the first!",
+        "✨ *Brand New!*\n\n📦 {product}\n💎 ${price}\n\n🔥 Limited availability!",
+        "🆕 *Fresh in Store!*\n\n{product}\n💵 ${price}\n\n🛒 Don't miss out!",
+        "📦 *New Drop!*\n\n{product}\n💰 ${price}\n\n⚡ Get yours today!",
+        "🎊 *Hot New Item!*\n\n📦 {product}\n💵 ${price}\n\n🔥 Selling fast!",
+        "🛍️ *Just Launched!*\n\n{product}\n💰 ${price}\n\n✨ Try it now!",
+        "💎 *New Premium!*\n\n📦 {product}\n💵 ${price}\n\n🛒 Limited stock!",
+        "⚡ *New Product Alert!*\n\n{product}\n💰 ${price}\n\n🔥 Hurry up!",
+    ],
+    "sb_flash": [
+        "⚡ *FLASH SALE!* 🔥\n\n📦 {product}\n❌ Was ${old_price}\n💥 Now ${new_price}\n\n⏰ Limited time!",
+        "🔥 *HOT DEAL!*\n\n{product}\n💥 ${new_price} (was ${old_price})\n\n⚡ Today only!",
+        "⏰ *FLASH OFFER!*\n\n📦 {product}\n💵 ${new_price} — was ${old_price}\n\n🛒 Hurry, ends soon!",
+        "💥 *BIG SAVINGS!*\n\n{product}\n✅ ${new_price} (was ${old_price})\n\n⚡ Don't wait!",
+        "⚡ *LIMITED FLASH!*\n\n📦 {product}\n🔥 Only ${new_price} (was ${old_price})\n\n⏰ Ends midnight!",
+        "🎉 *FLASH DEAL!*\n\n{product}\n💥 ${new_price} — save big\n\n🛒 Grab it fast!",
+        "🔥 *MEGA FLASH!*\n\n📦 {product}\n💵 ${new_price} (was ${old_price})\n\n⚡ While stocks last!",
+        "⏳ *FLASH COUNTDOWN!*\n\n{product}\n💥 ${new_price} — was ${old_price}\n\n🛒 Time is running out!",
+        "💎 *FLASH EXCLUSIVE!*\n\n📦 {product}\n✅ ${new_price} (was ${old_price})\n\n🔥 Act fast!",
+        "⚡ *NOW ON FLASH!*\n\n{product}\n💥 ${new_price} — was ${old_price}\n\n🛒 Don't miss it!",
+    ],
+    "bc_pricedrop": [
+        "💥 *PRICE DROP!* 📉\n\n📦 {product}\n❌ Was ${old_price}\n✅ Now ${new_price}\n\n🛒 Grab it!",
+        "📉 *Price Reduced!*\n\n{product}\n💵 ${new_price} (was ${old_price})\n\n⚡ Big savings!",
+        "🎯 *New Lower Price!*\n\n📦 {product}\n✅ ${new_price} — was ${old_price}\n\n🔥 Don't miss!",
+        "💸 *Cheaper Now!*\n\n{product}\n💰 ${new_price} (was ${old_price})\n\n🛒 Save more!",
+        "📉 *Deal Alert!*\n\n📦 {product}\n❌ ${old_price} → ✅ ${new_price}\n\n⚡ Limited time!",
+        "🎉 *Price Cut!*\n\n{product}\n💵 ${new_price} (was ${old_price})\n\n🔥 Grab it now!",
+        "💥 *Savings Time!*\n\n📦 {product}\n✅ ${new_price} — was ${old_price}\n\n🛒 Shop today!",
+        "📊 *Better Price!*\n\n{product}\n💰 ${new_price} (was ${old_price})\n\n⚡ Hurry up!",
+        "🛍️ *Reduced Price!*\n\n📦 {product}\n💵 ${new_price} (was ${old_price})\n\n🔥 Don't wait!",
+        "✨ *Price Update!*\n\n{product}\n✅ ${new_price} — was ${old_price}\n\n🛒 Get yours!",
     ],
     # 🆕 v161.12: BULK DISCOUNT HYPE (fake) — fired when admin adds a tier +
     # periodically for products that have bulk tiers.
