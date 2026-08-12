@@ -148,6 +148,9 @@ TRANSLATIONS = {
     "menu_loyalty":        {"en": "🏆 Loyalty",         "ur": "🏆 لائلٹی",         "ru": "🏆 Loyalty",      "hi": "🏆 Loyalty"},
     "menu_admin":          {"en": "👑 Admin Panel",    "ur": "👑 ایڈمن پینل",     "ru": "👑 Admin Panel",  "hi": "👑 Admin Panel"},
     "menu_language":       {"en": "🌐 Language",       "ur": "🌐 زبان",           "ru": "🌐 Language",     "hi": "🌐 Language"},
+    # 🆕 v161.18: missing main-menu buttons so they translate when language changes
+    "menu_price_list":     {"en": "📊 Price List",     "ur": "📊 قیمت کی فہرست", "ru": "📊 Price List",   "hi": "📊 Price List"},
+    "menu_reseller_api":   {"en": "🔗 Reseller API Key","ur": "🔗 ریزیلر API کلید","ru": "🔗 Reseller API Key","hi": "🔗 Reseller API Key"},
 
     # ══════════ LANGUAGE SELECTOR ══════════
     "lang_select_title":   {"en": "🌐 Select Your Language\n━━━━━━━━━━━━━━━━━━━━\nChoose your preferred language:",

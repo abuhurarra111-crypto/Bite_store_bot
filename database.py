@@ -6661,3 +6661,101 @@ def deduct_combined_points(user_id, amount, tx_type='debit', description='', eve
     return deduct_points_if_enough(user_id, amount, tx_type=tx_type,
                                    description=description, event_id=event_id,
                                    order_id=order_id)
+
+
+# ────────────────────────────────────────────────────────────
+# 🆕 v161.18 — RESELLER DASHBOARD (top products, trend, profit)
+# ────────────────────────────────────────────────────────────
+
+def reseller_top_product(key_id: int) -> dict:
+    """Top product (by delivered qty) for one reseller key."""
+    out = {"product_name": "", "qty": 0, "revenue": 0.0, "profit": 0.0}
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("""SELECT product_id, product_name, SUM(qty) q, SUM(usd_amount) rev
+                     FROM reseller_orders
+                     WHERE key_id=? AND status='delivered'
+                     GROUP BY product_id ORDER BY q DESC LIMIT 1""", (int(key_id),))
+        r = c.fetchone()
+        if r:
+            out["product_name"] = str(r["product_name"] or "")
+            out["qty"] = int(r["q"] or 0)
+            out["revenue"] = round(float(r["rev"] or 0), 2)
+            try:
+                out["profit"] = round(reseller_order_profit({"product_id": r["product_id"],
+                                                              "qty": r["q"],
+                                                              "usd_amount": r["rev"]}), 2)
+            except Exception:
+                out["profit"] = 0.0
+    except Exception:
+        pass
+    finally:
+        try: conn.close()
+        except Exception: pass
+    return out
+
+
+def reseller_trend(key_id: int, days: int = 14) -> list:
+    """Daily delivered revenue for the last N days (for a graph)."""
+    from datetime import datetime, timedelta
+    out = []
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("""SELECT date(created_at) d, SUM(usd_amount) rev
+                     FROM reseller_orders
+                     WHERE key_id=? AND status='delivered' AND created_at >= ?
+                     GROUP BY date(created_at) ORDER BY d""",
+                  (int(key_id), (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d 00:00:00")))
+        by_day = {str(r["d"]): round(float(r["rev"] or 0), 2) for r in c.fetchall()}
+    except Exception:
+        by_day = {}
+    finally:
+        try: conn.close()
+        except Exception: pass
+    for i in range(days - 1, -1, -1):
+        d = (datetime.now() - timedelta(days=i)).strftime("%Y-%m-%d")
+        out.append({"date": d[5:], "revenue": by_day.get(d, 0.0)})
+    return out
+
+
+def reseller_dashboard(limit=8) -> dict:
+    """Aggregate dashboard: top resellers with per-key top product + profit +
+    a simple revenue graph (bars) + totals."""
+    from reseller_api import list_reseller_keys
+    from database import (get_user, get_user_points, get_setting)
+    keys = list_reseller_keys()
+    rows = []
+    totals = {"orders": 0, "revenue": 0.0, "profit": 0.0}
+    try:
+        ppd = float(get_setting("reseller_points_per_dollar") or 10)
+    except Exception:
+        ppd = 10.0
+    for k in keys[:limit]:
+        kid = int(k.get("id") or 0)
+        tr = reseller_key_tracking(kid)
+        tp = reseller_top_product(kid)
+        uid = int(k.get("owner_id") or 0)
+        try:
+            u = get_user(uid)
+            uname = (u.get("first_name") if u else None) or str(uid)
+        except Exception:
+            uname = str(uid)
+        bal = 0.0
+        try:
+            bal = float(get_user_points(uid) or 0) / ppd if ppd else 0.0
+        except Exception:
+            bal = 0.0
+        rows.append({
+            "key_id": kid, "prefix": k.get("key_prefix"), "name": uname, "uid": uid,
+            "orders": tr.get("orders", 0), "revenue": tr.get("revenue_usd", 0),
+            "profit": tr.get("profit_usd", 0), "balance": round(bal, 2),
+            "top_product": tp.get("product_name", ""), "top_qty": tp.get("qty", 0),
+            "active": bool(k.get("is_active")),
+        })
+        totals["orders"] += tr.get("orders", 0)
+        totals["revenue"] += tr.get("revenue_usd", 0)
+        totals["profit"] += tr.get("profit_usd", 0)
+    rows.sort(key=lambda x: x["revenue"], reverse=True)
+    totals["revenue"] = round(totals["revenue"], 2)
+    totals["profit"] = round(totals["profit"], 2)
+    return {"keys": rows, "totals": totals, "ppd": ppd}

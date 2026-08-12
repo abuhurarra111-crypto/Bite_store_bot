@@ -2402,6 +2402,7 @@ def main():
         ("^reseller_orders_filter_(status|range)_(.+)$", reseller_orders_filter_callback),
         ("^reseller_deliver_panel_\\d+$", reseller_deliver_panel_callback),
         ("^reseller_stats_panel$", reseller_stats_panel_callback),
+        ("^reseller_dashboard_panel$", reseller_dashboard_callback),
         ("^reseller_admin_products$", reseller_admin_products_callback),
         ("^reseller_prod_toggle_\\d+$", reseller_prod_toggle_callback),
         ("^reseller_prod_price_\\d+$", reseller_prod_price_callback),
@@ -2413,6 +2414,7 @@ def main():
         ("^reseller_export_panel$", reseller_export_callback),
         ("^reseller_export_key_\\d+$", reseller_export_key_callback),
         # 🆕 v161.4: user-facing ProdSeller-style API Access panel (any user)
+        ("^cz_admin_all_green$", cz_admin_all_green_callback),
         ("^reseller_api_user$", reseller_api_user_callback),
         ("^reseller_api_generate$", reseller_api_generate_callback),
         ("^reseller_api_show$", reseller_api_show_callback),

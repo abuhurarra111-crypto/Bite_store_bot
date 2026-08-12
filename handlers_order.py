@@ -2895,10 +2895,11 @@ def _bybit_recent_amount_fallback(rows, expected, order=None, window_min=0):
                 continue
             if not _usdt_amount_match(d.get('amount'), expected, anchored=True):
                 continue
-            t = int(d.get('time_ms') or 0)
-            if t and order_ts and t < order_ts:
-                # Deposit BEFORE the order was placed → can't be this payment.
-                continue
+            # 🆕 v161.18: TIME SYSTEM REMOVED (user demand). Payment matches on
+            # unique amount + txid dedup alone — the deposit can arrive at any
+            # time (before or after order creation) and still credit, because
+            # the bot's unique random amount + is_txid_used guard make
+            # double-credit impossible. No order_ts comparison anymore.
             hits.append(d)
         except Exception:
             continue
@@ -2947,7 +2948,7 @@ def _deep_find_id(record, key_norm):
     return False
 
 
-def _find_matching_bybit_payment(order, lookback_hours=168):
+def _find_matching_bybit_payment(order, lookback_hours=720):  # 🆕 v161.18: 30 days — no time rejection
     """Find a Bybit deposit matching the order.
 
     🔧 AUDIT-FIX v112 (2026-07-31): returns a *diagnostic* reason string instead
@@ -3108,14 +3109,9 @@ def _find_matching_bybit_payment(order, lookback_hours=168):
             if not _usdt_address_ok(d.get('address'), cfg): continue
             if not _usdt_amount_match(d.get('amount'), expected, anchored=bool(note)):
                 continue
-            # after-order recency guard (only when order has a timestamp)
-            try:
-                order_ts = _parse_order_created_epoch(order)
-                dep_ts = int(d.get('time_ms') or 0)
-                if order_ts and dep_ts and dep_ts < order_ts:
-                    continue
-            except Exception:
-                pass
+            # 🆕 v161.18: TIME SYSTEM REMOVED (user demand) — network + address +
+            # amount + txid-dedup is enough. Deposit arriving any time still
+            # credits; is_txid_used prevents double-credit.
             return d, 'matched'
         if not rows:
             return None, 'no_records'
@@ -3389,7 +3385,7 @@ async def bybit_deposit_background_job(context):
         orders = []
     for o in orders:
         try:
-            dep, reason = _find_matching_bybit_payment(o, lookback_hours=168)
+            dep, reason = _find_matching_bybit_payment(o, lookback_hours=720)
             if dep:
                 ok, msg = await _complete_bybit_order(context.bot, o, dep)
                 if ok:

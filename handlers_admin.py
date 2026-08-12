@@ -8663,6 +8663,8 @@ async def _render_customization_hub(q):
         [InlineKeyboardButton("🎨 Buttons Editor", callback_data="admin_buttons")],
         [InlineKeyboardButton("📏 Global Size", callback_data="admin_btn_size")],
         [InlineKeyboardButton("🎨 Group Colors", callback_data="admin_colors")],
+        # 🆕 v161.18: one-click all-green for the ADMIN panel buttons
+        [InlineKeyboardButton("🟢 Admin Panel All-Green", callback_data="cz_admin_all_green")],
         # ── MENU & NAV ──
         [InlineKeyboardButton("━━━ 🧭 Menu ━━━", callback_data="cz_noop")],
         [InlineKeyboardButton("🎨 Main Menu Layout (50)", callback_data="admin_main_layout")],
@@ -10908,12 +10910,13 @@ async def admin_reseller_callback(update, context):
         text += "• (koi orders nahi abhi)\n"
     kb = [
         [InlineKeyboardButton("🔑 Generate Key", callback_data="reseller_gen_panel")],
-        [InlineKeyboardButton("📋 Resellers", callback_data="reseller_keys_panel"),
-         InlineKeyboardButton("📦 Orders", callback_data="reseller_orders_panel")],
-        [InlineKeyboardButton("💲 Pricing", callback_data="reseller_pricing_panel"),
-         InlineKeyboardButton("🗂️ Products", callback_data="reseller_admin_products")],
-        [InlineKeyboardButton("🔔 Webhooks Log", callback_data="reseller_webhooks_panel"),
-         InlineKeyboardButton("📥 Export Record", callback_data="reseller_export_panel")],
+        [InlineKeyboardButton("📊 Dashboard", callback_data="reseller_dashboard_panel"),
+         InlineKeyboardButton("📋 Resellers", callback_data="reseller_keys_panel")],
+        [InlineKeyboardButton("📦 Orders", callback_data="reseller_orders_panel"),
+         InlineKeyboardButton("💲 Pricing", callback_data="reseller_pricing_panel")],
+        [InlineKeyboardButton("🗂️ Products", callback_data="reseller_admin_products"),
+         InlineKeyboardButton("🔔 Webhooks Log", callback_data="reseller_webhooks_panel")],
+        [InlineKeyboardButton("📥 Export Record", callback_data="reseller_export_panel")],
         [InlineKeyboardButton("🔙 Back", callback_data="admin_panel")],
     ]
     await q.edit_message_text(text, parse_mode="Markdown",
@@ -11956,3 +11959,90 @@ async def reseller_prod_page_callback(update, context):
     except Exception:
         return
     await reseller_admin_products_callback(update, context, page=page)
+
+
+# 🆕 v161.18: Admin Panel All-Green (one click)
+async def cz_admin_all_green_callback(update, context):
+    """Set EVERY admin-group button background to green (success)."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer("🟢 Applying…")
+    try:
+        from button_system import BUTTONS, set_button_style, set_group_style
+        n = 0
+        for bid, info in BUTTONS.items():
+            if info.get("group") == "admin":
+                set_button_style(bid, "success")
+                n += 1
+        set_group_style("admin", "success")
+        await q.edit_message_text(
+            f"🟢 *Done!* Admin panel ke *{n}* buttons sab green ho gaye.\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"_(Har button pe individually color bhi change kar sakte ho — "
+            f"Buttons Editor → Admin Panel)_",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Customization", callback_data="admin_customization")],
+                [InlineKeyboardButton("👁️ Preview Admin", callback_data="admin_panel")],
+            ]))
+    except Exception as e:
+        try:
+            await q.edit_message_text(f"❌ {e}")
+        except Exception:
+            pass
+
+
+# 🆕 v161.18: RESELLER DASHBOARD — top resellers, per-key top product,
+# profit + revenue graph (text-based bar chart).
+async def reseller_dashboard_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        from database import reseller_dashboard, reseller_trend
+        dash = reseller_dashboard(limit=8)
+        trend = reseller_trend(0, days=14)  # key 0 → aggregate all keys
+    except Exception as e:
+        await q.edit_message_text(f"❌ {e}")
+        return
+    t = dash["totals"]
+    lines = [
+        "📊 *Reseller Dashboard*\n━━━━━━━━━━━━━━━━━━━━",
+        f"👥 Resellers: *{len(dash['keys'])}*",
+        f"📦 Orders: *{t['orders']}*",
+        f"💰 Revenue: *${t['revenue']:,.2f}*",
+        f"📈 Profit: *${t['profit']:,.2f}*",
+        "",
+        "🏆 *Top Resellers (by revenue):*",
+    ]
+    if not dash["keys"]:
+        lines.append("_(koi reseller orders nahi abhi)_")
+    for i, k in enumerate(dash["keys"][:8], 1):
+        st = "🟢" if k["active"] else "🔴"
+        tp = k["top_product"]
+        tp_line = ""
+        if tp:
+            tp_line = f"  🛒 Top: {tp[:30]} ({k['top_qty']}×)"
+        lines.append(
+            f"{st} {i}. *{k['name']}* (`{k['prefix']}`)\n"
+            f"   💰 ${k['revenue']:,.2f} · 📈 ${k['profit']:,.2f} · 📦 {k['orders']}"
+            + (f"\n{tp_line}" if tp_line else "")
+        )
+    # simple revenue graph (14 days)
+    lines.append("\n📅 *Revenue (14 days)*")
+    try:
+        maxv = max((x["revenue"] for x in trend), default=0)
+        for x in trend:
+            bar = "█" * int(round((x["revenue"] / maxv) * 20)) if maxv else ""
+            if x["revenue"] > 0 or bar:
+                lines.append(f"`{x['date']}` {'█' * max(1, int((x['revenue']/maxv)*20) if maxv else 0)} ${x['revenue']:.0f}")
+        if not any(x["revenue"] > 0 for x in trend):
+            lines.append("_(is period mein koi revenue nahi)_")
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 Reseller Panel", callback_data="reseller_panel")],
+    ])
+    await q.edit_message_text("\n".join(lines)[:3900], parse_mode="Markdown", reply_markup=kb)

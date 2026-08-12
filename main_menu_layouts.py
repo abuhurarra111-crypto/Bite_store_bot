@@ -77,6 +77,9 @@ _LAYOUT_I18N_MAP = {
     "main_reviews": "menu_reviews",
     "main_loyalty": "menu_loyalty",
     "main_language": "menu_language",
+    # 🆕 v161.18: missing buttons added so they translate too
+    "main_price_list":  "menu_price_list",
+    "main_reseller_api": "menu_reseller_api",
 }
 
 LAYOUTS = {
