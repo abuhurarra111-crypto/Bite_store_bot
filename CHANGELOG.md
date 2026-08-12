@@ -8,6 +8,12 @@
 
 ---
 
+# 🐛 v163.1 (2026-08-12) — HOTFIX: FIX NAMEERROR IN `database.py`
+- **`database.py` (`setup_database`)**: Replaced `logger.info/warning` with `print` in the v163 one-time reset guard block. Fixed `NameError: name 'logger' is not defined` on Railway boot.
+- Verified boot smoke test with existing `DB_PATH` to ensure the one-time reset runs cleanly.
+
+---
+
 # 🚀 v163 (2026-08-12) — 🆕 100% FRESH RESET BOT DEPLOY + `/resetbot` + 1-CLICK RESET IN ADMIN
 
 ## 🔄 Fresh Reset Bot on Deploy (Zero Data policy as requested)

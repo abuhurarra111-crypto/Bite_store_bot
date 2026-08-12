@@ -227,15 +227,15 @@ def setup_database():
     try:
         reset_marker = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), ".v163_fresh_reset_done")
         if not os.path.exists(reset_marker) and os.path.exists(DB_PATH):
-            logger.info("🆕 [v163] Performing one-time fresh reset of database as requested by owner...")
+            print("🆕 [v163] Performing one-time fresh reset of database as requested by owner...")
             try:
                 os.remove(DB_PATH)
             except Exception as e:
-                logger.warning(f"Could not remove old DB for reset: {e}")
+                print(f"Could not remove old DB for reset: {e}")
             with open(reset_marker, "w") as f:
                 f.write("reset_done")
     except Exception as e:
-        logger.warning(f"[v163] reset marker check failed: {e}")
+        print(f"[v163] reset marker check failed: {e}")
 
     conn = get_connection(); c = conn.cursor()
 
