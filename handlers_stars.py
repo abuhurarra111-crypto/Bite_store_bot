@@ -66,26 +66,30 @@ def _parse_payload(raw):
         return {}
 
 
-def _stars_instructions_text(order_id, amount_usd, stars):
+def _stars_instructions_text(order_id, amount_usd, stars, product_name=""):
     """Instructions shown before the invoice (editable response)."""
     try:
         from database import get_response_with_auto_register
         from config import DEFAULT_RESPONSES
+        key = "payment_stars_checkout" if product_name else "payment_stars_deposit"
+        fallback_key = "stars_pay_instructions"
         tpl = get_response_with_auto_register(
-            "stars_pay_instructions",
-            DEFAULT_RESPONSES.get("stars_pay_instructions", ""))
+            key, DEFAULT_RESPONSES.get(key, DEFAULT_RESPONSES.get(fallback_key, "")))
     except Exception:
         tpl = ""
     if tpl:
         try:
-            return tpl.format(order_id=order_id, amount=f"{float(amount_usd):.2f}",
-                              stars=stars, rate=f"{_stars_per_dollar():g}")
+            return tpl.format(
+                order_id=order_id, amount=f"{float(amount_usd):.2f}",
+                stars=stars, rate=f"{_stars_per_dollar():g}",
+                product=product_name or "Points Deposit")
         except Exception:
             pass
     return (
         "⭐ *Pay with Telegram Stars*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🧾 Order: `#{order_id}`\n"
+        f"📦 Product: *{product_name or 'Points Deposit'}*\n"
         f"💰 Amount: *${float(amount_usd):.2f}*\n"
         f"⭐ Stars needed: *{stars} Stars*\n"
         f"📊 Rate: 1$ = {_stars_per_dollar():g} Stars\n\n"
@@ -176,7 +180,7 @@ async def product_stars_callback(update, context):
         return
 
     payload = _make_payload(oid, uid, "product", product_id=pid, qty=qty)
-    text = _stars_instructions_text(oid, total, stars)
+    text = _stars_instructions_text(oid, total, stars, product_name=pname)
     await _send_stars_invoice(context, q, oid, uid, "⭐ Buy Product",
                               text, payload, stars)
 

@@ -12,6 +12,15 @@ from database import (
 )
 from i18n import t, get_user_lang
 from utils import escape_md, format_date, nav_push
+import re
+
+def strip_html_tags(text):
+    """Remove any raw HTML/XML tags (like <tg-emoji ...>) and [[HTML]] from text."""
+    if not text:
+        return ""
+    s = str(text).replace("[[HTML]]", "")
+    cleaned = re.sub(r'<[^>]+>', '', s)
+    return " ".join(cleaned.split()).strip()
 
 # Conversation states for review writing
 REV_TEXT = 600
@@ -375,19 +384,41 @@ async def admin_reviews_callback(update, context):
                              "🔙 Return", callback_data="admin_panel")]]))
         return
 
-    lines = [f"⭐ *All Reviews* ({len(all_reviews)})\n━━━━━━━━━━━━━━━━━━━━\n"]
+    lines = [f"⭐ *All Reviews* ({len(all_reviews)})"]
     kb = []
-    for r in all_reviews[:15]:
-        pname = (r['product_name'] or "?")[:25]
-        uname = (r['first_name'] or "?")[:15]
-        flag = "🚫" if r['is_hidden'] else ("📌" if r['is_pinned'] else "✅")
-        lines.append(f"{flag} {stars_display(r['rating'])} *{escape_md(pname)}* — {escape_md(uname)}\n"
-                     f"_{escape_md((r['review_text'] or '(no text)')[:60])}_\n")
+    for r in all_reviews[:10]:
+        rid = r.get('id')
+        raw_pname = strip_html_tags(r.get('product_name') or "Unknown Product")
+        pname = (raw_pname[:35] + '...') if len(raw_pname) > 35 else raw_pname
+        
+        raw_uname = strip_html_tags(r.get('first_name') or "User")
+        username = strip_html_tags(r.get('username') or "")
+        uname = f"{raw_uname} (@{username})" if username else raw_uname
+        uid_str = str(r.get('user_id') or '?')
+        
+        rating_stars = stars_display(r.get('rating') or 5)
+        created = str(r.get('created_at') or '')[:16]
+        comment = strip_html_tags(r.get('review_text') or '(No text)')
+        if len(comment) > 100:
+            comment = comment[:97] + "..."
+            
+        status_flag = "🚫 Hidden" if r.get('is_hidden') else ("📌 Pinned" if r.get('is_pinned') else "✅ Approved")
+        
+        card = (
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"⭐ *Review #{rid}* | Status: *{status_flag}*\n"
+            f"• 📦 *Product:* `{escape_md(pname)}`\n"
+            f"• 👤 *User:* `{escape_md(uname)}` (`ID: {uid_str}`)\n"
+            f"• 🌟 *Rating:* {rating_stars} *({r.get('rating', 5)}/5)*\n"
+            f"• 🕒 *Date:* `{created}`\n"
+            f"• 💬 *Comment:*\n_{escape_md(comment)}_"
+        )
+        lines.append(card)
         kb.append([
-            InlineKeyboardButton(f"#{r['id']} {flag}", callback_data="noop"),
-            InlineKeyboardButton("📌", callback_data=f"admrev_pin_{r['id']}"),
-            InlineKeyboardButton("👁️", callback_data=f"admrev_hide_{r['id']}"),
-            InlineKeyboardButton("🗑️", callback_data=f"admrev_del_{r['id']}"),
+            InlineKeyboardButton(f"#{rid} Action:", callback_data="noop"),
+            InlineKeyboardButton("📌 Pin/Unpin", callback_data=f"admrev_pin_{rid}"),
+            InlineKeyboardButton("👁️ Hide/Show", callback_data=f"admrev_hide_{rid}"),
+            InlineKeyboardButton("🗑️ Delete", callback_data=f"admrev_del_{rid}"),
         ])
     kb.append([InlineKeyboardButton("🔙 Return", callback_data="admin_panel")])
 

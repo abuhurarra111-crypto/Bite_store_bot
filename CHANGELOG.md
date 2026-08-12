@@ -8,6 +8,41 @@
 
 ---
 
+# 🚀 v164 (2026-08-12) — ⭐ TELEGRAM STARS CHECKOUT IN EDIT RESPONSES + CLEAN ADMIN REVIEWS SCREEN REDESIGN + NEW READY DB (2)
+
+## 💬 NEW: Telegram Stars Checkout & Deposit Texts in "Edit Responses"
+- **`config.py`**: Added four distinct editable response templates for Telegram Stars:
+  - `payment_stars_checkout`: Instructions shown when checking out a product with Stars.
+  - `payment_stars_deposit`: Instructions shown when depositing / buying points with Stars.
+  - `payment_stars_success`: Success message shown upon successful Stars payment.
+  - `payment_stars_menu_text`: Description text shown in the payment method selector.
+- **`handlers_stars.py`**: Updated `_stars_instructions_text` to automatically use `payment_stars_checkout` for products and `payment_stars_deposit` for points deposits.
+- All four keys are grouped under `💳 Payment Screens` in Edit Responses and are auto-seeded on boot.
+
+## ✨ REDESIGNED: Admin Reviews Screen (`handlers_reviews.py`)
+- **HTML & Tag Stripping:** Added `strip_html_tags()` to safely remove `<tg-emoji...>` and `[[HTML]]` markup from product names, user names, and review text so raw HTML coding never leaks into text.
+- **`database.py` (`get_all_reviews_for_admin`)**: Query now selects `u.username` alongside `first_name`.
+- **Card Format Redesign:** Each review is now displayed as an organized, readable card:
+  - Review ID & Status (`✅ Approved`, `📌 Pinned`, `🚫 Hidden`)
+  - Product Name (`📦 Product: ...`)
+  - User Name, Username & Telegram ID (`👤 User: ... (@...) (ID: ...)`)
+  - Star Rating (`🌟 Rating: ⭐⭐⭐⭐⭐ (5/5)`)
+  - Submission Date & Time (`🕒 Date: YYYY-MM-DD HH:MM`)
+  - Clean Comment Text (`💬 Comment: ...`)
+- Added clear action text labels to inline buttons: `[ #2 Action: ] [ 📌 Pin/Unpin ] [ 👁️ Hide/Show ] [ 🗑️ Delete ]`.
+
+## 🗄️ READY DB (2): `bite_store_restore_ready.db` (v164 Migrated & Verified)
+- Downloaded user's latest MediaFire DB (`xwyxk19w9pcdp5t` -> `bite_store_restore_ready+(2).db`).
+- Performed zero-loss schema upgrade on workspace copy and seeded all 4 new Telegram Stars responses.
+- **Zero-Loss Audit Results:**
+  - `users`: 1098 -> 1098 rows ✅
+  - `orders`: 514 -> 514 rows ✅
+  - `products`: 16 -> 16 rows ✅
+  - `bot_responses`: 68 -> 72 rows (4 new Stars responses seeded) ✅
+- All 15 schema tables checked with 0 errors.
+
+---
+
 # 🐛 v163.1 (2026-08-12) — HOTFIX: FIX NAMEERROR IN `database.py`
 - **`database.py` (`setup_database`)**: Replaced `logger.info/warning` with `print` in the v163 one-time reset guard block. Fixed `NameError: name 'logger' is not defined` on Railway boot.
 - Verified boot smoke test with existing `DB_PATH` to ensure the one-time reset runs cleanly.

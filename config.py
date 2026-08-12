@@ -376,6 +376,43 @@ _No ID or screenshot needed — Stars credit instantly._""",
 🧾 Order ID: *#{order_id}*
 
 _Thank you for your deposit!_""",
+    "payment_stars_checkout": """⭐ *Telegram Stars — Product Checkout*
+━━━━━━━━━━━━━━━━━━━━
+
+📦 Product: *{product}*
+🧾 Order: `#{order_id}`
+💰 Total Amount: *${amount}*
+⭐ Stars needed: *{stars} Stars*
+📊 Exchange Rate: 1$ = {rate} Stars
+
+👇 Tap the button below to complete your purchase via Telegram's secure payment window.
+_Your product will be delivered instantly upon payment!_""",
+    "payment_stars_deposit": """⭐ *Telegram Stars — Buy Points Deposit*
+━━━━━━━━━━━━━━━━━━━━
+
+🧾 Order: `#{order_id}`
+💰 Deposit Amount: *${amount}*
+⭐ Stars needed: *{stars} Stars*
+📊 Exchange Rate: 1$ = {rate} Stars
+
+👇 Tap the button below to deposit via Telegram's secure payment window.
+_Points will be credited to your wallet instantly!_""",
+    "payment_stars_success": """🎉 *Payment Successful!*
+━━━━━━━━━━━━━━━━━━━━
+
+✅ Your Telegram Stars payment has been confirmed.
+💎 Points / Balance Added: *{points}*
+💰 Amount: *${amount}*
+🧾 Order ID: `#{order_id}`
+
+_Thank you for your purchase!_""",
+    "payment_stars_menu_text": """⭐ *Telegram Stars Payment*
+━━━━━━━━━━━━━━━━━━━━
+Fast, secure native payment inside Telegram.
+
+• 1$ = 120 Stars (Admin Editable)
+• No external wallets, UIDs, or TXIDs required.
+• Instant delivery upon payment confirmation.""",
 })
 
 

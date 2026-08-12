@@ -221,19 +221,20 @@ def ensure_supplier_retry_columns(c):
 
 
 def setup_database():
-    # ── 🆕 v163: One-time Fresh Reset for v163 deploy (as requested by owner) ──
+    # ── 🆕 v163: One-time Fresh Reset for v163 deploy on Railway ──
     # Wipes old database once so the bot boots fresh (0 users, 0 orders, 0 products).
     # Owner can restore live data anytime via /admin -> Backup & Restore.
     try:
-        reset_marker = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), ".v163_fresh_reset_done")
-        if not os.path.exists(reset_marker) and os.path.exists(DB_PATH):
-            print("🆕 [v163] Performing one-time fresh reset of database as requested by owner...")
-            try:
-                os.remove(DB_PATH)
-            except Exception as e:
-                print(f"Could not remove old DB for reset: {e}")
-            with open(reset_marker, "w") as f:
-                f.write("reset_done")
+        if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RESET_DB_FRESH") == "1":
+            reset_marker = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), ".v163_fresh_reset_done")
+            if not os.path.exists(reset_marker) and os.path.exists(DB_PATH):
+                print("🆕 [v163] Performing one-time fresh reset of database as requested by owner...")
+                try:
+                    os.remove(DB_PATH)
+                except Exception as e:
+                    print(f"Could not remove old DB for reset: {e}")
+                with open(reset_marker, "w") as f:
+                    f.write("reset_done")
     except Exception as e:
         print(f"[v163] reset marker check failed: {e}")
 
@@ -3139,7 +3140,7 @@ def toggle_review_pin(review_id):
 
 def get_all_reviews_for_admin(limit=50):
     conn = get_connection(); c = conn.cursor()
-    c.execute("""SELECT pr.*, p.name as product_name, u.first_name FROM product_reviews pr
+    c.execute("""SELECT pr.*, p.name as product_name, u.first_name, u.username FROM product_reviews pr
                  LEFT JOIN products p ON p.id = pr.product_id
                  LEFT JOIN users u ON u.user_id = pr.user_id
                  ORDER BY pr.created_at DESC LIMIT ?""", (limit,))
