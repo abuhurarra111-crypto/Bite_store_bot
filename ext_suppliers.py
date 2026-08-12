@@ -3999,6 +3999,12 @@ async def route_order_to_supplier(bot, order):
 
     # Save delivery content for future re-view + set status
     _save_delivery(order['id'], delivery_text)
+    # 🆕 v161.20: audit log — supplier deliveries get the exact text logged too.
+    try:
+        from database import add_order_delivery
+        add_order_delivery(order['id'], kind='text', content=delivery_text)
+    except Exception:
+        pass
     update_order_status(order['id'], 'delivered')
 
     # Send to customer
@@ -4059,12 +4065,20 @@ async def route_order_to_supplier(bot, order):
                 )
                 # 🐛 v145: save the document file_id so it can be re-opened /
                 # downloaded from Completed Orders later.
+                # 🆕 v161.20: also add to the order_deliveries audit log.
                 try:
                     _did = getattr(sent_doc, "document", None)
                     if _did is not None and getattr(_did, "file_id", None):
                         _gc2 = _gc(); _cc = _gc2.cursor()
                         _cc.execute("UPDATE orders SET delivery_file_id=? WHERE id=?", (str(_did.file_id), order['id']))
                         _gc2.commit(); _gc2.close()
+                        try:
+                            from database import add_order_delivery
+                            add_order_delivery(order['id'], kind='document',
+                                               content=f"{len(items)} accounts — Order #{order['id']}",
+                                               file_id=str(_did.file_id), file_name=fname)
+                        except Exception:
+                            pass
                 except Exception:
                     pass
             except Exception as e:

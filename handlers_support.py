@@ -1492,7 +1492,9 @@ async def adm_delivery_text_received(update, context):
         await update.message.reply_text("❌ Delivery text is empty. Please try again.")
         return 403
 
-    from database import update_order_status, get_order, add_points, get_connection, save_order_delivery_content
+    from database import (update_order_status, get_order, add_points,
+                          get_connection, save_order_delivery_content,
+                          add_order_delivery)
     from config import POINTS_PER_DOLLAR
 
     o = get_order(oid)
@@ -1500,6 +1502,8 @@ async def adm_delivery_text_received(update, context):
         p = get_product(o['product_id']) if o['product_id'] else None
         update_order_status(oid, 'delivered')
         save_order_delivery_content(oid, delivery_text)
+        # 🆕 v161.20: audit log — manual deliveries visible in Completed Orders.
+        add_order_delivery(oid, kind='text', content=delivery_text)
         # 🆕 v69 BUG FIX: NO points credit on product delivery.
         pts = 0
 

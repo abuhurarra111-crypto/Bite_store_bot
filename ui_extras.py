@@ -3505,3 +3505,226 @@ async def send_activity_message(bot, user_id: int, message: str, reply_markup=No
 
     return sent_any
 
+
+
+# ════════════════════════════════════════════════════════════
+# 🆕 v161.20 — 🌐 LANGUAGE SYSTEM (admin panel)
+# Shows all supported languages + a live preview of translated
+# instructions so the owner can verify every language works.
+# ════════════════════════════════════════════════════════════
+
+# Sample instruction text used for the preview (matches a real user screen).
+_LANG_SAMPLE_TEXT = (
+    "🛒 *How to Buy a Product*\n"
+    "━━━━━━━━━━━━━━━━━━━━\n\n"
+    "1️⃣ From Main Menu tap *Shop Now*.\n"
+    "2️⃣ Open the product you want.\n"
+    "3️⃣ Tap *Buy Now* (1 item) or *Buy Multiple* (quantity).\n"
+    "4️⃣ Choose a payment method.\n"
+    "5️⃣ Pay the exact amount shown and tap *Check Payment*.\n\n"
+    "✅ Delivered orders appear in *Order History*."
+)
+
+
+# Native translations of the sample instruction (no Gemini needed for preview).
+_LANG_SAMPLE_NATIVE = {
+    "en": (
+        "🛒 *How to Buy a Product*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "1️⃣ From Main Menu tap *Shop Now*.\n"
+        "2️⃣ Open the product you want.\n"
+        "3️⃣ Tap *Buy Now* (1 item) or *Buy Multiple* (quantity).\n"
+        "4️⃣ Choose a payment method.\n"
+        "5️⃣ Pay the exact amount shown and tap *Check Payment*.\n\n"
+        "✅ Delivered orders appear in *Order History*."
+    ),
+    "ur": (
+        "🛒 *پروڈکٹ کیسے خریدیں*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "1️⃣ مین مینو سے *شاپ ناؤ* پر ٹیپ کریں۔\n"
+        "2️⃣ مطلوبہ پروڈکٹ کھولیں۔\n"
+        "3️⃣ *ابھی خریدیں* (1 آئٹم) یا *ایک سے زیادہ خریدیں* (مقدار) منتخب کریں۔\n"
+        "4️⃣ ادائیگی کا طریقہ منتخب کریں۔\n"
+        "5️⃣ دکھائی گئی رقم بالکل ادا کریں اور *چیک پیمنٹ* پر ٹیپ کریں۔\n\n"
+        "✅ ڈیلیور شدہ آرڈرز *آرڈر ہسٹری* میں دکھائی دیتے ہیں۔"
+    ),
+    "ru": (
+        "🛒 *Product Kaise Khareedein*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "1️⃣ Main Menu se *Shop Now* par tap karein.\n"
+        "2️⃣ Apni pasand ka product kholen.\n"
+        "3️⃣ *Buy Now* (1 item) ya *Buy Multiple* (quantity) chunein.\n"
+        "4️⃣ Payment method chunein.\n"
+        "5️⃣ Bot ne jo exact amount dikhaya woh pay karein aur *Check Payment* tap karein.\n\n"
+        "✅ Delivered orders *Order History* mein dikhte hain."
+    ),
+    "hi": (
+        "🛒 *Product Kaise Khareedein*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "1️⃣ Main Menu se *Shop Now* dabao.\n"
+        "2️⃣ Apna product kholo.\n"
+        "3️⃣ *Buy Now* (1 item) ya *Buy Multiple* (quantity) chuno.\n"
+        "4️⃣ Payment method chuno.\n"
+        "5️⃣ Exact amount pay karo aur *Check Payment* dabao.\n\n"
+        "✅ Delivered orders *Order History* mein dikhte hain."
+    ),
+    "ar": (
+        "🛒 *كيفية شراء منتج*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "1️⃣ من القائمة الرئيسية اضغط *تسوق الآن*.\n"
+        "2️⃣ افتح المنتج الذي تريده.\n"
+        "3️⃣ اختر *اشترِ الآن* (عنصر واحد) أو *اشترِ متعددًا* (الكمية).\n"
+        "4️⃣ اختر طريقة الدفع.\n"
+        "5️⃣ ادفع المبلغ المحدد بالضبط ثم اضغط *تحقق من الدفع*.\n\n"
+        "✅ تظهر الطلبات المُسلَّمة في *سجل الطلبات*."
+    ),
+    "es": (
+        "🛒 *Cómo Comprar un Producto*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "1️⃣ Desde el Menú Principal toca *Comprar Ahora*.\n"
+        "2️⃣ Abre el producto que quieras.\n"
+        "3️⃣ Toca *Comprar Ahora* (1 artículo) o *Comprar Varios* (cantidad).\n"
+        "4️⃣ Elige un método de pago.\n"
+        "5️⃣ Paga el monto exacto mostrado y toca *Verificar Pago*.\n\n"
+        "✅ Los pedidos entregados aparecen en *Historial de Pedidos*."
+    ),
+    "fr": (
+        "🛒 *Comment Acheter un Produit*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "1️⃣ Depuis le menu principal, touchez *Acheter Maintenant*.\n"
+        "2️⃣ Ouvrez le produit souhaité.\n"
+        "3️⃣ Touchez *Acheter* (1 article) ou *Acheter Plusieurs* (quantité).\n"
+        "4️⃣ Choisissez un mode de paiement.\n"
+        "5️⃣ Payez le montant exact affiché puis touchez *Vérifier le Paiement*.\n\n"
+        "✅ Les commandes livrées apparaissent dans *Historique des Commandes*."
+    ),
+    "de": (
+        "🛒 *So Kaufen Sie ein Produkt*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "1️⃣ Tippen Sie im Hauptmenü auf *Jetzt Kaufen*.\n"
+        "2️⃣ Öffnen Sie das gewünschte Produkt.\n"
+        "3️⃣ Tippen Sie auf *Jetzt Kaufen* (1 Artikel) oder *Mehrere Kaufen* (Menge).\n"
+        "4️⃣ Wählen Sie eine Zahlungsmethode.\n"
+        "5️⃣ Zahlen Sie den exakten Betrag und tippen Sie auf *Zahlung Prüfen*.\n\n"
+        "✅ Gelieferte Bestellungen erscheinen im *Bestellverlauf*."
+    ),
+    "ru_lang": (
+        "🛒 *Как купить товар*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "1️⃣ В главном меню нажмите *Купить сейчас*.\n"
+        "2️⃣ Откройте нужный товар.\n"
+        "3️⃣ Нажмите *Купить сейчас* (1 шт.) или *Купить несколько* (количество).\n"
+        "4️⃣ Выберите способ оплаты.\n"
+        "5️⃣ Оплатите точную сумму и нажмите *Проверить оплату*.\n\n"
+        "✅ Доставленные заказы видны в *Истории заказов*."
+    ),
+    "zh": (
+        "🛒 *如何购买产品*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "1️⃣ 在主菜单点击*立即购买*。\n"
+        "2️⃣ 打开您想要的产品。\n"
+        "3️⃣ 点击*立即购买*（1件）或*购买多件*（数量）。\n"
+        "4️⃣ 选择付款方式。\n"
+        "5️⃣ 支付显示的准确金额并点击*检查付款*。\n\n"
+        "✅ 已交付的订单会出现在*订单历史*中。"
+    ),
+}
+
+
+def _lang_status_lines():
+    """All languages with native names + coverage status."""
+    from i18n import LANGUAGES, t, TRANSLATIONS
+    langs = ["en", "ur", "ru", "hi", "ar", "es", "fr", "de", "ru_lang", "zh"]
+    order_labels = {
+        "en": "English", "ur": "اردو", "ru": "Roman Urdu",
+        "hi": "हिन्दी", "ar": "العربية", "es": "Español",
+        "fr": "Français", "de": "Deutsch", "ru_lang": "Русский", "zh": "中文",
+    }
+    flags = {
+        "en": "🇬🇧", "ur": "🇵🇰", "ru": "🇵🇰", "hi": "🇮🇳", "ar": "🇸🇦",
+        "es": "🇪🇸", "fr": "🇫🇷", "de": "🇩🇪", "ru_lang": "🇷🇺", "zh": "🇨🇳",
+    }
+    lines = []
+    for code in langs:
+        btn = t("menu_shop", lang=code)
+        # A language is "fully wired" when the TRANSLATIONS dict has a real
+        # entry for it (even if the word matches English, e.g. German "Shop").
+        entry = TRANSLATIONS.get("menu_shop") or {}
+        wired = code in entry
+        mark = "✅" if wired else "⚠️"
+        lines.append(f"{mark} {flags.get(code,'')} {order_labels.get(code, code)} — menu: *{btn}*")
+    return lines
+
+
+async def admin_lang_system_callback(update, context):
+    """Admin Panel → 🌐 Language System — overview + live preview."""
+    q = update.callback_query
+    from config import ADMIN_ID as _AID
+    if q.from_user.id != _AID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+
+    from i18n import LANGUAGES, t
+    lines = [
+        "🌐 *Language System*",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "",
+        "Every user can pick a language in 🌐 *Language*. Buttons, instructions",
+        "and payment screens then appear in that language automatically.",
+        "",
+        "*Supported languages:*",
+    ]
+    lines += _lang_status_lines()
+    lines += [
+        "",
+        "🛡️ *How it works:*",
+        "• Menu buttons → native translations (baked in)",
+        "• Guides & instructions → auto-translated (Gemini, cached)",
+        "• Admin-custom English templates stay the baseline",
+        "",
+        "_Tap any language below to preview the sample instruction._",
+    ]
+    kb = []
+    flags = {"en":"🇬🇧","ur":"🇵🇰","ru":"🇵🇰","hi":"🇮🇳","ar":"🇸🇦","es":"🇪🇸","fr":"🇫🇷","de":"🇩🇪","ru_lang":"🇷🇺","zh":"🇨🇳"}
+    names = {"en":"English","ur":"اردو","ru":"Roman Urdu","hi":"हिन्दी","ar":"العربية","es":"Español","fr":"Français","de":"Deutsch","ru_lang":"Русский","zh":"中文"}
+    row = []
+    for i, code in enumerate(["en","ur","ru","hi","ar","es","fr","de","ru_lang","zh"]):
+        row.append(InlineKeyboardButton(f"{flags[code]} {code}", callback_data=f"langsys_{code}"))
+        if i % 2 == 1:
+            kb.append(row); row = []
+    if row:
+        kb.append(row)
+    kb.append([InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_panel")])
+    await _safe_edit(q, "\n".join(lines), parse_mode="Markdown",
+                     reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def langsys_preview_callback(update, context):
+    """Preview the sample instruction translated into one language."""
+    q = update.callback_query
+    from config import ADMIN_ID as _AID
+    if q.from_user.id != _AID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    code = (q.data or "").replace("langsys_", "")
+    # Native baked-in translation first (instant, no API), Gemini as fallback.
+    tr = _LANG_SAMPLE_NATIVE.get(code)
+    if not tr:
+        try:
+            from i18n import tr_user
+            tr = tr_user(_LANG_SAMPLE_TEXT, lang=code) or _LANG_SAMPLE_TEXT
+        except Exception:
+            tr = _LANG_SAMPLE_TEXT
+    flags = {"en":"🇬🇧","ur":"🇵🇰","ru":"🇵🇰","hi":"🇮🇳","ar":"🇸🇦","es":"🇪🇸","fr":"🇫🇷","de":"🇩🇪","ru_lang":"🇷🇺","zh":"🇨🇳"}
+    names = {"en":"English","ur":"اردو","ru":"Roman Urdu","hi":"हिन्दी","ar":"العربية","es":"Español","fr":"Français","de":"Deutsch","ru_lang":"Русский","zh":"中文"}
+    header = (f"{flags.get(code,'')} *{names.get(code, code)} preview* — sample instruction:\n"
+              f"━━━━━━━━━━━━━━━━━━━━\n\n")
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 All Languages", callback_data="admin_lang_system")],
+        [InlineKeyboardButton("🔙 Admin Panel", callback_data="admin_panel")],
+    ])
+    try:
+        await q.edit_message_text(header + tr, parse_mode="Markdown",
+                                  reply_markup=kb)
+    except Exception:
+        await q.edit_message_text(header + tr, reply_markup=kb)

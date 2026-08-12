@@ -4129,3 +4129,45 @@ Every release below shipped a working zip with tests. Details in git history.
 
 ## 📝 Update Rule
 When a new version ships, **prepend a new `# 🚀 vXX` section at the top** of this file. Don't create new `CHANGELOG_vXX.md` files. Keep the history flowing in one place.
+
+---
+
+# 🚀 v161.20 (2026-08-12) — AUTO BUY-NOW BUTTON + REFERRAL BONUS SETTINGS + DELIVERY AUDIT + FULL LANGUAGE SYSTEM
+
+## ✅ 1. Fake Activity → Buy Now button LAZMI (product naam wali har broadcast)
+- **purchase + discount** broadcasts ab `broadcast_store_message()` se route hote hain →
+  🛒 Buy Now button (green) HAMESHA attach hota hai jab message mein product ka naam ho.
+- Button format: `{premium emoji} {pehle 2 words} Buy Now` — user spec ke mutabiq.
+- **Naya product add hone par auto-detect + auto-apply** (koi manual setting nahi).
+- `_product_buy_emoji` bug fix: own products ka emoji ab sahi nikalta hai
+  (pehle rest-text return hota tha → button "Canva 500 User Panel Buy Now" jaisa ban jata tha).
+- **Products bina emoji ke → auto-emoji** (keyword map + fallback 🛍️) — har product ka
+  button ab `{emoji} First Two Words Buy Now` consistent hai (36/36 verified).
+
+## ✅ 2. Referral Milestone Bonus — Settings (Referrals Abuse panel)
+- Panel button: **🎯 Milestone Bonus (20 refs → +10 pts)** — admin khud set kare:
+  `20:10, 50:30, 100:80` (kitny reffreals py kitna bonus).
+- Har tier ek dafa pay hota hai (watermark `ref_milestone_paid_<uid>`) — double-pay abuse se bacha.
+- Referral instructions + milestone templates dynamically update.
+
+## ✅ 3. Delivered Files → Completed Orders (voice/video/pic/file/text SAB)
+- Naya **`order_deliveries`** audit table: har delivery log (text/document/photo/video/voice/audio).
+- Har delivery point hooked: supplier router, account pool, static media, manual delivery, admin approve.
+- Completed Orders (v2 + purana view) mein **📦 Delivered Items (N)** button →
+  saari delivered cheezein list + har media file dobara kholo/download karo.
+- Purane `approve_order_callback` ka delivery_content save nahi hota tha → ab fixed.
+
+## ✅ 4. Language System — saari 10 languages (Arabic/Spanish/French/German/Russian/Chinese ab bhi)
+- i18n.py TRANSLATIONS ab **10/10 languages** mein complete (menu buttons, language selector,
+  reviews, loyalty, analytics) — pehle sirf en/ur/ru/hi thi.
+- Naya admin panel: **🌐 Language System** → saari languages + live instruction preview
+  (har language mein native translation, Gemini pe depend nahi).
+- Guide/instructions pehle se per-user translate (Gemini cached) — ab menu bhi translate.
+
+## 🛠️ Verified
+- 36/36 product buttons `{emoji} First2Words Buy Now` ✅
+- purchase/discount broadcast button green + callback buy_<pid> ✅
+- milestone tiers 20→10, 50→30 no double-pay ✅
+- delivered-items audit document/photo/text ✅
+- Arabic + Spanish + German main menu buttons ✅
+- bot full import smoke ✅

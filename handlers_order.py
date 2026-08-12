@@ -956,11 +956,19 @@ async def _send_static_media_delivery(bot, order, product, method, amount, pts_b
     file_name = pd.get('delivery_file_name', '') or file_type
     caption_text = (pd.get('delivery_caption', '') or pd.get('delivery_text', '') or '').strip()
 
-    from database import save_order_delivery_content
+    from database import save_order_delivery_content, add_order_delivery, set_order_delivery_file
     history_note = f"[Static {file_type}: {file_name}]"
     if caption_text:
         history_note += f"\n{caption_text}"
     save_order_delivery_content(order['id'], history_note)
+    # 🆕 v161.20: log the ACTUAL delivered media file so the admin can re-open
+    # the exact file (photo/video/document) from Completed Orders.
+    add_order_delivery(order['id'], kind=file_type or 'document',
+                       content=caption_text,
+                       file_id=file_id,
+                       file_name=file_name)
+    if file_id:
+        set_order_delivery_file(order['id'], file_id)
     update_order_status(order['id'], 'delivered')
     # 🆕 v66: bonus 10pts removed — no add_points call here.
 
@@ -1131,10 +1139,13 @@ async def fulfill_paid_product_order(bot, order, paid_amount=None, *, payment_me
     # account-pool delivery is also handled there.
     # 🔧 AUDIT-FIX C1/C2 (2026-07-31): use the structured result so an order is
     # NEVER marked 'delivered' when the stock pool couldn't cover the full qty.
-    from database import build_delivery_detailed, save_order_delivery_content
+    from database import build_delivery_detailed, save_order_delivery_content, add_order_delivery
     dres = build_delivery_detailed(order['product_id'], order['id'], qty, order['user_id'])
     delivery = dres['text']
     save_order_delivery_content(order['id'], delivery)
+    # 🆕 v161.20: audit log — the exact delivery text is stored so Completed
+    # Orders can show/re-open it later.
+    add_order_delivery(order['id'], kind='text', content=delivery)
 
     if not dres['ok']:
         # ⛔ Not fully fulfilled — park the order for the admin instead of

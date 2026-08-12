@@ -691,6 +691,7 @@ async def run_fake_broadcast(bot, force_type=None):
         all_products = []
 
     # Fallback product info for test mode when shop is empty
+    product_pid = None
     if not all_products:
         if is_test:
             product_name = "ChatGPT Plus 1 Month"
@@ -703,9 +704,17 @@ async def run_fake_broadcast(bot, force_type=None):
         if isinstance(product, dict):
             product_name = product.get("name", "Unknown Product")
             product_price = float(product.get("price", 5.0))
+            try:
+                product_pid = product.get("id")
+            except Exception:
+                product_pid = None
         else:
             product_name = product[2]
             product_price = float(product[4] or 5.0)
+            try:
+                product_pid = product[0]
+            except Exception:
+                product_pid = None
 
     # ── Determine which types are available (for non-test auto mode) ──
     type_weights = {
@@ -1096,6 +1105,24 @@ async def run_fake_broadcast(bot, force_type=None):
 
     if not msg:
         return None, 0, 0
+
+    # 🆕 v161.20 (user demand): ANY activity broadcast whose message mentions a
+    # product name MUST carry the 🛒 Buy Now button — labelled
+    # "{emoji} First Two Words Buy Now" (green by default). purchase/discount
+    # used to go through send_to_all_users() with NO button; now they route
+    # through broadcast_store_message() with pid + per-template button so the
+    # styled Buy Now button is ALWAYS attached (auto-detected per product,
+    # including newly added products).
+    if chosen_type in ("purchase", "discount") and product_pid:
+        try:
+            success = await broadcast_store_message(
+                bot, msg, pid=product_pid, tpl_id=f"bc_{chosen_type}")
+        except Exception as _be:
+            logger.exception(f"[FakeBroadcast] {chosen_type} button send failed: {_be}")
+            success, _ = await send_to_all_users(bot, msg)
+        _log_broadcast(chosen_type, msg, success)
+        logger.info(f"[FakeBroadcast] Done {chosen_type} — ✅ {success} sent (Buy Now attached)")
+        return chosen_type, success, 0
 
     # ── Send to all users ──
     logger.info(f"[FakeBroadcast] Sending '{chosen_type}' broadcast...")
@@ -3881,6 +3908,32 @@ def _product_name_with_fixed_emoji(product):
         return str(product.get("name") or "Product") if product else "Product"
 
 
+# ─────────────────────────────────────────────
+# 🆕 v161.20: auto-emoji for products whose name has no emoji — every Buy-Now
+# button shows "{emoji} First Two Words Buy Now" consistently.
+# _AUTO_FALLBACK_EMOJI / _AUTO_PRODUCT_EMOJI
+# ─────────────────────────────────────────────
+# 🆕 v161.20: auto-emoji for products whose name has no emoji — every Buy-Now
+# button shows "{emoji} First Two Words Buy Now" consistently.
+_AUTO_FALLBACK_EMOJI = "🛍️"
+_AUTO_PRODUCT_EMOJI = [
+    ("chatgpt", "🤖"), ("chat gpt", "🤖"), ("gpt", "🤖"), ("openai", "🤖"),
+    ("gemini", "🤖"), ("bard", "🤖"), ("ai", "🤖"), ("claude", "🤖"),
+    ("codex", "🧠"), ("midjourney", "🎨"), ("leonardo", "🎨"), ("canva", "🎨"),
+    ("adobe", "🎨"), ("autodesk", "🎨"), ("autocad", "📐"), ("3ds max", "📐"),
+    ("netflix", "🎬"), ("disney", "🎬"), ("prime", "🎬"), ("spotify", "🎵"),
+    ("youtube", "▶️"), ("yt", "▶️"), ("video", "▶️"), ("mail", "📧"),
+    ("outlook", "📧"), ("hotmail", "📧"), ("gmail", "📧"), ("email", "📧"),
+    ("vpn", "🔐"), ("surfshark", "🔐"), ("proxy", "🔐"), ("instagram", "📱"),
+    ("tiktok", "📱"), ("whatsapp", "📱"), ("telegram", "✈️"), ("twitter", "🐦"),
+    ("capcut", "✴️"), ("cap cut", "✴️"), ("elevenlab", "🗣️"), ("voice", "🗣️"),
+    ("scribd", "📖"), ("wink", "🔼"), ("meitu", "👍"), ("key", "🔑"),
+    ("license", "🔑"), ("account", "👤"), ("subscription", "📅"), ("panel", "🖥️"),
+    ("server", "🖥️"), ("hosting", "🖥️"), ("app", "📱"), ("movie", "🎬"),
+    ("tv", "📺"), ("stream", "📺"), ("course", "🎓"), ("book", "📚"),
+    ("game", "🎮"), ("gaming", "🎮"), ("xbox", "🎮"), ("playstation", "🎮"),
+    ("nord", "🔐"), ("express vpn", "🔐"), ("glass", "💎"),
+]
 # ─────────────────────────────────────────────────────────────
 # 🆕 v94: Buy Now button — product-name prefix + global color
 # ─────────────────────────────────────────────────────────────
@@ -3917,14 +3970,700 @@ def _product_buy_emoji(pid):
         row = c.fetchone()
         if row:
             try:
-                from button_system import extract_emoji_from_html
-                eid, ech = extract_emoji_from_html(row["name"] or "")
-                return str(eid or ""), str(ech or "")
+                import re as _re
+                raw = str(row["name"] or "")
+                # 🐛 v161.20 FIX: extract_emoji_from_html() returns (eid,
+                # REST_TEXT_WITHOUT_EMOJI) — the old code used that rest text as
+                # the emoji char → button labels like "Canva 500 User Panel Buy
+                # Now" instead of "🎨 Canva 500 Buy Now". Grab the FALLBACK char
+                # that lives INSIDE the <tg-emoji> tag instead.
+                m = _re.search(
+                    r'<tg-emoji\s+emoji-id=["\'](\d+)["\']\s*>\s*([^<]{1,8})\s*</tg-emoji>',
+                    raw, flags=_re.I)
+                if m:
+                    return str(m.group(1)), str(m.group(2)).strip()
+                # legacy: no <tg-emoji> tag → leading regular emoji chars
+                em = _re.match(
+                    r"^\s*([\U0001F000-\U0001FFFF\u2600-\u27BF"
+                    r"\U00002B00-\U00002BFF\u203C-\u2049\ufe0f]+)\s*",
+                    raw)
+                if em:
+                    return "", str(em.group(1)).strip()
             except Exception:
                 pass
     except Exception:
         pass
-    return "", ""
+    # 🆕 v161.20: products with NO emoji anywhere (name or supplier) still get a
+    # sensible auto-emoji on their Buy-Now button so EVERY product shows
+    # "{emoji} First Two Words Buy Now" consistently (user requirement).
+    try:
+        from database import get_connection as _gc2
+        _c2 = _gc2().cursor()
+        _c2.execute("SELECT name FROM products WHERE id=?", (int(pid),))
+        _row2 = _c2.fetchone()
+        if _row2:
+            _nm = str(_row2["name"] or "").lower()
+            for _kw, _em in _AUTO_PRODUCT_EMOJI:
+                if _kw in _nm:
+                    return "", _em
+        return "", _AUTO_FALLBACK_EMOJI
+    except Exception:
+        return "", _AUTO_FALLBACK_EMOJI
+
+
+def _buy_now_label(pid, default_suffix="🛒 Buy Now") -> str:
+    """Return the Buy Now button label.
+
+    🆕 v96 FORMAT: "{leading_emoji} {first_2_words} Buy Now"
+      - leading_emoji: extracted from product name start (both regular emoji
+        AND premium <tg-emoji> markup; for premium the visible fallback char
+        is used in the button text since Telegram premium emojis inside
+        button labels are not supported by the API — the visible char is
+        the best UX we can do).
+      - first_2_words: first two whitespace-separated tokens from the
+        emoji-stripped product name (title-cased for polish).
+
+    Examples:
+      "🎮 Chatgpt Plus icloud mail nw"  →  "🎮 Chatgpt Plus Buy Now"
+      "[[HTML]]<tg-emoji emoji-id='5' >🎮</tg-emoji> Netflix Premium 1 Month"
+                                        →  "🎮 Netflix Premium Buy Now"
+      "Spotify"                          →  "Spotify Buy Now"
+      "" or missing product              →  "🛒 Buy Now"
+
+    Cleans [[HTML]]/<tg-emoji> markup + truncates to Telegram button
+    soft cap (~60 chars).
+
+    v96 change: `default_suffix` is now used as the trailing text only
+    (no dash separator). Old callers passing "🛒 Buy Now" get a nicer,
+    shorter, product-branded button. Legacy full-name behavior removed
+    per user request (2026-07-20).
+    """
+    import re as _re
+
+    try:
+        from database import get_connection
+        conn = get_connection(); c = conn.cursor()
+        c.execute("SELECT name FROM products WHERE id=?", (int(pid),))
+        row = c.fetchone(); conn.close()
+        if not row:
+            return default_suffix
+        raw = (row["name"] or "").strip()
+    except Exception:
+        return default_suffix
+
+    if not raw:
+        return default_suffix
+
+    # ── Step 1: Extract leading emoji (regular OR premium fallback char) ──
+    leading_emoji = ""
+    body = raw
+
+    # 🐛 v147 FIX (Bug6): supplier-linked products use their FIXED emoji from
+    # ext_products; own products use the emoji in the name.
+    try:
+        _eid, _ech = _product_buy_emoji(int(pid))
+        if _ech:
+            leading_emoji = _ech
+            # strip the fixed emoji prefix from the body so it isn't repeated
+            if body.startswith(_ech):
+                body = body[len(_ech):].lstrip()
+    except Exception:
+        pass
+
+    # Case A: [[HTML]]<tg-emoji emoji-id="X">EMOJI</tg-emoji> rest...
+    if body.startswith("[[HTML]]"):
+        body = body[len("[[HTML]]"):]
+    tg_match = _re.match(
+        r"^\s*<tg-emoji\s+emoji-id=[\"'][^\"']+[\"']\s*>([^<]{1,8})</tg-emoji>\s*",
+        body
+    )
+    if tg_match:
+        leading_emoji = tg_match.group(1).strip()
+        body = body[tg_match.end():]
+
+    # Case B: leading regular emoji chars (unicode symbols/pictographs)
+    if not leading_emoji:
+        # Match any leading emoji-ish characters (broad unicode range)
+        emo_match = _re.match(
+            r"^\s*([\U0001F000-\U0001FFFF\u2600-\u27BF\U00002B00-\U00002BFF"
+            r"\U0001F300-\U0001F9FF\u2700-\u27BF\u203C-\u2049\ufe0f]+)\s*",
+            body
+        )
+        if emo_match:
+            leading_emoji = emo_match.group(1).strip()
+            body = body[emo_match.end():]
+
+    # ── Step 2: Strip any residual HTML tags from body ──
+    body = _re.sub(r"<[^>]+>", "", body).strip()
+
+    # Fallback: also try name_for_button as safety net if body empty
+    if not body:
+        try:
+            from utils import name_for_button
+            body = (name_for_button(raw) or "").strip()
+        except Exception:
+            pass
+
+    # ── Step 3: Take first 2 words (skip lone emoji-only bodies) ──
+    words = body.split()
+    # Guard: if body is only the same emoji we already extracted, drop it
+    if len(words) == 1 and leading_emoji and words[0] == leading_emoji:
+        words = []
+    if len(words) >= 2:
+        first2 = f"{words[0]} {words[1]}"
+    elif len(words) == 1:
+        first2 = words[0]
+    else:
+        first2 = ""
+
+    # Title-case for polish (only if word is all-lower or all-upper for safety)
+    def _polish(w):
+        return w.title() if (w.islower() or w.isupper()) else w
+    if first2:
+        first2 = " ".join(_polish(w) for w in first2.split())
+
+    # ── Step 4: Trailing suffix — strip cart emoji from default so we don't
+    #           get "🛒 Buy Now" when user already has a product emoji.
+    trail = default_suffix
+    if leading_emoji:
+        # Remove the 🛒 (or any leading cart-like emoji) from default suffix
+        trail = _re.sub(r"^\s*[🛒🛍️🛍💰]+\s*", "", trail).strip() or "Buy Now"
+
+    # ── Step 5: Assemble ──
+    parts = []
+    if leading_emoji:
+        parts.append(leading_emoji)
+    if first2:
+        parts.append(first2)
+    if trail:
+        parts.append(trail)
+    label = " ".join(parts).strip()
+
+    if not label:
+        return default_suffix
+
+    # ── Step 6: Truncate to Telegram button soft cap (~60 chars) ──
+    MAX = 60
+    if len(label) > MAX:
+        label = label[:MAX - 1].rstrip() + "…"
+    return label
+
+
+def _get_broadcast_global_color(tpl_id: str = None) -> str:
+    """🆕 v94: return the color to apply on a broadcast button.
+
+    Priority:
+      1. Per-template color   (btn_style_<tpl_id> — set via Edit Templates)
+      2. Global broadcast color (broadcast_btn_color — new v94 setting)
+      3. 🆕 v96 default: "success" (green) — per user spec that Buy Now
+         button should always render green for broadcast messages unless
+         admin explicitly changes it.
+    """
+    try:
+        from button_system import VALID_BUTTON_STYLES
+        from database import get_setting
+        if tpl_id:
+            c = (get_setting(f"btn_style_{tpl_id}", "") or "").strip().lower()
+            if c in VALID_BUTTON_STYLES:
+                return c
+        c = (get_setting("broadcast_btn_color", "") or "").strip().lower()
+        if c in VALID_BUTTON_STYLES:
+            return c
+        # v96: green fallback when nothing else is set
+        if "success" in VALID_BUTTON_STYLES:
+            return "success"
+    except Exception:
+        pass
+    return ""
+
+
+def set_broadcast_global_color(color: str):
+    """🆕 v94: persist the global broadcast button color."""
+    try:
+        from button_system import VALID_BUTTON_STYLES
+        from database import set_setting
+        c = (color or "").strip().lower()
+        if c not in VALID_BUTTON_STYLES:
+            c = ""
+        set_setting("broadcast_btn_color", c)
+    except Exception:
+        pass
+
+
+async def _buy_now_keyboard(bot, pid, btn_key="sb_buy_generic"):
+    """🛒 Buy Now button.
+    - For the bot's private chat: a normal callback (buy_<pid>).
+    - For groups/channels: a deep link to the bot (since callbacks don't work there).
+    Returns (private_kb, group_kb).
+
+    🆕 v43: Per-template button text editor + premium-emoji icon support
+    (Bot API 9.4 / PTB 22.7+). Map old btn_keys → template ids used by
+    the new editor so admin's changes inside Edit Templates apply here too.
+
+    🆕 v94: Button label is now "{product_name} - Buy Now" (product prefix).
+    Also applies global/per-template color via _get_broadcast_global_color().
+
+    🆕 v102 FIX: extract the PRODUCT's own <tg-emoji emoji-id="..."> premium
+    markup from the product's name (if any) and attach it as
+    icon_custom_emoji_id on the button. Previously only the regular emoji
+    fallback char was shown → premium emoji got demoted to a plain unicode
+    char. Now the actual premium emoji renders as the button icon.
+    """
+    _key_to_tpl = {
+        "sb_buy_flash":   "sb_flash",
+        "sb_buy_newprod": "sb_newprod",
+        "sb_buy_generic": "sb_generic",
+    }
+    tpl_id = _key_to_tpl.get(btn_key, "sb_generic")
+
+    # 🆕 v94: build product-prefixed label
+    prefixed = _buy_now_label(pid, "🛒 Buy Now")
+    color = _get_broadcast_global_color(tpl_id)
+
+    # 🆕 v102 / 🐛 v147 FIX (Bug6): extract the product's premium emoji_id —
+    # supplier-linked products use the FIXED emoji from ext_products, own
+    # products use the emoji in the NAME — and render it as the button icon.
+    product_emoji_id = ""
+    try:
+        _eid, _ = _product_buy_emoji(int(pid))
+        if _eid:
+            product_emoji_id = str(_eid)
+            # Also strip the leading fallback char from the label if we
+            # already put one there — otherwise emoji appears twice.
+            # _buy_now_label(v96) returns "[emoji] first_2_words Buy Now"
+            # so drop the leading emoji token when we're going to render
+            # a proper premium icon.
+            import re as _re
+            # Match the first "word" (emoji cluster) and strip it if it's
+            # a lone emoji-like character followed by space
+            _stripped = _re.sub(
+                r"^\s*[\U0001F000-\U0001FFFF\u2600-\u27BF"
+                r"\U00002B00-\U00002BFF\U0001F300-\U0001F9FF"
+                r"\u2700-\u27BF\u203C-\u2049\ufe0f]+\s+", "", prefixed
+            )
+            if _stripped and _stripped != prefixed:
+                prefixed = _stripped
+    except Exception:
+        pass
+
+    def _apply_color_and_icon(btn):
+        """Attach both color and premium emoji icon via api_kwargs."""
+        extras = {}
+        if color:
+            extras["style"] = color
+        if product_emoji_id:
+            extras["icon_custom_emoji_id"] = product_emoji_id
+        if not extras:
+            return btn
+        try:
+            return InlineKeyboardButton(
+                btn.text,
+                callback_data=getattr(btn, "callback_data", None),
+                url=getattr(btn, "url", None),
+                api_kwargs=extras,
+            )
+        except Exception:
+            return btn
+
+    try:
+        from button_system import build_button as _bb
+        private_btn = _apply_color_and_icon(_bb(tpl_id, prefixed, callback_data=f"buy_{pid}", force_default=True))
+    except Exception:
+        private_btn = _apply_color_and_icon(InlineKeyboardButton(prefixed, callback_data=f"buy_{pid}"))
+    private_kb = InlineKeyboardMarkup([[private_btn]])
+
+    try:
+        me = await bot.get_me()
+        username = me.username
+    except Exception:
+        username = None
+    if username:
+        deep = f"https://t.me/{username}?start=buy_{pid}"
+        try:
+            from button_system import build_button as _bb2
+            group_btn = _apply_color_and_icon(_bb2(tpl_id, prefixed, url=deep, force_default=True))
+        except Exception:
+            group_btn = _apply_color_and_icon(InlineKeyboardButton(prefixed, url=deep))
+        group_kb = InlineKeyboardMarkup([[group_btn]])
+    else:
+        group_kb = private_kb
+    return private_kb, group_kb
+
+
+# ════════════════════════════════════════════════════════════════
+# 📤 DESTINATION-AWARE BROADCAST
+# ════════════════════════════════════════════════════════════════
+
+async def _alert_broadcast_dest_failure(bot, dest_ref, chat_id, err, cooldown_min=20):
+    """🔧 v132: throttled admin alert when a broadcast cannot reach the
+    destination group/channel — so dead destinations are VISIBLE."""
+    import time as _t
+    try:
+        from database import get_setting, set_setting
+        key = f"bcast_dest_alerted_{chat_id}"
+        last = 0.0
+        try:
+            last = float(get_setting(key, "0") or 0)
+        except Exception:
+            last = 0.0
+        now = _t.time()
+        if now - last < cooldown_min * 60:
+            return
+        set_setting(key, f"{now}")
+        from config import ADMIN_ID
+        if not ADMIN_ID:
+            return
+        msg = (
+            "🚨 *Broadcast destination FAILED*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"Dest: `{dest_ref}` (chat `{chat_id}`)\n"
+            f"Error: `{type(err).__name__}: {str(err)[:160]}`\n\n"
+            f"_Fix: make sure the bot is an ADMIN in the group/channel, and "
+            f"that dest_chat_id is correct (Settings → Fake Activity)._\n\n"
+            f"_Real + fake broadcasts to this destination are being skipped._"
+        )
+        await bot.send_message(ADMIN_ID, msg, parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None, bypass_maintenance=False, reply_markup=None):
+    """Send `text` to the destination configured for fake activity:
+       bot_only  → all bot users (DM)
+       group_only→ the configured group/channel
+       both      → users + group
+    A 🛒 Buy Now button is attached when `pid` is given.
+
+    🆕 v44: Pass `tpl_id` (e.g. "bc_purchase", "bc_discount", "sb_flash")
+    to attach the EXACT per-template button (with admin-customized text
+    and premium-emoji icon, if any). When tpl_id is None we fall back to
+    auto-detecting btn_key from text content (legacy behaviour).
+
+    🆕 v60: SKIP broadcast entirely if the referenced product is hidden,
+    deleted, or out-of-stock — this prevents users from tapping a broadcast
+    button and finding the product missing/unavailable (which would expose
+    the bot's fake-activity system as obviously fake).
+
+    Returns number of successful sends (0 if broadcast was skipped).
+    """
+    # 🆕 v96: maintenance mode gate — nothing goes out during maintenance
+    try:
+        from maintenance_mode import is_maintenance_on
+        if is_maintenance_on() and not bypass_maintenance:
+            logger.info(f"[broadcast_store_message] SKIPPED — maintenance ON")
+            return 0
+    except Exception:
+        pass
+
+    # 🆕 v60: Pre-flight check — abort broadcast if product is not buyable
+    if pid is not None:
+        if not _is_product_broadcastable(pid):
+            logger.info(f"[broadcast_store_message] SKIPPED pid={pid} — product hidden/deleted/out-of-stock")
+            return 0
+
+    mode = _g("dest_mode", "bot_only")
+
+    # 🆕 v96: bot-self self-protection for dest_chat (extra safety on top of
+    # the save-time validation added in v95)
+    try:
+        _dest_chat = _g("dest_chat_id", "").strip()
+        if _dest_chat and mode in ("group_only", "both"):
+            me = await bot.get_me()
+            own = f"@{(me.username or '').lower()}"
+            if _dest_chat.lower() in (own, own.lstrip("@")):
+                logger.warning(f"[broadcast_store_message] dest_chat is bot's own username — group send disabled")
+                mode = "bot_only" if mode == "both" else "bot_only"
+    except Exception:
+        pass
+
+    sent = 0
+
+    private_kb = group_kb = reply_markup
+    if pid is not None:
+        # Priority 1: explicit tpl_id (NEW v44 — used by Edit Templates → Test)
+        if tpl_id:
+            try:
+                from button_system import build_button as _bb
+                # 🆕 v49: also apply size/align/pad styler + background color
+                # so per-product fc_btn_<pid> customizations render fully.
+                try:
+                    from button_system import wrap_button as _wrap_style
+                except Exception:
+                    _wrap_style = lambda k, b: b  # noqa: E731
+                # 🆕 v94: color resolution now respects global broadcast color
+                # as a fallback (was per-template-only). Priority: per-template
+                # > global broadcast > none.
+                _color = _get_broadcast_global_color(tpl_id)
+
+                # 🆕 v94: label now has product name prefix — "{product} - Buy Now"
+                _btn_label = _buy_now_label(pid, "🛒 Buy Now")
+
+                # 🆕 v102 / 🐛 v147 FIX (Bug6): pull the product's premium
+                # emoji_id (supplier → fixed ext emoji; own → name emoji) and
+                # strip the leading emoji fallback from the label so the
+                # premium icon renders correctly.
+                _product_emoji_id = ""
+                try:
+                    _eid, _ = _product_buy_emoji(int(pid))
+                    if _eid:
+                        _product_emoji_id = str(_eid)
+                        import re as _re_local
+                        _stripped = _re_local.sub(
+                            r"^\s*[\U0001F000-\U0001FFFF\u2600-\u27BF"
+                            r"\U00002B00-\U00002BFF\U0001F300-\U0001F9FF"
+                            r"\u2700-\u27BF\u203C-\u2049\ufe0f]+\s+", "",
+                            _btn_label
+                        )
+                        if _stripped and _stripped != _btn_label:
+                            _btn_label = _stripped
+                except Exception:
+                    pass
+
+                def _decorate(btn, key):
+                    # Apply visual width/align/pad
+                    try:
+                        btn = _wrap_style(key, btn)
+                    except Exception:
+                        pass
+                    # Combine color + premium emoji icon into a single api_kwargs
+                    _extras = {}
+                    if _color:
+                        _extras["style"] = _color
+                    if _product_emoji_id:
+                        _extras["icon_custom_emoji_id"] = _product_emoji_id
+                    if _extras:
+                        try:
+                            btn = InlineKeyboardButton(
+                                btn.text,
+                                callback_data=getattr(btn, "callback_data", None),
+                                url=getattr(btn, "url", None),
+                                api_kwargs=_extras,
+                            )
+                        except Exception:
+                            pass
+                    return btn
+
+                private_btn = _decorate(
+                    _bb(tpl_id, _btn_label, callback_data=f"buy_{pid}", force_default=True),
+                    tpl_id)
+                try:
+                    me = await bot.get_me(); _u = me.username
+                except Exception:
+                    _u = None
+                if _u:
+                    deep = f"https://t.me/{_u}?start=buy_{pid}"
+                    group_btn = _decorate(
+                        _bb(tpl_id, _btn_label, url=deep, force_default=True),
+                        tpl_id)
+                    private_kb = InlineKeyboardMarkup([[private_btn]])
+                    group_kb   = InlineKeyboardMarkup([[group_btn]])
+                else:
+                    private_kb = InlineKeyboardMarkup([[private_btn]])
+                    group_kb   = private_kb
+            except Exception as _e:
+                # Fallback to legacy path below
+                tpl_id = None
+
+        if not tpl_id:
+            # Priority 2: explicit btn_key (legacy)
+            _bk = btn_key
+            if not _bk:
+                # Priority 3: auto-detect from text content
+                tl = (text or "").lower()
+                if "flash" in tl or "⚡" in (text or ""):
+                    _bk = "sb_buy_flash"
+                elif "new product" in tl or "🆕" in (text or ""):
+                    _bk = "sb_buy_newprod"
+                else:
+                    _bk = "sb_buy_generic"
+            private_kb, group_kb = await _buy_now_keyboard(bot, pid, btn_key=_bk)
+
+    # 🆕 Premium/custom emoji aware everywhere (even if [[HTML]] appears in the middle)
+    _text, _pm = smart_text_and_mode(text, "Markdown")
+
+    async def _send(chat_id, kb, is_group=False):
+        try:
+            await bot.send_message(chat_id=chat_id, text=_text, parse_mode=_pm, reply_markup=kb)
+            return True
+        except Exception:
+            # Parse-mode fallback → plain text
+            try:
+                await bot.send_message(chat_id=chat_id, text=_text, reply_markup=kb)
+                return True
+            except Exception as _e:
+                # 🔧 v132: NEVER silent — log + alert the admin (throttled) so a
+                # dead destination is visible, not invisible. This was why real
+                # purchase/join/stock broadcasts silently stopped reaching the group.
+                logger.warning(f"[StoreBroadcast] send failed chat={chat_id}: {type(_e).__name__}: {str(_e)[:150]}")
+                try:
+                    if is_group:
+                        await _alert_broadcast_dest_failure(bot, dest_chat_ref, chat_id, _e)
+                except Exception:
+                    pass
+                return False
+
+    # ── Bot users ──
+    if mode in ("bot_only", "both"):
+        try:
+            from database import get_all_users_for_broadcast
+            users = get_all_users_for_broadcast()
+            user_ids = [u["user_id"] for u in users]
+        except Exception:
+            user_ids = []
+        for uid in user_ids:
+            if await _send(uid, private_kb):
+                sent += 1
+
+    # ── Group / channel ──
+    if mode in ("group_only", "both"):
+        dest_chat = _g("dest_chat_id", "").strip()
+        dest_chat_ref = dest_chat
+        if dest_chat:
+            try:
+                from ui_extras import _resolve_chat_id
+                resolved = await _resolve_chat_id(bot, dest_chat)
+            except Exception:
+                resolved = dest_chat
+            if await _send(resolved, group_kb, is_group=True):
+                sent += 1
+
+    logger.info(f"[StoreBroadcast] Sent to {sent} destinations (mode={mode}, pid={pid})")
+    return sent
+
+
+
+# ════════════════════════════════════════════════════════════
+# 🔧 v132 — BROADCAST DESTINATION SELF-TEST (admin panel)
+# ════════════════════════════════════════════════════════════
+
+async def admin_bcast_test_callback(u, c):
+    """Test: can the bot post to the fake-activity destination group/channel?
+    Checks bot's member status, resolves dest, sends a test message, and
+    reports the exact result to the admin.
+    🐛 v139 FIX: ADMIN_ID was used without import → NameError on tap."""
+    from config import ADMIN_ID
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer("Testing destination…")
+    from database import get_setting
+    dest = get_setting("dest_chat_id", "").strip()
+    mode = get_setting("dest_mode", "bot_only")
+    lines = ["🛰️ *Broadcast Destination Test*\n━━━━━━━━━━━━━━━━━━━━",
+             f"Dest: `{dest or '—'}`", f"Mode: `{mode}`", ""]
+    if not dest:
+        lines.append("❌ No destination set. Set dest_chat_id in Fake Activity settings.")
+        await q.edit_message_text("\n".join(lines), parse_mode="Markdown",
+                                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="admin_fake_activity")]]))
+        return
+    try:
+        from ui_extras import _resolve_chat_id
+        resolved = await _resolve_chat_id(c.bot, dest)
+        lines.append(f"✅ Resolved → `{resolved}`")
+    except Exception as e:
+        lines.append(f"❌ Resolve failed: `{str(e)[:120]}`")
+        lines.append("_Check dest_chat_id — the bot must be a member._")
+        await q.edit_message_text("\n".join(lines), parse_mode="Markdown",
+                                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="admin_fake_activity")]]))
+        return
+    # Check bot's member status in the group
+    try:
+        me = await c.bot.get_me()
+        mem = await c.bot.get_chat_member(chat_id=resolved, user_id=me.id)
+        status = getattr(mem, "status", "?")
+        lines.append(f"🤖 Bot status in chat: `{status}`")
+        if status in ("administrator", "creator", "member"):
+            lines.append("✅ Bot can post (member/admin)")
+        else:
+            lines.append(f"⚠️ Bot status `{status}` — may NOT be able to post. Make the bot an ADMIN.")
+    except Exception as e:
+        lines.append(f"⚠️ Could not check membership: `{str(e)[:100]}`")
+    # Send a test message
+    try:
+        await c.bot.send_message(chat_id=resolved,
+                                 text="✅ *Broadcast test OK*\nThe bot can post to this destination.",
+                                 parse_mode="Markdown")
+        lines.append("\n✅ *Test message sent successfully!*")
+    except Exception as e:
+        lines.append(f"\n❌ *Test send FAILED:* `{str(e)[:160]}`")
+        lines.append("_Fix: add the bot as ADMIN in the group/channel._")
+    await q.edit_message_text("\n".join(lines), parse_mode="Markdown",
+                              reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="admin_fake_activity")]]))
+
+# 🆕 v94: Buy Now button — product-name prefix + global color
+# ─────────────────────────────────────────────────────────────
+def _product_buy_emoji(pid):
+    """🐛 v147 FIX (Bug6): return (emoji_id, emoji_char) for a product's
+    Buy-Now button.
+
+    Priority:
+      1. SUPPLIER-LINKED products → the FIXED premium emoji the admin set in
+         the supplier emoji library (`ext_products.emoji_id` / `emoji_char`).
+         Supplier raw names carry no emoji; this fixed emoji is the source of
+         truth the owner wants on the button.
+      2. OWN (manual) products → the premium emoji inside the product NAME
+         (the owner types it directly in the name, e.g.
+         `[[HTML]]<tg-emoji ...>🎨</tg-emoji>Canva 500 User Panel`).
+    Returns ("", "") when nothing is found.
+    """
+    try:
+        from database import get_connection
+        c = get_connection().cursor()
+        # 1) supplier-linked → fixed emoji from ext_products
+        c.execute(
+            "SELECT e.emoji_id, e.emoji_char FROM ext_products e "
+            "WHERE e.shop_product_id=? AND e.emoji_id IS NOT NULL AND e.emoji_id!='' "
+            "LIMIT 1", (int(pid),))
+        row = c.fetchone()
+        if row:
+            eid = str(row[0] or "").strip()
+            ech = str(row[1] or "").strip()
+            if eid or ech:
+                return eid, ech
+        # 2) own product → premium emoji from the NAME
+        c.execute("SELECT name FROM products WHERE id=?", (int(pid),))
+        row = c.fetchone()
+        if row:
+            try:
+                import re as _re
+                raw = str(row["name"] or "")
+                # 🐛 v161.20 FIX: extract_emoji_from_html() returns (eid,
+                # REST_TEXT_WITHOUT_EMOJI) — the old code used that rest text as
+                # the emoji char → button labels like "Canva 500 User Panel Buy
+                # Now" instead of "🎨 Canva 500 Buy Now". Grab the FALLBACK char
+                # that lives INSIDE the <tg-emoji> tag instead.
+                m = _re.search(
+                    r'<tg-emoji\s+emoji-id=["\'](\d+)["\']\s*>\s*([^<]{1,8})\s*</tg-emoji>',
+                    raw, flags=_re.I)
+                if m:
+                    return str(m.group(1)), str(m.group(2)).strip()
+                # legacy: no <tg-emoji> tag → leading regular emoji chars
+                em = _re.match(
+                    r"^\s*([\U0001F000-\U0001FFFF\u2600-\u27BF"
+                    r"\U00002B00-\U00002BFF\u203C-\u2049\ufe0f]+)\s*",
+                    raw)
+                if em:
+                    return "", str(em.group(1)).strip()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    # 🆕 v161.20: products with NO emoji anywhere (name or supplier) still get a
+    # sensible auto-emoji on their Buy-Now button so EVERY product shows
+    # "{emoji} First Two Words Buy Now" consistently (user requirement).
+    try:
+        from database import get_connection as _gc2
+        _c2 = _gc2().cursor()
+        _c2.execute("SELECT name FROM products WHERE id=?", (int(pid),))
+        _row2 = _c2.fetchone()
+        if _row2:
+            _nm = str(_row2["name"] or "").lower()
+            for _kw, _em in _AUTO_PRODUCT_EMOJI:
+                if _kw in _nm:
+                    return "", _em
+        return "", _AUTO_FALLBACK_EMOJI
+    except Exception:
+        return "", _AUTO_FALLBACK_EMOJI
 
 
 def _buy_now_label(pid, default_suffix="🛒 Buy Now") -> str:

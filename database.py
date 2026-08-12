@@ -2024,6 +2024,98 @@ def save_order_delivery_content(oid, content):
     c.execute("UPDATE orders SET delivery_content=? WHERE id=?", (content or '', oid))
     conn.commit(); conn.close()
 
+
+# ─────────────────────────────────────────────────────────────
+# 🆕 v161.20: ORDER DELIVERY AUDIT — logs EVERYTHING delivered to a customer
+# (text / .txt document / photo / video / voice / audio) so the admin can
+# re-open ANY delivered item from Completed Orders — no matter how it was
+# sent (supplier auto-delivery, account pool, static media file, manual).
+# ─────────────────────────────────────────────────────────────
+
+_ORDER_DELIVERIES_DDL = """
+CREATE TABLE IF NOT EXISTS order_deliveries (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id   INTEGER NOT NULL,
+    seq        INTEGER DEFAULT 1,
+    kind       TEXT DEFAULT 'text',          -- text|document|photo|video|voice|audio
+    content    TEXT DEFAULT '',              -- delivered text / caption
+    file_id    TEXT DEFAULT '',              -- telegram file_id (media/document)
+    file_name  TEXT DEFAULT '',              -- original filename
+    created_at TEXT DEFAULT (datetime('now'))
+)
+"""
+_ORDER_DELIVERIES_IDX = (
+    "CREATE INDEX IF NOT EXISTS idx_order_deliveries_order ON order_deliveries(order_id)"
+)
+
+
+def ensure_order_deliveries_table():
+    """Create the order_deliveries audit table + index if missing (idempotent)."""
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute(_ORDER_DELIVERIES_DDL)
+        c.execute(_ORDER_DELIVERIES_IDX)
+        conn.commit()
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+
+def add_order_delivery(order_id, kind="text", content="", file_id="", file_name=""):
+    """Log one delivered item for an order. Returns the new row id (or 0)."""
+    try:
+        ensure_order_deliveries_table()
+        conn = get_connection(); c = conn.cursor()
+        c.execute("SELECT COALESCE(MAX(seq),0)+1 FROM order_deliveries WHERE order_id=?", (int(order_id),))
+        seq = int(c.fetchone()[0] or 1)
+        c.execute(
+            "INSERT INTO order_deliveries (order_id, seq, kind, content, file_id, file_name) "
+            "VALUES (?,?,?,?,?,?)",
+            (int(order_id), seq, str(kind or 'text'), str(content or ''),
+             str(file_id or ''), str(file_name or '')))
+        row_id = c.lastrowid
+        # keep orders.delivery_file_id in sync (first media item wins)
+        if file_id:
+            ensure_column(c, "orders", "delivery_file_id", "TEXT DEFAULT ''")
+            c.execute("UPDATE orders SET delivery_file_id=? WHERE id=? AND (delivery_file_id IS NULL OR delivery_file_id='')",
+                      (str(file_id), int(order_id)))
+        conn.commit(); conn.close()
+        return row_id
+    except Exception:
+        try:
+            conn.rollback(); conn.close()
+        except Exception:
+            pass
+        return 0
+
+
+def get_order_deliveries(order_id):
+    """All logged delivery items for an order, oldest first."""
+    try:
+        ensure_order_deliveries_table()
+        conn = get_connection(); c = conn.cursor()
+        c.execute("SELECT * FROM order_deliveries WHERE order_id=? ORDER BY seq ASC", (int(order_id),))
+        rows = [dict(r) for r in c.fetchall()]
+        conn.close()
+        return rows
+    except Exception:
+        return []
+
+
+def set_order_delivery_file(order_id, file_id):
+    """Set the primary delivery file_id on the order (for the Download button)."""
+    try:
+        conn = get_connection(); c = conn.cursor()
+        ensure_column(c, "orders", "delivery_file_id", "TEXT DEFAULT ''")
+        c.execute("UPDATE orders SET delivery_file_id=? WHERE id=?", (str(file_id or ''), int(order_id)))
+        conn.commit(); conn.close()
+    except Exception:
+        try: conn.close()
+        except Exception: pass
+
 def get_user_orders(uid):
     conn = get_connection(); c = conn.cursor()
     c.execute("SELECT * FROM orders WHERE user_id=? ORDER BY created_at DESC", (uid,)); r = c.fetchall(); conn.close(); return r

@@ -172,12 +172,20 @@ def _panel_kb():
         _math_on = bool(_gme())
     except Exception:
         _math_on = True
+    # 🆕 v161.20: milestone bonus tiers summary on the panel button.
+    try:
+        from handlers_start import _ref_bonus_tiers_text as _rbtt
+        _bonus_txt = _rbtt()
+    except Exception:
+        _bonus_txt = "20 refs → +10 pts"
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📜 Recent Referral Log", callback_data="refadm_log_all")],
         [InlineKeyboardButton("✅ Counted Only", callback_data="refadm_log_counted"),
          InlineKeyboardButton("🚫 Blocked Only", callback_data="refadm_log_blocked")],
         # 🆕 v133: per-ref reward setter (shows current value)
         [InlineKeyboardButton(f"🎁 Points per Ref: {pp:g}", callback_data="refadm_set_points_start")],
+        # 🆕 v161.20: milestone bonus config (how many refs → how many bonus points)
+        [InlineKeyboardButton(f"🎯 Milestone Bonus ({_bonus_txt})", callback_data="refadm_bonus_start")],
         # 🆕 v134: math verification toggle for referral-origin users
         [InlineKeyboardButton(f"🧮 Math Verify for Refs: {'ON' if _math_on else 'OFF'}",
                               callback_data="refadm_math_toggle")],
@@ -628,6 +636,10 @@ async def refadm_text_received(update: Update, context: ContextTypes.DEFAULT_TYP
             await update.message.reply_text(f"❌ Could not save button: {e}", reply_markup=kb_back)
         return True
 
+    if step == "set_bonus":
+        # 🆕 v161.20: milestone bonus tiers input ("20:10, 50:30")
+        return await refadm_bonus_received(update, context)
+
     if step.startswith("tpl_"):
         kind = step.replace("tpl_", "", 1)
         if kind not in REF_TPL_DEFAULTS:
@@ -870,6 +882,94 @@ async def refadm_prod_detail_callback(update: Update, context: ContextTypes.DEFA
 # ════════════════════════════════════════════════════════════════
 # 🆕 v134 — REFERRAL MATH VERIFICATION TOGGLE
 # ════════════════════════════════════════════════════════════════
+
+# ════════════════════════════════════════════════════════════
+# 🆕 v161.20 — MILESTONE BONUS SETTER ("kitny reffreals py kitna bonus")
+# ════════════════════════════════════════════════════════════
+
+async def refadm_bonus_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ask admin to type the bonus tiers as 'refs:bonus' pairs."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        from handlers_start import _ref_bonus_tiers, _ref_bonus_tiers_text
+        cur = _ref_bonus_tiers_text()
+    except Exception:
+        cur = "20 refs → +10 pts"
+    context.user_data["refadm_step"] = "set_bonus"
+    await _safe_edit(q,
+        f"🎯 *Referral Milestone Bonus*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Current: *{cur}*\n\n"
+        f"Type your bonus tiers as:\n`refs:bonus, refs:bonus, ...`\n\n"
+        f"_Examples:_\n"
+        f"  `20:10`            → every 20 refs = +10 points\n"
+        f"  `20:10, 50:30`     → 20 refs = +10, 50 refs = +30 points\n"
+        f"  `10:5, 25:15, 100:80`\n\n"
+        f"Each milestone pays ONCE per user (no repeat abuse). "
+        f"Type `0` to disable the bonus.\n\n"
+        f"_Bonus points are added to the user's wallet automatically._",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="refadm_panel")]]))
+
+
+async def refadm_bonus_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Parse & save the bonus tiers string. Called from refadm_text_received."""
+    raw = (update.message.text or "").strip()
+    kb_back = InlineKeyboardMarkup([[InlineKeyboardButton(
+        "🔙 Referral Panel", callback_data="refadm_panel")]])
+    if raw == "0":
+        set_setting("ref_bonus_tiers", "")
+        set_setting("ref_milestone_every", "0")
+        set_setting("ref_milestone_bonus", "0")
+        await update.message.reply_text(
+            "✅ *Milestone bonus DISABLED.* No bonus points will be paid.\n\n"
+            "_Referral reward (+points per referral) still works._",
+            parse_mode="Markdown", reply_markup=kb_back)
+        return True
+    tiers = []
+    try:
+        for part in raw.split(","):
+            part = part.strip()
+            if ":" not in part:
+                raise ValueError(f"bad segment: {part!r}")
+            r_s, b_s = part.split(":", 1)
+            r = int(float(r_s.strip()))
+            b = float(b_s.strip())
+            if r <= 0 or b <= 0:
+                raise ValueError("refs and bonus must be > 0")
+            tiers.append((r, b))
+        if not tiers:
+            raise ValueError("no tiers")
+        tiers.sort(key=lambda t: t[0])
+        # dedupe
+        uniq = []
+        for t in tiers:
+            if not uniq or uniq[-1][0] != t[0]:
+                uniq.append(t)
+            else:
+                uniq[-1] = t
+        tiers = uniq
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ Invalid format: {e}\n\n"
+            "Use `refs:bonus, refs:bonus` — e.g. `20:10, 50:30`",
+            parse_mode="Markdown", reply_markup=kb_back)
+        return True
+    enc = ", ".join(f"{r}:{b:g}" for r, b in tiers)
+    set_setting("ref_bonus_tiers", enc)
+    set_setting("ref_milestone_every", str(tiers[0][0]))
+    set_setting("ref_milestone_bonus", str(tiers[0][1]))
+    lines = ["✅ *Milestone Bonus Updated!*\n━━━━━━━━━━━━━━━━━━━━", ""]
+    for r, b in tiers:
+        b_txt = str(int(b)) if float(b).is_integer() else f"{b:g}"
+        lines.append(f"🎯 {r} direct referrals → *+{b_txt} wallet points*")
+    lines.append("\n_Paid once per tier per user — no repeat abuse._")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown",
+                                    reply_markup=kb_back)
+    return True
+
 
 async def refadm_math_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle math verification for referral-origin users."""

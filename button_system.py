@@ -265,6 +265,13 @@ BUTTONS = {
         "large": "📊 Polls (Demand/Vote)", "xl": "📊 Polls — create poll & get users' votes",
         "callback": "admin_polls",
     },
+    # 🆕 v161.20: Language System — view all languages + live translation preview
+    "admin_lang_system": {
+        "group": "admin", "essential": False,
+        "short": "🌐", "medium": "🌐 Language System",
+        "large": "🌐 Language System", "xl": "🌐 Language System — all languages + translation preview",
+        "callback": "admin_lang_system",
+    },
     # 🆕 v73: "admin_orders" (Pending Orders button) REMOVED permanently per user request.
     # Replaced by "admin_completed" (Completed Orders with Delivered/Refunded/Cancelled tabs)
     # plus "admin_pending_delivery" which already covers manual delivery queue.

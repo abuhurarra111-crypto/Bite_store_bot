@@ -902,13 +902,37 @@ async def view_order_callback(u,c):
     if not o: await _safe_edit(q, "❌ Order not found!"); return
     text=f"🛒 *#{o['id']}*\n👤 {escape_md(o['user_name'])} `{o['user_id']}`\n📦 {escape_md(o['product_name'])}\n💰 {fmt_price(o['price'])}\n💳 {o['payment_method']}\n📊 {o['status']}"
     if o['payment_method']=='binance': text+=f"\n🔶 {escape_md(o['binance_sender_name'])} — {o['binance_amount']}"
+    # 🆕 v161.20 FIX (user demand): delivered content + file visible here too.
+    try:
+        _dc = str(o.get('delivery_content') or '').strip()
+        _fid = str(o.get('delivery_file_id') or '').strip()
+        if _dc or _fid:
+            text += "\n━━━━━━━━━━━━━━━━━━━━\n📤 *Delivered:* "
+            if _fid:
+                text += f"\n📎 File attached ✅ `{escape_md(_fid[:18])}...`"
+            if _dc:
+                _preview = escape_md(_dc[:400].replace("\n", " "))
+                text += f"\n📝 {_preview}" + ("…" if len(_dc) > 400 else "")
+    except Exception:
+        pass
+    try:
+        from database import get_order_deliveries
+        _dlvs = get_order_deliveries(o['id'])
+    except Exception:
+        _dlvs = []
+    kb_rows = admin_order_keyboard(o['id']).inline_keyboard
+    if _dlvs:
+        kb_rows = kb_rows + [[InlineKeyboardButton(f"📦 Delivered Items ({len(_dlvs)})",
+                                                   callback_data=f"ac2_dlv_{o['id']}")]]
+    from telegram import InlineKeyboardMarkup as _IKM
+    _kb = _IKM(kb_rows)
     if o['payment_screenshot']:
         try:
             await q.delete_message()
-            await c.bot.send_photo(q.from_user.id,o['payment_screenshot'],caption=text,parse_mode="Markdown",reply_markup=admin_order_keyboard(o['id']))
+            await c.bot.send_photo(q.from_user.id,o['payment_screenshot'],caption=text,parse_mode="Markdown",reply_markup=_kb)
             return
         except: pass
-    await _safe_edit(q, text,parse_mode="Markdown",reply_markup=admin_order_keyboard(o['id']))
+    await _safe_edit(q, text,parse_mode="Markdown",reply_markup=_kb)
 
 async def approve_order_callback(u,c):
     q=u.callback_query
@@ -961,9 +985,13 @@ async def approve_order_callback(u,c):
         else:
             # 🔧 AUDIT-FIX C1/C2 (2026-07-31): structured result — never mark
             # 'delivered' when the stock pool couldn't cover the full qty.
-            from database import build_delivery_detailed
+            from database import build_delivery_detailed, save_order_delivery_content, add_order_delivery
             _dres = build_delivery_detailed(o['product_id'], o['id'], order_qty, o['user_id'])
             delivery = _dres['text']
+            # 🐛 v161.20 FIX: this approval path never saved the delivery content
+            # → Completed Orders showed "(nothing stored)". Now it's saved + logged.
+            save_order_delivery_content(o['id'], delivery)
+            add_order_delivery(o['id'], kind='text', content=delivery)
             if _dres['ok']:
                 # 🆕 v69: NO add_points here
                 update_order_status(o['id'], 'delivered')

@@ -109,8 +109,63 @@ async def _panic_reset_user_session(update: Update, context: ContextTypes.DEFAUL
 # 🆕 v48: Referral attribution with anti-fake checks (instant, no delay)
 # ════════════════════════════════════════════════════════════════
 
+# 🆕 v161.20: milestone bonus is now admin-configurable via the Referral Abuse
+# panel ("🎯 Milestone Bonus"). Stored as a compact string in bot_settings:
+#   ref_bonus_tiers = "20:10, 50:30, 100:80"   (refs:bonus pairs)
+# Legacy single-pair settings (ref_milestone_every / ref_milestone_bonus) are
+# used as the fallback so existing installs keep working.
 REFERRAL_MILESTONE_EVERY = 20
 REFERRAL_MILESTONE_BONUS_POINTS = 10
+
+
+def _ref_bonus_tiers():
+    """Return sorted list of (refs, bonus_points) milestone tiers.
+
+    e.g. [(20, 10), (50, 30)] means: 20 direct referrals → +10 wallet points,
+    50 direct referrals → +30 wallet points. Falls back to the legacy single
+    milestone (every 20 → +10) when nothing is configured.
+    """
+    tiers = []
+    try:
+        from database import get_setting as _gs
+        raw = str(_gs("ref_bonus_tiers", "") or "").strip()
+        if raw:
+            for part in raw.split(","):
+                part = part.strip()
+                if ":" not in part:
+                    continue
+                r_s, b_s = part.split(":", 1)
+                r = int(float(r_s.strip()))
+                b = float(b_s.strip())
+                if r > 0 and b > 0:
+                    tiers.append((r, b))
+            tiers.sort(key=lambda t: t[0])
+            # dedupe same refs
+            uniq = []
+            for t in tiers:
+                if not uniq or uniq[-1][0] != t[0]:
+                    uniq.append(t)
+                else:
+                    uniq[-1] = t
+            if uniq:
+                return uniq
+        # legacy fallback
+        every = int(float(_gs("ref_milestone_every", "20") or 20))
+        bonus = float(_gs("ref_milestone_bonus", "10") or 10)
+        if every > 0 and bonus > 0:
+            return [(every, bonus)]
+    except Exception:
+        pass
+    return [(REFERRAL_MILESTONE_EVERY, REFERRAL_MILESTONE_BONUS_POINTS)]
+
+
+def _ref_bonus_tiers_text():
+    """Human-readable summary like '20 refs → +10 pts, 50 refs → +30 pts'."""
+    parts = []
+    for r, b in _ref_bonus_tiers():
+        b_txt = str(int(b)) if float(b).is_integer() else f"{b:g}"
+        parts.append(f"{r} refs → +{b_txt} pts")
+    return ", ".join(parts) if parts else "—"
 
 _DEFAULT_REFERRER_REFERRAL_TEMPLATE = """🎉 *New Referral Joined!*\n━━━━━━━━━━━━━━━━━━━━\n\n👤 Referred user: *{referred_name}*\n🆔 Referred ID: `{referred_id}`\n\n✅ Reward: *+{reward_points} referral point*\n📊 Your direct referrals: *{total_referrals}*\n🎯 Next bonus: *{remaining_to_bonus}* more referrals → *+{milestone_bonus} wallet points* ($1)\n\nKeep sharing your link and earning rewards! 🚀"""
 
@@ -199,18 +254,26 @@ async def _send_direct_referral_notifications(context, referrer_id, new_user, re
         ref_row = None
     ref = _ref_display_user(ref_row, referrer_id)
     new = _ref_display_user(new_user, getattr(new_user, 'id', 0))
-    remaining = REFERRAL_MILESTONE_EVERY - (int(direct_count) % REFERRAL_MILESTONE_EVERY)
-    if remaining == REFERRAL_MILESTONE_EVERY:
+    # 🆕 v161.20: milestone targets come from admin-configurable tiers.
+    tiers = _ref_bonus_tiers()
+    direct_count_i = int(direct_count)
+    next_tier = next((t for t in tiers if t[0] > direct_count_i), None)
+    if next_tier:
+        remaining = next_tier[0] - direct_count_i
+        next_milestone = int(next_tier[0])
+        next_bonus = next_tier[1]
+    else:
         remaining = 0
-    next_milestone = ((int(direct_count) // REFERRAL_MILESTONE_EVERY) + 1) * REFERRAL_MILESTONE_EVERY
+        next_milestone = int(tiers[-1][0])
+        next_bonus = tiers[-1][1]
     values = {
         'referrer_id': ref['id'], 'referrer_name': ref['name'], 'referrer_username': ref['username'],
         'referred_id': new['id'], 'referred_name': new['name'], 'referred_username': new['username'],
         'reward_points': fmt_points(reward_points),
-        'total_referrals': int(direct_count),
+        'total_referrals': direct_count_i,
         'remaining_to_bonus': int(remaining),
-        'milestone_bonus': fmt_points(REFERRAL_MILESTONE_BONUS_POINTS),
-        'milestone_number': int(direct_count),
+        'milestone_bonus': fmt_points(next_bonus),
+        'milestone_number': direct_count_i,
         'next_milestone': int(next_milestone),
     }
     # Referrer notification
@@ -234,15 +297,27 @@ async def _send_direct_referral_notifications(context, referrer_id, new_user, re
             _render_referral_template('ref_tpl_admin', _DEFAULT_ADMIN_REFERRAL_TEMPLATE, values))
     except Exception:
         pass
-    # Every 20 direct referrals: +10 wallet points bonus, paid once per milestone.
+    # 🆕 v161.20: milestone bonus — pay EVERY admin-configured tier the user has
+    # crossed since the last payment (e.g. tiers 20→10, 50→30: reaching 50 pays
+    # the 20-tier bonus if never paid, plus the 50-tier bonus). Paid once per
+    # tier via the ref_milestone_paid_<uid> watermark.
     try:
-        if int(direct_count) > 0 and int(direct_count) % REFERRAL_MILESTONE_EVERY == 0:
+        if direct_count_i > 0:
             key = f"ref_milestone_paid_{int(referrer_id)}"
             last_paid = int(get_setting(key, '0') or 0)
-            if last_paid < int(direct_count):
-                add_points(referrer_id, REFERRAL_MILESTONE_BONUS_POINTS, tx_type='referral_milestone', description='20 referral milestone', event_id=f"ref_milestone_{int(referrer_id)}_{int(direct_count)}")
-                set_setting(key, str(int(direct_count)))
-                values['next_milestone'] = int(direct_count) + REFERRAL_MILESTONE_EVERY
+            earned = [(r, b) for r, b in tiers if r <= direct_count_i and r > last_paid]
+            if earned:
+                highest = earned[-1]
+                total_bonus = float(sum(b for _, b in earned))
+                add_points(referrer_id, total_bonus, tx_type='referral_milestone',
+                           description=f'{highest[0]} referral milestone',
+                           event_id=f"ref_milestone_{int(referrer_id)}_{int(direct_count_i)}")
+                set_setting(key, str(highest[0]))
+                values['milestone_number'] = highest[0]
+                values['milestone_bonus'] = fmt_points(total_bonus)
+                # next milestone after this payment
+                nxt = next((t for t in tiers if t[0] > highest[0]), None)
+                values['next_milestone'] = int(nxt[0]) if nxt else int(highest[0])
                 await _send_referral_message(
                     context.bot, referrer_id,
                     _render_referral_template('ref_tpl_milestone', _DEFAULT_MILESTONE_TEMPLATE, values))
@@ -1081,7 +1156,7 @@ async def referral_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "4️⃣ The bot *observes activity for ~30 seconds* — the reward unlocks only for a real human.\n"
         "5️⃣ Self-referrals, duplicate users, or suspicious activity are blocked.\n\n"
         f"🎁 *Rewards:* +{pp_ref:g} point(s) per approved direct referral to **BOTH you and your friend**. "
-        f"Every 20 direct referrals = +10 wallet points bonus."
+        f"🏆 *Milestone bonus:* {_ref_bonus_tiers_text()}"
     )
     text += rules
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=back_btn(location="referral"))

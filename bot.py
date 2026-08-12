@@ -192,7 +192,7 @@ from maintenance_mode import (
 from completed_orders_v2 import (
     admin_completed_v2_callback, ac2_page_callback,
     ac2_user_callback, ac2_order_callback, ac2_userview_callback, ac2_noop_callback,
-    ac2_dlfile_callback,
+    ac2_dlfile_callback, ac2_dlv_callback, ac2_dlvopen_callback,  # v161.20
     ac2_clear_search_callback,
     ac2_search_entry, ac2_search_received, ac2_search_cancel,
     AC2_SEARCH_TEXT,
@@ -259,6 +259,7 @@ from ui_extras import (
     dest_panel_callback, dest_set_callback, dest_clear_chat_callback,
     dest_set_chat_callback, dest_chat_received,
     FJ_MSG, DEST_CHAT,
+    admin_lang_system_callback, langsys_preview_callback,  # 🆕 v161.20 Language System
 )
 # 🆕 Per-User Lifetime Fake Activity
 from per_user_activity import restore_all_jobs, setup_activity_table, activity_watchdog_job, fake_activity_status_message
@@ -331,7 +332,7 @@ from handlers_referral_admin import (
     refadm_text_received,
     refadm_set_points_start, refadm_set_points_received,
     refadm_prod_panel_callback, refadm_prod_detail_callback,
-    refadm_math_toggle_callback,
+    refadm_math_toggle_callback, refadm_bonus_start,  # 🆕 v161.20 milestone bonus
 )
 # 🆕 v50: Screen-by-Screen Editor (drill-down user-side editor)
 from customization import (
@@ -2364,6 +2365,9 @@ def main():
         # 🆕 v37: Language Selector
         ("^language_menu$", language_menu_callback),
         ("^setlang_", set_language_callback),
+        # 🆕 v161.20: Language System admin panel + previews
+        ("^admin_lang_system$", admin_lang_system_callback),
+        ("^langsys_",           langsys_preview_callback),
         # 🆕 v37: Reviews (user side)
         ("^reviews_menu$", reviews_menu_callback),
         ("^rev_pick_order$", rev_pick_order_callback),
@@ -2436,6 +2440,9 @@ def main():
         # 🆕 v101: user-side delivery preview (admin sees exactly what customer got)
         ("^ac2_userview_",               ac2_userview_callback),
         ("^ac2_dlfile_",                 ac2_dlfile_callback),
+        # 🆕 v161.20: delivered-items audit (voice/video/pic/file/text)
+        ("^ac2_dlv_",                    ac2_dlv_callback),
+        ("^ac2_dlvopen_",                ac2_dlvopen_callback),
         ("^ac2_clear_search$",           ac2_clear_search_callback),
         ("^ac2_noop$",                   ac2_noop_callback),
         # 🆕 v84: Maintenance Mode admin panel
@@ -2596,6 +2603,7 @@ def main():
         # 🆕 v48: Referral Abuse admin panel
         ("^refadm_panel$",      refadm_panel_callback),
         ("^refadm_set_points_start$", refadm_set_points_start),
+        ("^refadm_bonus_start$",      refadm_bonus_start),  # 🆕 v161.20 milestone bonus
         ("^refadm_prod_panel$",       refadm_prod_panel_callback),
         ("^refadm_prod_detail_",      refadm_prod_detail_callback),
         ("^refadm_math_toggle$",      refadm_math_toggle_callback),

@@ -314,6 +314,15 @@ def _build_order_detail_kb(order: dict) -> InlineKeyboardMarkup:
     if order.get("delivery_file_id"):
         kb.append([InlineKeyboardButton("📎 Download Delivery File (.txt)",
                                          callback_data=f"ac2_dlfile_{oid}")])
+    # 🆕 v161.20: delivered-items audit — voice/video/pic/file/text ALL listed
+    try:
+        from database import get_order_deliveries
+        _dlvs = get_order_deliveries(oid)
+        if _dlvs:
+            kb.append([InlineKeyboardButton(f"📦 Delivered Items ({len(_dlvs)})",
+                                             callback_data=f"ac2_dlv_{oid}")])
+    except Exception:
+        pass
     kb.append([InlineKeyboardButton("🔙 Back to User's Orders",
                                      callback_data=f"ac2_user_{uid}_0")])
     kb.append([InlineKeyboardButton("👥 All Users",
@@ -628,3 +637,133 @@ async def ac2_dlfile_callback(update, context):
             parse_mode="Markdown")
     except Exception as e:
         await q.answer(f"❌ {str(e)[:60]}", show_alert=True)
+
+
+# ─────────────────────────────────────────────────────────────
+# 🆕 v161.20 — DELIVERED ITEMS AUDIT VIEW
+# Shows EVERYTHING that was delivered for an order (text / document /
+# photo / video / voice / audio) — whatever the customer got, the admin
+# sees it here and can re-open any media file.
+# ─────────────────────────────────────────────────────────────
+_KIND_ICON = {
+    "text": "📝", "document": "📄", "photo": "🖼️", "video": "🎬",
+    "voice": "🎤", "audio": "🎵", "sticker": "🩹",
+}
+
+
+def _esc_html(s: str) -> str:
+    s = str(s or "")
+    return (s.replace("&", "&amp;").replace("<", "&lt;")
+             .replace(">", "&gt;").replace('"', "&quot;"))
+
+
+async def ac2_dlv_callback(update, context):
+    """List all delivered items for an order."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        oid = int(q.data.replace("ac2_dlv_", ""))
+    except Exception:
+        return
+    from database import get_order_deliveries, get_order
+    o = get_order(oid)
+    if not o:
+        await _safe_edit(q, "❌ Order not found.")
+        return
+    dlvs = get_order_deliveries(oid)
+    if not dlvs:
+        await _safe_edit(q, "ℹ️ <i>No delivered items logged for this order.</i>",
+                         parse_mode="HTML",
+                         reply_markup=InlineKeyboardMarkup([[
+                             InlineKeyboardButton("🔙 Back to Order",
+                                                  callback_data=f"ac2_order_{oid}")]]))
+        return
+    lines = [
+        f"📦 <b>Delivered Items — Order #{oid}</b>",
+        f"<i>Everything sent to the customer:</i>",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "",
+    ]
+    kb = []
+    for d in dlvs:
+        kind = d.get("kind") or "text"
+        icon = _KIND_ICON.get(kind, "📦")
+        fname = (d.get("file_name") or "")[:24]
+        if d.get("file_id"):
+            label = f"{icon} {kind.title()} · {fname or 'file'}"
+            kb.append([InlineKeyboardButton(f"📂 Open: {label}",
+                                            callback_data=f"ac2_dlvopen_{d['id']}")])
+        else:
+            preview = (d.get("content") or "").strip().replace("\n", " ")[:60]
+            label = f"{icon} {kind.title()}: {preview or '(empty)'}"
+        lines.append(f"{icon} <b>{kind.title()}</b>"
+                     + (f" · {_esc_html(fname)}" if fname else "")
+                     + f" · <code>#{d.get('seq')}</code>")
+        if not d.get("file_id"):
+            content = (d.get("content") or "").strip()
+            if content:
+                lines.append(f"    ↳ <i>{_esc_html(content[:120])}</i>"
+                             + ("…" if len(content) > 120 else ""))
+            else:
+                lines.append("    ↳ <i>(no text)</i>")
+    kb.append([InlineKeyboardButton("🔙 Back to Order",
+                                    callback_data=f"ac2_order_{oid}")])
+    await _safe_edit(q, "\n".join(lines), parse_mode="HTML",
+                     reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def ac2_dlvopen_callback(update, context):
+    """Re-open / re-download one specific delivered media item."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        did = int(q.data.replace("ac2_dlvopen_", ""))
+    except Exception:
+        return
+    from database import get_connection
+    conn = get_connection(); c = conn.cursor()
+    c.execute("SELECT * FROM order_deliveries WHERE id=?", (did,))
+    d = c.fetchone(); conn.close()
+    if not d:
+        await q.answer("Item not found", show_alert=True); return
+    d = dict(d)
+    oid = d.get("order_id")
+    kind = d.get("kind") or "document"
+    fid = d.get("file_id") or ""
+    content = (d.get("content") or "").strip()
+    caption = f"📦 <i>Delivered item #{d.get('seq')} — Order #{oid}</i>"
+    if content:
+        caption += f"\n<i>{content[:200]}</i>"
+    back_kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔙 Delivered Items",
+                             callback_data=f"ac2_dlv_{oid}"),
+        InlineKeyboardButton("🔙 Order", callback_data=f"ac2_order_{oid}"),
+    ]])
+    if not fid:
+        # text-only item → just re-send the content
+        await _safe_edit(q, f"<b>📝 Delivered text — Order #{oid}</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                            f"{content or '(empty)'}",
+                         parse_mode="HTML", reply_markup=back_kb)
+        return
+    try:
+        if kind == "photo":
+            await context.bot.send_photo(q.from_user.id, photo=fid, caption=caption,
+                                         parse_mode="HTML", reply_markup=back_kb)
+        elif kind == "video":
+            await context.bot.send_video(q.from_user.id, video=fid, caption=caption,
+                                         parse_mode="HTML", reply_markup=back_kb)
+        elif kind == "voice":
+            await context.bot.send_voice(q.from_user.id, voice=fid, caption=caption,
+                                         parse_mode="HTML", reply_markup=back_kb)
+        elif kind == "audio":
+            await context.bot.send_audio(q.from_user.id, audio=fid, caption=caption,
+                                         parse_mode="HTML", reply_markup=back_kb)
+        else:
+            await context.bot.send_document(q.from_user.id, document=fid, caption=caption,
+                                            parse_mode="HTML", reply_markup=back_kb)
+    except Exception as e:
+        await q.answer(f"❌ Could not re-open: {str(e)[:70]}", show_alert=True)
