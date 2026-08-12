@@ -8,6 +8,26 @@
 
 ---
 
+# 🚀 v165 (2026-08-12) — ⭐ TELEGRAM STARS PREMIUM EMOJI & HTML RENDERING FIX + READY DB (3)
+
+## ✨ FIX: Telegram Stars Invoice & Success HTML/Emoji Rendering (`handlers_stars.py`)
+- **Root Cause Found:** `_send_stars_invoice` in `handlers_stars.py` was calling `q.edit_message_text(..., parse_mode="Markdown")` directly instead of `_safe_send(...)` / `smart_text_and_mode(...)`. When an admin customized `payment_stars_checkout` with `[[HTML]]` or custom `<tg-emoji>` premium emojis, Telegram received raw HTML tags in Markdown mode and printed them as ugly text (`[[HTML]]<tg-emoji ...>⭐</tg-emoji>`).
+- **Fix:** Switched `_send_stars_invoice` to use `_safe_send(q, context, text, reply_markup=kb)`, which automatically calls `smart_text_and_mode(text, "Markdown")`, strips `[[HTML]]`, balances unclosed tags, and sends in `"HTML"` mode.
+- Switched `stars_successful_payment` to also run messages through `smart_text_and_mode(msg_text, "Markdown")`.
+- Verified in test suite that `<tg-emoji>` premium emojis now render cleanly in HTML mode.
+
+## 🗄️ READY DB (3): `bite_store_restore_ready.db` (v165 Migrated & Verified)
+- Downloaded user's latest MediaFire backup DB (`n03jz59nx0xfwhy` -> `bite_store_backup_20260812_161239.db`).
+- Performed zero-loss schema upgrade on workspace copy (`bite_store_restore_ready.db`).
+- **Zero-Loss Audit Results:**
+  - `users`: 1100 -> 1100 rows ✅
+  - `orders`: 516 -> 516 rows ✅
+  - `products`: 28 -> 28 rows ✅
+  - `bot_responses`: 72 -> 72 rows ✅
+- All 39 tables checked with 0 errors.
+
+---
+
 # 🚀 v164 (2026-08-12) — ⭐ TELEGRAM STARS CHECKOUT IN EDIT RESPONSES + CLEAN ADMIN REVIEWS SCREEN REDESIGN + NEW READY DB (2)
 
 ## 💬 NEW: Telegram Stars Checkout & Deposit Texts in "Edit Responses"

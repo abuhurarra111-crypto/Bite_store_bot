@@ -209,13 +209,8 @@ async def _send_stars_invoice(context, q, oid, uid, title, text, payload, stars)
             cancel_btn = InlineKeyboardButton("❌ Cancel", callback_data="cancel_order")
         kb = InlineKeyboardMarkup([[btn], [cancel_btn]])
         # Show instructions first, then invoice button via edit
-        try:
-            await q.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
-        except Exception:
-            try:
-                await q.message.reply_text(text, parse_mode="Markdown", reply_markup=kb)
-            except Exception:
-                pass
+        from handlers_order import _safe_send
+        await _safe_send(q, context, text, reply_markup=kb)
         # Keep the real invoice for when user taps the pay button — we store it
         # in user_data and send on tap (avoids double-invoice confusion).
         context.user_data['stars_invoice'] = {
@@ -372,21 +367,25 @@ async def stars_successful_payment(update: Update, context: ContextTypes.DEFAULT
             if tpl:
                 msg_text = tpl.format(points=fmt_points(pts), amount=f"{amount:.2f}",
                                       order_id=oid)
-                await msg.reply_text(msg_text, parse_mode="Markdown")
+                from utils import smart_text_and_mode
+                s_txt, s_mode = smart_text_and_mode(msg_text, "Markdown")
+                await msg.reply_text(s_txt, parse_mode=s_mode)
             else:
                 from handlers_order import _send_deposit_success
                 await _send_deposit_success(context.bot, o, amount)
         except Exception:
             try:
-                from utils import fmt_points
-                await msg.reply_text(
+                from utils import fmt_points, smart_text_and_mode
+                fb_text = (
                     f"🎉 *Deposit Successful!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
                     f"✅ Your payment has been confirmed.\n"
                     f"💎 Points Added: *{fmt_points(pts)}*\n"
                     f"💰 Amount: *${amount:.2f}*\n"
                     f"🧾 Order ID: *#{oid}*\n\n"
-                    f"_Thank you for your deposit!_",
-                    parse_mode="Markdown")
+                    f"_Thank you for your deposit!_"
+                )
+                s_txt, s_mode = smart_text_and_mode(fb_text, "Markdown")
+                await msg.reply_text(s_txt, parse_mode=s_mode)
             except Exception:
                 pass
     except Exception as e:
