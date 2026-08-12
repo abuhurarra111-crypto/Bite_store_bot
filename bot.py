@@ -1831,6 +1831,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start_command), group=-49)
     app.add_handler(CommandHandler("admin", admin_command))
+    app.add_handler(CommandHandler("resetbot", resetbot_command))
     app.add_handler(CommandHandler("deliver", deliver_command))
 
     # 🆕 v161.4: reseller system is BUTTON-DRIVEN (no commands).
@@ -2049,6 +2050,9 @@ def main():
         ("^bk_download$", backup_download_callback),
         ("^bk_cloud_now$", backup_cloud_now_callback),
         ("^bk_restore_start$", backup_restore_start_callback),
+        ("^bk_reset_start$", backup_reset_start_callback),
+        ("^bk_reset_do$", backup_reset_do_callback),
+        ("^bk_reset_cancel$", backup_reset_cancel_callback),
         ("^bk_cancel_restore$", backup_cancel_restore_callback),
         ("^bk_restore_do$", backup_restore_do_callback),
         ("^bk_restore_cancel_file$", backup_restore_cancel_file_callback),

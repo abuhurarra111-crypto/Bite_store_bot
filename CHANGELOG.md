@@ -8,6 +8,19 @@
 
 ---
 
+# 🚀 v163 (2026-08-12) — 🆕 100% FRESH RESET BOT DEPLOY + `/resetbot` + 1-CLICK RESET IN ADMIN
+
+## 🔄 Fresh Reset Bot on Deploy (Zero Data policy as requested)
+- **`database.py` (`setup_database`)**: Added a one-time reset guard (`.v163_fresh_reset_done`). When deployed, the bot boots with a 100% fresh, clean, empty database (`0 users`, `0 orders`, `0 products`) and pre-seeds only the 68 default English responses.
+- **`handlers_admin.py` & `bot.py`**:
+  - Added new Admin Command **`/resetbot`** — Admin can reset the bot database to an empty 0-data state anytime from Telegram chat (with safety auto-backup).
+  - Added **`🔄 Reset to Fresh (0 Data)`** button in `/admin` → **💾 Backup & Restore**.
+
+## 🗄️ Ready DB Deliverable
+- `bite_store_restore_ready.db` remains available and zero-loss verified (`users: 1098`, `orders: 514`). Admin can restore live data anytime via `/admin` → **Backup & Restore** → **Restore from File**.
+
+---
+
 # 🚀 v162 (2026-08-12) — ⭐ TELEGRAM STARS FLOW CUSTOMIZATION + EDIT RESPONSES + HOW-TO-USE GUIDES + READY DB
 
 ## 🎨 NEW: Telegram Stars Flow in Customization

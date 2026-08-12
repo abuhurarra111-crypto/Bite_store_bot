@@ -4599,6 +4599,7 @@ Choose action:"""
         [InlineKeyboardButton("📥 Download Backup", callback_data="bk_download")],
         [InlineKeyboardButton("☁️ Backup to Channel NOW", callback_data="bk_cloud_now")],
         [InlineKeyboardButton("📤 Restore from File", callback_data="bk_restore_start")],
+        [InlineKeyboardButton("🔄 Reset to Fresh (0 Data)", callback_data="bk_reset_start")],
         [InlineKeyboardButton("📋 View Auto-Backups", callback_data="bk_list_auto")],
         [InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_panel")],
     ]
@@ -4961,6 +4962,135 @@ async def backup_restore_cancel_file_callback(u, c):
         try: os.remove(restore_file)
         except: pass
     c.user_data.pop('restore_file', None)
+    await q.answer("Cancelled")
+    set_cb_data(u, "admin_backup")
+    await admin_backup_callback(u, c)
+
+
+async def resetbot_command(update, context):
+    """🔄 /resetbot — Instantly reset the bot database to fresh empty state (0 data)."""
+    uid = update.effective_user.id if update.effective_user else 0
+    if not _is_admin(uid):
+        return
+    import shutil
+    from datetime import datetime as _dt
+    from database import DB_PATH, setup_database, migrate_all
+    
+    ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+    os.makedirs("auto_backups", exist_ok=True)
+    safety_backup = os.path.join("auto_backups", f"pre_reset_{ts}.db")
+    try:
+        if os.path.exists(DB_PATH):
+            shutil.copy2(DB_PATH, safety_backup)
+    except Exception:
+        pass
+
+    try:
+        if os.path.exists(DB_PATH):
+            os.remove(DB_PATH)
+    except Exception as e:
+        await update.message.reply_text(f"❌ Could not remove DB: {e}")
+        return
+
+    setup_database()
+    migrate_all()
+
+    try:
+        from config import DEFAULT_RESPONSES
+        from database import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+        for k, v in DEFAULT_RESPONSES.items():
+            cur.execute("INSERT OR IGNORE INTO bot_responses (key, value) VALUES (?, ?)", (k, v))
+        conn.commit()
+    except Exception:
+        pass
+
+    await update.message.reply_text(
+        "✅ *Bot Reset Complete!*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Database has been reset to a fresh state (`0 users`, `0 orders`, `0 products`).\n\n"
+        "All 68 default English responses and schemas are ready.\n\n"
+        "Whenever you want to restore your live data, upload your `.db` file in `/admin` → *Backup & Restore* → *Restore from File*.",
+        parse_mode="Markdown"
+    )
+
+
+async def backup_reset_start_callback(u, c):
+    """🔄 Prompt confirmation to reset DB to empty 0-data state."""
+    q = u.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    text = (
+        "⚠️ *WARNING: Reset Bot to Fresh State (0 Data)*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "This will wipe all existing users, orders, and products so the bot becomes 100% fresh and empty.\n\n"
+        "🛡️ A safety backup of the current database will be saved automatically before resetting.\n\n"
+        "Are you SURE you want to reset the bot?"
+    )
+    kb = [
+        [InlineKeyboardButton("✅ YES, Reset Now", callback_data="bk_reset_do")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="bk_reset_cancel")],
+    ]
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def backup_reset_do_callback(u, c):
+    """✅ Perform actual DB reset to empty fresh state."""
+    q = u.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer("Resetting...")
+    import shutil
+    from datetime import datetime as _dt
+    from database import DB_PATH, setup_database, migrate_all
+    
+    ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+    os.makedirs("auto_backups", exist_ok=True)
+    safety_backup = os.path.join("auto_backups", f"pre_reset_{ts}.db")
+    try:
+        if os.path.exists(DB_PATH):
+            shutil.copy2(DB_PATH, safety_backup)
+    except Exception:
+        pass
+
+    try:
+        if os.path.exists(DB_PATH):
+            os.remove(DB_PATH)
+    except Exception as e:
+        await _safe_edit(q, f"❌ Could not remove DB: {e}")
+        return
+
+    setup_database()
+    migrate_all()
+
+    try:
+        from config import DEFAULT_RESPONSES
+        from database import get_connection
+        conn = get_connection()
+        cur = conn.cursor()
+        for k, v in DEFAULT_RESPONSES.items():
+            cur.execute("INSERT OR IGNORE INTO bot_responses (key, value) VALUES (?, ?)", (k, v))
+        conn.commit()
+    except Exception:
+        pass
+
+    text = (
+        "✅ *Bot Reset Complete!*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Database has been reset to a fresh state (`0 users`, `0 orders`, `0 products`).\n\n"
+        "Whenever you want to restore your live data, use *Restore from File* in `/admin` → *Backup & Restore*."
+    )
+    kb = [[InlineKeyboardButton("🔙 Back to Backup & Restore", callback_data="admin_backup")]]
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def backup_reset_cancel_callback(u, c):
+    """❌ Cancel DB reset."""
+    q = u.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
     await q.answer("Cancelled")
     set_cb_data(u, "admin_backup")
     await admin_backup_callback(u, c)

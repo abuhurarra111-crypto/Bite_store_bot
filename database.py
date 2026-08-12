@@ -221,6 +221,22 @@ def ensure_supplier_retry_columns(c):
 
 
 def setup_database():
+    # ── 🆕 v163: One-time Fresh Reset for v163 deploy (as requested by owner) ──
+    # Wipes old database once so the bot boots fresh (0 users, 0 orders, 0 products).
+    # Owner can restore live data anytime via /admin -> Backup & Restore.
+    try:
+        reset_marker = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), ".v163_fresh_reset_done")
+        if not os.path.exists(reset_marker) and os.path.exists(DB_PATH):
+            logger.info("🆕 [v163] Performing one-time fresh reset of database as requested by owner...")
+            try:
+                os.remove(DB_PATH)
+            except Exception as e:
+                logger.warning(f"Could not remove old DB for reset: {e}")
+            with open(reset_marker, "w") as f:
+                f.write("reset_done")
+    except Exception as e:
+        logger.warning(f"[v163] reset marker check failed: {e}")
+
     conn = get_connection(); c = conn.cursor()
 
     c.execute("""CREATE TABLE IF NOT EXISTS categories (
