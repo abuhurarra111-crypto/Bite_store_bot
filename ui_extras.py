@@ -1848,7 +1848,7 @@ async def _resolve_chat_id(bot, chat_id: str) -> str:
 # get_chat_member per target (3 targets × network latency each tap) which
 # made the bot feel slow/stuck. Cache result per (user, chat) for 300s.
 _FJ_MEMBER_CACHE = {}
-_FJ_MEMBER_CACHE_TTL = 300  # seconds
+_FJ_MEMBER_CACHE_TTL = 900  # seconds (v161.21: 15min — kills per-tap Telegram member-check spam)
 _FJ_MEMBER_CACHE_LOCK = asyncio.Lock() if False else None  # placeholder
 
 async def _is_member(bot, user_id: int, chat_id: str) -> bool:
