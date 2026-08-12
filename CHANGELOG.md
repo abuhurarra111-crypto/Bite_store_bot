@@ -8,6 +8,18 @@
 
 ---
 
+# 🚀 v166 (2026-08-12) — ⭐ TELEGRAM NATIVE INVOICE PLAIN-TEXT CLEANER (FIXED RAW HTML CODING) + READY DB (3)
+
+## ✨ FIX: Telegram Native Invoice (`send_invoice`) Description Cleaning (`handlers_stars.py`)
+- **Root Cause Found:** When a user clicked `"⭐ Pay X Stars"` on the checkout message, the bot called Telegram's `send_invoice` API to open the native Telegram Stars payment window. However, Telegram's `send_invoice` `description` field is strictly plain text (`max 255 characters`) and does not parse HTML or `<tg-emoji>` tags. Because `_send_stars_invoice` stored the rich HTML instructions in `inv["desc"]`, passing that directly to `send_invoice` caused Telegram to display raw HTML `<tg-emoji...>` coding and cut off the text after 255 characters (`...<b>Canva`).
+- **Fix:** Added `clean_plain_text(text)` helper in `handlers_stars.py` that strips `[[HTML]]`, `<tg-emoji>`, `<code>`, `<b>`, `<i>`, and Markdown asterisks, returning a concise, beautiful Unicode plain-text description (e.g. `⭐️ Telegram Stars — Product Checkout ... 📦 Product: 🎨Canva 500 User Panel ...`, exactly 153 characters).
+- Now when the native invoice window opens, zero raw coding is displayed and the full description fits cleanly.
+
+## 🗄️ READY DB (3): `bite_store_restore_ready.db` (v166 Verified)
+- Zero-loss audit verified on user's live DB (`bite_store_restore_ready.db`, `1100 users`, `516 orders`, `28 products`).
+
+---
+
 # 🚀 v165 (2026-08-12) — ⭐ TELEGRAM STARS PREMIUM EMOJI & HTML RENDERING FIX + READY DB (3)
 
 ## ✨ FIX: Telegram Stars Invoice & Success HTML/Emoji Rendering (`handlers_stars.py`)

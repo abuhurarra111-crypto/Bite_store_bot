@@ -15,6 +15,7 @@
 import json
 import logging
 import os
+import re
 import time
 
 from telegram import LabeledPrice, Update
@@ -23,6 +24,18 @@ from telegram.ext import ContextTypes
 logger = logging.getLogger(__name__)
 
 STARS_METHOD = "telegram_stars"
+
+def clean_plain_text(text):
+    """Strip all [[HTML]], <tg-emoji...>, <b>, <i>, <code> and markdown formatting
+    to produce clean plain text for Telegram invoice description (which does not support HTML).
+    """
+    if not text:
+        return ""
+    s = str(text).replace("[[HTML]]", "")
+    s = re.sub(r'<[^>]+>', '', s)
+    s = re.sub(r'[*_`~]', '', s)
+    lines = [l.strip() for l in s.splitlines() if l.strip()]
+    return "\n".join(lines)
 
 # Amount rounding guard: Telegram Stars amounts must be positive whole integers
 # and the invoice total (sum of prices) must fit a signed 32-bit int.
@@ -245,14 +258,16 @@ async def stars_pay_callback(update, context):
         return
     uid = q.from_user.id
     stars = int(inv.get("stars") or 120)
-    title = str(inv.get("title") or "Bite Store Deposit")
+    title = clean_plain_text(str(inv.get("title") or "Bite Store Deposit"))
     payload = str(inv.get("payload") or "")
-    desc = str(inv.get("desc") or "")
+    desc = clean_plain_text(str(inv.get("desc") or ""))
+    if len(desc) > 255:
+        desc = desc[:252] + "..."
     try:
         await context.bot.send_invoice(
             chat_id=uid,
             title=title,
-            description=desc[:255],
+            description=desc,
             payload=payload,
             provider_token="",          # EMPTY = Telegram Stars
             currency="XTR",             # Stars currency code
