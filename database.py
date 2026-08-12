@@ -221,22 +221,31 @@ def ensure_supplier_retry_columns(c):
 
 
 def setup_database():
-    # ── 🆕 v163: One-time Fresh Reset for v163 deploy on Railway ──
-    # Wipes old database once so the bot boots fresh (0 users, 0 orders, 0 products).
-    # Owner can restore live data anytime via /admin -> Backup & Restore.
+    # ── 🆕 v167: Universal Deployed Version Reset Guard (Zero Data on New Deploy) ──
+    # Whenever a new release version is deployed on Railway/server, this automatically
+    # wipes old data once so the bot boots fresh (0 users, 0 orders, 0 products).
+    # Owner can restore live data anytime via /admin -> Backup & Restore -> Restore from File.
     try:
         if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RESET_DB_FRESH") == "1":
-            reset_marker = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), ".v163_fresh_reset_done")
-            if not os.path.exists(reset_marker) and os.path.exists(DB_PATH):
-                print("🆕 [v163] Performing one-time fresh reset of database as requested by owner...")
+            current_version = "v167"
+            version_marker = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), ".deployed_version")
+            last_version = ""
+            if os.path.exists(version_marker):
+                try:
+                    with open(version_marker, "r") as f:
+                        last_version = f.read().strip()
+                except Exception:
+                    pass
+            if last_version != current_version and os.path.exists(DB_PATH):
+                print(f"🆕 [{current_version}] New release deployed! Performing fresh reset of DB (was {last_version})...")
                 try:
                     os.remove(DB_PATH)
                 except Exception as e:
                     print(f"Could not remove old DB for reset: {e}")
-                with open(reset_marker, "w") as f:
-                    f.write("reset_done")
+                with open(version_marker, "w") as f:
+                    f.write(current_version)
     except Exception as e:
-        print(f"[v163] reset marker check failed: {e}")
+        print(f"[{current_version}] reset marker check failed: {e}")
 
     conn = get_connection(); c = conn.cursor()
 

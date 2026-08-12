@@ -8,6 +8,19 @@
 
 ---
 
+# 🚀 v167 (2026-08-12) — 🆕 UNIVERSAL NEW-RELEASE FRESH RESET GUARD (ALWAYS BOOT 0 DATA ON DEPLOY) + READY DB (3)
+
+## 🔄 Universal Fresh Reset Guard on Railway (`database.py`)
+- **Root Cause Found:** Previously, `.v163_fresh_reset_done` existed on `/var/data/`, so subsequent deployments (`v164`, `v165`, `v166`) did not wipe the database and booted with existing data.
+- **Fix:** Replaced static marker with `.deployed_version` tracking (`v167`). Now whenever a new release version is deployed on Railway (`last_version != "v167"`), `database.py` automatically wipes `/var/data/shop.db` once so the new deployment starts 100% FRESH AND EMPTY (`0 users`, `0 orders`, `0 products`) with pre-seeded default English responses.
+- Normal restarts of the same deployed version will not wipe data.
+- Admin can restore live data anytime via `/admin` -> Backup & Restore -> Restore from File.
+
+## 🗄️ READY DB (3): `bite_store_restore_ready.db` (v167 Verified)
+- Zero-loss audit verified on user's live DB (`1100 users`, `516 orders`, `28 products`).
+
+---
+
 # 🚀 v166 (2026-08-12) — ⭐ TELEGRAM NATIVE INVOICE PLAIN-TEXT CLEANER (FIXED RAW HTML CODING) + READY DB (3)
 
 ## ✨ FIX: Telegram Native Invoice (`send_invoice`) Description Cleaning (`handlers_stars.py`)
