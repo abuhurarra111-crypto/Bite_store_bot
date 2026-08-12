@@ -227,7 +227,7 @@ def setup_database():
     # Owner can restore live data anytime via /admin -> Backup & Restore -> Restore from File.
     try:
         if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RESET_DB_FRESH") == "1":
-            current_version = "v167"
+            current_version = "v168"
             version_marker = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), ".deployed_version")
             last_version = ""
             if os.path.exists(version_marker):

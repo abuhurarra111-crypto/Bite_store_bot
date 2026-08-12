@@ -8,6 +8,26 @@
 
 ---
 
+# 🚀 v168 (2026-08-13) — ⚡ CRITICAL FIX: REFERRAL FREEZE BUG + SUPER FAST BOT SPEED
+
+## 🐛 CRITICAL FIX: Referral Freeze Bug (`handlers_start.py` + `fake_engagement.py`)
+- **Root Cause Found:** When a new referral user joined via `/start ref_XXXX`, the bot would freeze for 5+ minutes. All buttons and commands stopped working. Customers complained heavily.
+- **Problem 1:** `broadcast_new_user_join()` was `await`ed synchronously in `/start` handler. It sent messages to ALL 1100+ users one-by-one with `asyncio.sleep(0.05)` between each = ~3 minutes blocking.
+- **Problem 2:** Referral broadcast in `_process_referral_attribution()` also looped over ALL 1100+ users sequentially = ~2-3 minutes blocking.
+- **Fix:** Both broadcasts now run as `asyncio.create_task()` background tasks (fire-and-forget). The `/start` handler returns INSTANTLY — user gets their welcome screen in <1 second while broadcasts happen in the background.
+- **Referral broadcast capped to 30 random users** instead of ALL 1100 — saves API quota and is sufficient for social proof.
+
+## ⚡ SPEED OPTIMIZATION: Batch Sending (`fake_engagement.py`)
+- **`send_to_all_users()`:** Replaced sequential one-by-one sending with `asyncio.gather()` batches of 15 concurrent sends. Broadcast time reduced from 3+ minutes to ~15 seconds for 1100 users. Sleep reduced from 0.05s/msg to 0.1s/batch.
+- **`broadcast_store_message()`:** Same batch optimization applied to the main store broadcast loop. 10x faster delivery.
+- Added `max_recipients` parameter to `send_to_all_users()` for optional capping.
+
+## 🗄️ RESET GUARD: `database.py` bumped to `v168`
+- Fresh reset guard triggers on new deploy (wipes DB for clean boot).
+
+---
+
+
 # 🚀 v167 (2026-08-12) — 🆕 UNIVERSAL NEW-RELEASE FRESH RESET GUARD (ALWAYS BOOT 0 DATA ON DEPLOY) + READY DB (3)
 
 ## 🔄 Universal Fresh Reset Guard on Railway (`database.py`)

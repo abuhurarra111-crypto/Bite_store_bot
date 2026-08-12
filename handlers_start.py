@@ -562,12 +562,15 @@ async def _process_referral_attribution(context, new_user, referrer_id, is_new_u
         await _send_direct_referral_notifications(
             context, referrer_id, new_user, reward, direct_total)
 
-    # Broadcast (existing fake-activity destination)
+    # 🆕 v168: BACKGROUND broadcast — fire-and-forget so /start returns INSTANTLY
+    # Previously this loop sent to ALL 1100+ users synchronously, blocking the
+    # entire bot for 3-5 minutes. Now capped to 30 random users and runs in
+    # a background task so the referring user gets instant responses.
     try:
         from per_user_activity import (
             is_globally_enabled, _random_name, _mask_name
         )
-        from database import get_all_users_for_broadcast
+        from database import get_all_users_for_broadcast, row_uid
         from customization import render_template
         if is_globally_enabled():
             ref_count = get_referral_count(referrer_id)
@@ -576,12 +579,22 @@ async def _process_referral_attribution(context, new_user, referrer_id, is_new_u
             real_msg = render_template("bc_active_referral", {
                 "user": rname, "referrals": str(ref_count), "more": str(more),
             })
-            for usr in get_all_users_for_broadcast():
+            _bot = context.bot
+            import asyncio, random as _rnd
+            async def _bg_referral_broadcast():
                 try:
-                    uid_b = row_uid(usr)
-                    await context.bot.send_message(uid_b, real_msg, parse_mode="Markdown")
+                    all_users = get_all_users_for_broadcast()
+                    sample = _rnd.sample(all_users, min(30, len(all_users))) if all_users else []
+                    for usr in sample:
+                        try:
+                            uid_b = row_uid(usr)
+                            await _bot.send_message(uid_b, real_msg, parse_mode="Markdown")
+                            await asyncio.sleep(0.03)
+                        except Exception:
+                            pass
                 except Exception:
                     pass
+            asyncio.create_task(_bg_referral_broadcast())
     except Exception:
         pass
 
@@ -960,10 +973,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Name: {escape_md(u.first_name or 'N/A')}\n"
             f"Username: {('@' + escape_md(_nu)) if _nu else '_no username_'}\n"
             f"ID: `{u.id}`")
-        # 📢 Broadcast new user join to all existing users (if enabled)
+        # 🆕 v168: 📢 Broadcast new user join — BACKGROUND TASK (fire-and-forget)
+        # Previously this blocked the /start handler for 2-3 minutes while sending
+        # to all 1100+ users. Now runs in background so user gets instant response.
         try:
             from fake_engagement import broadcast_new_user_join
-            await broadcast_new_user_join(context.bot, u.first_name or "Someone")
+            import asyncio
+            asyncio.create_task(broadcast_new_user_join(context.bot, u.first_name or "Someone"))
         except Exception:
             pass
 
