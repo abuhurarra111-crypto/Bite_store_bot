@@ -4171,3 +4171,38 @@ When a new version ships, **prepend a new `# 🚀 vXX` section at the top** of t
 - delivered-items audit document/photo/text ✅
 - Arabic + Spanish + German main menu buttons ✅
 - bot full import smoke ✅
+
+---
+
+# 🚀 v161.21 (2026-08-12) — SUPER-SPEED FIX (bot slow/frozen clicks ROOT CAUSE FOUND)
+
+## 🐛 ROOT CAUSE — bot slow again after v161.18/19/20
+- `i18n.translate_display_text()` called the **Gemini API SYNCHRONOUSLY** on the
+  asyncio event loop.
+- Product-detail render (`handlers_shop._build_detail_text`) calls `tr_user()`
+  **16× per view** (name, desc, note, status, delivery, format, warranty, qty).
+- Main-menu render called it per-button (~13×) for any non-English user.
+- ⇒ every product tap / menu re-render by a non-English user = 10-30 SECONDS of
+  frozen event loop ⇒ **EVERY user's clicks lagged** (bot feels slow everywhere).
+
+## ✅ FIX — translation NEVER blocks the loop anymore
+- `translate_display_text()` is now non-blocking:
+  1. In-process LRU cache → microseconds
+  2. DB cache (bot_settings) → fast local read
+  3. On MISS → returns the ORIGINAL text instantly + warms the translation in a
+     background daemon thread (rate-limited: max 3 concurrent, max 60 pending,
+     deduped). The NEXT view is already translated.
+- Verified: first call 1-2 ms (was seconds), background warm fills cache.
+- Measured after fix (non-English user): main menu 90ms, product detail 20ms,
+  my-account 23ms. All click paths < 500ms.
+
+## ✅ Also fixed — supplier sync crash loop
+- Logs showed `[async_helper] fetch_products crashed: float() argument must be
+  a string or a real number, not 'dict'` every 30s.
+- Some suppliers (Canboso etc.) send prices as dicts ({"USD": 5}) → float(dict)
+  crashed the fetch.
+- Added `_safe_float()` (handles dict/string/None) + patched all risky float()
+  calls (Canboso base_price/usdPricing, price_usd, ProdSeller price,
+  _compute_sell_price, update_ext_product).
+- Verified LIVE: ProdSeller 16 products, real stock (296/924/295...), balance
+  $11.86 — no crash.

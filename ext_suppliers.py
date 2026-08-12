@@ -39,6 +39,22 @@ from utils import escape_md, html_code_block, html_escape_plain, smart_text_and_
 
 logger = logging.getLogger(__name__)
 
+# 🐛 v161.21 FIX: some suppliers nest prices as dicts ({"USD": 5} / {"amount": 5})
+# or send them as strings. float(dict) crashes the whole fetch_products →
+# background autosync error loop. This helper always returns a number.
+def _safe_float(v, default=0.0):
+    try:
+        if isinstance(v, dict):
+            for k in ("USD", "usd", "amount", "price", "value", "total", "base_price"):
+                if k in v and v[k] is not None:
+                    return float(v[k])
+            return default
+        f = float(v)
+        return f
+    except (TypeError, ValueError):
+        return default
+
+
 # ────────────────────────────────────────────────────────────
 # 1. DB SCHEMA + HELPERS
 # ────────────────────────────────────────────────────────────
@@ -338,16 +354,16 @@ def _compute_sell_price(cost_usd, markup_pct, fixed_price, fixed_price_base):
          - If cost >  fixed_price_base  → sell = fixed_price + (cost - fixed_price_base)
                                           (cost rise passed through, admin's profit preserved)
     """
-    cost = float(cost_usd or 0)
+    cost = _safe_float(cost_usd)
     if fixed_price and fixed_price > 0:
-        base = float(fixed_price_base or 0)
+        base = _safe_float(fixed_price_base)
         if cost <= base:
-            return float(fixed_price)
+            return _safe_float(fixed_price, cost)
         # Cost went UP → increase sell by exact delta
         delta = cost - base
-        return float(fixed_price) + delta
+        return _safe_float(fixed_price) + delta
     # Auto-markup mode
-    mkp = float(markup_pct or 40)
+    mkp = _safe_float(markup_pct, 40)
     return cost * (1 + mkp / 100.0)
 
 
@@ -449,10 +465,10 @@ def update_ext_product(eid, **fields):
     # 🆕 v81.1: Recompute sell_price using SMART LOCK logic
     if any(k in fields for k in ("markup_pct", "cost_usd", "fixed_price", "fixed_price_base")):
         cur = get_ext_product(eid) or {}
-        cost = float(fields.get("cost_usd", cur.get("cost_usd", 0)) or 0)
-        mkp  = float(fields.get("markup_pct", cur.get("markup_pct", 40)) or 40)
-        fp   = float(fields.get("fixed_price", cur.get("fixed_price", 0)) or 0)
-        fpb  = float(fields.get("fixed_price_base", cur.get("fixed_price_base", 0)) or 0)
+        cost = _safe_float(fields.get("cost_usd", cur.get("cost_usd")))
+        mkp  = _safe_float(fields.get("markup_pct", cur.get("markup_pct")), 40)
+        fp   = _safe_float(fields.get("fixed_price", cur.get("fixed_price")))
+        fpb  = _safe_float(fields.get("fixed_price_base", cur.get("fixed_price_base")))
         fields["sell_price"] = _compute_sell_price(cost, mkp, fp, fpb)
     sets = ", ".join(f"{k}=?" for k in fields)
     vals = list(fields.values()) + [int(eid)]
@@ -997,7 +1013,7 @@ class AkundingAdapter(SupplierAdapterBase):
                 "description": (p.get("description") or "") + (
                     "\n\n" + p.get("features", "") if p.get("features") else ""
                 ),
-                "cost_usd": float(p.get("base_price", 0) or 0),
+                "cost_usd": _safe_float(p.get("base_price")),
                 "stock": int(p.get("stock", 0) or 0),
                 "raw": p,
             })
@@ -1160,7 +1176,10 @@ class CanbosoAdapter(SupplierAdapterBase):
         for p in arr:
             # Canboso tenants vary slightly. Support both legacy Mongo-style
             # fields and documented/simple fields.
-            usd = float(p.get("usdPricing", p.get("price", p.get("base_price", p.get("cost_usd", 0)))) or 0)
+            usd = _safe_float(p.get("usdPricing")
+                               or p.get("price")
+                               or p.get("base_price")
+                               or p.get("cost_usd"))
             # 🐛 v97 CRITICAL FIX: Canboso API does NOT return a top-level
             # "stock" field. Real stock lives in `stats.available`.
             # Old code: p.get("stock", 0) → always 0 → ALL products showed
@@ -1403,10 +1422,7 @@ class MMOStoreAdapter(SupplierAdapterBase):
                     except (TypeError, ValueError):
                         continue
             # Price may arrive as string ("2.1500") or number — handle both
-            try:
-                usd = float(p.get("price_usd", 0) or 0)
-            except (TypeError, ValueError):
-                usd = 0.0
+            usd = _safe_float(p.get("price_usd"))
             out.append({
                 "remote_id": str(p.get("id")),
                 "name": p.get("name_en") or p.get("name") or "",
@@ -1610,10 +1626,7 @@ class ProdSellerAdapter(SupplierAdapterBase):
             rid = str(p.get("id") or "").strip()
             if not rid:
                 continue
-            try:
-                price = float(p.get("price"))
-            except Exception:
-                price = 0.0
+            price = _safe_float(p.get("price"))
             in_stock = bool(p.get("inStock", True))
             # 🆕 v161.18: REAL stock — ProdSeller's NEW API (/v1/products/:id)
             # returns a numeric `stock` field (null for custom-delivery items).

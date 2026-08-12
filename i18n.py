@@ -50,11 +50,107 @@ def _display_cache_key(text, lang):
     return "i18n_display_" + hashlib.md5(raw).hexdigest()[:24]
 
 
-def translate_display_text(text, user_id=None, lang=None, max_len=1800):
-    """Translate user-visible text at display-time only.
+# ─────────────────────────────────────────────────────────────
+# 🐛 v161.21 FIX (bot SLOW): translate_display_text() used to call the
+# Gemini API SYNCHRONOUSLY on the asyncio event loop. Product-detail renders
+# call tr_user() ~16× per view → every product tap by a non-English user did
+# 16 blocking network calls → the ENTIRE bot froze for seconds → every user's
+# clicks felt slow.
+#
+# New behaviour (never blocks the loop):
+#   1. In-process LRU cache  → microseconds.
+#   2. DB cache (bot_settings) → one fast local read.
+#   3. On MISS → return the ORIGINAL text immediately and translate in a
+#      background daemon thread (rate-limited, deduped) so the NEXT view is
+#      already translated. The event loop is NEVER blocked by Gemini.
+# ─────────────────────────────────────────────────────────────
+import threading
 
-    Source DB/product/supplier data is never changed. If Gemini/API is not
-    configured or translation fails, original text is returned safely.
+_mem_cache = {}
+_mem_lock = threading.Lock()
+_pending = set()                 # keys currently being translated in background
+_gemini_sem = threading.BoundedSemaphore(3)   # max 3 concurrent Gemini calls
+_MEM_CACHE_MAX = 2000
+_MAX_PENDING = 60                # don't queue unbounded background translations
+
+
+def _cache_get(key):
+    with _mem_lock:
+        return _mem_cache.get(key)
+
+
+def _cache_put(key, value):
+    global _mem_cache
+    with _mem_lock:
+        if len(_mem_cache) >= _MEM_CACHE_MAX:
+            # cheap eviction: drop ~20% oldest keys
+            _mem_cache = dict(list(_mem_cache.items())[len(_mem_cache) // 5:])
+        _mem_cache[key] = value
+
+
+def _gemini_translate_blocking(text, target, key):
+    """Blocking Gemini call — runs ONLY inside a worker thread (never the loop)."""
+    import google.generativeai as genai
+    from config import GEMINI_API_KEY
+    if not GEMINI_API_KEY:
+        return None
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel(model_name="gemini-2.5-flash")
+    prompt = (
+        f"Translate the following Telegram bot UI text to {target}.\n"
+        "Rules:\n"
+        "1. Preserve emojis exactly.\n"
+        "2. Preserve HTML tags and [[HTML]] markers exactly.\n"
+        "3. Preserve placeholders like {name}, {price}, {qty}, and callback-like IDs.\n"
+        "4. Preserve URLs, emails, codes, and text inside <code> or `backticks`.\n"
+        "5. Do not translate brand/product names like ChatGPT, Netflix, Adobe, Canva, Binance, EasyPaisa, JazzCash.\n"
+        "6. Keep line breaks and separators. Output only translated text.\n\n"
+        f"Text:\n{text}"
+    )
+    resp = model.generate_content(
+        prompt,
+        generation_config={"temperature": 0.15,
+                           "max_output_tokens": max(500, int(len(text) * 2.5))})
+    out = (getattr(resp, 'text', '') or '').strip()
+    if not out:
+        return None
+    out = out.strip('`').strip()
+    _cache_put(key, out)
+    try:
+        from database import set_setting
+        set_setting(key, out)
+    except Exception:
+        pass
+    return out
+
+
+def _warm_translation(text, target, key):
+    """Schedule a background translation — returns immediately, never blocks."""
+    with _mem_lock:
+        if key in _pending or len(_pending) >= _MAX_PENDING:
+            return
+        _pending.add(key)
+
+    def _run():
+        try:
+            with _gemini_sem:
+                try:
+                    _gemini_translate_blocking(text, target, key)
+                except Exception:
+                    pass
+        finally:
+            with _mem_lock:
+                _pending.discard(key)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def translate_display_text(text, user_id=None, lang=None, max_len=1800):
+    """Translate user-visible text at display-time only — ALWAYS non-blocking.
+
+    v161.21: Gemini translation never runs on the event loop. On a cache miss
+    the original text is returned instantly and the translation is warmed in a
+    background thread, so the bot can NEVER be frozen by translation again.
     """
     if text is None:
         return ""
@@ -75,46 +171,29 @@ def translate_display_text(text, user_id=None, lang=None, max_len=1800):
     # Keep pure URLs / code-ish strings unchanged.
     if text.strip().startswith(('http://', 'https://')):
         return text
+
+    key = _display_cache_key(text, lang)
+    # 1) in-process cache (microseconds)
+    cached = _cache_get(key)
+    if cached:
+        return cached
+    # 2) DB cache (fast local read)
     try:
-        from database import get_setting, set_setting
-        key = _display_cache_key(text, lang)
+        from database import get_setting
         cached = get_setting(key, "")
         if cached:
+            _cache_put(key, cached)
             return cached
     except Exception:
-        key = ""
+        pass
+    # 3) MISS → return original NOW, translate in background (never blocks)
     try:
-        import google.generativeai as genai
         from config import GEMINI_API_KEY
-        if not GEMINI_API_KEY:
-            return text
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel(model_name="gemini-2.5-flash")
-        target = _display_lang_name(lang)
-        prompt = (
-            f"Translate the following Telegram bot UI text to {target}.\n"
-            "Rules:\n"
-            "1. Preserve emojis exactly.\n"
-            "2. Preserve HTML tags and [[HTML]] markers exactly.\n"
-            "3. Preserve placeholders like {name}, {price}, {qty}, and callback-like IDs.\n"
-            "4. Preserve URLs, emails, codes, and text inside <code> or `backticks`.\n"
-            "5. Do not translate brand/product names like ChatGPT, Netflix, Adobe, Canva, Binance, EasyPaisa, JazzCash.\n"
-            "6. Keep line breaks and separators. Output only translated text.\n\n"
-            f"Text:\n{text}"
-        )
-        resp = model.generate_content(prompt, generation_config={"temperature":0.15, "max_output_tokens": max(500, int(len(text)*2.5))})
-        out = (getattr(resp, 'text', '') or '').strip()
-        if not out:
-            return text
-        out = out.strip('`').strip()
-        try:
-            if key:
-                set_setting(key, out)
-        except Exception:
-            pass
-        return out
+        if GEMINI_API_KEY:
+            _warm_translation(text, _display_lang_name(lang), key)
     except Exception:
-        return text
+        pass
+    return text
 
 
 def tr_user(text, user_id=None, lang=None):
