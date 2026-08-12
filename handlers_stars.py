@@ -198,8 +198,12 @@ async def _send_stars_invoice(context, q, oid, uid, title, text, payload, stars)
         except Exception:
             btn = InlineKeyboardButton(f"⭐ Pay {stars} Stars",
                                        callback_data=f"stars_pay_{oid}")
-        kb = InlineKeyboardMarkup([[btn], [
-            InlineKeyboardButton("❌ Cancel", callback_data="cancel_order")]])
+        try:
+            cancel_btn = _bb("nav_pay_cancel", "❌ Cancel",
+                             callback_data="cancel_order", force_default=True)
+        except Exception:
+            cancel_btn = InlineKeyboardButton("❌ Cancel", callback_data="cancel_order")
+        kb = InlineKeyboardMarkup([[btn], [cancel_btn]])
         # Show instructions first, then invoice button via edit
         try:
             await q.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
@@ -353,10 +357,21 @@ async def stars_successful_payment(update: Update, context: ContextTypes.DEFAULT
                    description="Telegram Stars deposit",
                    event_id=f"stars_{charge_id or oid}")
         update_order_status(oid, "delivered")
-        # Deposit success message (same nice one as other methods)
+        # Deposit success message (editable response stars_payment_success)
         try:
-            from handlers_order import _send_deposit_success
-            await _send_deposit_success(context.bot, o, amount)
+            from database import get_response_with_auto_register
+            from config import DEFAULT_RESPONSES
+            from utils import fmt_points
+            tpl = get_response_with_auto_register(
+                "stars_payment_success",
+                DEFAULT_RESPONSES.get("stars_payment_success", ""))
+            if tpl:
+                msg_text = tpl.format(points=fmt_points(pts), amount=f"{amount:.2f}",
+                                      order_id=oid)
+                await msg.reply_text(msg_text, parse_mode="Markdown")
+            else:
+                from handlers_order import _send_deposit_success
+                await _send_deposit_success(context.bot, o, amount)
         except Exception:
             try:
                 from utils import fmt_points

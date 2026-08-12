@@ -355,6 +355,29 @@ DEFAULT_RESPONSES.update({
     "payment_not_found_txid": """⏳ *Transaction Not Found Yet*\n━━━━━━━━━━━━━━━━━━━━\nIf you already paid, wait a moment and paste the correct Transaction / Transfer ID again.\n\nPlease make sure:\n• amount is exact\n• correct network/payment method was used\n• the ID matches the one in your Bybit receipt\n\n📲 *Bybit Pay tip:* agar aap ne Bybit Pay se bheja hai to Bybit app mein *Bybit Pay → Receive* kholein — agar wahan koi *pending request* dikhe to usay *Accept* karein. Accept hone ke baad payment 20 second mein khud verify ho jayegi.\n\nIf it still doesn't verify, contact support — the store will check manually.""",
 })
 
+# ⭐ v162: Telegram Stars Editable Payment Screen Texts
+DEFAULT_RESPONSES.update({
+    "stars_pay_instructions": """⭐ *Pay with Telegram Stars*
+━━━━━━━━━━━━━━━━━━━━
+
+🧾 Order: `#{order_id}`
+💰 Amount: *${amount}*
+⭐ Stars needed: *{stars} Stars*
+📊 Rate: 1$ = {rate} Stars
+
+👇 Tap the button below — Telegram will open its secure payment window.
+_No ID or screenshot needed — Stars credit instantly._""",
+    "stars_payment_success": """🎉 *Deposit Successful!*
+━━━━━━━━━━━━━━━━━━━━
+
+✅ Your Telegram Stars payment has been confirmed.
+💎 Points Added: *{points}*
+💰 Amount: *${amount}*
+🧾 Order ID: *#{order_id}*
+
+_Thank you for your deposit!_""",
+})
+
 
 # 🔧 v122: Bybit Pay new UID-flow screens (auto-match by UID + unique amount)
 DEFAULT_RESPONSES.update({

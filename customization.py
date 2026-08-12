@@ -2205,6 +2205,7 @@ MAIN_SCREENS = [
     # Payment flows
     ("binance_flow_screen", "🔶 Binance Flow"),
     ("bybit_flow_screen", "🟡 Bybit Flow"),
+    ("stars_flow_screen", "⭐ Telegram Stars Flow"),
     ("crypto_usdt_flow_screen", "🪙 Crypto USDT"),
     ("easypaisa_flow_screen", "📱 EasyPaisa Flow"),
     ("jazzcash_flow_screen", "📱 JazzCash Flow"),
@@ -2224,6 +2225,7 @@ BTN_TARGET_SCREEN = {
     "pay_binance": "binance_flow_screen", "pay_usdt_trc20": "crypto_usdt_flow_screen",
     "pay_usdt_bep20": "crypto_usdt_flow_screen", "pay_bybit_pay": "bybit_flow_screen",
     "pay_bybit_usdt_trc20": "bybit_flow_screen", "pay_bybit_usdt_bep20": "bybit_flow_screen",
+    "pay_stars": "stars_flow_screen", "pay_stars_pay": "stars_flow_screen",
     "pay_easypaisa": "easypaisa_flow_screen", "pay_jazzcash": "jazzcash_flow_screen",
     "pay_pts": "buy_points_payment_screen",
 }
@@ -2975,6 +2977,7 @@ SCREEN_TREE = {
         "children": [
             "binance_flow_screen",
             "bybit_flow_screen",
+            "stars_flow_screen",
             "crypto_usdt_flow_screen",
             "easypaisa_flow_screen",
             "jazzcash_flow_screen",
@@ -3085,6 +3088,23 @@ SCREEN_TREE = {
                      "bybit_deposit_screen", "bybit_uid_layouts",
                      "bybit_usdt_warning_screen", "bybit_usdt_amount_screen",
                      "bybit_usdt_deposit_screen", "bybit_usdt_flow_layouts"],
+    },
+
+    # ⭐ v162: Telegram Stars Flow screen node
+    "stars_flow_screen": {
+        "icon": "⭐",
+        "title": "Telegram Stars Payment Flow",
+        "description": "Telegram Stars payment instructions and checkout buttons",
+        "texts": [
+            ("stars_pay_instructions", "📝 Stars Payment Instructions"),
+            ("stars_payment_success", "📝 Stars Payment Success Message"),
+        ],
+        "buttons": [
+            {"id": "pay_stars", "kind": "registry"},
+            {"id": "pay_stars_pay", "kind": "registry"},
+            {"id": "nav_pay_cancel", "kind": "registry"},
+        ],
+        "children": [],
     },
 
     # 🔧 v123: Bybit USDT flow screen nodes
@@ -3305,13 +3325,14 @@ SCREEN_TREE = {
         "texts": [
                                             ],
         "buttons": [
+            {"id": "pay_stars",         "kind": "registry"},
             {"id": "pay_binance",       "kind": "registry"},
             {"id": "pay_easypaisa",     "kind": "registry"},
             {"id": "pay_jazzcash",      "kind": "registry"},
             # 🆕 v52: Cancel button editable
             {"id": "nav_points_cancel", "kind": "registry"},
         ],
-        "children": [],
+        "children": ["stars_flow_screen"],
     },
 
     # ═══════════════════════════════════════════════════════════

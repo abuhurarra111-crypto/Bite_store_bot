@@ -253,6 +253,7 @@ def _build_how_to_hub_text_and_kb(user_id=None):
         [InlineKeyboardButton(_tr("🛒 How to Buy a Product"),      callback_data="guide_buy_product")],
         [InlineKeyboardButton(_tr("💎 How to Buy Points / Deposit"), callback_data="guide_deposit")],
         [InlineKeyboardButton(_tr("💳 Payment Methods (Overview)"),   callback_data="guide_pay_overview")],
+        [InlineKeyboardButton(_tr("⭐ Telegram Stars — Step-by-Step"), callback_data="guide_pay_stars")],
         [InlineKeyboardButton(_tr("🪙 Binance USDT — Step-by-Step"),   callback_data="guide_pay_binance")],
         [InlineKeyboardButton(_tr("💳 Bybit Pay / USDT — Step-by-Step"), callback_data="guide_pay_bybit")],
         [InlineKeyboardButton(_tr("📱 EasyPaisa — Step-by-Step"),      callback_data="guide_pay_easypaisa")],
@@ -263,6 +264,7 @@ def _build_how_to_hub_text_and_kb(user_id=None):
         [InlineKeyboardButton(_tr("🔁 How to Request Replacement"),     callback_data="guide_replacement")],
         [InlineKeyboardButton(_tr("⭐ How to Leave a Review"),          callback_data="guide_review")],
         [InlineKeyboardButton(_tr("🎁 Free Account / Referrals"),       callback_data="guide_referral")],
+        [InlineKeyboardButton(_tr("🔗 Reseller API — Step-by-Step"),      callback_data="guide_reseller_api")],
         [InlineKeyboardButton(_tr("🏆 Tier System & Loyalty"),          callback_data="guide_tier")],
         [InlineKeyboardButton(_tr("📜 Order History & Tracking"),       callback_data="guide_orders")],
         [InlineKeyboardButton(_tr("📊 Price List & Filters"),            callback_data="guide_price_list")],
@@ -355,15 +357,45 @@ _GUIDES = {
         "💳 *Payment Methods — Overview*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "Bite Store accepts these ways to pay (whatever is enabled at checkout):\n\n"
-        "*1. 💳 Bybit Pay*\n"
+        "*1. ⭐ Telegram Stars (Instant)*\n"
+        "  Pay natively inside Telegram without external crypto wallets. Instant credit.\n\n"
+        "*2. 💳 Bybit Pay*\n"
         "  Send USDT to the bot's Bybit UID. Simple, click-to-verify.\n\n"
-        "*2. 💎 Bybit USDT (TRC20 / BEP20)*\n"
+        "*3. 💎 Bybit USDT (TRC20 / BEP20)*\n"
         "  Send USDT on your chosen network to the shown address.\n\n"
-        "*3. 🪙 Binance USDT*\n"
+        "*4. 🪙 Binance USDT*\n"
         "  Send USDT from Binance, then paste the TXID — auto-verified by API.\n\n"
-        "*4. 💰 Points Wallet*\n"
+        "*5. 💰 Points Wallet*\n"
         "  Use balance you already deposited. No external payment needed.\n\n"
         "_Tap any specific method button on the previous screen for step-by-step._"
+    ),
+    "pay_stars": (
+        "⭐ *Telegram Stars — Step-by-Step*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Telegram Stars is the fastest, instant way to deposit or buy products directly inside Telegram without external wallets.\n\n"
+        "*Step 1:* At checkout or in Buy Points, select *⭐ Telegram Stars*.\n\n"
+        "*Step 2:* Bot shows the required Stars amount (converted at the store's current exchange rate, default 1$ = 120 Stars).\n\n"
+        "*Step 3:* Tap the *⭐ Pay X Stars* button.\n\n"
+        "*Step 4:* Telegram opens its secure native payment popup. Tap to authorize the payment with your Stars balance.\n\n"
+        "*Step 5:* The payment is verified instantly inside Telegram! The bot credits your Points or delivers your product immediately.\n\n"
+        "✨ *Why use Stars?* No screenshots, no copying UIDs or TXIDs, and no waiting for blockchain confirmation!"
+    ),
+    "reseller_api": (
+        "🔗 *Reseller API — Step-by-Step*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Bite Store provides a ProdSeller-compatible REST API so you can connect your own bot or website and sell products automatically.\n\n"
+        "*Step 1:* From Main Menu, tap *🔗 Reseller API*.\n\n"
+        "*Step 2:* Tap *🔑 Generate / View API Key* to create your secret API key.\n\n"
+        "*Step 3:* Tap *📖 API Documentation* to open the interactive Swagger UI (`/api-docs/`).\n\n"
+        "*Step 4:* Configure your bot or application with:\n"
+        "  • Base URL: Your store's URL\n"
+        "  • Header: `X-API-Key: <your_api_key>`\n\n"
+        "*Endpoints available:*\n"
+        "  • `GET /v1/products` — Get live stock and prices\n"
+        "  • `GET /v1/balance` — Check your reseller wallet balance\n"
+        "  • `POST /v1/orders` — Place an automated order (returns delivered keys instantly)\n"
+        "  • `GET /v1/orders/{id}` — Check order status\n\n"
+        "✨ Real live stock is checked on every request — no fake stock numbers!"
     ),
     "pay_binance": (
         "🪙 *Binance USDT — Step-by-Step*\n"

@@ -8,6 +8,46 @@
 
 ---
 
+# 🚀 v162 (2026-08-12) — ⭐ TELEGRAM STARS FLOW CUSTOMIZATION + EDIT RESPONSES + HOW-TO-USE GUIDES + READY DB
+
+## 🎨 NEW: Telegram Stars Flow in Customization
+- **`customization.py`**: Added `"stars_flow_screen"` (`⭐ Telegram Stars Flow`) to Screen-by-Screen Editor (`MAIN_SCREENS`, `BTN_TARGET_SCREEN`, `SCREEN_TREE`), parallel to `bybit_flow_screen`.
+- Admin can now edit buttons (`pay_stars`, `pay_stars_pay`, `nav_pay_cancel`) and texts (`stars_pay_instructions`, `stars_payment_success`) directly via Customization → Payment Methods → ⭐ Telegram Stars Flow.
+- **`handlers_stars.py`**: Updated `_send_stars_invoice` to build `nav_pay_cancel` dynamically via `button_system.build_button()`, and updated deposit success to use the editable response `"stars_payment_success"`.
+
+## 💬 NEW: Telegram Stars in "Edit Responses"
+- **`config.py` & `handlers_admin.py`**: Added `stars_pay_instructions` and `stars_payment_success` to `DEFAULT_RESPONSES` and registered `stars_` prefix in `CATEGORIES["payment"]`.
+- Admin can now search or browse under `💳 Payment Screens` in Edit Responses to customize Telegram Stars texts.
+
+## 📚 UPDATED: "How to Use" Guidelines (English)
+- **`ui_extras.py`**:
+  - Updated `_GUIDES["pay_overview"]` to feature ⭐ Telegram Stars prominently at #1.
+  - Added dedicated full-screen guides for **⭐ Telegram Stars — Step-by-Step** (`guide_pay_stars`) and **🔗 Reseller API — Step-by-Step** (`guide_reseller_api`).
+  - Added interactive buttons for both guides in the How-to-Use Guide Hub keyboard.
+
+## 🗄️ READY DB: `bite_store_restore_ready.db` (v162 Migrated & Verified)
+- Downloaded user's live MediaFire database and performed zero-loss schema upgrade on a workspace copy.
+- **Zero-Loss Verification:**
+  - `users`: 1098 -> 1098 rows ✅
+  - `orders`: 514 -> 514 rows ✅
+  - `products`: 16 -> 16 rows ✅
+  - `bot_settings`: 1100 -> 1100 rows ✅
+- Seeded missing responses into `bot_responses`. All 15 schema tables checked with 0 errors.
+
+## 🧪 Automated Tests & Boot Smoke
+- `_test_v162_stars_customization.py` — **9/9 PASS**:
+  - `test_01_stars_flow_screen_in_screens` ✅
+  - `test_02_btn_target_screen_mapping` ✅
+  - `test_03_stars_flow_screen_hierarchy` ✅
+  - `test_04_default_responses_contain_stars_keys` ✅
+  - `test_05_admin_edit_responses_category` ✅
+  - `test_06_ui_extras_guides_added` ✅
+  - `test_07_pay_overview_lists_stars_first` ✅
+  - `test_08_zero_loss_database_verification` ✅
+  - `test_09_boot_smoke_import_and_migrate` ✅
+
+---
+
 # 🚀 v161 (2026-08-10) — 🔗 RESELLER API (ProdSeller-compatible) + Railway LIVE
 
 ## 🟢 Railway migration COMPLETE

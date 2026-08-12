@@ -1354,6 +1354,52 @@ async def admin_responses_callback(u,c):
     await _show_responses_category(u, c)
 
 
+def get_response_categories_map(all_keys=None):
+    """Helper to return the categorized responses mapping."""
+    if all_keys is None:
+        try:
+            from database import get_all_response_keys
+            all_keys = get_all_response_keys()
+        except Exception:
+            all_keys = []
+    _p = lambda *pfx: [k for k in all_keys if k.startswith(pfx)]
+    CATEGORIES = {
+        "main": {"name": "🏠 Main Menu", "keys": ["welcome", "my_account", "cancelled_message", "fj_verified_done"]},
+        "shop": {"name": "🛒 Shop & Products", "keys": ["shop_title", "shop_categories_title", "product_detail", "no_products", "out_of_stock", "confirm_purchase", "confirm_bulk_purchase", "bulk_confirmed", "no_orders", "orders_title", "shop_no_available", "shop_no_unavailable"]},
+        "payment": {"name": "💳 Payment Screens", "keys": [k for k in all_keys if k.startswith(("payment_", "binance_", "jazzcash_", "easypaisa_", "jc_", "ep_", "buy_points", "bybit_", "stars_"))]},
+        "verify": {"name": "✅ Verification Messages", "keys": [k for k in all_keys if k.startswith(("payment_verified", "analyzing_", "screenshot_", "reupload_", "jc_reupload", "upload_image"))]},
+        "orderflow": {"name": "🧾 Order Flow", "keys": [k for k in all_keys if k.startswith(("order_", "refund_"))]},
+        "error": {"name": "❌ Error Messages", "keys": [k for k in all_keys if k.startswith("error_")]},
+        "points": {"name": "💎 Points & Referrals", "keys": [k for k in all_keys if k.startswith(("points_", "referral_", "no_transactions", "buy_points"))]},
+        "features": {"name": "🧩 Feature Screens", "keys": ["support_menu_header", "warranty_menu_header", "warranty_no_orders", "reviews_menu_header", "loyalty_menu_header", "language_menu_header"]},
+        "tier": {"name": "🏆 Loyalty & Tiers", "keys": [k for k in all_keys if k.startswith("tier_")]},
+        "freeclaim": {"name": "🎁 Free Claim", "keys": [k for k in all_keys if k.startswith("freeclaim_")]},
+        "reseller": {"name": "🔗 Reseller API", "keys": [k for k in all_keys if k.startswith("reseller_api_")]},
+        "other": {"name": "📞 Support & Other", "keys": ["support_text", "terms", "order_rejected", "new_user_notification", "binance_instructions", "refund_processed"]},
+    }
+    try:
+        from custom_locations import get_custom_response_categories
+        for cc in get_custom_response_categories():
+            cat_id = cc.get("id", "")
+            if cat_id and cat_id not in CATEGORIES:
+                CATEGORIES[cat_id] = {
+                    "name": cc.get("name") or cat_id,
+                    "keys": [k for k in (cc.get("keys") or []) if k in all_keys],
+                }
+    except Exception:
+        pass
+    covered = set()
+    for cat_info in CATEGORIES.values():
+        covered.update(k for k in cat_info["keys"] if k in all_keys)
+    uncategorized = sorted(set(all_keys) - covered)
+    if uncategorized:
+        CATEGORIES["uncategorized"] = {
+            "name": f"📄 Other / New ({len(uncategorized)})",
+            "keys": uncategorized,
+        }
+    return CATEGORIES
+
+
 async def _show_responses_category(u, c, category="all", page=1):
     """Show responses editor — categorized with pagination.
 
@@ -1367,64 +1413,7 @@ async def _show_responses_category(u, c, category="all", page=1):
     from database import get_all_response_keys
     all_keys = get_all_response_keys()
 
-    # Define categories — hardcoded lists for the well-known groups.
-    # 🔧 v120: coverage audit — every DEFAULT_RESPONSES / DB key now lands in a
-    # named category (no more stragglers in "uncategorized" for known keys).
-    # Grouping rules:
-    #   payment   → payment_*, binance_*, jazzcash_*, easypaisa_*, jc_*, ep_*,
-    #               buy_points*, and the method-menu texts
-    #   verify    → payment_verified*, analyzing_*, screenshot_*, reupload_*,
-    #               jc_reupload*, upload_image*
-    #   orderflow → order_* (created/cancelled/rejected/refund)
-    #   error     → error_*
-    #   points    → points/referral/deposit texts
-    #   tier      → tier_*
-    #   freeclaim → freeclaim_*
-    #   features  → header/menu screens
-    #   other     → support/terms/notifications
-    _p = lambda *pfx: [k for k in all_keys if k.startswith(pfx)]
-    CATEGORIES = {
-        "main": {"name": "🏠 Main Menu", "keys": ["welcome", "my_account", "cancelled_message", "fj_verified_done"]},
-        "shop": {"name": "🛒 Shop & Products", "keys": ["shop_title", "shop_categories_title", "product_detail", "no_products", "out_of_stock", "confirm_purchase", "confirm_bulk_purchase", "bulk_confirmed", "no_orders", "orders_title", "shop_no_available", "shop_no_unavailable"]},
-        "payment": {"name": "💳 Payment Screens", "keys": [k for k in all_keys if k.startswith(("payment_", "binance_", "jazzcash_", "easypaisa_", "jc_", "ep_", "buy_points", "bybit_"))]},
-        "verify": {"name": "✅ Verification Messages", "keys": [k for k in all_keys if k.startswith(("payment_verified", "analyzing_", "screenshot_", "reupload_", "jc_reupload", "upload_image"))]},
-        "orderflow": {"name": "🧾 Order Flow", "keys": [k for k in all_keys if k.startswith(("order_", "refund_"))]},
-        "error": {"name": "❌ Error Messages", "keys": [k for k in all_keys if k.startswith("error_")]},
-        "points": {"name": "💎 Points & Referrals", "keys": [k for k in all_keys if k.startswith(("points_", "referral_", "no_transactions", "buy_points"))]},
-        "features": {"name": "🧩 Feature Screens", "keys": ["support_menu_header", "warranty_menu_header", "warranty_no_orders", "reviews_menu_header", "loyalty_menu_header", "language_menu_header"]},
-        # 🆕 v95: NEW category for tier / freeclaim / refund groups (were missing)
-        "tier": {"name": "🏆 Loyalty & Tiers", "keys": [k for k in all_keys if k.startswith("tier_")]},
-        "freeclaim": {"name": "🎁 Free Claim", "keys": [k for k in all_keys if k.startswith("freeclaim_")]},
-        # 🆕 v161.11: Reseller API responses (editable)
-        "reseller": {"name": "🔗 Reseller API", "keys": [k for k in all_keys if k.startswith("reseller_api_")]},
-        "other": {"name": "📞 Support & Other", "keys": ["support_text", "terms", "order_rejected", "new_user_notification", "binance_instructions", "refund_processed"]},
-    }
-
-    # 🆕 v95: merge admin-added custom response categories (dynamic, from DB)
-    try:
-        from custom_locations import get_custom_response_categories
-        for cc in get_custom_response_categories():
-            cat_id = cc.get("id", "")
-            if cat_id and cat_id not in CATEGORIES:
-                CATEGORIES[cat_id] = {
-                    "name": cc.get("name") or cat_id,
-                    "keys": [k for k in (cc.get("keys") or []) if k in all_keys],
-                }
-    except Exception:
-        pass
-
-    # 🐛 v95 FIX: compute what's covered vs missing, add a catch-all for
-    # anything that slipped through (future-proof — if admin adds a new
-    # DEFAULT_RESPONSES key, it appears here automatically without code change)
-    covered = set()
-    for cat_info in CATEGORIES.values():
-        covered.update(k for k in cat_info["keys"] if k in all_keys)
-    uncategorized = sorted(set(all_keys) - covered)
-    if uncategorized:
-        CATEGORIES["uncategorized"] = {
-            "name": f"📄 Other / New ({len(uncategorized)})",
-            "keys": uncategorized,
-        }
+    CATEGORIES = get_response_categories_map(all_keys)
     
     # Build category list
     if category == "all":
