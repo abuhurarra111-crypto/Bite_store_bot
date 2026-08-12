@@ -8519,6 +8519,10 @@ async def admin_pm_crypto_callback(u, c):
         by_cfg = "🟢 set" if bybit_api_is_configured() else "🔴 MISSING (set BYBIT_API_KEY + BYBIT_API_SECRET in Render env)"
     except Exception:
         by_cfg = "?"
+    try:
+        _spr = get_setting("stars_per_dollar", "120")
+    except Exception:
+        _spr = "120"
     text = (
         f"🪙 *Crypto Payment Settings*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -8530,10 +8534,13 @@ async def admin_pm_crypto_callback(u, c):
         f"Pay ID/UID: `{escape_md(by_pay or 'not set')}`\n"
         f"TRC20: `{escape_md(by_trc)}`\n"
         f"BEP20: `{escape_md(by_bep)}`\n\n"
+        f"⭐ *Telegram Stars*\n"
+        f"Rate: 1$ = *{escape_md(str(_spr))} Stars*\n\n"
         f"Tap *Bybit Test & Refresh* to check the API connection and permissions."
     )
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🔄 Bybit Test & Refresh", callback_data="bybit_test")],
+        [InlineKeyboardButton("⭐ Set Stars Rate (1$ = ? Stars)", callback_data="set_stars_rate")],
         [InlineKeyboardButton("✏️ Bybit Pay ID / UID", callback_data="set_bybit_pay_id")],
         [InlineKeyboardButton("✏️ Bybit TRC20 Address", callback_data="set_bybit_usdt_trc20_address")],
         [InlineKeyboardButton("✏️ Bybit BEP20 Address", callback_data="set_bybit_usdt_bep20_address")],
@@ -12093,3 +12100,48 @@ async def reseller_dashboard_callback(update, context):
         [InlineKeyboardButton("🔙 Reseller Panel", callback_data="reseller_panel")],
     ])
     await q.edit_message_text("\n".join(lines)[:3900], parse_mode="Markdown", reply_markup=kb)
+
+
+# ⭐ v161.25: Telegram Stars rate setter (1$ = ? Stars)
+async def stars_rate_start_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    cur = get_setting("stars_per_dollar", "120")
+    context.user_data["pm_stars_rate"] = True
+    await _safe_edit(q,
+        f"⭐ *Set Telegram Stars Rate*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Current: 1$ = *{escape_md(str(cur))} Stars*\n\n"
+        f"Type a number (how many Stars = $1).\n"
+        f"Example: `120` → 1$ = 120 Stars (like Stock Lara)\n\n"
+        f"_Send the number as your next message._",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="pm_crypto")]]))
+
+
+async def stars_rate_received(update, context):
+    """Called from bot.py handle_text when pm_stars_rate is set."""
+    if update.effective_user.id != ADMIN_ID:
+        return False
+    if not context.user_data.get("pm_stars_rate"):
+        return False
+    context.user_data.pop("pm_stars_rate", None)
+    raw = (update.message.text or "").strip()
+    try:
+        val = float(raw)
+        if val < 1 or val > 100000:
+            raise ValueError
+    except Exception:
+        await update.message.reply_text(
+            "❌ Enter a valid number ≥ 1, e.g. `120`.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Crypto Settings", callback_data="pm_crypto")]]))
+        return True
+    set_setting("stars_per_dollar", str(int(val) if float(val).is_integer() else val))
+    await update.message.reply_text(
+        f"✅ *Stars rate updated:* 1$ = *{int(val) if float(val).is_integer() else val:g} Stars*\n\n"
+        f"_Customers will see the new conversion instantly._",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Crypto Settings", callback_data="pm_crypto")]]))
+    return True

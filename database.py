@@ -2348,6 +2348,7 @@ PAYMENT_METHODS = {
     "bybit_usdt_trc20": {"label": "Bybit USDT TRC20", "default_on": "1"},
     "bybit_usdt_bep20": {"label": "Bybit USDT BEP20", "default_on": "1"},
     "points":     {"label": "💎 Pay with Points",     "default_on": "1"},
+    "telegram_stars": {"label": "⭐ Telegram Stars",   "default_on": "1"},
 }
 
 _DEFAULT_UNAVAILABLE_MSGS = {
@@ -2357,6 +2358,7 @@ _DEFAULT_UNAVAILABLE_MSGS = {
     "usdt_trc20": "USDT TRC20 payments are temporarily unavailable. Please choose another method.",
     "usdt_bep20": "USDT BEP20 payments are temporarily unavailable. Please choose another method.",
     "points":    "💎 Points payment is currently disabled.\n\nPlease use an external payment method (Binance / EasyPaisa / JazzCash / USDT).",
+    "telegram_stars": "⭐ Telegram Stars is temporarily unavailable.\n\nPlease use another payment method.",
 }
 
 

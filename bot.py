@@ -7,7 +7,8 @@ import os
 import warnings
 from telegram.warnings import PTBUserWarning
 from telegram.ext import (Application, CommandHandler, CallbackQueryHandler,
-    MessageHandler, ConversationHandler, filters, ApplicationHandlerStop)
+    MessageHandler, ConversationHandler, filters, ApplicationHandlerStop,
+    PreCheckoutQueryHandler)
 from telegram.request import HTTPXRequest
 
 # Keep Render logs clean: PTB emits noisy ConversationHandler warnings for
@@ -87,8 +88,15 @@ from admin_panels import (
 from user_tracking import tracking_wipe_job
 # 🆕 v69: 24h post-delivery review reminder
 from support_replacement import review_reminder_job
+# ⭐ v161.25: Telegram Stars payment
+from handlers_stars import (
+    points_stars_callback, product_stars_callback,
+    stars_pay_callback, stars_precheckout_callback,
+    stars_successful_payment,
+)
 from handlers_support import (adm_upacct_callback, upacct_skip_inst_callback, adm_chat_callback, adm_ownmaildone_callback, user_reply_to_admin_callback, cancel_user_chat_callback)
-from handlers_admin import (flash_toggle_callback, manual_hist_callback, edit_manual_order_callback, delivery_settings_callback, pdm_callback, pfmt_callback, pmt_callback, pmail_callback, ppass_callback, ds_toggle_callback, ds_format_pick_callback, ds_set_format_callback, ds_template_pick_callback, ds_set_template_callback, cb_style_callback)
+from handlers_admin import (flash_toggle_callback, manual_hist_callback, edit_manual_order_callback, delivery_settings_callback, pdm_callback, pfmt_callback, pmt_callback, pmail_callback, ppass_callback, ds_toggle_callback, ds_format_pick_callback, ds_set_format_callback, ds_template_pick_callback, ds_set_template_callback, cb_style_callback,
+    stars_rate_start_callback, stars_rate_received)  # ⭐ v161.25 Stars rate
 from handlers_admin import (flash_toggle_callback, adm_manage_pts_callback, adm_pts_uid_received, adm_pts_amt_received)
 from handlers_admin import *
 from handlers_admin import adm_diagnostics_callback
@@ -615,6 +623,9 @@ async def handle_text(update, context):
         if await refadm_set_points_received(update, context): return
     if context.user_data.get('refadm_step'):
         if await refadm_text_received(update, context): return
+    # ⭐ v161.25: Telegram Stars rate input
+    if context.user_data.get('pm_stars_rate'):
+        if await stars_rate_received(update, context): return
     # 🆕 v49: Per-product broadcast button editor inputs (text / premium emoji)
     if context.user_data.get('fcb_step'):
         if await fcb_text_received(update, context): return
@@ -2000,7 +2011,11 @@ def main():
         ("^usdtv_", usdt_verify_callback),
         ("^bybitv_", bybit_verify_callback),
         ("^bybit_manual_confirm_", bybit_manual_confirm_callback),
-        ("^bybit_flow_continue$", bybit_flow_continue_callback),
+                # ⭐ v161.25: Telegram Stars payment
+        ("^ptspay_stars_",                 points_stars_callback),
+        ("^pay_stars_",                    product_stars_callback),
+        ("^stars_pay_",                    stars_pay_callback),
+("^bybit_flow_continue$", bybit_flow_continue_callback),
         ("^bybit_flow_cancel$", bybit_flow_cancel_callback),
         ("^buy_", buy_callback), ("^pay_binance_", payment_binance_callback),
         ("^pay_easy_", payment_easypaisa_callback), ("^pay_jazz_", payment_jazzcash_callback),
@@ -2088,6 +2103,7 @@ def main():
         ("^pm_easypaisa$", admin_pm_easypaisa_callback),
         ("^pm_jazzcash$", admin_pm_jazzcash_callback),
         ("^pm_crypto$", admin_pm_crypto_callback),
+        ("^set_stars_rate$", stars_rate_start_callback),
         ("^bybit_test$", bybit_test_callback),
         # 🆕 v30: Binance proxy removed (screenshot verifier doesn't need it)
         # 🆕 v23: Product Color Indicators
@@ -2920,6 +2936,10 @@ def main():
     except Exception:
         pass
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    # ⭐ v161.25: Telegram Stars — pre-checkout + successful payment
+    app.add_handler(PreCheckoutQueryHandler(stars_precheckout_callback))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, stars_successful_payment))
 
     # 🆕 v148: Poll answers — users voting in broadcast polls
     try:

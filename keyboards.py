@@ -593,6 +593,10 @@ def payment_method_keyboard(pid, qty=1):
     if is_payment_enabled("jazzcash"):
         b = _rb("pay_jazzcash", callback_data=f"pay_jazz_{pid}_{qty}")
         kb.append([b] if b else [InlineKeyboardButton("JazzCash", callback_data=f"pay_jazz_{pid}_{qty}")])
+    # ⭐ v161.25: Telegram Stars (product checkout)
+    if is_payment_enabled("telegram_stars"):
+        b = _rb("pay_stars", callback_data=f"pay_stars_{pid}_{qty}")
+        kb.append([b] if b else [InlineKeyboardButton("⭐ Telegram Stars", callback_data=f"pay_stars_{pid}_{qty}")])
     try:
         kb.extend(_custom_buttons_for("payment"))
     except Exception:
@@ -685,6 +689,10 @@ def points_payment_keyboard(amt):
     if _ipe("jazzcash"):
         b = _rb("pay_jazzcash", callback_data=f"ptspay_jazz_{amt}")
         kb.append([b] if b else [InlineKeyboardButton("JazzCash", callback_data=f"ptspay_jazz_{amt}")])
+    # ⭐ v161.25: Telegram Stars deposit
+    if _ipe("telegram_stars"):
+        b = _rb("pay_stars", callback_data=f"ptspay_stars_{amt}")
+        kb.append([b] if b else [InlineKeyboardButton("⭐ Telegram Stars", callback_data=f"ptspay_stars_{amt}")])
     _b = _rb("nav_points_cancel", callback_data="buy_points")
     if _b: kb.append([_b])
     return InlineKeyboardMarkup(kb)

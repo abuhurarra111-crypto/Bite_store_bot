@@ -429,6 +429,20 @@ DEFAULT_RESPONSES.update({
     ),
 })
 
+# ⭐ v161.25: Telegram Stars payment responses
+DEFAULT_RESPONSES.update({
+    "stars_pay_instructions": (
+        "⭐ *Pay with Telegram Stars*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🧾 Order: `#{order_id}`\n"
+        "💰 Amount: *${amount}*\n"
+        "⭐ Stars needed: *{stars} Stars*\n"
+        "📊 Rate: 1$ = {rate} Stars\n\n"
+        "👇 Tap the button below — Telegram opens its secure payment window.\n"
+        "_No ID or screenshot needed — Stars credit instantly._"
+    ),
+})
+
 
 # 🔧 v123: Bybit USDT (TRC-20 / BEP-20) new UID-free deposit flow
 DEFAULT_RESPONSES.update({

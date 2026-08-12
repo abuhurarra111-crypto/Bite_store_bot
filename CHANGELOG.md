@@ -4265,3 +4265,41 @@ nahi kar pa raha tha. 3 problems:
 ## ✅ READY DB (nayi — user ki current): 1098 users / 513 orders / 16 products
 - bite_store_restore_ready.db — migrate 0 errors, order_deliveries ready,
   ref_bonus_tiers=20:10, ProdSeller docs fixed. Functional tests passed.
+
+---
+
+# 🚀 v161.25 (2026-08-12) — ⭐ TELEGRAM STARS PAYMENT ADDED
+
+## Naya payment method: ⭐ Telegram Stars (Buy Points + Products)
+- User ne dekha Stock Lara bot mein Stars payment → "mera b krdena"
+- Implementation (web-researched, Bot API docs):
+  - `handlers_stars.py` naya module:
+    - `points_stars_callback` (ptspay_stars_{amt}) — Buy Points Stars invoice
+    - `product_stars_callback` (pay_stars_{pid}_{qty}) — product Stars invoice
+    - `stars_pay_callback` — tap "Pay X Stars" → bot.send_invoice(currency=XTR, provider_token="")
+    - `stars_precheckout_callback` — PreCheckoutQueryHandler → answer OK
+    - `stars_successful_payment` — order delivered + points credited + Deposit Successful msg
+  - Rate: `stars_per_dollar` setting (default 120 = 1$ : 120 Stars, admin editable)
+  - `database.py`: PAYMENT_METHODS mein telegram_stars
+  - `keyboards.py`: Buy Points + product checkout mein ⭐ button
+  - `button_system.py`: pay_stars + pay_stars_pay registry buttons (rename/color)
+  - `handlers_admin.py`: Crypto Settings mein Stars rate + Set Stars Rate button
+    (stars_rate_start_callback + stars_rate_received)
+  - `ui_extras.py`: How-to-Use deposit guide Stars section
+  - `config.py`: stars_pay_instructions response (editable in Edit Responses)
+  - bot.py: PreCheckoutQueryHandler + MessageHandler(filters.SUCCESSFUL_PAYMENT) registered
+
+## Tests (sab pass):
+- rate: $1=120, $2.6309=316 ✅
+- invoice stored 600 stars ($5) ✅
+- send_invoice: currency=XTR, provider_token='', prices[0].amount=600 ✅
+- pre_checkout answered OK ✅
+- successful_payment → order delivered + 50 points + Deposit Successful msg ✅
+- product order: pay_stars_242_1 → 120 stars invoice ✅
+- rate setter: 120→150 works ✅
+- FULL BOT BOOT OK ✅
+
+## Note for owner:
+- BotFather → Payments → "Back to Bot" (provider list fiat ke liye hai, Stars ke liye
+  kuch nahi chahiye — Stars sab bots ko automatic available hai)
+- Stars paisa bot ke Telegram Stars balance mein aata hai → Fragment se withdraw

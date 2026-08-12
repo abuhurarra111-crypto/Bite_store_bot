@@ -573,6 +573,19 @@ BUTTONS = {
         "large": "📱 JazzCash ⚡ Auto", "xl": "📱 JazzCash — Auto Verify ⚡",
         "callback": None,
     },
+    # ⭐ v161.25: Telegram Stars
+    "pay_stars": {
+        "group": "payment", "essential": False,
+        "short": "⭐", "medium": "⭐ Telegram Stars",
+        "large": "⭐ Telegram Stars", "xl": "⭐ Telegram Stars — Instant Deposit",
+        "callback": None,
+    },
+    "pay_stars_pay": {
+        "group": "payment", "essential": False,
+        "short": "⭐", "medium": "⭐ Pay",
+        "large": "⭐ Pay Now", "xl": "⭐ Pay with Stars — Open Payment Window",
+        "callback": None,
+    },
 
     # ── POINTS BUY ──
     "pts_custom": {
