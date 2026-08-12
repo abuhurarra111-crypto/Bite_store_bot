@@ -4462,3 +4462,11 @@ nahi kar pa raha tha. 3 problems:
 - BotFather → Payments → "Back to Bot" (provider list fiat ke liye hai, Stars ke liye
   kuch nahi chahiye — Stars sab bots ko automatic available hai)
 - Stars paisa bot ke Telegram Stars balance mein aata hai → Fragment se withdraw
+
+## v168.1 (2026-08-13)
+### 🎯 Broadcast Routing Fix
+- **Fixed:** Referral and new user broadcasts now route through configured fake activity destination
+- Referral broadcasts go to destination (group/channel/bot) instead of random 30 user inboxes
+- New user join broadcasts go to destination instead of all users
+- Consistent with other fake activity broadcasts (purchase, deposit, etc.)
+- Users' inboxes are now clean — only see activity they interact with directly

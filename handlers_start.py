@@ -562,15 +562,13 @@ async def _process_referral_attribution(context, new_user, referrer_id, is_new_u
         await _send_direct_referral_notifications(
             context, referrer_id, new_user, reward, direct_total)
 
-    # 🆕 v168: BACKGROUND broadcast — fire-and-forget so /start returns INSTANTLY
-    # Previously this loop sent to ALL 1100+ users synchronously, blocking the
-    # entire bot for 3-5 minutes. Now capped to 30 random users and runs in
-    # a background task so the referring user gets instant responses.
+    # 🆕 v168.1: Referral broadcast → ONLY to fake activity destination (not user inbox)
+    # Routes through broadcast_store_message() which respects dest_mode config
+    # (group_only/bot_only/both) so referral activity only shows where admin wants it.
     try:
         from per_user_activity import (
             is_globally_enabled, _random_name, _mask_name
         )
-        from database import get_all_users_for_broadcast, row_uid
         from customization import render_template
         if is_globally_enabled():
             ref_count = get_referral_count(referrer_id)
@@ -580,18 +578,11 @@ async def _process_referral_attribution(context, new_user, referrer_id, is_new_u
                 "user": rname, "referrals": str(ref_count), "more": str(more),
             })
             _bot = context.bot
-            import asyncio, random as _rnd
+            import asyncio
             async def _bg_referral_broadcast():
                 try:
-                    all_users = get_all_users_for_broadcast()
-                    sample = _rnd.sample(all_users, min(30, len(all_users))) if all_users else []
-                    for usr in sample:
-                        try:
-                            uid_b = row_uid(usr)
-                            await _bot.send_message(uid_b, real_msg, parse_mode="Markdown")
-                            await asyncio.sleep(0.03)
-                        except Exception:
-                            pass
+                    from fake_engagement import broadcast_store_message
+                    await broadcast_store_message(_bot, real_msg, bypass_maintenance=True)
                 except Exception:
                     pass
             asyncio.create_task(_bg_referral_broadcast())

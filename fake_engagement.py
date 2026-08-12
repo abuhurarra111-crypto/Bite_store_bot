@@ -2781,7 +2781,8 @@ async def broadcast_new_user_join(bot, new_user_name: str):
             ]
             msg = random.choice(greetings)
 
-        await send_to_all_users(bot, msg)
+        # 🆕 v168.1: Route through destination-based broadcast (not user inbox)
+        await broadcast_store_message(bot, msg, bypass_maintenance=True)
 
     except Exception as e:
         import logging
