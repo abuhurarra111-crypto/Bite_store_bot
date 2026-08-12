@@ -4946,6 +4946,14 @@ def setup_ref_points_and_log():
             print("✅ v161.16 ref_points merged into wallet")
     except Exception as _e:
         print(f"⚠️ v161.16 ref merge failed: {_e}")
+    # 🆕 v161.17: purge STUCK pending referrals (observation-era leftovers).
+    # They block nothing now (approval is immediate), but clear them so the
+    # per-tap pending check doesn't keep re-approving old rows.
+    try:
+        c.execute("UPDATE pending_referrals SET status='approved' WHERE status='pending'")
+        c.execute("UPDATE pending_referrals SET observe_tries=0 WHERE observe_tries>0")
+    except Exception as _e:
+        print(f"⚠️ v161.17 pending purge: {_e}")
     # Referral audit log
     c.execute("""
         CREATE TABLE IF NOT EXISTS referral_log (

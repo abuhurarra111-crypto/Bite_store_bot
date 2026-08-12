@@ -1844,6 +1844,13 @@ async def _resolve_chat_id(bot, chat_id: str) -> str:
         return raw  # Return original as fallback
 
 
+# 🆕 v161.17: force-join member-check cache — every button tap called
+# get_chat_member per target (3 targets × network latency each tap) which
+# made the bot feel slow/stuck. Cache result per (user, chat) for 300s.
+_FJ_MEMBER_CACHE = {}
+_FJ_MEMBER_CACHE_TTL = 300  # seconds
+_FJ_MEMBER_CACHE_LOCK = asyncio.Lock() if False else None  # placeholder
+
 async def _is_member(bot, user_id: int, chat_id: str) -> bool:
     """
     Check if user_id is a member of chat_id.
@@ -1861,18 +1868,32 @@ async def _is_member(bot, user_id: int, chat_id: str) -> bool:
     Fails OPEN on errors (don't block users if Telegram API fails).
     🐛 v143: wrapped in asyncio.wait_for so a stalled Telegram API call can
     never freeze the bot (fail-open after 6s).
+    🆕 v161.17: 5-min result cache — removes the per-tap API spam that made
+    the bot slow/stuck (was: 3 get_chat_member calls on EVERY button tap).
     """
+    import time as _t
+    cache_key = f"{int(user_id)}|{str(chat_id).strip().lower()}"
+    now = _t.time()
+    hit = _FJ_MEMBER_CACHE.get(cache_key)
+    if hit and (now - hit[0]) < _FJ_MEMBER_CACHE_TTL:
+        return hit[1]
     try:
         # Resolve to numeric or @username
-        resolved = await asyncio.wait_for(_resolve_chat_id(bot, chat_id), timeout=6)
+        resolved = await asyncio.wait_for(_resolve_chat_id(bot, chat_id), timeout=4)
 
         member = await asyncio.wait_for(
-            bot.get_chat_member(chat_id=resolved, user_id=user_id), timeout=6)
-        return member.status in (
+            bot.get_chat_member(chat_id=resolved, user_id=user_id), timeout=4)
+        result = member.status in (
             ChatMember.MEMBER,
             ChatMember.ADMINISTRATOR,
             ChatMember.OWNER,
         )
+        _FJ_MEMBER_CACHE[cache_key] = (now, result)
+        # keep cache bounded
+        if len(_FJ_MEMBER_CACHE) > 5000:
+            for k in list(_FJ_MEMBER_CACHE.keys())[:2000]:
+                _FJ_MEMBER_CACHE.pop(k, None)
+        return result
     except TelegramError as e:
         err = str(e)
         # "Chat not found" — bot is not in the group
@@ -1885,6 +1906,7 @@ async def _is_member(bot, user_id: int, chat_id: str) -> bool:
                 f"[ForceJoin] ⚠️ Bot is NOT a member of {chat_id}. "
                 f"Add bot as admin to the group/channel first!"
             )
+        _FJ_MEMBER_CACHE[cache_key] = (now, True)  # fail-open cached too (v161.17)
         return True  # Fail open — do NOT block user on API errors
 
 
