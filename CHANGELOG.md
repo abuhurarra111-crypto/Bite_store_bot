@@ -4206,3 +4206,35 @@ When a new version ships, **prepend a new `# 🚀 vXX` section at the top** of t
   _compute_sell_price, update_ext_product).
 - Verified LIVE: ProdSeller 16 products, real stock (296/924/295...), balance
   $11.86 — no crash.
+
+---
+
+# 🚀 v161.22 (2026-08-12) — BYBIT PAY REDESIGN — payment ab DETECT hoti hai + bot FAST
+
+## 🐛 ROOT CAUSE (user: "payment add ni hoi" + "bot slow again")
+Screenshot OCR: user ne Bybit Pay UID 563918642 paste kiya → bot "Payment Not Found Yet".
+Live Bybit API test se 3 internal deposits milin — **user 563918642 ki $1.0 payment API mein
+MOJUD thi** (`fromMemberId=563918642, amount=1.0, txid=7efd6bc9-...`), lekin bot match
+nahi kar pa raha tha. 3 problems:
+
+1. **Clock drift (retCode 10002)** — `_bybit_server_offset()` 300s cache; stale offset →
+   API call fail → "Payment Not Found Yet". Main jab manually check karta hoon fresh
+   offset leta hoon isliye payment milti thi, bot ko nahi.
+2. **Async job → SYNC requests** — `bybit_deposit_background_job` (async) directly
+   `_find_matching_bybit_payment()` call karta hai jo proxy-rotating sync requests hai
+   (30-40s!) → event loop frozen → har click slow.
+3. **23-proxy pool, 8-15s timeouts** — dead proxies pe rotation 2-3 min burn karti thi.
+
+## ✅ FIX (tested live)
+- `_bybit_get()` ab retCode 10002 par offset refresh karke RETRY karta hai → clock drift
+  kabhi payment ko "not found" nahi bana sakta.
+- `bybit_deposit_background_job` + `_verify_bybit_order_and_respond` (Check button) +
+  `_notify_admin_bybit_failure` sab `asyncio.to_thread` → event loop kabhi block nahi.
+- Proxy rotation timeout per-proxy 3s (23 proxies × 3s max ≈ 69s worst, normally 1-3s).
+- Bybit auto-check job 45s → 20s (faster detection).
+
+## ✅ VERIFIED (live Bybit API)
+- Internal fetch: 2.3s (pehle 30-40s).
+- User 563918642 $1.0 payment MATCHED in 0.8s (txid 7efd6bc9-234f-4b77-9f30-0665c931).
+- Event-loop heartbeat test: max gap 51ms during scan → bot responsive.
+- Full bot boot OK.

@@ -305,10 +305,16 @@ def _request_with_rotation(method_url: str, headers: dict, timeout: int,
         if _is_in_cooldown(proxy_url):
             continue
         try:
+            # 🆕 v161.22 FIX (Bybit Pay SLOW/undetected): a 23-proxy pool with
+            # 8-15s timeouts could burn 2-3 MINUTES on dead proxies before a
+            # working one responded — the event loop froze and payments looked
+            # "not found". Tighten each attempt to 3s so rotation is fast.
+            t0 = time.time()
             r = requests.get(
                 method_url, headers=headers,
-                proxies=_proxies_for(proxy_url), timeout=timeout,
+                proxies=_proxies_for(proxy_url), timeout=min(timeout, 3),
             )
+            elapsed = time.time() - t0
             try:
                 body_txt = r.text or ""
             except Exception:
@@ -318,7 +324,11 @@ def _request_with_rotation(method_url: str, headers: dict, timeout: int,
                 _mark_proxy_fail(proxy_url, f"HTTP {r.status_code} (geo-blocked)")
                 last_err = f"{proxy_url}: HTTP {r.status_code} blocked"
                 continue
-            _mark_proxy_ok(proxy_url, last_good_key=last_good_key)
+            if elapsed > 2.5:
+                # slow-but-working proxy: remember but don't let it lead
+                _mark_proxy_ok(proxy_url, last_good_key=None)
+            else:
+                _mark_proxy_ok(proxy_url, last_good_key=last_good_key)
             return r.status_code, r, proxy_url
         except requests.exceptions.ProxyError as e:
             _mark_proxy_fail(proxy_url, f"ProxyError: {e}")
@@ -952,6 +962,34 @@ def _bybit_get(path: str, params: dict | None = None, timeout: int = 15):
         last_good_key="bybit_proxy_last_good",
         geo_block_check=_bybit_blocked,
     )
+    # 🆕 v161.22 FIX (Bybit Pay NOT detected): Bybit's server clock drifts and
+    # the 300s offset cache can go stale → retCode 10002 "check your server
+    # timestamp". When that happens we refresh the offset NOW and retry ONCE
+    # with the corrected timestamp, so a stale offset can NEVER make a real
+    # payment look "not found". Same for geo-blocked proxies: retry once with
+    # the proxy pool's next candidate.
+    if code == 200:
+        try:
+            _j = resp.json()
+            _rc = int(_j.get("retCode", -1)) if isinstance(_j, dict) else -1
+        except Exception:
+            _rc = -1
+        if _rc == 10002:
+            try:
+                _bybit_offset_fetched[0] = 0  # force fresh server-time sync
+                _off2 = _bybit_server_offset()
+                ts2 = str(_bybit_now_ms())
+                headers2 = dict(headers)
+                headers2["X-BAPI-TIMESTAMP"] = ts2
+                headers2["X-BAPI-SIGN"] = _bybit_sign(ts2, query)
+                code, resp, _used = _request_with_rotation(
+                    url, headers2, timeout,
+                    last_good_key="bybit_proxy_last_good",
+                    geo_block_check=_bybit_blocked,
+                )
+                logger.info(f"[BybitAPI] clock-drift retry after 10002 (offset={_off2:.0f}ms)")
+            except Exception as _r2:
+                logger.warning(f"[BybitAPI] clock-drift retry failed: {_r2}")
     if code == -1:
         _bybit_last_meta.update({"path": path, "http": -1, "retCode": None,
                                  "retMsg": str(resp)[:160], "ok": False, "error": str(resp)[:160]})

@@ -1004,7 +1004,7 @@ async def post_init(app):
             # 🪙 USDT TRC20/BEP20 on-chain deposit checker
             app.job_queue.run_repeating(usdt_deposit_background_job, interval=45, first=15, name="usdt_deposit_checker")
             # 🟡 Bybit Pay + Bybit USDT deposit checker
-            app.job_queue.run_repeating(bybit_deposit_background_job, interval=45, first=20, name="bybit_deposit_checker")
+            app.job_queue.run_repeating(bybit_deposit_background_job, interval=20, first=10, name="bybit_deposit_checker")  # 🆕 v161.22: 45s→20s — faster auto-verify
             # 🆕 v161.3: Pending reseller order reminder to admin
             app.job_queue.run_repeating(_reseller_pending_reminder_job, interval=900, first=300, name="reseller_pending_reminder")
     except Exception:

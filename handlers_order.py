@@ -3215,7 +3215,7 @@ async def _notify_admin_bybit_failure(bot, order, reason):
         diag_lines = []
         try:
             from payments import get_bybit_api_key_info
-            kinfo = get_bybit_api_key_info()
+            kinfo = await asyncio.to_thread(get_bybit_api_key_info)
             try:
                 from database import get_setting as _gs
                 pay_uid = str(_gs('bybit_pay_id', os.getenv('BYBIT_PAY_ID', '')) or '')
@@ -3235,8 +3235,8 @@ async def _notify_admin_bybit_failure(bot, order, reason):
             dep_rows = []
             try:
                 from payments import get_bybit_internal_deposits, get_bybit_deposit_records
-                dep_rows.extend(get_bybit_internal_deposits('USDT', lookback_hours=96))
-                dep_rows.extend(get_bybit_deposit_records('USDT', lookback_hours=96))
+                dep_rows.extend(await asyncio.to_thread(get_bybit_internal_deposits, 'USDT', 96))
+                dep_rows.extend(await asyncio.to_thread(get_bybit_deposit_records, 'USDT', 96))
             except Exception:
                 pass
             seen = set()
@@ -3346,7 +3346,10 @@ async def _verify_bybit_order_and_respond(target, context, oid):
     o=get_order(int(oid))
     if not o: await _send_or_edit(target, '❌ Order not found.', reply_markup=back_btn()); return
     if o['status']=='delivered': await _send_or_edit(target, '✅ Already verified.', reply_markup=back_btn()); return
-    dep,reason=_find_matching_bybit_payment(o)
+    # 🆕 v161.22 FIX (bot SLOW + not-detected): the Bybit scan is a sync
+    # proxy-rotating API call — run it in a worker thread so the Check button
+    # responds instantly and the event loop never freezes.
+    dep,reason=await asyncio.to_thread(_find_matching_bybit_payment, o)
     if dep:
         ok,msg=await _complete_bybit_order(context.bot,o,dep)
         if ok:
@@ -3388,6 +3391,12 @@ async def bybit_deposit_background_job(context):
     (bybit_usdt_*). Same safe matching as the Check button; on success the
     order is credited + user notified. On failure an admin alert is sent
     (throttled) with a Mark Received & Credit button.
+
+    🆕 v161.22 FIX (bot SLOW): _find_matching_bybit_payment() performs SYNC
+    requests (proxy rotation) that can take 3-60s. Calling it directly inside
+    an async job froze the ENTIRE event loop — every user's clicks lagged while
+    the Bybit scan ran. Now each order's scan runs in asyncio.to_thread so the
+    loop never blocks.
     """
     try:
         from database import get_pending_bybit_orders
@@ -3396,7 +3405,7 @@ async def bybit_deposit_background_job(context):
         orders = []
     for o in orders:
         try:
-            dep, reason = _find_matching_bybit_payment(o, lookback_hours=720)
+            dep, reason = await asyncio.to_thread(_find_matching_bybit_payment, o, 720)
             if dep:
                 ok, msg = await _complete_bybit_order(context.bot, o, dep)
                 if ok:
