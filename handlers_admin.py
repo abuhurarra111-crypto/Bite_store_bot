@@ -8590,9 +8590,28 @@ async def bybit_test_callback(u, c):
         pay_line = f"\n🎯 *Customers pay to (bybit_pay_id):* `{escape_md(str(pay_uid))}`"
         if uid_line and pay_uid and str(kinfo.get('uid') or '') and str(pay_uid).strip() != str(kinfo.get('uid') or '').strip():
             pay_line += "\n\n⚠️ *UID MISMATCH!* The API key belongs to a different Bybit account than the Pay ID customers pay to. The bot can never see those deposits. Fix: use a key from the SAME account as the Pay ID."
+        # 🆕 v161.23: FUND + UNIFIED balance — agar payment Bybit Pay balance mein
+        # hai to FUND 0 dikhega aur admin ko samajh aayega payment kahan atki hai.
+        bal_line = ""
+        try:
+            from payments import _bybit_get as _bg
+            _f = _bg("/v5/asset/transfer/query-account-coins-balance", {"coin": "USDT", "accountType": "FUND"}, timeout=20)
+            if isinstance(_f, dict) and _f.get("retCode") == 0:
+                _fb = ((_f.get("result") or {}).get("balance") or [{}])
+                _fval = (_fb[0].get("walletBalance") if _fb else "0") or "0"
+                bal_line += f"\n💼 *FUND USDT balance:* `{escape_md(str(_fval))}`"
+            _u = _bg("/v5/asset/transfer/query-account-coins-balance", {"coin": "USDT", "accountType": "UNIFIED"}, timeout=20)
+            if isinstance(_u, dict) and _u.get("retCode") == 0:
+                _ub = ((_u.get("result") or {}).get("balance") or [{}])
+                _uval = (_ub[0].get("walletBalance") if _ub else "0") or "0"
+                bal_line += f"\n💼 *UNIFIED USDT balance:* `{escape_md(str(_uval))}`"
+            if bal_line:
+                bal_line += "\n_⚠️ Agar FUND balance 0 hai lekin customer ne Bybit Pay se bheja hai, to paisa Bybit Pay balance mein hai — Bybit app → Bybit Pay → balance → Transfer to Funding karo, phir bot 20s mein detect kar lega._"
+        except Exception:
+            pass
         await q.edit_message_text(
             f"{status} — Bybit API Test\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n\n{escape_md(msg)}{uid_line}{pay_line}",
+            f"━━━━━━━━━━━━━━━━━━━━\n\n{escape_md(msg)}{uid_line}{pay_line}{bal_line}",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Crypto Settings", callback_data="pm_crypto")]]))
     except Exception as e:
