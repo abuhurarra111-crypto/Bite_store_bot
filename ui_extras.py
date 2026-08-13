@@ -2250,6 +2250,7 @@ async def fj_verified_callback(update, context):
     # Using bot.send_message() instead of q.message.reply_text() to avoid deleted message issues
     try:
         from database import save_user, get_user, get_response
+        from utils import smart_text_and_mode  # 🆕 v169.2: CRITICAL FIX - import missing!
         save_user(user.id, user.username or "", user.first_name or "")
         from keyboards import main_menu_keyboard, persistent_menu
         from config import ADMIN_ID
