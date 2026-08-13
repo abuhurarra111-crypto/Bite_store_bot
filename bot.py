@@ -77,7 +77,7 @@ from handlers_shop import (shop_flash_callback, req_restock_callback, shop_callb
                             shop_category_callback, shop_category_page_callback,
                             shop_filter_callback, favorite_toggle_callback, favorites_callback)  # 🆕 v59/v142
 from handlers_order import *
-from handlers_order import pay_pts_callback, binance_note_background_job
+from handlers_order import pay_pts_callback, binance_note_background_job, orders_layout_picker_callback, set_orders_layout_callback
 # 🆕 v65: Refund + Cancel handlers
 from admin_panels import (
     adm_refund_callback, adm_refund_confirm_callback, adm_refund_abort_callback,
@@ -2122,6 +2122,8 @@ def main():
         ("^my_orders$", my_orders_callback),
         ("^myord_resend_", my_order_resend_callback),
         ("^myord_", my_order_detail_callback),
+        ("^orders_layout_picker$", orders_layout_picker_callback),
+        ("^set_orders_layout_", set_orders_layout_callback),
         ("^pts_custom$", points_custom_callback),
         ("^ptspay_binance_menu_", points_binance_menu_callback),
         ("^ptspay_bybit_menu_", points_bybit_menu_callback),

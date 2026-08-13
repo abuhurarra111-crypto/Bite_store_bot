@@ -3732,8 +3732,7 @@ async def handle_screenshot(update, context):
 # 📜 MY ORDERS (Product History)
 # ════════════════════════════════════════════
 async def my_orders_callback(update, context):
-    """🆕 v169: Redesigned orders screen — shows products like shop (not order list).
-    User sees only products they've ordered. Click to see delivery details."""
+    """🆕 v170: Orders screen with 10 premium layouts - shop-like display"""
     q = update.callback_query; await q.answer()
     nav_push(context, 'my_orders')
     orders = get_user_product_orders(q.from_user.id)
@@ -3743,60 +3742,103 @@ async def my_orders_callback(update, context):
                                   reply_markup=back_btn(location="my_orders"))
         return
     
-    # Group orders by product (show each unique product once with latest order info)
-    products_seen = {}
-    for o in orders:
-        pid = o.get('product_id') or o.get('id')  # fallback to order id
-        if pid not in products_seen:
-            products_seen[pid] = o
+    # 🆕 v170: Use orders layout system with premium emojis + colored backgrounds
+    try:
+        from orders_layouts import render_orders
+        text, keyboard = render_orders(orders, q.from_user.id)
+        
+        # Add layout selector button
+        keyboard.inline_keyboard.insert(-1, [
+            InlineKeyboardButton("🎨 Change Layout", callback_data="orders_layout_picker")
+        ])
+        
+        send_text, send_mode = smart_text_and_mode(text[:3900], "Markdown")
+        await q.edit_message_text(send_text, parse_mode=send_mode, reply_markup=keyboard)
+    except Exception as e:
+        logger.error(f"Orders layout error: {e}")
+        # Fallback to old system
+        products_seen = {}
+        for o in orders:
+            pid = o.get('product_id') or o.get('id')
+            if pid not in products_seen:
+                products_seen[pid] = o
+        
+        text = "📦 *My Orders*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        text += f"🛍️ You have ordered *{len(products_seen)}* product(s)\n\n"
+        
+        rows = []
+        for pid, o in list(products_seen.items())[:15]:
+            pname = o.get('product_name', 'Product')
+            import re as _re
+            clean_name = _re.sub(r'<[^>]+>', '', pname).replace('[[HTML]]', '')
+            if len(clean_name) > 40:
+                clean_name = clean_name[:37] + "..."
+            
+            status = o.get('status', 'pending')
+            s_icon = {
+                'pending': '🟡', 'screenshot_sent': '📸', 'binance_waiting': '🔶',
+                'usdt_waiting': '🪙', 'bybit_waiting': '🟡',
+                'paid_pending_delivery': '🕒', 'waiting_for_details': '📨',
+                'supplier_processing': '🔄', 'supplier_retry_pending': '🔁',
+                'delivered': '✅', 'cancelled': '❌', 'rejected': '❌', 'refunded': '💎'
+            }.get(status, '❓')
+            
+            text += f"{s_icon} *{escape_md(clean_name)}*\n"
+            text += f"   Status: #{o['id']} • 💰 {fmt_price(o.get('price', 0))}\n\n"
+            
+            btn_text = f"📦 View Delivery #{o['id']}" if status == 'delivered' else f"🔎 View #{o['id']}"
+            rows.append([InlineKeyboardButton(btn_text, callback_data=f"myord_{o['id']}")])
+        
+        rows.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
+        
+        send_text, send_mode = smart_text_and_mode(text[:3900], "Markdown")
+        await q.edit_message_text(send_text, parse_mode=send_mode, reply_markup=InlineKeyboardMarkup(rows))
+
+
+async def orders_layout_picker_callback(update, context):
+    """🆕 v170: Show all 10 order layouts for admin to choose"""
+    q = update.callback_query; await q.answer()
     
-    text = "📦 *My Orders*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-    text += f"🛍️ You have ordered *{len(products_seen)}* product(s)\n\n"
+    from orders_layouts import get_all_layouts, get_orders_layout
+    layouts = get_all_layouts()
+    current = get_orders_layout()
+    
+    text = "🎨 *Orders Layout Picker*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+    text += f"Current: *{layouts[current]['name']}*\n\n"
+    text += "_Choose a layout to change how orders display:_\n\n"
     
     rows = []
-    for pid, o in list(products_seen.items())[:15]:  # Show max 15 products
-        # Product name with emoji (like shop)
-        pname = o.get('product_name', 'Product')
-        # Clean HTML tags from name for display
-        import re as _re
-        clean_name = _re.sub(r'<[^>]+>', '', pname).replace('[[HTML]]', '')
-        if len(clean_name) > 40:
-            clean_name = clean_name[:37] + "..."
-        
-        # Status icon (like shop shows stock)
-        status = o.get('status', 'pending')
-        s_icon = {
-            'pending': '🟡', 'screenshot_sent': '📸', 'binance_waiting': '🔶',
-            'usdt_waiting': '🪙', 'bybit_waiting': '🟡',
-            'paid_pending_delivery': '🕒', 'waiting_for_details': '📨',
-            'supplier_processing': '🔄', 'supplier_retry_pending': '🔁',
-            'delivered': '✅', 'cancelled': '❌', 'rejected': '❌', 'refunded': '💎'
-        }.get(status, '❓')
-        
-        # Status text
-        s_text = {
-            'pending': 'Pending', 'screenshot_sent': 'Processing',
-            'binance_waiting': 'Awaiting Payment', 'usdt_waiting': 'Awaiting USDT',
-            'bybit_waiting': 'Awaiting Bybit', 'paid_pending_delivery': 'Processing',
-            'waiting_for_details': 'Waiting Info', 'supplier_processing': 'Processing',
-            'supplier_retry_pending': 'Retrying', 'delivered': 'Delivered',
-            'cancelled': 'Cancelled', 'rejected': 'Rejected', 'refunded': 'Refunded'
-        }.get(status, status)
-        
-        text += f"{s_icon} *{escape_md(clean_name)}*\n"
-        text += f"   Status: {s_text} • #{o['id']}\n"
-        text += f"   💰 {fmt_price(o.get('price', 0))}\n\n"
-        
-        # Button to view details (like "Buy Now" in shop)
-        btn_text = f"🔎 View #{o['id']}"
-        if status == 'delivered':
-            btn_text = f"📦 View Delivery #{o['id']}"
-        rows.append([InlineKeyboardButton(btn_text, callback_data=f"myord_{o['id']}")])
+    for layout_id, layout in layouts.items():
+        marker = "✅" if layout_id == current else "  "
+        rows.append([InlineKeyboardButton(
+            f"{marker} {layout['name']}",
+            callback_data=f"set_orders_layout_{layout_id}"
+        )])
     
-    rows.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
+    rows.append([InlineKeyboardButton("🔙 Back to Orders", callback_data="my_orders")])
     
-    send_text, send_mode = smart_text_and_mode(text[:3900], "Markdown")
-    await q.edit_message_text(send_text, parse_mode=send_mode, reply_markup=InlineKeyboardMarkup(rows))
+    await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(rows))
+
+
+async def set_orders_layout_callback(update, context):
+    """🆕 v170: Set the selected orders layout"""
+    q = update.callback_query; await q.answer()
+    
+    layout_id = q.data.replace("set_orders_layout_", "")
+    
+    from orders_layouts import set_orders_layout, get_all_layouts
+    layouts = get_all_layouts()
+    
+    if layout_id in layouts:
+        set_orders_layout(layout_id)
+        await q.answer(f"✅ Layout changed to {layouts[layout_id]['name']}", show_alert=True)
+        
+        # Go back to orders screen
+        from handlers_order import my_orders_callback
+        await my_orders_callback(update, context)
+    else:
+        await q.answer("❌ Invalid layout", show_alert=True)
+
 
 
 async def my_order_detail_callback(update, context):
