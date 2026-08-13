@@ -3732,30 +3732,69 @@ async def handle_screenshot(update, context):
 # 📜 MY ORDERS (Product History)
 # ════════════════════════════════════════════
 async def my_orders_callback(update, context):
+    """🆕 v169: Redesigned orders screen — shows products like shop (not order list).
+    User sees only products they've ordered. Click to see delivery details."""
     q = update.callback_query; await q.answer()
     nav_push(context, 'my_orders')
     orders = get_user_product_orders(q.from_user.id)
     if not orders:
-        await q.edit_message_text("📜 *No orders yet!*", parse_mode="Markdown",
-                                    reply_markup=back_btn(location="my_orders"))
+        await q.edit_message_text("📜 *No orders yet!*\n\nStart shopping to see your orders here.", 
+                                  parse_mode="Markdown",
+                                  reply_markup=back_btn(location="my_orders"))
         return
-    text = "📜 *Order History:*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    # Group orders by product (show each unique product once with latest order info)
+    products_seen = {}
+    for o in orders:
+        pid = o.get('product_id') or o.get('id')  # fallback to order id
+        if pid not in products_seen:
+            products_seen[pid] = o
+    
+    text = "📦 *My Orders*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+    text += f"🛍️ You have ordered *{len(products_seen)}* product(s)\n\n"
+    
     rows = []
-    for o in orders[:12]:
-        s_icon = {'pending':'🟡','screenshot_sent':'📸','binance_waiting':'🔶','usdt_waiting':'🪙','bybit_waiting':'🟡',
-                  'paid_pending_delivery':'🕒','waiting_for_details':'📨',
-                  'supplier_processing':'🔄','supplier_retry_pending':'🔁',
-                  'delivered':'✅','cancelled':'❌','rejected':'❌','refunded':'💎'}.get(o['status'],'❓')
-        text += f"• #{o['id']} {escape_md(o['product_name'])} — {fmt_price(o['price'])} {s_icon}\n"
-        if o['status'] == 'delivered':
-            text += "   ↳ Tap View to see/resend delivery details.\n"
-        elif o['status'] in ('paid_pending_delivery','waiting_for_details','supplier_processing'):
-            text += "   ↳ Your order is in progress.\n"
-        elif o['status'] == 'supplier_retry_pending':
-            text += "   ↳ Supplier retry window active; auto-refund if not delivered.\n"
-        text += "\n"
-        rows.append([InlineKeyboardButton(f"🔎 View #{o['id']}", callback_data=f"myord_{o['id']}")])
+    for pid, o in list(products_seen.items())[:15]:  # Show max 15 products
+        # Product name with emoji (like shop)
+        pname = o.get('product_name', 'Product')
+        # Clean HTML tags from name for display
+        import re as _re
+        clean_name = _re.sub(r'<[^>]+>', '', pname).replace('[[HTML]]', '')
+        if len(clean_name) > 40:
+            clean_name = clean_name[:37] + "..."
+        
+        # Status icon (like shop shows stock)
+        status = o.get('status', 'pending')
+        s_icon = {
+            'pending': '🟡', 'screenshot_sent': '📸', 'binance_waiting': '🔶',
+            'usdt_waiting': '🪙', 'bybit_waiting': '🟡',
+            'paid_pending_delivery': '🕒', 'waiting_for_details': '📨',
+            'supplier_processing': '🔄', 'supplier_retry_pending': '🔁',
+            'delivered': '✅', 'cancelled': '❌', 'rejected': '❌', 'refunded': '💎'
+        }.get(status, '❓')
+        
+        # Status text
+        s_text = {
+            'pending': 'Pending', 'screenshot_sent': 'Processing',
+            'binance_waiting': 'Awaiting Payment', 'usdt_waiting': 'Awaiting USDT',
+            'bybit_waiting': 'Awaiting Bybit', 'paid_pending_delivery': 'Processing',
+            'waiting_for_details': 'Waiting Info', 'supplier_processing': 'Processing',
+            'supplier_retry_pending': 'Retrying', 'delivered': 'Delivered',
+            'cancelled': 'Cancelled', 'rejected': 'Rejected', 'refunded': 'Refunded'
+        }.get(status, status)
+        
+        text += f"{s_icon} *{escape_md(clean_name)}*\n"
+        text += f"   Status: {s_text} • #{o['id']}\n"
+        text += f"   💰 {fmt_price(o.get('price', 0))}\n\n"
+        
+        # Button to view details (like "Buy Now" in shop)
+        btn_text = f"🔎 View #{o['id']}"
+        if status == 'delivered':
+            btn_text = f"📦 View Delivery #{o['id']}"
+        rows.append([InlineKeyboardButton(btn_text, callback_data=f"myord_{o['id']}")])
+    
     rows.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
+    
     send_text, send_mode = smart_text_and_mode(text[:3900], "Markdown")
     await q.edit_message_text(send_text, parse_mode=send_mode, reply_markup=InlineKeyboardMarkup(rows))
 

@@ -1322,8 +1322,10 @@ EXTRA_KEYS = [
     ("shop_category",    "📂 Shop — Category Buttons (default)"),
     ("shop_back_cats",   "🔙 Shop — Back to Categories"),
     # ── PRODUCT DETAIL ──
+    ("prod_favorite",    "⭐ Product Detail — Add/Remove Favorite"),
     ("prod_buy",         "🛒 Product Detail — Buy Now"),
     ("prod_buyx",        "🛒× Product Detail — Buy Multiple"),
+    ("prod_req",         "🔔 Product Detail — Notify When Available"),
     ("prod_review",      "⭐ Product Detail — View Reviews"),
     ("prod_back_shop",   "🔙 Product Detail — Back to Shop"),
     ("prod_home",        "🏠 Product Detail — Home"),
@@ -1464,7 +1466,7 @@ def get_grouped_keys():
     shop_keys     = {"shop_product", "shop_pagination", "shop_home",
                       "shop_buy_points", "shop_view_all", "shop_category",
                       "shop_back_cats"}
-    prod_keys     = {"prod_buy", "prod_buyx", "prod_review",
+    prod_keys     = {"prod_favorite", "prod_buy", "prod_buyx", "prod_req", "prod_review",
                       "prod_back_shop", "prod_home"}
     car_keys      = {"cnav_prev", "cnav_next", "cnav_buy", "cnav_list"}
     custom_keys   = {"custom_default", "custom_submenu"}

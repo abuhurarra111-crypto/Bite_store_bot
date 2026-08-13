@@ -710,6 +710,10 @@ async def run_fake_broadcast(bot, force_type=None):
                     continue
             except Exception:
                 pass
+            # 🆕 v169: Exclude test/API products from broadcasts
+            pname = (d.get("name") or "").lower()
+            if "api test" in pname or "apitest" in pname:
+                continue
             all_products.append(p)
     except Exception:
         all_products = []
@@ -1710,6 +1714,10 @@ def insert_fake_review(product_id=None, product_name=None, force_language=None, 
                     continue
             except Exception:
                 pass
+            # 🆕 v169: Exclude test/API products from fake reviews too
+            pname = (d.get("name") or "").lower()
+            if "api test" in pname or "apitest" in pname:
+                continue
             in_stock.append(p)
 
         if not in_stock:
@@ -3489,27 +3497,35 @@ def _is_product_broadcastable(pid):
     A product is BROADCASTABLE only when ALL of these are true:
       1. Product exists in DB (not deleted by admin)
       2. is_active == 1 (not soft-deleted)
-      3. is_hidden == 0 (admin hasn't hidden it from users)
+      3. is_hidden == 0 (admin hasn't hidden it)
       4. stock > 0  (currently buyable)
-
-    If any of these fail, returning False causes broadcast_store_message()
-    to silently skip sending — so users never see a broadcast for a product
-    they cannot tap-to-buy.
+      5. 🆕 v169: name doesn't contain "api test" AND pid not excluded
 
     Defensive: any DB error → return False (skip broadcast = safe).
     """
     try:
-        from database import get_product, is_product_hidden
-        p = get_product(int(pid))
+        from database import get_product, is_product_hidden, get_setting
+        pid = int(pid)
+        p = get_product(pid)
         if not p:
-            return False  # deleted / never existed
+            return False
         d = dict(p)
         if int(d.get("is_active", 0) or 0) != 1:
-            return False  # soft-deleted
-        if is_product_hidden(int(pid)):
-            return False  # admin hid it
+            return False
+        if is_product_hidden(pid):
+            return False
         if int(d.get("stock", 0) or 0) <= 0:
-            return False  # out of stock
+            return False
+        # 🆕 v169: Exclude test/API products from ALL broadcasts
+        name = (d.get("name") or "").lower()
+        if "api test" in name or "apitest" in name:
+            return False
+        # Also check admin-configured exclusion list
+        exclude_ids = str(get_setting("broadcast_exclude_products", "") or "").strip()
+        if exclude_ids:
+            excluded = [int(x.strip()) for x in exclude_ids.split(",") if x.strip().isdigit()]
+            if pid in excluded:
+                return False
         return True
     except Exception as e:
         logger.warning(f"[_is_product_broadcastable] pid={pid} check failed: {e} → skipping broadcast")

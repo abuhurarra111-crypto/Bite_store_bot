@@ -499,7 +499,10 @@ def product_detail_keyboard(product, user=None):
         if user_id:
             from database import is_favorite
             fav = is_favorite(user_id, pid)
-            rows.append([InlineKeyboardButton("💔 Remove Favorite" if fav else "⭐ Add to Favorites", callback_data=f"fav_toggle_{pid}")])
+            fav_lbl = _translate_btn_label("prod_favorite", "💔 Remove Favorite" if fav else "⭐ Add to Favorites", user_id=user_id)
+            fav_lbl = _apply_styler("prod_favorite", fav_lbl)
+            fav_style = resolve_button_style("prod_favorite") if 'resolve_button_style' in dir() else ""
+            rows.append([_make_btn(fav_lbl, callback_data=f"fav_toggle_{pid}", style=fav_style)])
     except Exception:
         pass
     if stock > 0:
@@ -507,14 +510,19 @@ def product_detail_keyboard(product, user=None):
                      "large": "🛒 Buy Now", "xl": "🛒 Buy Now — Order this item"}.get(size, "🛒 Buy"), user_id=user_id))
         buyx_lbl = _apply_styler("prod_buyx", _translate_btn_label("prod_buyx", {"small": "🛒×", "medium": "🛒× Buy Multiple",
                       "large": "🛒× Buy Multiple (Bulk)", "xl": "🛒× Buy Multiple — Bulk order"}.get(size, "🛒× Buy Multiple"), user_id=user_id))
-        rows.append([InlineKeyboardButton(decorate(buy_lbl), callback_data=f"buy_{pid}")])
-        rows.append([InlineKeyboardButton(decorate(buyx_lbl), callback_data=f"buyx_{pid}")])
+        # 🎨 v169: Apply background color and premium emoji support
+        buy_style = resolve_button_style("prod_buy") if 'resolve_button_style' in dir() else ""
+        buyx_style = resolve_button_style("prod_buyx") if 'resolve_button_style' in dir() else ""
+        rows.append([_make_btn(buy_lbl, callback_data=f"buy_{pid}", style=buy_style)])
+        rows.append([_make_btn(buyx_lbl, callback_data=f"buyx_{pid}", style=buyx_style)])
     else:
         req_lbl = _apply_styler("prod_req", _translate_btn_label("prod_req", "🔔 Notify Me When Available", user_id=user_id))
-        rows.append([InlineKeyboardButton(decorate(req_lbl), callback_data=f"req_restock_{pid}")])
+        req_style = resolve_button_style("prod_req") if 'resolve_button_style' in dir() else ""
+        rows.append([_make_btn(req_lbl, callback_data=f"req_restock_{pid}", style=req_style)])
         
     rev_lbl = _apply_styler("prod_review", _translate_btn_label("prod_review", "⭐ View Reviews", user_id=user_id))
-    rows.append([InlineKeyboardButton(rev_lbl, callback_data=f"prodrev_{pid}")])
+    rev_style = resolve_button_style("prod_review") if 'resolve_button_style' in dir() else ""
+    rows.append([_make_btn(rev_lbl, callback_data=f"prodrev_{pid}", style=rev_style)])
 
     # 🆕 v70: Share Product button — hidden if Free-via-Referrals is enabled
     try:

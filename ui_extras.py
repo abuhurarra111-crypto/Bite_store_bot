@@ -2231,12 +2231,11 @@ async def fj_verified_callback(update, context):
             show_alert=True)
         return
 
-    # Verified! Delete the join message and proceed
-    try:
-        await q.message.delete()
-    except Exception:
-        pass
-
+    # 🆕 v169.1: CRITICAL FIX - DO NOT DELETE MESSAGE!
+    # Previously: q.message.delete() was called, then q.message.reply_text() was attempted
+    # This caused the bot to appear stuck because replying to a deleted message fails silently.
+    # Now: We keep the message and edit it instead, OR use bot.send_message() for new messages.
+    
     # 🆕 v134: referral-origin users continue the /start flow that stopped at
     # the force-join wall — referral recorded as PENDING, then MATH question.
     try:
@@ -2244,15 +2243,15 @@ async def fj_verified_callback(update, context):
         handled = await continue_after_force_join_verified(update, context, user)
         if handled:
             return
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[ForceJoin] continue_after_force_join_verified error: {e}")
 
-    # 🆕 v138: verified-response is now editable (Edit Responses) with
-    # premium emoji + auto-deletes from the user's chat after 5 seconds.
+    # 🆕 v169.1: FIXED — show proper welcome with persistent menu
+    # Using bot.send_message() instead of q.message.reply_text() to avoid deleted message issues
     try:
         from database import save_user, get_user, get_response
         save_user(user.id, user.username or "", user.first_name or "")
-        from keyboards import main_menu_keyboard
+        from keyboards import main_menu_keyboard, persistent_menu
         from config import ADMIN_ID
         tpl = get_response("fj_verified_done", "")
         if not tpl:
@@ -2261,21 +2260,17 @@ async def fj_verified_callback(update, context):
             shop = get_setting("shop_name", SHOP_NAME)
             tpl = f"✅ *Verified!*\n\nWelcome to *{shop}*! 🛍️\n\nYou're all set to use the bot."
         send_text, send_mode = smart_text_and_mode(tpl, "Markdown")
-        sent = await q.message.reply_text(
-            send_text, parse_mode=send_mode,
+        
+        chat_id = q.message.chat_id
+        
+        # 🆕 v169.1: Use bot.send_message() - works even if original message was deleted
+        await bot.send_message(chat_id, "👋", reply_markup=persistent_menu(user.id))
+        await bot.send_message(
+            chat_id,
+            send_text, 
+            parse_mode=send_mode,
             reply_markup=main_menu_keyboard(user.id == ADMIN_ID, user_id=user.id))
-        # Auto-delete the verified message after 5 seconds (per user request)
-        try:
-            if sent and getattr(context, 'job_queue', None):
-                mid = sent.message_id; chat_id = sent.chat_id
-                async def _del(_c):
-                    try:
-                        await _c.bot.delete_message(chat_id, mid)
-                    except Exception:
-                        pass
-                context.job_queue.run_once(_del, 5, name=f"fj_del_{chat_id}_{mid}")
-        except Exception:
-            pass
+        
         # Start personal fake activity
         try:
             from per_user_activity import start_personal_activity
@@ -2284,8 +2279,11 @@ async def fj_verified_callback(update, context):
             pass
     except Exception as e:
         logger.error(f"[ForceJoin] Verified flow error: {e}")
-        await q.message.reply_text(
-            "✅ Verified! Please send /start to continue.")
+        # Fallback: use bot.send_message() with chat_id
+        try:
+            await bot.send_message(q.message.chat_id, "✅ Verified! Please send /start to continue.")
+        except Exception as e2:
+            logger.error(f"[ForceJoin] Fallback also failed: {e2}")
 
 
 # ════════════════════════════════════════════════════════════════
