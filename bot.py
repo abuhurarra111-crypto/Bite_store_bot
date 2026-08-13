@@ -3065,3 +3065,4 @@ if __name__ == "__main__":
         except Exception as _e:
             _logging.exception("💥 Bot crashed; rebuilding fresh in 15s")
             _time.sleep(15)
+# Force restart marker - Thu Aug 13 09:02:52 UTC 2026
