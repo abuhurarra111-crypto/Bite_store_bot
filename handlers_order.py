@@ -3745,13 +3745,17 @@ async def my_orders_callback(update, context):
     # 🆕 v170: Use orders layout system with premium emojis + colored backgrounds
     try:
         from orders_layouts import render_orders
-        text, keyboard = render_orders(orders, q.from_user.id)
+        text, buttons = render_orders(orders, q.from_user.id)
         
-        # Add layout selector button
-        keyboard.inline_keyboard.insert(-1, [
+        # Add layout selector button before back button
+        buttons.insert(-1, [
             InlineKeyboardButton("🎨 Change Layout", callback_data="orders_layout_picker")
         ])
         
+        # Add back button
+        buttons.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
+        
+        keyboard = InlineKeyboardMarkup(buttons)
         send_text, send_mode = smart_text_and_mode(text[:3900], "Markdown")
         await q.edit_message_text(send_text, parse_mode=send_mode, reply_markup=keyboard)
     except Exception as e:

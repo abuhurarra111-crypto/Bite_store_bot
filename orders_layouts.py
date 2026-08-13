@@ -413,20 +413,19 @@ def get_all_layouts():
 
 
 def render_orders(orders, user_id=None):
-    """Render orders with current layout"""
+    """Render orders with current layout
+    
+    Returns:
+        tuple: (text, buttons_list) where buttons_list is a list of button rows
+    """
     layout_id = get_orders_layout()
     layout = ORDERS_LAYOUTS.get(layout_id, ORDERS_LAYOUTS["premium"])
     
     try:
         text, buttons = layout["render"](orders, user_id)
-        
-        # Add back button
-        buttons.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
-        
-        return text, InlineKeyboardMarkup(buttons)
+        return text, buttons
     except Exception as e:
         logger.error(f"Error rendering orders: {e}")
         # Fallback to classic
         text, buttons = ORDERS_LAYOUTS["classic"]["render"](orders, user_id)
-        buttons.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
-        return text, InlineKeyboardMarkup(buttons)
+        return text, buttons
