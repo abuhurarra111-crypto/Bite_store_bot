@@ -8,6 +8,42 @@
 
 ---
 
+# 🚀 v170.2 (2026-08-14) — 🔐 FORCE-JOIN TIGHT SECURITY: LEAVE DETECTION
+
+## 🐛 USER BUG: user verify ho kar bot start kar leta hai, phir channels LEAVE kar
+## deta hai — par bot phir bhi chalta rehta hai. Hona chahiye: leave karte hi bot
+## foran wohi channel dobara join karne par force kare.
+
+## ROOT CAUSE
+- `_FJ_MEMBER_CACHE` positive result (member=True) **900s (15 min)** cache karta tha.
+- User verify ke baad 3 targets ka `True` cache hota tha → channel leave karne ke
+  baad bhi gate (force_join_action_gate) cache se purana `True` uthata tha →
+  fresh `get_chat_member` hota hi nahi tha → 15 min tak bot chalne deta tha.
+
+## FIX (ui_extras.py + bot.py)
+1. `_FJ_MEMBER_CACHE_TTL` 900s → **60s** (leave max 1 min me detect — channel ke
+   liye, kyunki Telegram channel leave ka koi push event nahi deta).
+2. **Naya `fj_chat_member_handler`** + `ChatMemberHandler(ANY_CHAT_MEMBER)`:
+   jab koi user kisi chat se leave/join kare (group leave ka instant event aata
+   hai) to uski membership cache **turant invalidate** → next action par fresh
+   check → leave karne wala foran block (join wall dobara dikhta hai).
+3. `invalidate_fj_member_cache(user_id=None)` helper (single user ya sab clear).
+
+## TESTED (local reproduction)
+- Verify → positive cache banai → leave event → cache 0 → gate BLOCKED ✅
+- Leave ke baad fresh gate check → BLOCKED ✅ (join wall reply aata hai)
+- Rejoin → gate PASS ✅
+- v170.1 verify flow regression → abhi bhi sahi (negative cache nahi hota) ✅
+- Boot smoke OK ✅
+
+## NOTE
+- Channel leave ka instant event Telegram nahi deta (channel join/leave ka koi
+  service message nahi) — isliye channels ke liye 60s TTL hi reliable detection hai.
+  Group leave instant detect hota hai (chat_member update).
+- DB version marker `v170` hi rakha — deploy live DB wipe NAHI karega.
+
+---
+
 # 🚀 v168 (2026-08-13) — ⚡ CRITICAL FIX: REFERRAL FREEZE BUG + SUPER FAST BOT SPEED
 
 ## 🐛 CRITICAL FIX: Referral Freeze Bug (`handlers_start.py` + `fake_engagement.py`)

@@ -1886,8 +1886,45 @@ async def _resolve_chat_id(bot, chat_id: str) -> str:
 # get_chat_member per target (3 targets × network latency each tap) which
 # made the bot feel slow/stuck. Cache result per (user, chat) for 300s.
 _FJ_MEMBER_CACHE = {}
-_FJ_MEMBER_CACHE_TTL = 900  # seconds (v161.21: 15min — kills per-tap Telegram member-check spam)
+# 🐛 v170.2: TTL 900s → 60s. Pehle positive cache 15 min tak "member" ka jhoota
+# signal deta tha → user channel LEAVE karne ke baad bhi bot chalta rehta tha.
+# Ab sirf 60s cache → leave hote hi (max 1 min me) next action par fresh check.
+# + chat_member update handler (niche) leave par cache TURANT invalidate karta hai.
+_FJ_MEMBER_CACHE_TTL = 60
 _FJ_MEMBER_CACHE_LOCK = asyncio.Lock() if False else None  # placeholder
+
+
+def invalidate_fj_member_cache(user_id=None):
+    """🆕 v170.2: clear membership cache (one user ya sab). Jab koi user kisi
+    force-join target se LEAVE/join kare to isko call karo → next action par
+    fresh Telegram check hoga → leave karne wala foran block ho jayega."""
+    global _FJ_MEMBER_CACHE
+    if user_id is None:
+        _FJ_MEMBER_CACHE.clear()
+        return
+    prefix = f"{int(user_id)}|"
+    for k in [k for k in _FJ_MEMBER_CACHE.keys() if k.startswith(prefix)]:
+        _FJ_MEMBER_CACHE.pop(k, None)
+
+
+async def fj_chat_member_handler(update, context):
+    """🆕 v170.2: instant leave/join detection. Telegram jab bot (admin) ko
+    kisi member ka status change batata hai (group join/leave) to us user ki
+    cache turant clear karo. Channel leave ka koi push event nahi aata
+    (Telegram ki limitation) — unke liye 60s TTL hi safety net hai."""
+    try:
+        cmu = update.chat_member or update.my_chat_member
+        if not cmu:
+            return
+        u = getattr(cmu, "from_user", None)
+        if not u:
+            nc = getattr(cmu, "new_chat_member", None)
+            u = getattr(nc, "user", None) if nc else None
+        if not u or getattr(u, "is_bot", False):
+            return
+        invalidate_fj_member_cache(u.id)
+    except Exception:
+        pass
 
 async def _is_member(bot, user_id: int, chat_id: str) -> bool:
     """

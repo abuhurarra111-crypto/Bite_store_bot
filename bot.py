@@ -8,7 +8,7 @@ import warnings
 from telegram.warnings import PTBUserWarning
 from telegram.ext import (Application, CommandHandler, CallbackQueryHandler,
     MessageHandler, ConversationHandler, filters, ApplicationHandlerStop,
-    PreCheckoutQueryHandler)
+    PreCheckoutQueryHandler, ChatMemberHandler)
 from telegram.request import HTTPXRequest
 
 # Keep Render logs clean: PTB emits noisy ConversationHandler warnings for
@@ -1538,6 +1538,15 @@ def main():
     # ── 🆕 v134: Referral activity observation (runs before all others) ──
     app.add_handler(CallbackQueryHandler(_activity_hook_callback), group=-100)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _activity_hook_text), group=-100)
+    # 🆕 v170.2: instant force-join leave detection — jab koi user kisi target
+    # chat se leave/join kare to membership cache turant invalidate hoti hai.
+    try:
+        from ui_extras import fj_chat_member_handler
+        app.add_handler(ChatMemberHandler(
+            fj_chat_member_handler,
+            chat_member_types=ChatMemberHandler.ANY_CHAT_MEMBER), group=-100)
+    except Exception as _fe:
+        print(f"[ForceJoin] chat_member handler register failed: {_fe}")
 
     # ── Conversations ──
     # 1. Add Category
