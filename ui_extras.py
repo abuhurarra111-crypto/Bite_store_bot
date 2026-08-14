@@ -1926,12 +1926,25 @@ async def _is_member(bot, user_id: int, chat_id: str) -> bool:
             ChatMember.ADMINISTRATOR,
             ChatMember.OWNER,
         )
-        _FJ_MEMBER_CACHE[cache_key] = (now, result)
+        # 🐛 v170.1 FIX: sirf POSITIVE (member=True) result cache karo.
+        # Pehle False (not-a-member) bhi 900s cache hota tha → naya user /start
+        # par "not joined" cache karwa leta tha → phir channels join kar ke
+        # Verify dabata to cache se purana False milta tha → "Not joined yet"
+        # forever (15 min tak). Ab False cache nahi hota → verify hamesha
+        # FRESH Telegram check karta hai → abhi-join kiya user turant pass.
+        if result:
+            _FJ_MEMBER_CACHE[cache_key] = (now, result)
         # keep cache bounded
         if len(_FJ_MEMBER_CACHE) > 5000:
             for k in list(_FJ_MEMBER_CACHE.keys())[:2000]:
                 _FJ_MEMBER_CACHE.pop(k, None)
         return result
+    except (TimeoutError, asyncio.TimeoutError):
+        # 🐛 v170.1 FIX: get_chat_member slow ho to callback crash nahi hona
+        # chahiye (pehle TimeoutError propagate hota tha → user sirf
+        # "Checking..." toast dekhta tha aur kuch nahi hota tha).
+        logger.warning(f"[ForceJoin] Member check timed out for {user_id} in {chat_id} — failing open")
+        return True  # fail open — state unknown, don't cache
     except TelegramError as e:
         err = str(e)
         # "Chat not found" — bot is not in the group
@@ -2260,6 +2273,15 @@ async def fj_verified_callback(update, context):
             from config import SHOP_NAME
             shop = get_setting("shop_name", SHOP_NAME)
             tpl = f"✅ *Verified!*\n\nWelcome to *{shop}*! 🛍️\n\nYou're all set to use the bot."
+        # 🐛 v170.1 FIX: {shop_name}/{shop} placeholder replace karo — pehle
+        # template mein literal "{shop_name}" hi dikh jata tha user ko.
+        try:
+            from database import get_setting as _gs
+            from config import SHOP_NAME as _sn
+            _shop = str(_gs("shop_name", _sn) or _sn)
+            tpl = str(tpl).replace("{shop_name}", _shop).replace("{shop}", _shop)
+        except Exception:
+            pass
         send_text, send_mode = smart_text_and_mode(tpl, "Markdown")
         
         chat_id = q.message.chat_id
