@@ -8,6 +8,43 @@
 
 ---
 
+# 🚀 v170.3 (2026-08-14) — 🔐 FORCE-JOIN LEAVE DETECTION REAL FIX (live test fail hua tha)
+
+## 🐛 USER LIVE TEST FAIL (v170.2 ke baad): wife ke phone se verify → bot start →
+## channels leave → wapis aake button dabaya → force NAHI hua. /start par bhi nahi.
+
+## ROOT CAUSE (found + verified live)
+- v170.2 me positive member cache TTL **60s** tha. User ne leave karne ke baad
+  **60s ke ANDAR** wapas aake button dabaya → cache purana `True` de raha tha →
+  fresh `get_chat_member` hota hi nahi → force nahi hua.
+- LIVE verify: bot 3no targets (bite_alerts / learnwith_Alex / Alex_Resellers) me
+  ADMIN hai → `get_chat_member` theek chalta hai. Real user jo leave kar chuka hai
+  uske liye `status="left"` return hota hai (users 5707883931, 7814495526 se confirm)
+  → member check accurate hai, masla sirf cache ka tha.
+
+## FIX (ui_extras.py)
+1. **Positive cache TTL 60s → 5s** — sirf rapid double-tap dedupe ke liye.
+   Leave detection ab ~5s me (channel leave ka Telegram koi push event nahi deta).
+2. **Parallel member check** (`_membership_missing` helper — `asyncio.gather`):
+   pehle 3 targets sequential (3 round-trips) → isliye bara cache lagana para tha.
+   Ab 3 targets 1 round-trip ≈ 200-450ms (LIVE measured) → fresh check hamesha
+   affordable. Teen call sites (check_force_join, force_join_action_gate,
+   fj_verified_callback) ab ye helper use karte hain.
+3. **Fail-open True ab cache nahi hota** (TelegramError branch) — transient error
+   ke baad user 5s tak galat "member" na rahe.
+4. ChatMemberHandler (v170.2) — group leave par cache turant invalidate — barkarar.
+
+## TESTED (local reproduction + real API)
+- User scenario: /start(block) → join → verify(start) → leave all → wait 6s →
+  main menu tap → BLOCKED ✅ | /start → BLOCKED ✅ | rejoin → PASS ✅
+- Real API parallel check: 176-456ms (fast) ✅
+- Real API: left-wala user → "left" (accurate) ✅
+- Boot smoke OK ✅
+
+## NOTE: DB version marker `v170` hi rakha — deploy live DB wipe NAHI karega.
+
+---
+
 # 🚀 v170.2 (2026-08-14) — 🔐 FORCE-JOIN TIGHT SECURITY: LEAVE DETECTION
 
 ## 🐛 USER BUG: user verify ho kar bot start kar leta hai, phir channels LEAVE kar

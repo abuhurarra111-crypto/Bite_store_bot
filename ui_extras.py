@@ -1886,11 +1886,11 @@ async def _resolve_chat_id(bot, chat_id: str) -> str:
 # get_chat_member per target (3 targets × network latency each tap) which
 # made the bot feel slow/stuck. Cache result per (user, chat) for 300s.
 _FJ_MEMBER_CACHE = {}
-# 🐛 v170.2: TTL 900s → 60s. Pehle positive cache 15 min tak "member" ka jhoota
-# signal deta tha → user channel LEAVE karne ke baad bhi bot chalta rehta tha.
-# Ab sirf 60s cache → leave hote hi (max 1 min me) next action par fresh check.
-# + chat_member update handler (niche) leave par cache TURANT invalidate karta hai.
-_FJ_MEMBER_CACHE_TTL = 60
+# 🐛 v170.3: TTL 60s → 5s. Pehle 60s ka positive cache tha → user channel LEAVE
+# kar ke 60s ke andar wapis aata to bot purana "member" signal dikhata → force
+# nahi hota (user ka live test yahi fail hua). Ab 5s ka hi short cache — sirf
+# rapid double-tap dedupe ke liye. Leave detection ab ~5s me ho jati hai.
+_FJ_MEMBER_CACHE_TTL = 5
 _FJ_MEMBER_CACHE_LOCK = asyncio.Lock() if False else None  # placeholder
 
 
@@ -1994,8 +1994,34 @@ async def _is_member(bot, user_id: int, chat_id: str) -> bool:
                 f"[ForceJoin] ⚠️ Bot is NOT a member of {chat_id}. "
                 f"Add bot as admin to the group/channel first!"
             )
-        _FJ_MEMBER_CACHE[cache_key] = (now, True)  # fail-open cached too (v161.17)
+        # 🐛 v170.3: fail-open True cache NAHI karo — ek transient API error ke
+        # baad user 5s tak "member" na samjha jaye. Agli check dobara fresh hogi.
         return True  # Fail open — do NOT block user on API errors
+
+
+async def _membership_missing(bot, user_id, targets):
+    """🆕 v170.3: sab targets ka membership check PARALLEL (asyncio.gather) karo.
+    Pehle sequential loop me 3 get_chat_member = 3 round-trips (slow tha, isliye
+    900s/60s cache lagana para). Parallel me 1 round-trip ≈ 200-400ms — ab fresh
+    check hamesha affordable hai → leave ka turant pata chalta hai (cache sirf 5s).
+    Returns list of targets (dicts) user is NOT a member of."""
+    pairs = [(t, (t.get("link") or "").strip())
+             for t in targets if (t.get("link") or "").strip()]
+    if not pairs:
+        return []
+    results = await asyncio.gather(
+        *[_is_member(bot, int(user_id), link) for _, link in pairs],
+        return_exceptions=True)
+    missing = []
+    for (t, link), r in zip(pairs, results):
+        if isinstance(r, BaseException):
+            # Unexpected internal error → fail-open (TelegramError/Timeout
+            # _is_member ke andar hi handle hote hain, yahan sirf bug aata hai)
+            logger.warning(f"[ForceJoin] membership check raised for {link}: {r!r}")
+            continue
+        if not r:
+            missing.append(t)
+    return missing
 
 
 async def check_force_join(update, context) -> bool:
@@ -2042,13 +2068,8 @@ async def check_force_join(update, context) -> bool:
     if not targets:
         return True
 
-    missing = []
-    for t in targets:
-        link = (t.get("link") or "").strip()
-        if not link:
-            continue
-        if not await _is_member(bot, user.id, link):
-            missing.append(t)
+    # 🐛 v170.3: parallel fresh check — sab targets ek saath (fast + accurate)
+    missing = await _membership_missing(bot, user.id, targets)
 
     if not missing:
         return True  # All joined → proceed
@@ -2183,8 +2204,8 @@ async def force_join_action_gate(update, context) -> bool:
             targets.append({"label": "👥 Group", "link": group, "style": "", "emoji_id": ""})
     if not targets:
         return False
-    missing = [t for t in targets if (t.get("link") or "").strip()
-               and not await _is_member(bot, user.id, (t.get("link") or "").strip())]
+    # 🐛 v170.3: parallel fresh check — leave hote hi (5s ke andar) block
+    missing = await _membership_missing(bot, user.id, targets)
     if not missing:
         return False
     # User must (re)join → send the same join screen (🐛 v140.1: show ALL
@@ -2266,13 +2287,9 @@ async def fj_verified_callback(update, context):
         if group:
             targets.append({"label": "👥 Group", "link": group, "style": "", "emoji_id": ""})
 
-    missing = []
-    for t in targets:
-        link = (t.get("link") or "").strip()
-        if not link:
-            continue
-        if not await _is_member(bot, user.id, link):
-            missing.append(t.get("label") or "Target")
+    # 🐛 v170.3: parallel fresh check (verify hamesha accurate)
+    _missing_t = await _membership_missing(bot, user.id, targets)
+    missing = [t.get("label") or "Target" for t in _missing_t]
 
     if missing:
         await q.answer(
