@@ -8,6 +8,32 @@
 
 ---
 
+# 🚀 v170.4 (2026-08-14) — FORCE-JOIN MISSING-ONLY + RICH ORDERS LAYOUT
+
+## 1. FORCE-JOIN: sirf MISSING channel ka join wall (user demand)
+- Pehle: user ne 1 channel chhoda to bot SAB channels ka join wall bhejta tha.
+- Ab: sirf WOHI channel dikhta hai jo chhoda hai; SAB tabhi jab SAB chhode.
+- Message smart: kuch chhode → "You left the following. Please rejoin"; naya user → "you must join".
+- Helper `_build_fj_join_wall(targets)` (sirf missing targets ke buttons/links).
+- TESTED: 1 channel leave → sirf 1 button ✅ | sab leave → sab 3 ✅ | boot OK ✅
+
+## 2. ORDERS LAYOUT: Rich Details (user choice) + premium emoji fix
+- User ne 10 layouts mein se **Rich Details (#7)** choose kiya.
+- `orders_layouts.py`:
+  - `_render_rich()` ab HTML mode mein render hota hai — product name **PREMIUM
+    emoji + supplier FIXED emoji** ke saath (pehle `_clean_name()` tags hata deta
+    tha → emoji gayab hota tha).
+  - Naya helper `_render_product_name_html()` (utils.name_for_message_html use
+    karta hai — wahi logic jo product list/detail mein hai).
+  - Default layout `premium` → `rich` (code + DB dono).
+- VERIFIED (real DB orders): "🤖 Gemini AI Pro 18m", "👍 Meitu Svip" premium
+  emoji ke saath render; smart_text_and_mode → HTML mode, [[HTML]] leak nahi.
+
+## NOTE: DB marker `v170` hi rakha — deploy live DB wipe NAHI karega.
+## Ready DB: orders_layout=rich baked.
+
+---
+
 # 🚀 v170.3 (2026-08-14) — 🔐 FORCE-JOIN LEAVE DETECTION REAL FIX (live test fail hua tha)
 
 ## 🐛 USER LIVE TEST FAIL (v170.2 ke baad): wife ke phone se verify → bot start →

@@ -220,21 +220,24 @@ def _render_minimal(orders, user_id):
 
 
 def _render_rich(orders, user_id):
-    """Layout 7: Detailed info"""
-    text = "💫 *Order Details*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-    
+    """Layout 7: Detailed info — 🆕 v170.4: product name ab PREMIUM EMOJI +
+    supplier FIXED EMOJI ke saath render hota hai (waisa hi jaise product list
+    mein). Pehle _clean_name() HTML tags hata deta tha → emoji gayab."""
+    text = "[[HTML]]"
+    text += "💫 <b>Order Details</b>\n━━━━━━━━━━━━━━━━━━━━\n\n"
+
     buttons = []
     for o in orders[:10]:
-        name = _clean_name(o.get('product_name', 'Product'))
-        
-        text += f"*{name}*\n"
-        text += f"├ 🆔 Order ID: `{o['id']}`\n"
-        text += f"├ 💰 Amount: *${o.get('price', 0):.2f}*\n"
-        text += f"├ 📊 Status: {_get_status_icon(o['status'])} *{_get_status_text(o['status'])}*\n"
+        name = _render_product_name_html(o.get('product_name', 'Product'))
+
+        text += f"📦 <b>{name}</b>\n"
+        text += f"├ 🆔 Order ID: <code>{o['id']}</code>\n"
+        text += f"├ 💰 Amount: <b>${o.get('price', 0):.2f}</b>\n"
+        text += f"├ 📊 Status: {_get_status_icon(o['status'])} <b>{_get_status_text(o['status'])}</b>\n"
         text += f"└ 🎯 Qty: {o.get('quantity', 1)}\n\n"
-        
+
         buttons.append([InlineKeyboardButton(f"📦 View #{o['id']}", callback_data=f"myord_{o['id']}")])
-    
+
     return text, buttons
 
 
@@ -297,6 +300,23 @@ def _render_vip(orders, user_id):
 # ════════════════════════════════════════════════════════════════
 # 🛠️ HELPER FUNCTIONS
 # ════════════════════════════════════════════════════════════════
+
+def _render_product_name_html(name):
+    """🆕 v170.4: product name ko HTML mode ke liye render karo — premium
+    emoji (<tg-emoji>) + supplier fixed emoji PRESERVE karo (waisa hi jaise
+    product list mein dikhta hai). Agar name plain hai to HTML-escape karo."""
+    try:
+        from utils import name_for_message_html
+        return name_for_message_html(name)
+    except Exception:
+        pass
+    if name is None:
+        return ""
+    s = str(name)
+    if s.startswith("[[HTML]]"):
+        return s[len("[[HTML]]"):]
+    return s
+
 
 def _clean_name(name):
     """Remove HTML tags from product name"""
@@ -389,12 +409,12 @@ def _get_premium_status(status):
 # ════════════════════════════════════════════════════════════════
 
 def get_orders_layout():
-    """Get current orders layout from DB"""
+    """Get current orders layout from DB. 🆕 v170.4: default = rich (user choice)"""
     try:
         from database import get_setting
-        return get_setting("orders_layout", "premium")
+        return get_setting("orders_layout", "rich")
     except Exception:
-        return "premium"
+        return "rich"
 
 
 def set_orders_layout(layout_id):
@@ -419,7 +439,7 @@ def render_orders(orders, user_id=None):
         tuple: (text, buttons_list) where buttons_list is a list of button rows
     """
     layout_id = get_orders_layout()
-    layout = ORDERS_LAYOUTS.get(layout_id, ORDERS_LAYOUTS["premium"])
+    layout = ORDERS_LAYOUTS.get(layout_id, ORDERS_LAYOUTS["rich"])
     
     try:
         text, buttons = layout["render"](orders, user_id)

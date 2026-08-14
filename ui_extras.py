@@ -2024,6 +2024,31 @@ async def _membership_missing(bot, user_id, targets):
     return missing
 
 
+def _build_fj_join_wall(targets):
+    """🆕 v170.4: join-wall builder. Sirf MISSING targets ke buttons/links
+    banata hai (user demand: ek channel leave kiya to sirf wahi dikhe, sab
+    tabhi dikhe jab sab leave ho). Returns (link_lines, kb_links)."""
+    link_lines, kb_links = [], []
+    for t in targets:
+        chat = (t.get("link") or "").strip()
+        label = (t.get("label") or "Join").strip() or "Join"
+        if chat.startswith("https://t.me/"):
+            join_url = chat
+        elif chat.startswith("@"):
+            join_url = f"https://t.me/{chat.lstrip('@')}"
+        else:
+            join_url = f"https://t.me/{chat}"
+        link_lines.append(f"➤ {label}: {join_url}")
+        try:
+            from button_system import make_premium_button
+            kb_links.append([make_premium_button(
+                label, emoji_id=(t.get('emoji_id') or '') or None,
+                style=(t.get('style') or '').lower() or None, url=join_url)])
+        except Exception:
+            kb_links.append([InlineKeyboardButton(label, url=join_url)])
+    return link_lines, kb_links
+
+
 async def check_force_join(update, context) -> bool:
     """
     MAIN GATE FUNCTION — call this at the start of start_command().
@@ -2077,39 +2102,27 @@ async def check_force_join(update, context) -> bool:
     # Build join message
     custom_msg = _g(S_FJ_MSG, "").strip()
     if not custom_msg:
-        custom_msg = (
-            "⚠️ *Access Restricted!*\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "To use *Bite Store Bot*, you must join:\n\n"
-            "{links}\n\n"
-            "After joining, tap the button below ✅"
-        )
-
-    # Build join buttons — 🐛 v140.1 FIX: render EVERY enabled target, not
-    # only `missing`. _is_member fails OPEN when the bot is not admin in a
-    # group/channel, which used to hide those targets entirely (a 3-button
-    # setup showed only 1). Now all configured buttons always show, and the
-    # Verify tap re-checks each one.
-    link_lines = []
-    kb_links   = []
-    for t in targets:
-        chat = (t.get("link") or "").strip()
-        label = (t.get("label") or "Join").strip() or "Join"
-        if chat.startswith("https://t.me/"):
-            join_url = chat  # already a full link
-        elif chat.startswith("@"):
-            join_url = f"https://t.me/{chat.lstrip('@')}"
+        if len(missing) < len(targets):
+            # 🆕 v170.4: user ne kuch channels chhode hain → rejoin message
+            custom_msg = (
+                "⚠️ *Channel Membership Required!*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                "You left the following. Please *rejoin* to continue:\n\n"
+                "{links}\n\n"
+                "After joining, tap the button below ✅"
+            )
         else:
-            join_url = f"https://t.me/{chat}"
-        link_lines.append(f"➤ {label}: {join_url}")
-        try:
-            from button_system import make_premium_button
-            kb_links.append([make_premium_button(
-                label, emoji_id=(t.get('emoji_id') or '') or None,
-                style=(t.get('style') or '').lower() or None,
-                url=join_url)])
-        except Exception:
-            kb_links.append([InlineKeyboardButton(label, url=join_url)])
+            custom_msg = (
+                "⚠️ *Access Restricted!*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                "To use *Bite Store Bot*, you must join:\n\n"
+                "{links}\n\n"
+                "After joining, tap the button below ✅"
+            )
+
+    # Build join buttons — 🆕 v170.4: sirf MISSING targets dikhao (user demand).
+    # Ek channel leave kiya to sirf wahi button/link, sab leave kiye to sab.
+    link_lines, kb_links = _build_fj_join_wall(missing)
 
     links_str = "\n".join(link_lines)
     msg = custom_msg.replace("{links}", links_str)
@@ -2208,27 +2221,9 @@ async def force_join_action_gate(update, context) -> bool:
     missing = await _membership_missing(bot, user.id, targets)
     if not missing:
         return False
-    # User must (re)join → send the same join screen (🐛 v140.1: show ALL
-    # enabled targets, not just `missing`, so every button the admin created
-    # is visible even if the bot is not admin in some of them).
-    link_lines, kb_links = [], []
-    for t in targets:
-        chat = (t.get("link") or "").strip()
-        label = (t.get("label") or "Join").strip() or "Join"
-        if chat.startswith("https://t.me/"):
-            join_url = chat
-        elif chat.startswith("@"):
-            join_url = f"https://t.me/{chat.lstrip('@')}"
-        else:
-            join_url = f"https://t.me/{chat}"
-        link_lines.append(f"➤ {label}: {join_url}")
-        try:
-            from button_system import make_premium_button
-            kb_links.append([make_premium_button(
-                label, emoji_id=(t.get('emoji_id') or '') or None,
-                style=(t.get('style') or '').lower() or None, url=join_url)])
-        except Exception:
-            kb_links.append([InlineKeyboardButton(label, url=join_url)])
+    # User must (re)join → send join screen. 🆕 v170.4: sirf MISSING targets
+    # dikhao (ek leave kiya to sirf wahi, sab leave kiye to sab).
+    link_lines, kb_links = _build_fj_join_wall(missing)
     try:
         from database import get_fj_verify_button
         vb = get_fj_verify_button()
@@ -2243,9 +2238,15 @@ async def force_join_action_gate(update, context) -> bool:
                                               callback_data="fj_verified")])
     custom_msg = _g(S_FJ_MSG, "").strip()
     if not custom_msg:
-        custom_msg = ("⚠️ *Access Restricted!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                      "To use *Bite Store Bot*, you must join:\n\n{links}\n\n"
-                      "After joining, tap the button below ✅")
+        if len(missing) < len(targets):
+            # 🆕 v170.4: kuch channels chhode hain → rejoin message
+            custom_msg = ("⚠️ *Channel Membership Required!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                          "You left the following. Please *rejoin* to continue:\n\n{links}\n\n"
+                          "After joining, tap the button below ✅")
+        else:
+            custom_msg = ("⚠️ *Access Restricted!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                          "To use *Bite Store Bot*, you must join:\n\n{links}\n\n"
+                          "After joining, tap the button below ✅")
     msg = custom_msg.replace("{links}", "\n".join(link_lines))
     try:
         target = (update.effective_message or update.message)
