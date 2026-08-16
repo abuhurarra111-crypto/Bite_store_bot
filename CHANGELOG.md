@@ -8,6 +8,22 @@
 
 ---
 
+# 🚀 v170.7 (2026-08-16) — WARRANTY GREEN + CLEAN NAMES + REMOVE CHANGE LAYOUT
+
+## 1. 🛡️ Warranty/Refund menu — delivered products (user demand)
+- Delivered orders ke buttons ab **GREEN (success)** background + product ka
+  **premium emoji icon** + **clean name** (pehle raw `[[HTML]]<tg-emoji...>`
+  button label me dikh jata tha).
+- handlers_support.py `warranty_menu_callback` → make_premium_button + style="success".
+
+## 2. 🎨 "Change Layout" button REMOVED (user demand)
+- My Orders screen se "Change Layout" + orders_layout_picker route hata diya.
+  Ab sirf receipt layout (default) rehta hai, back button ke saath.
+
+## 3. ⚠️ FRESH DEPLOY: version bump v170.6 → v170.7 (har deploy fresh reset).
+
+---
+
 # 🚀 v170.6 (2026-08-16) — FRESH DEPLOY + RESELLER PRICES + FORMATS + RECEIPT UPGRADE
 
 ## ⚠️ 1. FRESH DEPLOY RULE (user demand — HAMESHA)

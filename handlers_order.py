@@ -3762,11 +3762,7 @@ async def my_orders_callback(update, context):
         text, buttons = render_orders(orders, q.from_user.id, page=page, page_size=8,
                                       status_filter=status_filter)
         
-        # Add layout selector button before back button
-        buttons.insert(-1, [
-            InlineKeyboardButton("🎨 Change Layout", callback_data="orders_layout_picker")
-        ])
-        
+        # 🆕 v170.7: "Change Layout" button REMOVED (user demand) — sirf receipt layout
         # Add back button
         buttons.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
         

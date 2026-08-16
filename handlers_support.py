@@ -441,9 +441,32 @@ async def warranty_menu_callback(update, context):
 
     text = _r("warranty_menu_header", user_id=q.from_user.id) + "\n"
     kb = []
+    # 🆕 v170.7: delivered orders — GREEN buttons + premium emoji icon + clean name
+    # (pehle raw [[HTML]]<tg-emoji...> button label me dikh jata tha).
+    try:
+        from button_system import make_premium_button, extract_emoji_from_html
+        _have_helpers = True
+    except Exception:
+        _have_helpers = False
     for o in delivered[:10]:
-        label = f"📦 #{o['id']} {o['product_name'][:25]} — {fmt_price(o['price'])}"
-        kb.append([InlineKeyboardButton(label, callback_data=f"wr_order_{o['id']}")])
+        oid = o['id']
+        raw_name = str(o.get('product_name') or 'Product')
+        plain = raw_name
+        eid = ""
+        if _have_helpers:
+            try:
+                _eid, _plain = extract_emoji_from_html(raw_name)
+                if _plain:
+                    plain = _plain
+                eid = _eid or ""
+            except Exception:
+                pass
+        label = f"📦 #{oid} {plain[:25]} — {fmt_price(o['price'])}"
+        if _have_helpers:
+            kb.append([make_premium_button(label, emoji_id=eid or None, style="success",
+                                           callback_data=f"wr_order_{oid}")])
+        else:
+            kb.append([InlineKeyboardButton(label, callback_data=f"wr_order_{oid}")])
 
     # 🆕 v38: Inject custom buttons for warranty screen
     try:
