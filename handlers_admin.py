@@ -11229,6 +11229,7 @@ async def reseller_keycfg_panel_callback(update, context):
         [InlineKeyboardButton("📦 Their Orders", callback_data=f"reseller_orders_key_{kid}"),
          InlineKeyboardButton("💳 Top-up", callback_data=f"reseller_topup_{kid}")],
         [InlineKeyboardButton("📥 Record (.txt)", callback_data=f"reseller_export_key_{kid}")],
+        [InlineKeyboardButton("💰 Product Prices", callback_data=f"reseller_keyprices_{kid}")],
         [InlineKeyboardButton("💲 Markup %", callback_data=f"reseller_keyaction_{kid}_markup"),
          InlineKeyboardButton("🏷️ Base cost", callback_data=f"reseller_keyaction_{kid}_base_cost"),
          InlineKeyboardButton("🏷️ Base price", callback_data=f"reseller_keyaction_{kid}_base_price")],
@@ -11485,7 +11486,8 @@ async def reseller_pricing_panel_callback(update, context):
             "━━━━━━━━━━━━━━━━━━━━\n"
             f"Markup: *{markup}%* (negative = discount)\n"
             f"Base: *{base}*\n\n"
-            "Base `cost` = supplier cost pe, `price` = aap ki selling price pe")
+            "Base `cost` = supplier cost pe, `price` = aap ki selling price pe\n"
+            "Per-reseller per-product price: Reseller Panel → kisi reseller → 💰 Product Prices")
     kb = [
         [InlineKeyboardButton("💲 Set Markup %", callback_data="reseller_price_markup")],
         [InlineKeyboardButton("🏷️ Base = cost", callback_data="reseller_base_mode_cost"),
@@ -11493,6 +11495,88 @@ async def reseller_pricing_panel_callback(update, context):
         [InlineKeyboardButton("🔙 Back", callback_data="reseller_panel")],
     ]
     await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def reseller_keyprices_callback(update, context):
+    """🆕 v170.6: per-reseller per-product price overrides (specific ya ALL)."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        kid = int(q.data.replace("reseller_keyprices_", ""))
+    except Exception:
+        await q.edit_message_text("❌ Invalid key"); return
+    try:
+        from database import get_api_key_row, get_all_products, list_reseller_key_prices
+        from reseller_api import reseller_price_for
+        from utils import html_strip_tags as _hs
+        k = get_api_key_row(kid)
+        products = get_all_products()
+        overrides = {}
+        for r in list_reseller_key_prices(kid):
+            try:
+                overrides[int(r.get("product_id") or 0)] = float(r.get("price_usd") or 0)
+            except Exception:
+                pass
+    except Exception as e:
+        await q.edit_message_text(f"❌ {e}"); return
+
+    lines = [f"💰 *Product Prices — `{k.get('key_prefix')}`*\n",
+             "_(exact $ = override · +20% / -10% / +1.5 = adjust · `default` = remove)_\n"]
+    kb = []
+    # ALL products row
+    all_p = overrides.get(0)
+    all_txt = f"${all_p:g}" if all_p and all_p > 0 else "default"
+    lines.append(f"🛍️ *ALL products:* {all_txt}")
+    kb.append([InlineKeyboardButton(f"🛍️ ALL products → {all_txt}",
+                                    callback_data=f"reseller_setprice_{kid}_0")])
+    for p in products[:20]:
+        pid = int(p["id"])
+        pname = (_hs(str(p.get("name") or "")) or "Product")[:20]
+        if pid in overrides:
+            cur = overrides[pid]
+            cur_txt = f"${cur:.2f}*"
+        else:
+            cur = reseller_price_for(dict(p), k)
+            cur_txt = f"${cur:.2f}"
+        lines.append(f"#{pid} {pname} → {cur_txt}")
+        kb.append([InlineKeyboardButton(f"#{pid} {pname} ({cur_txt})",
+                                        callback_data=f"reseller_setprice_{kid}_{pid}")])
+    kb.append([InlineKeyboardButton("🔙 Back", callback_data=f"reseller_keycfg_panel_{kid}")])
+    await q.edit_message_text("\n".join(lines), parse_mode="Markdown",
+                              reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def reseller_setprice_callback(update, context):
+    """🆕 v170.6: wizard start — set price for key × product (0 = ALL)."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        parts = q.data.replace("reseller_setprice_", "").split("_")
+        kid = int(parts[0]); pid = int(parts[1])
+    except Exception:
+        await q.edit_message_text("❌ Invalid"); return
+    try:
+        from database import get_api_key_row
+        from utils import html_strip_tags as _hs
+        k = get_api_key_row(kid)
+        label = f"key `{k.get('key_prefix')}` — ALL products"
+        if pid:
+            from database import get_product
+            p = get_product(pid)
+            if p:
+                label = f"key `{k.get('key_prefix')}` — #{pid} {(_hs(str(p.get('name') or '')) or 'Product')[:24]}"
+    except Exception:
+        label = f"key #{kid} product #{pid}"
+    context.user_data["rs_step"] = {"action": "key_prod_price", "key_id": kid, "product_id": pid}
+    await q.edit_message_text(
+        f"💰 Set price for {label}\n\n"
+        "Send: exact $ (`5.00`) · `+20%` / `-10%` · `+1.5` / `-0.5` · `default` (remove)\n"
+        "_(ALL products ke liye sirf exact $ ya `default`)_\n\n"
+        "_(/cancel to cancel)_", parse_mode="Markdown")
 
 
 async def reseller_price_markup_callback(update, context):
@@ -11739,6 +11823,53 @@ async def reseller_wizard_text(update, context):
             await update.message.reply_text(
                 f"✅ Reseller price for #{pid} → *${price:g}*" if n else "❌ Product not found",
                 parse_mode="Markdown")
+        elif action == "key_prod_price":
+            # 🆕 v170.6: per-key × per-product price override
+            kid = int(step.get("key_id") or 0)
+            pid = int(step.get("product_id") or 0)
+            from database import (get_api_key_row, get_all_products,
+                                  set_reseller_key_price)
+            from reseller_api import reseller_price_for
+            k = get_api_key_row(kid)
+            raw = text.strip().replace(" ", "")
+            low = raw.lower()
+            if low in ("default", "remove", "reset", "off", "none"):
+                set_reseller_key_price(kid, pid, 0)
+                await update.message.reply_text(
+                    f"✅ Override removed — price wapas auto (markup/base) ho gayi.",
+                    parse_mode="Markdown")
+            elif raw.endswith("%") or raw.startswith("+") or raw.startswith("-"):
+                if pid == 0:
+                    await update.message.reply_text(
+                        "❌ ALL products ke liye sirf exact $ (e.g. `5.00`) ya `default` do.",
+                        parse_mode="Markdown")
+                else:
+                    cur = None
+                    for p in get_all_products():
+                        if int(p["id"]) == pid:
+                            cur = reseller_price_for(dict(p), k)
+                            break
+                    if raw.endswith("%"):
+                        pct = float(raw[:-1])
+                        new = (cur or 0.0) * (1 + pct / 100.0)
+                    else:
+                        delta = float(raw)
+                        new = (cur or 0.0) + delta
+                    new = round(max(0.01, new), 2)
+                    set_reseller_key_price(kid, pid, new)
+                    await update.message.reply_text(
+                        f"✅ Key `{k.get('key_prefix')}` product #{pid} price → *${new:.2f}*",
+                        parse_mode="Markdown")
+            else:
+                price = float(raw)
+                if price <= 0:
+                    await update.message.reply_text("❌ Price must be > 0 (ya `default`).")
+                else:
+                    set_reseller_key_price(kid, pid, price)
+                    what = "ALL products" if pid == 0 else f"product #{pid}"
+                    await update.message.reply_text(
+                        f"✅ Key `{k.get('key_prefix')}` {what} price → *${price:.2f}*",
+                        parse_mode="Markdown")
         elif action == "topup":
             kid = int(step.get("key_id") or 0)
             pts = float(text)

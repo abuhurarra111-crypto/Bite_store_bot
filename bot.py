@@ -2130,6 +2130,7 @@ def main():
         ("^cl_reset$", color_reset_callback),
         ("^my_orders$", my_orders_callback),
         ("^myordspg_", my_orders_callback),   # 🆕 v170.5: receipt pagination
+        ("^myords_", my_orders_callback),     # 🆕 v170.6: receipt filter+page
         ("^myord_resend_", my_order_resend_callback),
         ("^myord_", my_order_detail_callback),
         ("^orders_layout_picker$", orders_layout_picker_callback),
@@ -2433,6 +2434,8 @@ def main():
         ("^reseller_keycfg_panel_\\d+$", reseller_keycfg_panel_callback),
         ("^reseller_keyaction_\\d+_[a-z_]+$", reseller_keyaction_callback),
         ("^reseller_pricing_panel$", reseller_pricing_panel_callback),
+        ("^reseller_keyprices_\\d+$", reseller_keyprices_callback),   # 🆕 v170.6
+        ("^reseller_setprice_\\d+_\\d+$", reseller_setprice_callback),  # 🆕 v170.6
         ("^reseller_price_markup$", reseller_price_markup_callback),
         ("^reseller_base_mode_(cost|price)$", reseller_base_mode_callback),
         ("^reseller_orders_panel$", reseller_orders_panel_callback),

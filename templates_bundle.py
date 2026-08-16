@@ -50,6 +50,13 @@ FORMAT_REDEEM_LINK = "redeem_link"
 FORMAT_COUPON_CODES = "coupon_code"
 FORMAT_COUPON_CODES_LEGACY = "coupon_codes"
 FORMAT_RAW_TEXT = "raw_text"
+# 🆕 v170.6: supplier catalogs me jo extra formats mile (V83_FORMATS ke baaki)
+FORMAT_PHONE_NUMBER = "phone_number"
+FORMAT_LICENSE_KEY = "license_key"
+FORMAT_COOKIE_SESSION = "cookie_session"
+FORMAT_API_TOKEN = "api_token"
+FORMAT_EMAIL_PASS_COOKIE = "email_pass_cookie"
+FORMAT_USERNAME_PASS = "username_pass"
 
 FORMAT_META = {
     FORMAT_EMAIL_PASS: {
@@ -107,6 +114,55 @@ FORMAT_META = {
         "example": "any-delivery-text",
         "spec": "Content",
         "min_parts": 1,
+    },
+    # 🆕 v170.6: extra account formats (supplier catalogs me yehi milte hain)
+    FORMAT_PHONE_NUMBER: {
+        "label": "Phone Number (PVA)",
+        "icon": "📱",
+        "hint": "One phone number per line",
+        "example": "+92 300 1234567",
+        "spec": "Phone",
+        "min_parts": 1,
+    },
+    FORMAT_LICENSE_KEY: {
+        "label": "License / Serial Key",
+        "icon": "🗝️",
+        "hint": "One license/serial key per line",
+        "example": "XXXX-XXXX-XXXX-XXXX",
+        "spec": "License Key",
+        "min_parts": 1,
+    },
+    FORMAT_COOKIE_SESSION: {
+        "label": "Cookies / Session",
+        "icon": "🍪",
+        "hint": "One cookie/session string per line",
+        "example": "sessionid=abc123; csrftoken=xyz",
+        "spec": "Cookies",
+        "min_parts": 1,
+    },
+    FORMAT_API_TOKEN: {
+        "label": "API Token / Bearer Key",
+        "icon": "🔑",
+        "hint": "One API token/bearer key per line",
+        "example": "sk-xxxx-yyyy-zzzz",
+        "spec": "API Token",
+        "min_parts": 1,
+    },
+    FORMAT_EMAIL_PASS_COOKIE: {
+        "label": "Email+Pass+Cookies",
+        "icon": "🧩",
+        "hint": "One account per line: email|password|cookie",
+        "example": "demo@gmail.com|MyPass123|cookie_here",
+        "spec": "Email | Password | Cookies",
+        "min_parts": 3,
+    },
+    FORMAT_USERNAME_PASS: {
+        "label": "Username+Password",
+        "icon": "👤",
+        "hint": "One account per line: username|password",
+        "example": "user123|MyPass123",
+        "spec": "Username | Password",
+        "min_parts": 2,
     },
 }
 
@@ -232,6 +288,21 @@ def normalize_product_format(value):
         "coupon_code": FORMAT_COUPON_CODES,
         "raw": FORMAT_RAW_TEXT,
         "text": FORMAT_RAW_TEXT,
+        # 🆕 v170.6: extra format aliases (supplier catalog names)
+        "phone": FORMAT_PHONE_NUMBER,
+        "phone_no": FORMAT_PHONE_NUMBER,
+        "license": FORMAT_LICENSE_KEY,
+        "serial": FORMAT_LICENSE_KEY,
+        "key": FORMAT_LICENSE_KEY,
+        "cookies": FORMAT_COOKIE_SESSION,
+        "cookie": FORMAT_COOKIE_SESSION,
+        "session": FORMAT_COOKIE_SESSION,
+        "token": FORMAT_API_TOKEN,
+        "api_key": FORMAT_API_TOKEN,
+        "email_cookie": FORMAT_EMAIL_PASS_COOKIE,
+        "email_password_cookie": FORMAT_EMAIL_PASS_COOKIE,
+        "username_password": FORMAT_USERNAME_PASS,
+        "user_pass": FORMAT_USERNAME_PASS,
     }
     value = aliases.get(value, value)
     return value if value in FORMAT_META else FORMAT_EMAIL_PASS
@@ -271,6 +342,13 @@ def get_product_format_choices():
         FORMAT_REDEEM_LINK,
         FORMAT_COUPON_CODES,
         FORMAT_RAW_TEXT,
+        # 🆕 v170.6: supplier catalogs wale extra formats (13 total)
+        FORMAT_PHONE_NUMBER,
+        FORMAT_LICENSE_KEY,
+        FORMAT_COOKIE_SESSION,
+        FORMAT_API_TOKEN,
+        FORMAT_EMAIL_PASS_COOKIE,
+        FORMAT_USERNAME_PASS,
     ]
 
 

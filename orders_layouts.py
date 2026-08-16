@@ -99,40 +99,98 @@ ORDERS_LAYOUTS = {
 # 🎨 LAYOUT RENDER FUNCTIONS
 # ════════════════════════════════════════════════════════════════
 
-def _receipt_name_qty(product_name, order_qty):
-    """🆕 v170.5: receipt row ke liye clean name + qty (trailing '× N' hatao)."""
+def _receipt_status_group(status):
+    """🆕 v170.6: status ko 4 groups me map karo (filter + color ke liye)."""
+    s = str(status or "").lower()
+    if s == "delivered":
+        return "delivered"
+    if s == "refunded":
+        return "refunded"
+    if s in ("cancelled", "failed", "rejected"):
+        return "cancelled"
+    return "pending"  # pending/processing/supplier_*/waiting/stars_waiting etc.
+
+
+def _receipt_icon(status):
+    return {"delivered": "✅", "pending": "⏳", "refunded": "💰", "cancelled": "❌"}.get(
+        _receipt_status_group(status), "⏳")
+
+
+def _receipt_style(status):
+    """Telegram button color: success=green, primary=blue, danger=red."""
+    return {"delivered": "success", "pending": "primary",
+            "refunded": "primary", "cancelled": "danger"}.get(
+        _receipt_status_group(status))
+
+
+def _receipt_name_parts(raw_name, order_qty):
+    """🆕 v170.6: (name_html, plain_name, emoji_id, qty) — premium emoji
+    preserve karo (message me <tg-emoji>, button me icon)."""
     import re as _re
-    name = _clean_name(product_name or "Product")
     qty = 1
     try:
         qty = int(order_qty or 1)
     except Exception:
         qty = 1
-    m = _re.search(r"\s*[×xX]\s*(\d+)\s*$", name)
+    name_html = _render_product_name_html(raw_name or "Product")
+    # trailing "× N" hatao (HTML ke end par plain hota hai)
+    m = _re.search(r"\s*[×xX]\s*(\d+)\s*$", name_html)
     if m:
         if qty == 1:
             try:
                 qty = int(m.group(1))
             except Exception:
                 pass
-        name = name[:m.start()].strip()
-    return (name or "Product"), qty
+        name_html = name_html[:m.start()].rstrip()
+    plain = _clean_name(name_html or "Product")
+    eid = ""
+    try:
+        from button_system import extract_emoji_from_html
+        _eid, _p = extract_emoji_from_html(raw_name or "")
+        if _p:
+            plain = _p
+        eid = _eid or ""
+    except Exception:
+        pass
+    return name_html or "Product", (plain or "Product"), eid, qty
 
 
-def _render_receipt(orders, user_id, page=0, page_size=8):
-    """🧾 RECEIPT layout — Shopee Labs style:
-       header RECEIPT / My Orders · 'X orders · $Y spent' · one-line rows
-       '#ID · Name × qty · $price' · pagination (Prev / Next)."""
+def _render_receipt(orders, user_id, page=0, page_size=8, status_filter="all"):
+    """🧾 RECEIPT layout (v170.6): premium emoji names + status colors
+    (delivered=green, pending/refunded=blue, cancelled/failed=red) +
+    filter buttons + pagination."""
     import math as _math
     orders = list(orders or [])
+    # 🆕 v170.6: status filter
+    sf = str(status_filter or "all").lower()
+    if sf not in ("all", "delivered", "pending", "refunded", "cancelled"):
+        sf = "all"
+    if sf != "all":
+        orders = [o for o in orders if _receipt_status_group(o.get("status")) == sf]
+
     total = len(orders)
     try:
         total_spent = round(sum(float(o.get("price") or 0) for o in orders), 2)
     except Exception:
         total_spent = 0.0
 
+    # filter buttons (hamesha top par)
+    filter_kb = []
+    for fkey, flabel in (("delivered", "✅ Delivered"), ("pending", "⏳ Pending"),
+                         ("refunded", "💰 Refunded"), ("cancelled", "❌ Cancelled"),
+                         ("all", "📋 All")):
+        mark = "•" if fkey == sf else ""
+        filter_kb.append(InlineKeyboardButton(
+            f"{flabel}{mark}", callback_data=f"myords_{fkey}_0"))
+    buttons = [filter_kb]
+
     if total == 0:
-        return "📜 *No orders yet!*\n\nStart shopping to see your orders here.", []
+        text = ("[[HTML]]<b>🧾 RECEIPT</b>\n"
+                "<i>My Orders</i>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                "0 orders in this filter.\n")
+        buttons.append([InlineKeyboardButton("📋 All", callback_data="myords_all_0")])
+        return text, buttons
 
     page = max(0, int(page or 0))
     page_size = max(1, int(page_size or 8))
@@ -140,38 +198,40 @@ def _render_receipt(orders, user_id, page=0, page_size=8):
     start = page * page_size
     page_orders = orders[start:start + page_size]
 
-    text = (
-        "🧾 *RECEIPT*\n"
-        "My Orders\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{total} orders · ${total_spent:.2f} spent\n\n"
-        "Tap an order to open its content again.\n\n"
-    )
+    text = ("[[HTML]]<b>🧾 RECEIPT</b>\n"
+            "<i>My Orders</i>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"{total} orders · ${total_spent:.2f} spent\n\n"
+            "<i>Tap an order to open its content again.</i>\n\n")
 
-    buttons = []
+    from button_system import make_premium_button
     for o in page_orders:
         oid = o.get("id")
         try:
             price = float(o.get("price") or 0)
         except Exception:
             price = 0.0
-        name, qty = _receipt_name_qty(o.get("product_name"), o.get("order_qty") or 1)
-        line = f"#{oid} · {name} × {qty} · ${price:.2f}"
-        text += line + "\n"
-        # button label chhota rakho
-        btn_lbl = f"#{oid} · {name[:22]} × {qty}"
-        buttons.append([InlineKeyboardButton(btn_lbl, callback_data=f"myord_{oid}")])
+        name_html, plain, eid, qty = _receipt_name_parts(
+            o.get("product_name"), o.get("order_qty") or 1)
+        icon = _receipt_icon(o.get("status"))
+        style = _receipt_style(o.get("status"))
+        text += f"{icon} #{oid} · {name_html} × {qty} · ${price:.2f}\n"
+        # button: product ka premium emoji icon + status color (green/blue/red)
+        btn_lbl = f"#{oid} · {plain[:20]} × {qty}"
+        buttons.append([make_premium_button(
+            btn_lbl, emoji_id=eid or None, style=style,
+            callback_data=f"myord_{oid}")])
 
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"myordspg_{page - 1}"))
+        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"myords_{sf}_{page - 1}"))
     if start + page_size < total:
-        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"myordspg_{page + 1}"))
+        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"myords_{sf}_{page + 1}"))
     if nav:
         buttons.append(nav)
 
     if total_pages > 1:
-        text += f"\n_page {page + 1} of {total_pages}_"
+        text += f"\n<i>page {page + 1} of {total_pages}</i>"
     return text, buttons
 
 
@@ -515,9 +575,9 @@ def get_all_layouts():
     return ORDERS_LAYOUTS
 
 
-def render_orders(orders, user_id=None, page=0, page_size=None):
-    """Render orders with current layout. 🆕 v170.5: pagination support
-    (receipt layout slices by page/page_size; others ignore it).
+def render_orders(orders, user_id=None, page=0, page_size=None, status_filter="all"):
+    """Render orders with current layout. 🆕 v170.6: status_filter support
+    (receipt layout: all/delivered/pending/refunded/cancelled).
 
     Returns:
         tuple: (text, buttons_list) where buttons_list is a list of button rows
@@ -527,7 +587,9 @@ def render_orders(orders, user_id=None, page=0, page_size=None):
 
     try:
         if layout_id == "receipt" and page_size:
-            text, buttons = layout["render"](orders, user_id, page=page, page_size=page_size)
+            text, buttons = layout["render"](orders, user_id, page=page,
+                                             page_size=page_size,
+                                             status_filter=status_filter)
         else:
             text, buttons = layout["render"](orders, user_id)
         return text, buttons

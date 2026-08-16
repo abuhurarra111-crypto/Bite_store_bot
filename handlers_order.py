@@ -3736,11 +3736,16 @@ async def my_orders_callback(update, context):
     🆕 v170.5: receipt pagination support (myordspg_N)."""
     q = update.callback_query; await q.answer()
     nav_push(context, 'my_orders')
-    # 🆕 v170.5: pagination — "myordspg_2" → page 2
+    # 🆕 v170.6: "myords_<filter>_<page>" (filter + pagination) | "myordspg_N" (old)
     page = 0
+    status_filter = "all"
     try:
         _d = str(q.data or "")
-        if _d.startswith("myordspg_"):
+        if _d.startswith("myords_"):
+            parts = _d.split("_")
+            status_filter = parts[1] if len(parts) > 1 else "all"
+            page = max(0, int(parts[2] or 0)) if len(parts) > 2 else 0
+        elif _d.startswith("myordspg_"):
             page = max(0, int(_d.replace("myordspg_", "")))
     except Exception:
         page = 0
@@ -3754,7 +3759,8 @@ async def my_orders_callback(update, context):
     # 🆕 v170: Use orders layout system with premium emojis + colored backgrounds
     try:
         from orders_layouts import render_orders
-        text, buttons = render_orders(orders, q.from_user.id, page=page, page_size=8)
+        text, buttons = render_orders(orders, q.from_user.id, page=page, page_size=8,
+                                      status_filter=status_filter)
         
         # Add layout selector button before back button
         buttons.insert(-1, [

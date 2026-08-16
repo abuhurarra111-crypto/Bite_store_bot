@@ -8,6 +8,40 @@
 
 ---
 
+# 🚀 v170.6 (2026-08-16) — FRESH DEPLOY + RESELLER PRICES + FORMATS + RECEIPT UPGRADE
+
+## ⚠️ 1. FRESH DEPLOY RULE (user demand — HAMESHA)
+- `current_version` → `v170.6`: ab HAR deploy bot ko FRESH reset karega
+  (0 users/0 orders/0 suppliers). Admin khud ready DB se restore karega.
+- 📌 MEMORY RULE: har naye deploy par `current_version` bump karna zaroori hai.
+
+## 2. 💰 Reseller per-key × per-product pricing (user demand)
+- Naya table `reseller_key_prices(key_id, product_id, price_usd)`. product_id=0 = ALL.
+- `reseller_price_for()` priority: per-key product → per-key ALL → products.reseller_price
+  → base(cost|price) × markup.
+- UI: Reseller Panel → kisi reseller → **💰 Product Prices** → list (ALL + products)
+  → ✏️ Set. Wizard: exact $ (`5.00`) / `+20%` / `-10%` / `+1.5` / `-0.5` / `default`.
+  ALL ke liye sirf exact $ ya default.
+
+## 3. 🧩 13 account formats in product editor (user demand)
+- templates_bundle: 6 naye formats add (phone_number, license_key, cookie_session,
+  api_token, email_pass_cookie, username_pass) + aliases. Ab get_product_format_choices()
+  = 13. Admin apna product add karte waqt sab formats pick kar sakta hai.
+
+## 4. 🧾 Receipt orders upgrade (user demand)
+- **Premium emojis:** product name ab <tg-emoji> (premium) render hota hai — simple
+  emoji nahi. Button par bhi product ka premium icon.
+- **Status colors (Telegram button style):** delivered=green(success),
+  pending/refunded=blue(primary), cancelled/failed=red(danger).
+- **Filter buttons:** ✅ Delivered / ⏳ Pending / 💰 Refunded / ❌ Cancelled / 📋 All
+  — click par sirf wohi status wale orders. Pagination filter preserve karta hai.
+- Callback `myords_<filter>_<page>`.
+
+## NOTE: DB marker = v170.6 (fresh deploy). Ready DB: 1261/644/33, receipt default,
+reseller_key_prices table ready, 13 formats, migrate clean.
+
+---
+
 # 🚀 v170.5 (2026-08-16) — PRODSELLER FIX + RECEIPT ORDERS + ADMIN IMPROVEMENTS
 
 ## 1. 🛒 ProdSeller auto-delivery FIX (root cause: 429 rate limit)

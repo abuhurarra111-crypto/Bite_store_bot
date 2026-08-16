@@ -185,7 +185,21 @@ def _markup_for(key=None) -> float:
 
 def reseller_price_for(pd: dict, key=None) -> float:
     """Reseller price in USD, key-aware.
-    Explicit per-product reseller_price wins; else base(cost|price) × (1+markup)."""
+    🆕 v170.6 priority: per-key per-product override → per-key ALL override →
+    explicit products.reseller_price → base(cost|price) × (1+markup)."""
+    # 🆕 v170.6: admin-set per-key × per-product price (highest priority)
+    try:
+        kid = int((key or {}).get("id") or 0)
+        pid = int(pd.get("id") or 0)
+        if kid:
+            from database import get_reseller_key_price
+            ov = get_reseller_key_price(kid, pid)
+            if ov is None and pid:
+                ov = get_reseller_key_price(kid, 0)  # ALL-products override
+            if ov is not None and float(ov) > 0:
+                return round(float(ov), 2)
+    except Exception:
+        pass
     try:
         explicit = float(pd.get("reseller_price") or 0)
         if explicit > 0:

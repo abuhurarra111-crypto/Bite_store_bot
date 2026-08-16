@@ -227,7 +227,10 @@ def setup_database():
     # Owner can restore live data anytime via /admin -> Backup & Restore -> Restore from File.
     try:
         if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RESET_DB_FRESH") == "1":
-            current_version = "v170"
+            # 🆕 v170.6: USER RULE — HAR DEPLOY FRESH (0 data). Is version ko
+            # HAR deploy par bump karo taake bot har nayi release par khud reset
+            # ho jaye (0 users/orders/suppliers). Admin manual restore karta hai.
+            current_version = "v170.6"
             version_marker = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), ".deployed_version")
             last_version = ""
             if os.path.exists(version_marker):
@@ -438,6 +441,7 @@ def migrate_all():
         ("ensure_poll_tables",            ensure_poll_tables),            # 🆕 v148 polls
         ("ensure_tier_discount_table",    ensure_tier_discount_table),    # 🆕 v158 tiered discounts
         ("migrate_reseller_tables",       migrate_reseller_tables),       # 🆕 v161 reseller API
+        ("_ensure_fake_activity_off_column", _ensure_fake_activity_off_column),  # 🆕 v170.5
     ):
         try:
             fn(); stats["tables_checked"] += 1
@@ -6372,6 +6376,15 @@ def migrate_reseller_tables():
         ensure_column(c, "api_keys", "rate_limit",         "INTEGER DEFAULT 60")
         ensure_column(c, "api_keys", "webhook_secret",     "TEXT DEFAULT ''")
         ensure_column(c, "api_keys", "key_encrypted",      "TEXT DEFAULT ''")  # Fernet-encrypted plaintext (Show Full Key)
+        # 🆕 v170.6: per-key × per-product reseller price overrides.
+        # product_id=0 → "ALL products" override for that key.
+        c.execute("""CREATE TABLE IF NOT EXISTS reseller_key_prices (
+            key_id INTEGER DEFAULT 0,
+            product_id INTEGER DEFAULT 0,
+            price_usd REAL DEFAULT 0,
+            updated_at TEXT DEFAULT '',
+            PRIMARY KEY (key_id, product_id)
+        )""")
         c.execute("""CREATE TABLE IF NOT EXISTS reseller_webhook_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             key_id INTEGER DEFAULT 0,
@@ -6395,6 +6408,51 @@ def migrate_reseller_tables():
     finally:
         try: conn.close()
         except Exception: pass
+
+
+def set_reseller_key_price(key_id, product_id, price_usd):
+    """🆕 v170.6: set/clear a per-key per-product reseller price override.
+    product_id=0 → ALL products. price_usd<=0 → override hatao."""
+    from datetime import datetime
+    migrate_reseller_tables()
+    conn = get_connection(); c = conn.cursor()
+    if price_usd is None or float(price_usd) <= 0:
+        c.execute("DELETE FROM reseller_key_prices WHERE key_id=? AND product_id=?",
+                  (int(key_id), int(product_id or 0)))
+    else:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        c.execute("""INSERT INTO reseller_key_prices (key_id, product_id, price_usd, updated_at)
+                     VALUES (?,?,?,?)
+                     ON CONFLICT(key_id, product_id)
+                     DO UPDATE SET price_usd=excluded.price_usd, updated_at=excluded.updated_at""",
+                  (int(key_id), int(product_id or 0), float(price_usd), now))
+    conn.commit(); conn.close()
+    return True
+
+
+def get_reseller_key_price(key_id, product_id):
+    """🆕 v170.6: price override (float) ya None."""
+    migrate_reseller_tables()
+    conn = get_connection(); c = conn.cursor()
+    c.execute("SELECT price_usd FROM reseller_key_prices WHERE key_id=? AND product_id=?",
+              (int(key_id), int(product_id or 0)))
+    r = c.fetchone(); conn.close()
+    if not r:
+        return None
+    try:
+        return float(r["price_usd"] if hasattr(r, "keys") else r[0])
+    except Exception:
+        return None
+
+
+def list_reseller_key_prices(key_id):
+    """🆕 v170.6: sab overrides for a key (list of dicts)."""
+    migrate_reseller_tables()
+    conn = get_connection(); c = conn.cursor()
+    c.execute("SELECT * FROM reseller_key_prices WHERE key_id=? ORDER BY product_id",
+              (int(key_id),))
+    rows = [dict(r) for r in c.fetchall()]; conn.close()
+    return rows
 
 
 def create_reseller_order(key_id, user_id, product_id, product_name, qty,
