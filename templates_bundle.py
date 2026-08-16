@@ -672,7 +672,12 @@ PRICE_DROP_TEMPLATES = [
 
 def render_price_drop(product_name: str, old_price: float, new_price: float) -> str:
     """Pick a random template and render it with the given product values.
-    Returns "" on invalid input (old<=0, new<=0, or new >= old)."""
+    Returns "" on invalid input (old<=0, new<=0, or new >= old).
+
+    🆕 v170.5: templates ab Customization → Templates (id: price_drop) se
+    EDITABLE hain — admin custom text ya 10 variants mein se random pick.
+    Hardcoded PRICE_DROP_TEMPLATES sirf fallback hai.
+    """
     try:
         old_price = float(old_price)
         new_price = float(new_price)
@@ -683,15 +688,45 @@ def render_price_drop(product_name: str, old_price: float, new_price: float) -> 
 
     savings = old_price - new_price
     discount_pct = int(round((savings / old_price) * 100))
+    data = {
+        "product": str(product_name or "Product"),
+        "old_price": f"{old_price:.2f}",
+        "new_price": f"{new_price:.2f}",
+        "discount_pct": str(discount_pct),
+        "savings": f"{savings:.2f}",
+    }
+
+    def _fmt(tpl: str) -> str:
+        import re as _re
+        low_map = {str(k).lower(): v for k, v in data.items()}
+        def _sub(m):
+            key = m.group(1)
+            spec = m.group(2) or ""
+            v = low_map.get(key.lower())
+            if v is None:
+                return m.group(0)
+            try:
+                return format(str(v), spec) if spec else str(v)
+            except Exception:
+                return str(v)
+        return _re.sub(r"\{([A-Za-z_][A-Za-z0-9_]*)(:[^}]*)?\}", _sub, tpl)
+
+    # 🆕 v170.5: editable path (Customization → Templates → Price Drop Alert)
+    try:
+        import random as _rnd
+        from database import get_setting
+        from customization import get_template_variants
+        custom = (get_setting("tpl_price_drop", "") or "").strip()
+        if custom:
+            return _fmt(custom)
+        variants = get_template_variants("price_drop")
+        if variants:
+            return _fmt(_rnd.choice(variants))
+    except Exception:
+        pass
 
     tpl = random.choice(PRICE_DROP_TEMPLATES)
-    return tpl.format(
-        product=str(product_name or "Product"),
-        old_price=f"{old_price:.2f}",
-        new_price=f"{new_price:.2f}",
-        discount_pct=discount_pct,
-        savings=f"{savings:.2f}",
-    )
+    return tpl.format(**data)
 
 
 def get_template_count() -> int:

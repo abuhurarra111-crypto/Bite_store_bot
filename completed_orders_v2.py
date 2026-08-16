@@ -310,6 +310,10 @@ def _build_order_detail_kb(order: dict) -> InlineKeyboardMarkup:
     if order.get("status") == "delivered" and order.get("delivery_content"):
         kb.append([InlineKeyboardButton("👀 User-Side Delivery View",
                                          callback_data=f"ac2_userview_{oid}")])
+    # 🆕 v170.5: one-tap — sab delivered files (voice/video/pic/doc/.txt) bhejo
+    if order.get("status") == "delivered":
+        kb.append([InlineKeyboardButton("📥 Get Delivered File(s)",
+                                         callback_data=f"ac2_allfiles_{oid}")])
     # 🐛 v145: bulk .txt delivery file — re-open / download from Completed Orders
     if order.get("delivery_file_id"):
         kb.append([InlineKeyboardButton("📎 Download Delivery File (.txt)",
@@ -357,6 +361,22 @@ def _build_order_detail_text(order: dict) -> str:
     price = float(order.get("price") or 0)
     pay = escape_html(order.get("payment_method") or "—")
     uname = escape_html(order.get("user_name") or "")
+    # 🆕 v170.5: supplier name (ADMIN-ONLY — customer kabhi nahi dekhta). Product
+    # ka ext_supplier_id → ext_suppliers.name. Sirf completed_orders (admin view)
+    # mein dikhta hai; user-side delivery untouched → no supplier leak.
+    supplier_name = ""
+    try:
+        from database import get_product, get_connection as _gc2
+        _p = get_product(order.get("product_id") or 0)
+        _esid = int((dict(_p) if _p else {}).get("ext_supplier_id") or 0)
+        if _esid:
+            _conn2 = _gc2(); _c2 = _conn2.cursor()
+            _c2.execute("SELECT name FROM ext_suppliers WHERE id=?", (_esid,))
+            _r2 = _c2.fetchone(); _conn2.close()
+            if _r2:
+                supplier_name = str((dict(_r2) if not isinstance(_r2, dict) else _r2).get("name") or "")
+    except Exception:
+        supplier_name = ""
     dc = (order.get("delivery_content") or "").strip()
     # 🐛 v104: heal legacy escaped <tg-emoji> markup that v83 renderer
     # accidentally wrote before v104 (see utils.heal_escaped_delivery_content)
@@ -377,6 +397,9 @@ def _build_order_detail_text(order: dict) -> str:
         f"🧑 <b>Customer:</b> {uname or ('user ' + str(order.get('user_id')))}\n"
         f"🔖 <b>Status:</b> {order.get('status','?')}\n"
     )
+    # 🆕 v170.5: supplier name (admin-only)
+    if supplier_name:
+        body += f"🏭 <b>Supplier:</b> {escape_html(supplier_name)}\n"
 
     if dc:
         body += "\n📤 <b>Delivered Content:</b>\n"
@@ -616,6 +639,57 @@ async def ac2_search_cancel(update, context):
     except Exception:
         pass
     return -1
+
+
+async def ac2_allfiles_callback(update, context):
+    """🆕 v170.5: one tap — send EVERY file that was delivered to the customer
+    (bulk .txt delivery_file_id + sab order_deliveries items jo file_id rakhte
+    hain — photo/video/voice/audio/document)."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        oid = int(q.data.replace("ac2_allfiles_", ""))
+    except Exception:
+        return
+    from database import get_order, get_order_deliveries
+    o = get_order(oid)
+    if not o:
+        await q.answer("Order not found", show_alert=True); return
+    sent = 0
+    caption = f"📥 <i>Delivered file(s) — Order #{oid}</i>"
+    # 1) bulk .txt file (orders.delivery_file_id)
+    if o.get("delivery_file_id"):
+        try:
+            await context.bot.send_document(q.from_user.id,
+                                            document=str(o["delivery_file_id"]),
+                                            caption=caption, parse_mode="HTML")
+            sent += 1
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"[ac2_allfiles] txt send fail: {e}")
+    # 2) individual delivered items with file_id
+    for d in get_order_deliveries(oid):
+        kind = d.get("kind") or ""
+        fid = d.get("file_id") or ""
+        if not fid:
+            continue
+        try:
+            if kind == "photo":
+                await context.bot.send_photo(q.from_user.id, photo=fid, caption=caption, parse_mode="HTML")
+            elif kind == "video":
+                await context.bot.send_video(q.from_user.id, video=fid, caption=caption, parse_mode="HTML")
+            elif kind == "voice":
+                await context.bot.send_voice(q.from_user.id, voice=fid)
+            elif kind == "audio":
+                await context.bot.send_audio(q.from_user.id, audio=fid, caption=caption, parse_mode="HTML")
+            else:
+                await context.bot.send_document(q.from_user.id, document=fid, caption=caption, parse_mode="HTML")
+            sent += 1
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"[ac2_allfiles] item send fail: {e}")
+    if sent == 0:
+        await q.answer("No delivered files stored for this order", show_alert=True)
 
 
 async def ac2_dlfile_callback(update, context):

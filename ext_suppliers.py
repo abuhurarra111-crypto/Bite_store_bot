@@ -1577,6 +1577,54 @@ class ProdSellerAdapter(SupplierAdapterBase):
     BALANCE_PATH = "/balance"
     PURCHASE_PATH = "/orders"
 
+    # 🐛 v170.5: RATE-LIMIT PROTECTION (ProdSeller = 300 req / 15 min / IP).
+    # Hamara 30s autosync list + HAR product ka detail call karta tha (list me
+    # stock field nahi) → ~17 calls/tick → 500+/15min → 429 "Trop de requêtes
+    # API" → real customer order refund ho jata tha. Fix: per-product detail
+    # cache (10 min) + request throttle + 429 retry with backoff.
+    _DETAIL_CACHE = {}            # remote_id -> (ts, stock_or_None)
+    _DETAIL_CACHE_TTL = 600       # 10 min
+    _last_request_ts = 0.0
+    _MIN_GAP = 0.35               # seconds between requests
+
+    def _throttle(self):
+        import time as _t
+        now = _t.time()
+        gap = now - ProdSellerAdapter._last_request_ts
+        if 0 < gap < ProdSellerAdapter._MIN_GAP:
+            _t.sleep(ProdSellerAdapter._MIN_GAP - gap)
+        ProdSellerAdapter._last_request_ts = _t.time()
+
+    def _get(self, path, timeout=20, extra_params=None):
+        self._throttle()
+        return super()._get(path, timeout=timeout, extra_params=extra_params)
+
+    def _cached_detail_stock(self, rid):
+        """Per-product detail stock with 10-min cache (kills N+1 hammering)."""
+        import time as _t
+        now = _t.time()
+        hit = ProdSellerAdapter._DETAIL_CACHE.get(rid)
+        if hit and (now - hit[0]) < ProdSellerAdapter._DETAIL_CACHE_TTL:
+            return hit[1]
+        val = None
+        try:
+            rd = self._get(f"{self.PRODUCTS_PATH}/{rid}")
+            if rd is not None and rd.status_code == 200:
+                dj = rd.json()
+                s2 = dj.get("stock")
+                if s2 is not None:
+                    try:
+                        val = int(s2)
+                    except Exception:
+                        val = None
+        except Exception:
+            val = None
+        ProdSellerAdapter._DETAIL_CACHE[rid] = (now, val)
+        if len(ProdSellerAdapter._DETAIL_CACHE) > 2000:
+            for k in list(ProdSellerAdapter._DETAIL_CACHE.keys())[:500]:
+                ProdSellerAdapter._DETAIL_CACHE.pop(k, None)
+        return val
+
     def test_connection(self):
         r = self._get(self.PRODUCTS_PATH)
         if r is None:
@@ -1631,25 +1679,14 @@ class ProdSellerAdapter(SupplierAdapterBase):
             # 🆕 v161.18: REAL stock — ProdSeller's NEW API (/v1/products/:id)
             # returns a numeric `stock` field (null for custom-delivery items).
             # The pseudo-stock hack is REMOVED. List may carry stock directly;
-            # if not, one detail call per product fills it (bounded, cached).
+            # if not, one detail call per product fills it — 🐛 v170.5: cached
+            # 10 min so the 30s autosync no longer hammers the API (429).
             try:
                 stock = int(p.get("stock") or 0)
             except Exception:
                 stock = 0
             if stock <= 0 and in_stock:
-                # try the per-product detail endpoint for the real number
-                try:
-                    rd = self._get(f"{self.PRODUCTS_PATH}/{rid}")
-                    if rd and rd.status_code == 200:
-                        dj = rd.json()
-                        s2 = dj.get("stock")
-                        if s2 is not None:
-                            try:
-                                stock = int(s2)
-                            except Exception:
-                                stock = 0
-                except Exception:
-                    stock = 0
+                stock = self._cached_detail_stock(rid) or 0
             # if detail API still says null → custom-delivery item: show a
             # healthy default only when explicitly inStock (no fake numbers).
             if stock <= 0 and in_stock:
@@ -1675,11 +1712,25 @@ class ProdSellerAdapter(SupplierAdapterBase):
         url = self.base_url + self.PURCHASE_PATH
         headers = self._headers()
         headers["Idempotency-Key"] = idem
-        try:
-            r = requests.post(url, headers=headers, json=body, timeout=45)
-        except Exception as e:
-            logger.warning(f"[prodseller] create_order network err: {e}")
-            r = None
+        # 🐛 v170.5: 429 retry with backoff. Real customer order par rate-limit
+        # aaya to turant refund NAHI — 2-3s backoff ke saath retry (idempotency
+        # key same rehta hai to double-charge ka risk nahi).
+        import time as _t
+        r = None
+        for attempt in range(3):
+            self._throttle()
+            try:
+                r = requests.post(url, headers=headers, json=body, timeout=45)
+            except Exception as e:
+                logger.warning(f"[prodseller] create_order network err: {e}")
+                r = None
+                break
+            if r is not None and r.status_code == 429:
+                logger.warning(f"[prodseller] 429 rate limited (attempt {attempt+1}/3) — retrying")
+                if attempt < 2:
+                    _t.sleep(2 + attempt * 3)
+                continue
+            break
         if r is None:
             return {"ok": False, "error": "network_error", "items": [], "raw": None}
         try:
@@ -1720,7 +1771,7 @@ SUPPLIER_PRESETS = {
     "akunding":  {"adapter": "akunding",   "name": "Akunding",        "base_url": "https://akunding.shop/api", "docs_url": "https://akunding.shop/swagger"},
     "mmostore":  {"adapter": "mmostore",   "name": "MMOStore",        "base_url": "https://api.mmostore.qzz.io", "docs_url": "https://api.mmostore.qzz.io/apidocumentation"},
     "tunvnmmo":  {"adapter": "tunvnmmo",   "name": "TunVNMMO",        "base_url": "https://api.tunvnmmo.store", "docs_url": "https://api.tunvnmmo.store/swagger"},
-    "prodseller":{"adapter": "prodseller", "name": "ProdSeller",      "base_url": "http://51.77.244.194/v1", "docs_url": "http://51.77.244.194/api-docs/"},
+    "prodseller":{"adapter": "prodseller", "name": "ProdSeller",      "base_url": "https://prodseller.com/v1", "docs_url": "https://prodseller.com/api-docs/"},
 }
 
 
@@ -1734,8 +1785,9 @@ def ensure_env_prodseller_supplier():
     ensure_ext_supplier_tables()
     name = "ProdSeller"
     adapter = "prodseller"
-    base_url = "http://51.77.244.194/v1"
-    docs_url = "http://51.77.244.194/api-docs/"
+    # 🐛 v170.5: NEW base URL (old 51.77.244.194 dead) + new prodseller.com docs
+    base_url = "https://prodseller.com/v1"
+    docs_url = "https://prodseller.com/api-docs/"
     conn = get_connection(); c = conn.cursor()
     try:
         c.execute("SELECT id FROM ext_suppliers WHERE lower(name)=lower(?) OR (adapter=? AND base_url=? AND api_key=?) LIMIT 1",

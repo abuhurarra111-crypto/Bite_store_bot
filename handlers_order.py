@@ -3732,9 +3732,18 @@ async def handle_screenshot(update, context):
 # 📜 MY ORDERS (Product History)
 # ════════════════════════════════════════════
 async def my_orders_callback(update, context):
-    """🆕 v170: Orders screen with 10 premium layouts - shop-like display"""
+    """🆕 v170: Orders screen with premium layouts - shop-like display.
+    🆕 v170.5: receipt pagination support (myordspg_N)."""
     q = update.callback_query; await q.answer()
     nav_push(context, 'my_orders')
+    # 🆕 v170.5: pagination — "myordspg_2" → page 2
+    page = 0
+    try:
+        _d = str(q.data or "")
+        if _d.startswith("myordspg_"):
+            page = max(0, int(_d.replace("myordspg_", "")))
+    except Exception:
+        page = 0
     orders = get_user_product_orders(q.from_user.id)
     if not orders:
         await q.edit_message_text("📜 *No orders yet!*\n\nStart shopping to see your orders here.", 
@@ -3745,7 +3754,7 @@ async def my_orders_callback(update, context):
     # 🆕 v170: Use orders layout system with premium emojis + colored backgrounds
     try:
         from orders_layouts import render_orders
-        text, buttons = render_orders(orders, q.from_user.id)
+        text, buttons = render_orders(orders, q.from_user.id, page=page, page_size=8)
         
         # Add layout selector button before back button
         buttons.insert(-1, [

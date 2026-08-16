@@ -147,8 +147,19 @@ def make_deposit_msg(user, amount, method):
     """💳 New Deposit — uses admin-editable template."""
     try:
         from customization import render_template
+        # 🆕 v170.5: pkr_amount + txid bhi pass karo (naya default template
+        # inhe use karta hai — warna literal {pkr_amount}/{txid} dikh jata)
+        import random as _rnd
+        try:
+            from database import get_setting
+            pkr_rate = float(get_setting("usd_to_pkr_rate", "280") or 280)
+        except Exception:
+            pkr_rate = 280.0
+        pkr_amount = f"Rs {int(float(amount) * pkr_rate):,}"
+        txid = f"GEN-{_rnd.randint(100000, 999999)}"
         return render_template("bc_deposit", {
-            "user": user, "amount": f"{amount:.2f}", "method": method
+            "user": user, "amount": f"{amount:.2f}", "method": method,
+            "pkr_amount": pkr_amount, "txid": txid,
         })
     except Exception:
         return f"💳 *New Deposit!* 💲\n\n👤 User: {user}\n💰 Amount: ${amount:.2f}\n🔵 Method: {method}\n\n_Processed automatically_ ⚡"
@@ -697,7 +708,7 @@ async def run_fake_broadcast(bot, force_type=None):
     # also explicitly re-check stock + is_hidden so a race-condition (admin hiding
     # a product mid-cycle) can't sneak a hidden product into a fake broadcast.
     try:
-        from database import get_all_products, is_product_hidden
+        from database import get_all_products, is_product_hidden, is_product_fake_off
         all_products = []
         for p in get_all_products():
             d = dict(p) if not isinstance(p, dict) else p
@@ -714,6 +725,12 @@ async def run_fake_broadcast(bot, force_type=None):
             pname = (d.get("name") or "").lower()
             if "api test" in pname or "apitest" in pname:
                 continue
+            # 🆕 v170.5: admin ka per-product "fake activity OFF" flag
+            try:
+                if is_product_fake_off(pid_):
+                    continue
+            except Exception:
+                pass
             all_products.append(p)
     except Exception:
         all_products = []
@@ -1699,7 +1716,7 @@ def insert_fake_review(product_id=None, product_name=None, force_language=None, 
     """
     # ── Pick product (v60: hidden + OOS excluded) ──
     try:
-        from database import get_all_products, is_product_hidden
+        from database import get_all_products, is_product_hidden, is_product_fake_off
         all_products = get_all_products()  # already excludes hidden after v60
         # Only use in-stock + not-hidden products (belt + suspenders)
         in_stock = []
@@ -1718,6 +1735,12 @@ def insert_fake_review(product_id=None, product_name=None, force_language=None, 
             pname = (d.get("name") or "").lower()
             if "api test" in pname or "apitest" in pname:
                 continue
+            # 🆕 v170.5: admin ka per-product "fake activity OFF" flag
+            try:
+                if pid_ and is_product_fake_off(pid_):
+                    continue
+            except Exception:
+                pass
             in_stock.append(p)
 
         if not in_stock:

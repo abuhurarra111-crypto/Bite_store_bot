@@ -1372,6 +1372,42 @@ def is_product_hidden(pid):
     return bool(r[0]) if r else False
 
 
+def _ensure_fake_activity_off_column():
+    """🆕 v170.5: products.fake_activity_off — is flag par fake activity is
+    product ko kabhi broadcast nahi karti (sirf REAL purchase alert)."""
+    try:
+        conn = get_connection(); c = conn.cursor()
+        ensure_column(c, "products", "fake_activity_off", "INTEGER DEFAULT 0")
+        conn.commit(); conn.close()
+    except Exception:
+        pass
+
+
+def is_product_fake_off(pid):
+    """🆕 v170.5: True agar product fake-activity broadcasts se excluded hai."""
+    try:
+        _ensure_fake_activity_off_column()
+        conn = get_connection(); c = conn.cursor()
+        c.execute("SELECT COALESCE(fake_activity_off, 0) FROM products WHERE id=?", (int(pid),))
+        r = c.fetchone(); conn.close()
+        return bool(r[0]) if r else False
+    except Exception:
+        return False
+
+
+def set_product_fake_off(pid, off=True):
+    """🆕 v170.5: toggle fake-activity exclusion for a product."""
+    try:
+        _ensure_fake_activity_off_column()
+        conn = get_connection(); c = conn.cursor()
+        c.execute("UPDATE products SET fake_activity_off=? WHERE id=?",
+                  (1 if off else 0, int(pid)))
+        conn.commit(); conn.close()
+        return True
+    except Exception:
+        return False
+
+
 def set_product_hidden(pid, hidden=True):
     """Toggle hide/unhide for a product."""
     _ensure_is_hidden_column()

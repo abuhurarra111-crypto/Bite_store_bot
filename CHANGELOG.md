@@ -8,6 +8,50 @@
 
 ---
 
+# 🚀 v170.5 (2026-08-16) — PRODSELLER FIX + RECEIPT ORDERS + ADMIN IMPROVEMENTS
+
+## 1. 🛒 ProdSeller auto-delivery FIX (root cause: 429 rate limit)
+- **ROOT CAUSE:** autosync har 30s me `fetch_products()` chalata tha jo ProdSeller ke
+  HAR product ka alag detail call karta tha (list me stock field nahi) → ~17 calls/tick
+  → 500+/15min → ProdSeller ka 300 req/15min limit blast → real customer order ko 429
+  "Trop de requêtes API, réessayez dans 15 minutes" → auto-refund (orders 649/650/643).
+- **FIX (ext_suppliers.py ProdSellerAdapter):**
+  1. Per-product detail stock **10-min cache** (kills N+1 hammering) → 2nd fetch 0.5s.
+  2. Request **throttle** (min 0.35s between calls).
+  3. `create_order` **429 retry ×3 backoff** (real order refund nahi hota).
+  4. Presets + ensure_env URLs → `https://prodseller.com/v1` (old 51.77.244.194 dead).
+- LIVE test: new key OK (balance $25.62, 16 products), fetch 8s → cache 0.5s.
+- ProdSeller **re-added** to DB: supplier + 16 products synced + mirrored to shop.
+
+## 2. 🧾 Receipt orders layout (user-requested, Shopee Labs jaisa)
+- New layout `receipt`: header RECEIPT/My Orders, "X orders · $Y spent",
+  "Tap an order to open its content again.", rows "#ID · Name × qty · $price",
+  pagination (Prev/Next, 8/page). DEFAULT layout = receipt (rich abhi bhi available).
+- Pagination callback `myordspg_N` registered.
+
+## 3. 📦 Completed Orders (admin) improvements
+- **Supplier name** ab admin order-detail me dikhta hai (product → ext_suppliers.name).
+  User-side delivery untouched → customer ko supplier info kabhi nahi milti.
+- Naya **"📥 Get Delivered File(s)"** button — one tap me sab delivered files
+  (bulk .txt + photo/video/voice/audio/doc) admin ko bhejta hai.
+
+## 4. 🎭 Per-product fake-activity OFF
+- Naya `products.fake_activity_off` flag + admin toggle in product panel.
+- Fake activity (global + per-user) is product ko skip karti hai — sirf REAL
+  purchase ka alert. (pehle sirf "api test" naam wale exclude the)
+
+## 5. 💬 Deposit + Price-Drop alerts editable
+- **Deposit:** bc_deposit default ab txid + pkr_amount + "Auto-Credited via API"
+  ke saath. Hardcoded "GEN-xxxx" ultimate fallback REMOVED (wo purchase-without-stock
+  ka galat fallthrough tha) → ab skip, sirf editable template.
+- **Price Drop:** 10 hardcoded templates (PREMIUM PRICE DROP / LOWEST PRICE EVER etc.)
+  ab Customization → Templates → "Price Drop Alert" se editable + random variant pick.
+
+## NOTE: DB marker `v170` hi rakha — deploy live DB wipe NAHI karega.
+## Ready DB: ProdSeller new key baked + receipt default + migrate clean.
+
+---
+
 # 🚀 v170.4 (2026-08-14) — FORCE-JOIN MISSING-ONLY + RICH ORDERS LAYOUT
 
 ## 1. FORCE-JOIN: sirf MISSING channel ka join wall (user demand)

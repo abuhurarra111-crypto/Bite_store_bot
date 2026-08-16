@@ -200,7 +200,7 @@ from maintenance_mode import (
 from completed_orders_v2 import (
     admin_completed_v2_callback, ac2_page_callback,
     ac2_user_callback, ac2_order_callback, ac2_userview_callback, ac2_noop_callback,
-    ac2_dlfile_callback, ac2_dlv_callback, ac2_dlvopen_callback,  # v161.20
+    ac2_dlfile_callback, ac2_allfiles_callback, ac2_dlv_callback, ac2_dlvopen_callback,  # v161.20 + v170.5
     ac2_clear_search_callback,
     ac2_search_entry, ac2_search_received, ac2_search_cancel,
     AC2_SEARCH_TEXT,
@@ -2129,6 +2129,7 @@ def main():
         ("^cl_preview$", color_preview_callback),
         ("^cl_reset$", color_reset_callback),
         ("^my_orders$", my_orders_callback),
+        ("^myordspg_", my_orders_callback),   # 🆕 v170.5: receipt pagination
         ("^myord_resend_", my_order_resend_callback),
         ("^myord_", my_order_detail_callback),
         ("^orders_layout_picker$", orders_layout_picker_callback),
@@ -2185,6 +2186,7 @@ def main():
         # Admin product active/deactivated + hide/unhide toggles
         ("^prodactive_", toggle_product_active_callback),
         ("^prodhide_", toggle_product_hidden_callback),
+        ("^prodfake_", toggle_product_fake_off_callback),   # 🆕 v170.5
         ("^delcatdo_", delete_category_do_callback),
         ("^delproddo_", delete_product_do_callback),
         ("^bulkprod_start$", bulk_product_delete_start_callback),
@@ -2470,6 +2472,7 @@ def main():
         ("^ac2_order_",                  ac2_order_callback),
         # 🆕 v101: user-side delivery preview (admin sees exactly what customer got)
         ("^ac2_userview_",               ac2_userview_callback),
+        ("^ac2_allfiles_",               ac2_allfiles_callback),   # 🆕 v170.5
         ("^ac2_dlfile_",                 ac2_dlfile_callback),
         # 🆕 v161.20: delivered-items audit (voice/video/pic/file/text)
         ("^ac2_dlv_",                    ac2_dlv_callback),

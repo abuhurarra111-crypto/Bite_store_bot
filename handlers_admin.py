@@ -7125,6 +7125,10 @@ async def view_product_callback(u, c):
         [InlineKeyboardButton(
             f"{'👁️ Show Product (currently HIDDEN)' if is_product_hidden(pid) else '🙈 Hide Product from Shop'}",
             callback_data=f"prodhide_{pid}")],
+        # 🆕 v170.5: fake-activity OFF flag (sirf real purchase par broadcast hoga)
+        [InlineKeyboardButton(
+            f"{'🎭 Fake Activity: 🚫 OFF' if is_product_fake_off(pid) else '🎭 Fake Activity: ✅ ON'}",
+            callback_data=f"prodfake_{pid}")],
         # 🆕 v71: Replacement window — per-product setting
         [_v71_replacement_window_button(pid)],
     ]
@@ -7169,6 +7173,28 @@ async def toggle_product_hidden_callback(u, c):
     msg = "🙈 Product HIDDEN from shop" if new_state else "👁️ Product VISIBLE in shop"
     await q.answer(f"{msg} ✅", show_alert=False)
     # Refresh the product view
+    set_cb_data(u, f"viewprod_{pid}")
+    await view_product_callback(u, c)
+
+
+async def toggle_product_fake_off_callback(u, c):
+    """🆕 v170.5: toggle fake-activity OFF for a product. Jab OFF → fake
+    activity (global + per-user) is product ko broadcast nahi karti, sirf
+    REAL purchase ka alert jata hai."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        pid = int(q.data.replace("prodfake_", ""))
+    except Exception:
+        await q.answer("❌ Bad id", show_alert=True); return
+    try:
+        from database import is_product_fake_off, set_product_fake_off
+        new_state = not is_product_fake_off(pid)
+        set_product_fake_off(pid, new_state)
+        await q.answer(f"🎭 Fake Activity {'🚫 OFF' if new_state else '✅ ON'} ✅", show_alert=False)
+    except Exception:
+        await q.answer("❌ Failed to update", show_alert=True); return
     set_cb_data(u, f"viewprod_{pid}")
     await view_product_callback(u, c)
 

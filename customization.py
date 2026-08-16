@@ -616,15 +616,20 @@ TEMPLATES = [
         "id":      "bc_deposit",
         "name":    "💳 Deposit",
         "section": "📢 Fake Broadcast",
-        "vars":    "{user}, {amount}, {method}",
+        # 🆕 v170.5: txid + pkr_amount + auto-credit line added (pehle ye fields
+        # template mein nahi the → hardcoded fallback dikhta tha jo editable nahi tha)
+        "vars":    "{user}, {amount}, {pkr_amount}, {method}, {txid}",
         "default": (
-            "💳 *New Deposit!* 💲\n\n"
-            "👤 User: {user}\n"
-            "💰 Amount: ${amount}\n"
-            "🔵 Method: {method}\n\n"
-            "_Processed automatically_ ⚡"
+            "💳 *New Deposit Alert!* 💲\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "👤 *User:* {user}\n"
+            "💰 *Added Amount:* ${amount} (~{pkr_amount})\n"
+            "🔵 *Gateway:* {method}\n"
+            "🧾 *Transaction ID:* `{txid}`\n\n"
+            "⚡ _Status: Auto-Credited via API_ 🟢"
         ),
-        "sample":  {"user": "a***d", "amount": "10.00", "method": "Binance Pay"},
+        "sample":  {"user": "a***d", "amount": "18.00", "pkr_amount": "Rs 5,040",
+                    "method": "Bybit Pay", "txid": "GEN-626769"},
     },
     {
         "id":      "bc_referral",
@@ -775,6 +780,26 @@ TEMPLATES = [
             "🛒 Grab it before it goes back up!"
         ),
         "sample":  {"product": "Netflix 1M", "old_price": "6.25", "new_price": "5.00"},
+    },
+    {
+        # 🆕 v170.5: price-drop broadcast templates (PREMIUM PRICE DROP /
+        # LOWEST PRICE EVER etc.) — pehle templates_bundle.py mein HARDCODED
+        # the (editable nahi). Ab Customization → Templates se editable.
+        "id":      "price_drop",
+        "name":    "📉 Price Drop Alert",
+        "section": "📢 Fake Broadcast",
+        "vars":    "{product}, {old_price}, {new_price}, {discount_pct}, {savings}",
+        "default": (
+            "💎 *PREMIUM PRICE DROP*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "🏷 *{product}*\n"
+            "Now: *${new_price}*\n"
+            "Old: ~~${old_price}~~\n"
+            "🎯 *{discount_pct}% OFF*  •  Save ${savings}\n\n"
+            "Visit shop to claim!"
+        ),
+        "sample":  {"product": "Chat GPT APPLE PAY", "old_price": "8.60",
+                    "new_price": "5.20", "discount_pct": "40", "savings": "3.40"},
     },
     {
         "id":      "bc_stock",
@@ -1044,6 +1069,21 @@ TEMPLATE_VARIANTS = {
         "📊 *Better Price!*\n\n{product}\n💰 ${new_price} (was ${old_price})\n\n⚡ Hurry up!",
         "🛍️ *Reduced Price!*\n\n📦 {product}\n💵 ${new_price} (was ${old_price})\n\n🔥 Don't wait!",
         "✨ *Price Update!*\n\n{product}\n✅ ${new_price} — was ${old_price}\n\n🛒 Get yours!",
+    ],
+    # 🆕 v170.5: price-drop variants (pehle templates_bundle.PRICE_DROP_TEMPLATES
+    # hardcoded the — ab editable/selectable). render_price_drop() random pick
+    # karta hai inme se.
+    "price_drop": [
+        "💥 *BIG PRICE DROP!* 📉\n\n📦 {product}\n❌ Was ${old_price}\n✅ Now ${new_price}\n\n🎯 *{discount_pct}% OFF* — grab it!",
+        "⚡ *FLASH PRICE CRASH!* ⚡\n\n💎 {product}\nPrice slashed: *${new_price}* (was ${old_price})\n\n🚀 *{discount_pct}% OFF* — Don't miss out!",
+        "🔥 *HOT DEAL ALERT!*\n\n📦 {product}\n💵 New price: *${new_price}*\n✂️ Cut from ${old_price} — save *${savings}*\n\n⏰ Limited-time offer. Order now!",
+        "🎯 *MEGA SALE!* 🎯\n\n🛍 {product}\n▫️ Was: ~~${old_price}~~\n▪️ Now: *${new_price}*\n▫️ Save: *${savings}* (*-{discount_pct}%*)\n\n🏃 Hurry — stocks running out!",
+        "💸 *PRICE CUT JUST ANNOUNCED!*\n\n📌 {product}\n🔻 Reduced by *{discount_pct}%* — now only *${new_price}*\n_Originally ${old_price}_\n\n🛒 Visit shop to buy!",
+        "💣 *DISCOUNT BOMB DROPPED!* 💣\n\n🎁 {product}\n🔥 *{discount_pct}% OFF*\n💵 Was ~~${old_price}~~ → Now *${new_price}*\n\n_Grab it before it's gone!_",
+        "🏷 *LOWEST PRICE EVER!*\n━━━━━━━━━━━━━━━━━━━━\n\n✨ *{product}*\nPrice now: *${new_price}* (was ${old_price})\n🎉 You save: ${savings} ({discount_pct}% off)\n\nBest time to buy — secure yours today!",
+        "🎊 *SPECIAL OFFER LIVE!* 🎊\n\n🛍 {product}\n💲 *${new_price}* (down from ${old_price})\n🎯 Save *{discount_pct}%* instantly\n\n🚀 Active now — limited time!",
+        "🤯 *INSANE DEAL!* 🤯\n\n📦 {product}\nPrice slashed *{discount_pct}%*!\nNow only *${new_price}* (was ${old_price})\n\n_Treat yourself today!_ 🎁",
+        "💎 *PREMIUM PRICE DROP*\n━━━━━━━━━━━━━━━━━━━━\n\n🏷 *{product}*\nNow: *${new_price}*\nOld: ~~${old_price}~~\n🎯 *{discount_pct}% OFF*  •  Save ${savings}\n\nVisit shop to claim!",
     ],
     # 🆕 v161.12: BULK DISCOUNT HYPE (fake) — fired when admin adds a tier +
     # periodically for products that have bulk tiers.

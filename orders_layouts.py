@@ -16,6 +16,13 @@ logger = logging.getLogger(__name__)
 # ════════════════════════════════════════════════════════════════
 
 ORDERS_LAYOUTS = {
+    # Layout 0: Receipt (user-requested style — Shopee Labs jaisa)
+    "receipt": {
+        "name": "🧾 Receipt",
+        "description": "Clean receipt-style list with total spent + pagination",
+        "render": lambda orders, user_id, **kw: _render_receipt(orders, user_id, **kw)
+    },
+
     # Layout 1: Classic List
     "classic": {
         "name": "📋 Classic List",
@@ -91,6 +98,82 @@ ORDERS_LAYOUTS = {
 # ════════════════════════════════════════════════════════════════
 # 🎨 LAYOUT RENDER FUNCTIONS
 # ════════════════════════════════════════════════════════════════
+
+def _receipt_name_qty(product_name, order_qty):
+    """🆕 v170.5: receipt row ke liye clean name + qty (trailing '× N' hatao)."""
+    import re as _re
+    name = _clean_name(product_name or "Product")
+    qty = 1
+    try:
+        qty = int(order_qty or 1)
+    except Exception:
+        qty = 1
+    m = _re.search(r"\s*[×xX]\s*(\d+)\s*$", name)
+    if m:
+        if qty == 1:
+            try:
+                qty = int(m.group(1))
+            except Exception:
+                pass
+        name = name[:m.start()].strip()
+    return (name or "Product"), qty
+
+
+def _render_receipt(orders, user_id, page=0, page_size=8):
+    """🧾 RECEIPT layout — Shopee Labs style:
+       header RECEIPT / My Orders · 'X orders · $Y spent' · one-line rows
+       '#ID · Name × qty · $price' · pagination (Prev / Next)."""
+    import math as _math
+    orders = list(orders or [])
+    total = len(orders)
+    try:
+        total_spent = round(sum(float(o.get("price") or 0) for o in orders), 2)
+    except Exception:
+        total_spent = 0.0
+
+    if total == 0:
+        return "📜 *No orders yet!*\n\nStart shopping to see your orders here.", []
+
+    page = max(0, int(page or 0))
+    page_size = max(1, int(page_size or 8))
+    total_pages = max(1, int(_math.ceil(total / page_size)))
+    start = page * page_size
+    page_orders = orders[start:start + page_size]
+
+    text = (
+        "🧾 *RECEIPT*\n"
+        "My Orders\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{total} orders · ${total_spent:.2f} spent\n\n"
+        "Tap an order to open its content again.\n\n"
+    )
+
+    buttons = []
+    for o in page_orders:
+        oid = o.get("id")
+        try:
+            price = float(o.get("price") or 0)
+        except Exception:
+            price = 0.0
+        name, qty = _receipt_name_qty(o.get("product_name"), o.get("order_qty") or 1)
+        line = f"#{oid} · {name} × {qty} · ${price:.2f}"
+        text += line + "\n"
+        # button label chhota rakho
+        btn_lbl = f"#{oid} · {name[:22]} × {qty}"
+        buttons.append([InlineKeyboardButton(btn_lbl, callback_data=f"myord_{oid}")])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"myordspg_{page - 1}"))
+    if start + page_size < total:
+        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"myordspg_{page + 1}"))
+    if nav:
+        buttons.append(nav)
+
+    if total_pages > 1:
+        text += f"\n_page {page + 1} of {total_pages}_"
+    return text, buttons
+
 
 def _render_classic_list(orders, user_id):
     """Layout 1: Simple clean list"""
@@ -409,12 +492,12 @@ def _get_premium_status(status):
 # ════════════════════════════════════════════════════════════════
 
 def get_orders_layout():
-    """Get current orders layout from DB. 🆕 v170.4: default = rich (user choice)"""
+    """Get current orders layout from DB. 🆕 v170.5: default = receipt (user choice)"""
     try:
         from database import get_setting
-        return get_setting("orders_layout", "rich")
+        return get_setting("orders_layout", "receipt")
     except Exception:
-        return "rich"
+        return "receipt"
 
 
 def set_orders_layout(layout_id):
@@ -432,20 +515,27 @@ def get_all_layouts():
     return ORDERS_LAYOUTS
 
 
-def render_orders(orders, user_id=None):
-    """Render orders with current layout
-    
+def render_orders(orders, user_id=None, page=0, page_size=None):
+    """Render orders with current layout. 🆕 v170.5: pagination support
+    (receipt layout slices by page/page_size; others ignore it).
+
     Returns:
         tuple: (text, buttons_list) where buttons_list is a list of button rows
     """
     layout_id = get_orders_layout()
-    layout = ORDERS_LAYOUTS.get(layout_id, ORDERS_LAYOUTS["rich"])
-    
+    layout = ORDERS_LAYOUTS.get(layout_id, ORDERS_LAYOUTS["receipt"])
+
     try:
-        text, buttons = layout["render"](orders, user_id)
+        if layout_id == "receipt" and page_size:
+            text, buttons = layout["render"](orders, user_id, page=page, page_size=page_size)
+        else:
+            text, buttons = layout["render"](orders, user_id)
         return text, buttons
     except Exception as e:
         logger.error(f"Error rendering orders: {e}")
         # Fallback to classic
-        text, buttons = ORDERS_LAYOUTS["classic"]["render"](orders, user_id)
+        try:
+            text, buttons = ORDERS_LAYOUTS["classic"]["render"](orders, user_id)
+        except Exception:
+            text, buttons = "📜 *My Orders*", []
         return text, buttons

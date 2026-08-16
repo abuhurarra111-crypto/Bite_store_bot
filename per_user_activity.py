@@ -413,7 +413,7 @@ def _get_random_product():
         # 🆕 v60: get_all_products() excludes hidden by default. Also re-check
         # stock + hide flag here so a freshly-hidden product can't leak into
         # a per-user fake broadcast (and look fake when the user taps it).
-        from database import get_all_products, is_product_hidden
+        from database import get_all_products, is_product_hidden, is_product_fake_off
         products = []
         for p in get_all_products():
             d = dict(p) if not isinstance(p, dict) else p
@@ -424,6 +424,11 @@ def _get_random_product():
                 continue
             try:
                 if is_product_hidden(pid_): continue
+            except Exception:
+                pass
+            # 🆕 v170.5: fake-activity OFF products kabhi fake broadcast nahi
+            try:
+                if is_product_fake_off(pid_): continue
             except Exception:
                 pass
             products.append(p)
@@ -1130,19 +1135,12 @@ async def build_fake_message(bot, user_id: int) -> tuple[str, any]:
         ), None
 
     # ── ULTIMATE FALLBACK ─────────────────────────
-    amount = round(round(random.uniform(2, 20) * 2) / 2, 2)
-    method = random.choice(_enabled_payment_methods())
-    pkr_amount = f"Rs {int(amount * pkr_rate):,}"
-    txid = f"GEN-{random.randint(100000, 999999)}"
-    return (
-        f"💳 *New Deposit Alert!* 💲\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👤 *User:* {masked}\n"
-        f"💰 *Added Amount:* ${amount:.2f} (~{pkr_amount})\n"
-        f"🔵 *Gateway:* {method}\n"
-        f"🧾 *Transaction ID:* `{txid}`\n\n"
-        f"⚡ _Status: Auto-Credited via API_ 🟢"
-    ), None
+    # 🐛 v170.5 FIX: pehle yahan "GEN-xxxx" wala hardcoded FAKE DEPOSIT return
+    # hota tha jab koi type (e.g. purchase bina stock) message na bana pata →
+    # user ko non-editable "New Deposit Alert / Auto-Credited via API" spam
+    # dikhta tha. Ab kuch na bhejo (skip) — deposit sirf editable bc_deposit
+    # template se jata hai.
+    return None, None
 
 
 
@@ -1168,6 +1166,11 @@ async def _send_activity_to_user(bot, user_id: int):
         return
 
     msg, kb = await build_fake_message(bot, user_id)
+    # 🐛 v170.5: build_fake_message ab (None, None) return kar sakta hai (e.g.
+    # purchase bina stock, ya sab products fake-activity-OFF) — is case me
+    # kuch na bhejo.
+    if not msg:
+        return
     try:
         # If mode is both, the per-user job should only send to the user's private chat.
         # If mode is bot_only, it only sends to the user's private chat.
