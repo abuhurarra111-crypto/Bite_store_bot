@@ -276,15 +276,51 @@ async def freebie_do_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         logger.exception("[freebie] record failed")
 
-    # notify admin
+    # 🆕 v170.28: DETAILED admin notification — supplier orders-delivered wali
+    # tarah (username + premium emoji + claim # + PKT time + cost).
     try:
-        from utils import notify_admin
+        from utils import notify_admin, fmt_price
+        from datetime import datetime, timezone, timedelta
+        from handlers_order import _fmt_msg_name
+        # buyer name + @username
+        fname = user_obj.first_name or ''
+        uname = user_obj.username or ''
+        try:
+            from database import get_user as _gu
+            _urow = _gu(uid)
+            if _urow:
+                if not fname:
+                    fname = str(_urow.get('first_name') or '')
+                if not uname:
+                    uname = str(_urow.get('username') or '')
+        except Exception:
+            pass
+        def _sp(s):
+            try:
+                import html as _h
+                from utils import html_strip_tags as _hst
+                s = _h.escape(_hst(s or '') or '')
+            except Exception:
+                pass
+            return (str(s).replace('`', "'").replace('_', '&#95;')
+                     .replace('*', '&#42;').replace('[', '&#91;').replace(']', '&#93;'))
+        name_line = f"{_sp(fname)} (@{_sp(uname)})" if (fname and uname) else (_sp(fname) or _sp(uname) or '—')
+        pk_time = datetime.now(timezone(timedelta(hours=5))).strftime('%Y-%m-%d %I:%M:%S %p PKT')
+        try:
+            cost = float((dict(prod) or {}).get('cost_price') or 0)
+        except Exception:
+            cost = 0.0
         await notify_admin(context.bot,
             f"🎁 *FREEBIE CLAIMED!*\n"
-            f"👤 {escape_md(user_obj.first_name or '')} (`{uid}`)\n"
-            f"📦 {escape_md(_clean_name(prod.get('name') or '', 60))}\n"
-            f"🔁 Claim #{claims + 1}\n"
-            f"🧾 Order: `#{oid}`")
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🛒 Order: `#{oid}`\n"
+            f"🕒 Time: `{pk_time}`\n"
+            f"👤 Customer: `{name_line}` (`{uid}`)\n"
+            f"📦 Product: {_fmt_msg_name(prod.get('name'))}\n"
+            f"🔁 Claim: #{claims + 1}\n"
+            f"💳 Payment: `freebie`\n"
+            f"💰 Cost: `{fmt_price(cost)}` · Sold: `$0`\n"
+            f"📉 Loss: `{fmt_price(-cost)}`")
     except Exception:
         pass
 

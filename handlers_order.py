@@ -963,8 +963,14 @@ async def _notify_admin_order_delivered(bot, order, qty=1, supplier_name="",
     🐛 v170.23 FIX: buyer username + product premium emoji ab har notification
     me hain (user demand — pehle bottom wale me dono missing the).
     🛡️ v170.23: customer ko kabhi supplier ka naam nahi jaata — ye sirf ADMIN
-    notification hai (notify_admin → ADMIN_ID)."""
+    notification hai (notify_admin → ADMIN_ID).
+
+    🆕 v170.28: FREEBIE orders (payment_method='freebie') yahan SKIP hote hain —
+    unka apna DETAILED "🎁 FREEBIE CLAIMED!" notification handlers_freebies.py
+    bhejta hai (duplicate "Order Delivered" nahi aata)."""
     try:
+        if str((order.get('payment_method') if isinstance(order, dict) else '') or '').strip().lower() == 'freebie':
+            return
         from utils import notify_admin
         from datetime import datetime, timezone, timedelta
         oid = int(order.get('id') or 0)

@@ -8,6 +8,28 @@
 
 ---
 
+# 🚀 v170.28 (2026-08-17) — DESTINATION SET FIX + FREEBIE DETAILED ADMIN NOTIFY
+
+## 1. 🐛 "Add/Change Channel" temporary-error + destination set nahi hoti FIX
+- Root cause: `dest_chat_received` me `_verify_bot_access()` function GHAYAB thi
+  (merge me delete, DEST_OPTIONS wali hi problem) → admin link/@username daalte
+  hi NameError → "temporary error" → destination save nahi hoti.
+- Fix: `_verify_bot_access()` ui_extras.py me dobara define — get_chat +
+  get_chat_member se bot ka access verify karta hai (fail-open: resolve ho jaye
+  to set ho jata hai). Ab channel add/change ho jati hai + fake activity ka
+  system sab chalne lagta hai.
+
+## 2. 🎁 Freebie claim → DETAILED admin notification (supplier wali jesi)
+- `freebie_do_callback` ab DETAILED admin notification bhejta hai:
+  Order #, PKT Time, Customer name+@username+ID, Product (premium emoji),
+  Claim #, Payment, Cost · Sold · Loss — bilkul supplier orders-delivered format.
+- `_notify_admin_order_delivered` ab FREEBIE orders skip karta hai (duplicate
+  "Order Delivered" nahi aata; freebie ka apna detailed notify hota hai).
+
+## 3. 🧪 Tests: _verify_bot_access (admin/no-access), freebie skip + normal notify — pass.
+
+---
+
 # 🚀 v170.27 (2026-08-17) — FREEBIES INSTRUCTIONS ENGLISH + READY DB
 
 ## 🌐 Freebies button ki instructions ab ENGLISH (user demand)

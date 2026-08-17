@@ -3615,6 +3615,46 @@ def _parse_chat_link(raw: str) -> str:
     return ""
 
 
+async def _verify_bot_access(bot, chat_id, kind="group/channel"):
+    """🐛 v170.28 FIX: ye function GHAYAB thi (merge me delete) — is liye
+    admin jab channel link/@username dalta tha to dest_chat_received NameError
+    phenkta tha → "temporary error" + destination set nahi hoti thi.
+
+    Ab define: bot destination chat tak pahunch sakta hai ya nahi verify karta
+    hai. Fail-open (resolve ho jaye to set ho jata hai) taake system kabhi block
+    na ho."""
+    try:
+        resolved = await _resolve_chat_id(bot, chat_id)
+        # 1. get_chat — agar bot chat tak pahunch sakta hai to ye pass hota hai
+        try:
+            chat_obj = await bot.get_chat(resolved)
+        except Exception as e:
+            return (False, (
+                "❌ *Cannot access that chat!*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"`{type(e).__name__}: {str(e)[:120]}`\n\n"
+                "Add the bot to the group/channel first, and make it ADMIN."))
+        # 2. bot khud admin/member hai ya nahi (best-effort)
+        try:
+            me = await bot.get_me()
+            member = await bot.get_chat_member(chat_obj.id, me.id)
+            status = str(getattr(member, 'status', '') or '').lower()
+            if status in ('administrator', 'creator', 'member', 'left'):
+                if status == 'left':
+                    return (False, (
+                        "❌ *Bot is not in that chat.*\n"
+                        "Add the bot and make it ADMIN first."))
+                return (True, "")
+            return (False, (
+                "❌ *Bot is not in that chat.*\n"
+                "Add the bot and make it ADMIN first."))
+        except Exception:
+            # get_chat pass ho gaya → bot ke paas kuch access hai → fail-open
+            return (True, "")
+    except Exception as e:
+        return (False, f"❌ *Verification failed:* `{type(e).__name__}: {str(e)[:120]}`")
+
+
 # ════════════════════════════════════════════════════════════════
 # 📤 SEND WITH DESTINATION (used by per_user_activity.py)
 # ════════════════════════════════════════════════════════════════
