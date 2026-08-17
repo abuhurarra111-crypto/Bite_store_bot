@@ -8,6 +8,18 @@
 
 ---
 
+# 🚀 v170.33 (2026-08-17) — FIX: FREEBIE PAR "ORDER DELIVERED" DUPLICATE NOTIFICATION
+
+## 🐛 Freebie claim par admin ko 2 notifications (Order Delivered + Freebie Claimed)
+- Root cause: `_notify_admin_order_delivered` ka freebie-skip check
+  `isinstance(order, dict)` use karta tha — lekin order DictRow (sqlite3.Row
+  subclass, NOT dict) hota hai → check hamesha False → skip kabhi nahi chalta →
+  freebie par bhi "🎉 Order Delivered! ✅" aata tha.
+- Fix: `.get('payment_method')` direct (DictRow support karta hai). Ab freebie
+  par sirf "🎁 FREEBIE CLAIMED!" notification aati hai.
+
+---
+
 # 🚀 v170.32 (2026-08-17) — FIX: FREEBIE YES/NO BUTTON TEMPORARY ERROR
 
 ## 🐛 "🎁 Yes — Make it FREE" / "No" button temporary-error FIX

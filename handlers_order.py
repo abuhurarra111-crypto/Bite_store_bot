@@ -969,7 +969,14 @@ async def _notify_admin_order_delivered(bot, order, qty=1, supplier_name="",
     unka apna DETAILED "🎁 FREEBIE CLAIMED!" notification handlers_freebies.py
     bhejta hai (duplicate "Order Delivered" nahi aata)."""
     try:
-        if str((order.get('payment_method') if isinstance(order, dict) else '') or '').strip().lower() == 'freebie':
+        # 🐛 v170.33 FIX: order DictRow (sqlite3.Row subclass) hota hai — NOT dict!
+        # `isinstance(order, dict)` False tha → freebie skip kabhi trigger nahi
+        # hota tha → "Order Delivered!" duplicate aata tha. Ab .get() direct use.
+        try:
+            _pm = (order.get('payment_method') if order is not None else '') or ''
+        except Exception:
+            _pm = ''
+        if str(_pm).strip().lower() == 'freebie':
             return
         from utils import notify_admin
         from datetime import datetime, timezone, timedelta
