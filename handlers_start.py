@@ -1089,6 +1089,144 @@ async def handle_freebies_button(update: Update, context: ContextTypes.DEFAULT_T
         logging.getLogger(__name__).debug(f"[persist-freebies] {e}")
 
 
+async def handle_shop_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🆕 v170.19: 🛍️ Shop persistent button — shop product list reply_text se."""
+    u = update.effective_user
+    if not u:
+        return
+    save_user(u.id, u.username or "", u.first_name or "")
+    await _panic_reset_user_session(update, context)
+    try:
+        from database import get_products_filtered
+        from keyboards import all_products_keyboard
+        from utils import sort_products_by_first_word
+        products = get_products_filtered("all")
+        try:
+            products = sort_products_by_first_word(products)
+        except Exception:
+            pass
+        if not products:
+            await update.message.reply_text(
+                "🛍️ *Shop*\n━━━━━━━━━━━━━━━━━━━━\n\n_No products yet._",
+                parse_mode="Markdown",
+                reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
+            return
+        kb, pg, tp = all_products_keyboard(products, 1, user=u, filter_mode="all")
+        await update.message.reply_text(
+            f"🛍️ *Shop* — page {pg}/{tp}",
+            parse_mode="Markdown", reply_markup=kb)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug(f"[persist-shop] {e}")
+
+
+async def handle_balance_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🆕 v170.19: 💰 Balance persistent button — compact account summary."""
+    u = update.effective_user
+    if not u:
+        return
+    save_user(u.id, u.username or "", u.first_name or "")
+    await _panic_reset_user_session(update, context)
+    try:
+        from database import get_user_points, get_ref_points, get_user
+        from utils import fmt_points
+        pts = get_user_points(u.id)
+        refs = get_ref_points(u.id)
+        usr = get_user(u.id)
+        uname = (usr.get("username") if usr else None) or u.username or "—"
+        text = (
+            "💰 *Balance*\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 User: `{escape_md(str(u.id))}`"
+            + (f" (@{escape_md(str(uname))})" if uname and uname != "—" else "") + "\n"
+            f"💎 Wallet Points: *{fmt_points(pts)}*\n"
+            f"🎁 Referral Points: *{fmt_points(refs)}*"
+        )
+        from keyboards import main_menu_keyboard
+        await update.message.reply_text(
+            text, parse_mode="Markdown",
+            reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug(f"[persist-balance] {e}")
+
+
+async def handle_deposit_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🆕 v170.19: 💎 Deposit persistent button — Buy Points screen."""
+    u = update.effective_user
+    if not u:
+        return
+    save_user(u.id, u.username or "", u.first_name or "")
+    await _panic_reset_user_session(update, context)
+    try:
+        from database import get_user_points
+        from keyboards import buy_points_keyboard, _custom_buttons_for
+        from config import POINTS_PER_DOLLAR
+        from telegram import InlineKeyboardMarkup as _IKM
+        pts = get_user_points(u.id)
+        rows = list(buy_points_keyboard().inline_keyboard)
+        try:
+            for r in _custom_buttons_for("buy_points"):
+                rows.insert(-1, r)
+        except Exception:
+            pass
+        text = (f"💎 *Buy Points*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"💎 Your Points: *{pts}*\n💰 Rate: $1 = {POINTS_PER_DOLLAR} Points\n\n"
+                f"Select payment method:")
+        await update.message.reply_text(text, parse_mode="Markdown",
+                                        reply_markup=_IKM(rows))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug(f"[persist-deposit] {e}")
+
+
+async def handle_history_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🆕 v170.19: 📜 History persistent button — My Orders (receipt)."""
+    u = update.effective_user
+    if not u:
+        return
+    save_user(u.id, u.username or "", u.first_name or "")
+    await _panic_reset_user_session(update, context)
+    try:
+        from database import get_user_product_orders
+        from orders_layouts import render_orders
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        orders = get_user_product_orders(u.id)
+        if not orders:
+            await update.message.reply_text(
+                "📜 *No orders yet!*\n\nStart shopping to see your orders here.",
+                parse_mode="Markdown", reply_markup=main_menu_keyboard(False, user_id=u.id))
+            return
+        text, buttons = render_orders(orders, u.id, page=0, page_size=8, status_filter="all")
+        buttons.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
+        from utils import smart_text_and_mode
+        send_text, send_mode = smart_text_and_mode(text[:3900], "Markdown")
+        await update.message.reply_text(send_text, parse_mode=send_mode,
+                                        reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug(f"[persist-history] {e}")
+
+
+async def handle_language_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🆕 v170.19: 🌐 Language persistent button — language picker."""
+    u = update.effective_user
+    if not u:
+        return
+    save_user(u.id, u.username or "", u.first_name or "")
+    await _panic_reset_user_session(update, context)
+    try:
+        from i18n import get_user_lang, t, lang_name
+        from ui_extras import language_menu_keyboard
+        current = get_user_lang(u.id)
+        text = (t("lang_select_title", lang=current) + "\n\n"
+                + t("lang_current", lang=current) + lang_name(current))
+        await update.message.reply_text(text, parse_mode="Markdown",
+                                        reply_markup=language_menu_keyboard(current))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug(f"[persist-language] {e}")
+
+
 async def handle_main_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """🔧 BUG #8 FIX: Show welcome (persistent keyboard already attached on /start)
     Inline keyboard goes in the welcome message itself.

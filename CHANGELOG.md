@@ -8,6 +8,30 @@
 
 ---
 
+# 🚀 v170.19 (2026-08-17) — PERSISTENT BUTTONS FIX + SCREENSHOT MENU
+
+## 🐛 CRITICAL FIX: persistent buttons work nahi kar rahe the
+- Root cause: admin ne buttons ke custom labels emoji KE BINA save kiye the
+  ("Freebies"/"How to Use"/"Reseller API") → handler hardcoded emoji label
+  ("🎁 Freebies" etc.) se match karta tha → match fail → kuch nahi hota tha.
+- FIX: naya `persist_button_from_text(text, user_id)` — CURRENT label (custom
+  rename + translation + legacy alias) se match karta hai. bot.py dispatch ab
+  isi se hota hai.
+
+## 🆕 Screenshot-style persistent menu (user demand)
+- Persistent reply keyboard ab 2-col grid:
+  🏠 Menu | 🛍️ Shop | 💰 Balance | 💎 Deposit | 📜 History | 🌐 Language
+  + 🎁 Freebies | 🔗 API Key | 📚 How to Use.
+- Naye handlers: handle_shop_button (shop list), handle_balance_button
+  (wallet+refs), handle_deposit_button (Buy Points), handle_history_button
+  (receipt orders), handle_language_button (language picker).
+- Ready DB me persist_order bake: home,shop,balance,deposit,history,language,
+  freebies,reseller,howto.
+
+## ⚠️ FRESH DEPLOY: version bump v170.18 → v170.19.
+
+---
+
 # 🚀 v170.18 (2026-08-17) — BROADCAST EXACT + WARRANTY-STYLE LISTS + ENGLISH
 
 ## 1. 🌐 Global broadcast — EXACT content (user demand)

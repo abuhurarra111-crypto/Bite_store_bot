@@ -268,13 +268,50 @@ def _apply_screen_pad_markup(markup, location):
 # 🆕 v170.12: ab ADMIN configurable (rename + reorder). Buttons:
 #   home / howto / reseller  (freebies Batch 6 me add hoga)
 _PERSIST_DEFAULTS = {
-    "home":     "🏠 Main Menu",
-    "howto":    "📚 How to Use",
-    "reseller": "🔗 Reseller API",
+    "home":     "🏠 Menu",
+    "shop":     "🛍️ Shop",
+    "balance":  "💰 Balance",
+    "deposit":  "💎 Deposit",
+    "history":  "📜 History",
+    "language": "🌐 Language",
     "freebies": "🎁 Freebies",
+    "reseller": "🔗 API Key",
+    "howto":    "📚 How to Use",
 }
 
-_PERSIST_IDS = ("home", "howto", "reseller", "freebies")
+_PERSIST_IDS = ("home", "shop", "balance", "deposit", "history",
+                "language", "freebies", "reseller", "howto")
+
+
+def persist_button_from_text(text, user_id=None):
+    """🆕 v170.19: reply-keyboard text → pid matching. Admin ka CUSTOM label,
+    translated default ya plain default — jo bhi button label abhi hai, usse
+    match karo (🐛 FIX: pehle hardcoded emoji label se match hota tha → admin
+    ne emoji hata kar label rename kiya to buttons kaam karna band ho gaye)."""
+    t = (text or "").strip()
+    if not t:
+        return None
+    for pid in _PERSIST_IDS:
+        try:
+            lbl = get_persist_label(pid, user_id=user_id)
+            if lbl and t == str(lbl).strip():
+                return pid
+        except Exception:
+            pass
+    # safety fallback: default labels (emoji wale bhi)
+    for pid, d in _PERSIST_DEFAULTS.items():
+        if t == d:
+            return pid
+    # legacy aliases (purane labels jo kisi client me cache ho sakte hain)
+    _legacy = {
+        "🏠 Main Menu": "home",
+        "📚 How to Use": "howto",
+        "🔗 Reseller API": "reseller",
+        "🎁 Freebies": "freebies",
+    }
+    if t in _legacy:
+        return _legacy[t]
+    return None
 
 
 def get_persist_label(pid, user_id=None):

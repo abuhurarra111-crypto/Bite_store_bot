@@ -542,21 +542,41 @@ async def handle_text(update, context):
     # and trying to send messages. The background job (every 30s) already
     # handles this — no need to duplicate it here. This caused unnecessary
     # DB queries and potential message sending delays.
-    # 🆕 v137: persistent reply-keyboard labels are translated per user lang
-    if _reply_btn_matches(t, "🏠 Main Menu", update.effective_user.id):
-        await handle_main_menu_button(update, context); return
-    # 🆕 v78: 📚 How to Use button on persistent reply keyboard
-    if _reply_btn_matches(t, "📚 How to Use", update.effective_user.id):
-        from handlers_start import handle_how_to_button
-        await handle_how_to_button(update, context); return
-    # 🆕 v170.12: 🔗 Reseller API button on persistent reply keyboard
-    if _reply_btn_matches(t, "🔗 Reseller API", update.effective_user.id):
-        from handlers_start import handle_reseller_button
-        await handle_reseller_button(update, context); return
-    # 🆕 v170.13: 🎁 Freebies button on persistent reply keyboard
-    if _reply_btn_matches(t, "🎁 Freebies", update.effective_user.id):
-        from handlers_start import handle_freebies_button
-        await handle_freebies_button(update, context); return
+    # 🆕 v170.19: persistent reply-keyboard dispatch — CURRENT label se match
+    # (custom rename + translation dono handle). 🐛 FIX: pehle hardcoded emoji
+    # label match hota tha → admin ne emoji hata kar rename kiya to buttons
+    # kaam karna band ho gaye (freebies/reseller/howto teeno dead).
+    try:
+        from keyboards import persist_button_from_text
+        _pid = persist_button_from_text(t, update.effective_user.id)
+        if _pid == "home":
+            await handle_main_menu_button(update, context); return
+        if _pid == "howto":
+            from handlers_start import handle_how_to_button
+            await handle_how_to_button(update, context); return
+        if _pid == "reseller":
+            from handlers_start import handle_reseller_button
+            await handle_reseller_button(update, context); return
+        if _pid == "freebies":
+            from handlers_start import handle_freebies_button
+            await handle_freebies_button(update, context); return
+        if _pid == "shop":
+            from handlers_start import handle_shop_button
+            await handle_shop_button(update, context); return
+        if _pid == "balance":
+            from handlers_start import handle_balance_button
+            await handle_balance_button(update, context); return
+        if _pid == "deposit":
+            from handlers_start import handle_deposit_button
+            await handle_deposit_button(update, context); return
+        if _pid == "history":
+            from handlers_start import handle_history_button
+            await handle_history_button(update, context); return
+        if _pid == "language":
+            from handlers_start import handle_language_button
+            await handle_language_button(update, context); return
+    except Exception as _pe:
+        pass
     # 🆕 v50: Screen-by-Screen Editor text input MUST run BEFORE any other 'erk'
     # consumer so admin's response edits go through our flow (with smart back).
     if context.user_data.get('se_back_sid'):
