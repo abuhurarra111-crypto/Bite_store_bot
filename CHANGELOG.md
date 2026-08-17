@@ -8,6 +8,41 @@
 
 ---
 
+# 🚀 v170.14 (2026-08-17) — BATCH 7: FREEBIES UI + BROADCAST + BULK TIERS SAVE
+
+## 1. ⌨️ Persistent buttons color (honest workaround)
+- Admin panel → ⌨️ Persistent Buttons → ab har button ka **🎨 Color** option
+  (🟢Green/🔵Blue/🔴Red/⚪None) — button label ke aage colored DOT emoji lagta hai.
+- ⚠️ HONEST: Telegram reply-keyboard buttons par BACKGROUND COLOR possible NAHI
+  (sirf inline buttons par hota hai). Dot emoji hi max hai.
+
+## 2. 🎁 Freebies UI (user demand)
+- Freebies menu: shop/home buttons HATA — ab sirf product list + back.
+- Admin Freebies panel ab warranty/refund STYLE: premium emoji names +
+  🟢ON/🔴OFF colored toggles.
+- 🐛 TOGGLE FIX: freebie_toggle screen refresh nahi karta tha (q.data se
+  "freebie_cfg_" parse hota tha magar data "freebie_toggle_101" tha → silent
+  return). Ab shared _render_freebie_config se dono refresh hote hain.
+
+## 3. 🎁 Freebies broadcasting (fake activity)
+- Naya type "freebie" (fbc_type_freebie + pua_type_freebie): random enabled
+  freebie products se broadcast, bc_freebie template + "🎁 Claim FREE" button.
+- Editable template: Customization → Templates → "🎁 Freebie Claimed" (10
+  variants). Toggles: Fake Broadcast panel + Per-User Activity panel.
+
+## 4. 📊 Bulk tiers: Save button se broadcast (user demand)
+- Pehle har tier add par turant broadcast hota tha → ab tier add par NAHI.
+- Naya **✅ Save & Broadcast** button (bdisc_broadcast_) — saare tiers ke baad
+  EK baar broadcast (selected destination). bdisc_price_received ab broadcast
+  nahi karta.
+
+## 5. 💎 Bulk deal template prettier (default updated, placeholders same:
+   {user} {product} {qty} {price} {base_price} {saving}).
+
+## 6. ⚠️ FRESH DEPLOY: version bump v170.13 → v170.14.
+
+---
+
 # 🚀 v170.13 (2026-08-17) — BATCH 6: 🎁 FREEBIES (naya free-claim system)
 
 ## 1. 🎁 Freebies — har user FREE claim kar sake (user demand)

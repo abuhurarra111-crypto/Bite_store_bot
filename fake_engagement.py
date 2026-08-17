@@ -315,6 +315,7 @@ SETTING_TYPE_TIER      = "fbc_type_tier"          # "1" or "0" — send fake tie
 SETTING_TYPE_STOCK     = "fbc_type_stock"         # "1" or "0" — send real new stock alerts?
 SETTING_TYPE_DISCOUNT  = "fbc_type_discount"      # "1" or "0" — send fake discount alerts?
 SETTING_TYPE_FREECLAIM = "fbc_type_freeclaim"     # 🆕 v110: fake free-via-referrals claims (uses per-product fc_btn)
+SETTING_TYPE_FREEBIE   = "fbc_type_freebie"       # 🆕 v170.14: fake freebie claims
 SETTING_TYPE_BULKDEAL  = "fbc_type_bulkdeal"      # 🆕 v161.12: fake bulk-discount hype (products WITH tiers)
 SETTING_TYPE_RESELLER  = "fbc_type_reseller"      # 🆕 v161.12: reseller API purchase hype
 SETTING_TYPE_NEWUSER   = "fbc_type_newuser"       # 🆕 v161.19: new member joined
@@ -399,6 +400,31 @@ def _get_freeclaim_broadcastable_products():
             out.append(pid)
         except Exception:
             pass
+    return out
+
+
+def _get_freebie_broadcastable_products():
+    """🆕 v170.14: freebie product ids jo enabled + in-stock + not-hidden hain.
+    Fake freebie-claim broadcasts inhi se pick karte hain."""
+    out = []
+    try:
+        from database import (get_all_freebie_products, get_product,
+                              is_product_hidden)
+        for f in get_all_freebie_products():
+            pid = int(f.get("product_id") or 0)
+            if not pid:
+                continue
+            try:
+                p = get_product(pid)
+                if not p or int(p["stock"] or 0) <= 0:
+                    continue
+                if is_product_hidden(pid):
+                    continue
+                out.append(pid)
+            except Exception:
+                pass
+    except Exception:
+        pass
     return out
 
 
@@ -533,6 +559,7 @@ def is_type_enabled(type_key):
         "stock":    SETTING_TYPE_STOCK,
         "discount": SETTING_TYPE_DISCOUNT,
         "freeclaim": SETTING_TYPE_FREECLAIM,  # 🆕 v110
+        "freebie":  SETTING_TYPE_FREEBIE,    # 🆕 v170.14
         "bulkdeal": SETTING_TYPE_BULKDEAL,    # 🆕 v161.12
         "reseller": SETTING_TYPE_RESELLER,    # 🆕 v161.12
         "newuser":   SETTING_TYPE_NEWUSER,    # 🆕 v161.19
@@ -772,6 +799,8 @@ async def run_fake_broadcast(bot, force_type=None):
         # least one enabled + in-stock free-claim product; auto-eligibility
         # filter happens below in the availability check.
         "freeclaim": 15,
+        # 🆕 v170.14: fake freebie claims (free products)
+        "freebie": 12,
         # 🆕 v161.12: fake bulk-deal hype (products WITH tiers) + reseller hype
         "bulkdeal": 10,
         "reseller": 6,
@@ -790,6 +819,8 @@ async def run_fake_broadcast(bot, force_type=None):
     else:
         # 🆕 v110: also skip 'freeclaim' if no eligible product available
         freeclaim_ready = bool(_get_freeclaim_broadcastable_products())
+        # 🆕 v170.14: freebie only when a freebie product exists
+        freebie_ready = bool(_get_freebie_broadcastable_products())
         # 🆕 v161.12: bulkdeal only when a product with tiers exists
         bulkdeal_ready = bool(_get_products_with_tiers())
         available_types = []
@@ -798,6 +829,8 @@ async def run_fake_broadcast(bot, force_type=None):
             if not is_type_enabled(ttype):
                 continue
             if ttype == "freeclaim" and not freeclaim_ready:
+                continue
+            if ttype == "freebie" and not freebie_ready:
                 continue
             if ttype == "bulkdeal" and not bulkdeal_ready:
                 continue
@@ -895,6 +928,36 @@ async def run_fake_broadcast(bot, force_type=None):
             return chosen_type, success, fail
         except Exception as _e:
             logger.exception(f"[FakeBroadcast] freeclaim failed: {_e}")
+            return None, 0, 0
+
+    # 🆕 v170.14: FAKE FREEBIE CLAIM — "someone got a free product"
+    if chosen_type == "freebie":
+        try:
+            eligible = _get_freebie_broadcastable_products()
+            if not eligible:
+                logger.info("[FakeBroadcast] freebie: no eligible product — skip")
+                return None, 0, 0
+            fb_pid = random.choice(eligible)
+            from database import get_product as _gp2
+            fb_prod = _gp2(fb_pid)
+            fb_name = (dict(fb_prod).get("name", "product") if fb_prod else "product")
+            try:
+                from utils import html_strip_tags as _hst2
+                fb_name = _hst2(fb_name)
+            except Exception:
+                pass
+            fb_msg = _rt("bc_freebie", {"user": user, "product": fb_name})
+            if not fb_msg:
+                fb_msg = (f"🎁 *FREEBIE CLAIMED!* 🎉\\n\\n"
+                          f"👤 {user} just got {fb_name} for FREE!\\n"
+                          f"🆓 100% free — tap below and grab yours too!")
+            success = await broadcast_store_message(bot, fb_msg, pid=fb_pid,
+                                                    tpl_id="bc_freebie")
+            _log_broadcast("freebie", fb_msg, success)
+            logger.info(f"[FakeBroadcast] Done freebie — ✅ {success} sent")
+            return chosen_type, success, 0
+        except Exception as _e:
+            logger.exception(f"[FakeBroadcast] freebie failed: {_e}")
             return None, 0, 0
 
     # 🆕 v161.12: FAKE BULK-DEAL HYPE — "people are bulk-buying this product"
@@ -2124,6 +2187,7 @@ async def fake_broadcast_panel_callback(update, context):
     t_discount = is_type_enabled("discount")
     t_stock    = is_type_enabled("stock")
     t_freeclaim = is_type_enabled("freeclaim")  # 🆕 v110
+    t_freebie   = is_type_enabled("freebie")    # 🆕 v170.14
     t_bulkdeal  = is_type_enabled("bulkdeal")   # 🆕 v161.12
     t_reseller  = is_type_enabled("reseller")   # 🆕 v161.12
     t_newuser   = is_type_enabled("newuser")    # 🆕 v161.19
@@ -2165,6 +2229,7 @@ async def fake_broadcast_panel_callback(update, context):
         f"  {_toggle_icon(t_discount)} Discount Alerts\n"
         f"  {_toggle_icon(t_stock)} Real Stock Alerts *(auto)*\n"
         f"  {_toggle_icon(t_freeclaim)} Fake Free-Claims *(uses per-product fc button)*\n"
+        f"  {_toggle_icon(t_freebie)} Freebie Claims *(free products)*\n"
         f"  {_toggle_icon(t_bulkdeal)} Bulk-Deal Hype *(products with tiers)*\n"
         f"  {_toggle_icon(t_reseller)} Reseller Purchase Hype\n"
         f"  {_toggle_icon(t_newuser)} New Member Joined\n"
@@ -2201,6 +2266,7 @@ async def fake_broadcast_panel_callback(update, context):
         # 🆕 v110: Fake Free-Claims toggle
         [
             InlineKeyboardButton(f"{_toggle_icon(t_freeclaim)} Fake Free-Claims", callback_data="fbc_type_freeclaim"),
+            InlineKeyboardButton(f"{_toggle_icon(t_freebie)} Freebie Claims", callback_data="fbc_type_freebie"),
         ],
         # 🆕 v161.12: Bulk-Deal + Reseller hype toggles
         [
@@ -2301,6 +2367,7 @@ _TYPE_MAP = {
     "discount": SETTING_TYPE_DISCOUNT,
     "stock":    SETTING_TYPE_STOCK,
     "freeclaim": SETTING_TYPE_FREECLAIM,  # 🆕 v110
+        "freebie":  SETTING_TYPE_FREEBIE,    # 🆕 v170.14
     "bulkdeal":  SETTING_TYPE_BULKDEAL,   # 🆕 v161.12
     "reseller":  SETTING_TYPE_RESELLER,   # 🆕 v161.12
     "newuser":   SETTING_TYPE_NEWUSER,    # 🆕 v161.19
@@ -2319,6 +2386,7 @@ _TYPE_LABELS = {
     "discount": "Discount Alerts",
     "stock":    "Real Stock Alerts",
     "freeclaim": "Fake Free-Claims",  # 🆕 v110
+    "freebie":   "Freebie Claims",     # 🆕 v170.14
     "bulkdeal":  "Bulk-Deal Hype",    # 🆕 v161.12
     "reseller":  "Reseller Hype",     # 🆕 v161.12
     "newuser":   "New Member Joined", # 🆕 v161.19

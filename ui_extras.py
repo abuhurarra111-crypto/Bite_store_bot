@@ -879,7 +879,7 @@ from per_user_activity import (
     S_TYPE_PURCHASE, S_TYPE_DEPOSIT, S_TYPE_REFERRAL,
     S_TYPE_DISCOUNT, S_TYPE_REVIEW, S_TYPE_TIER,
     S_TYPE_MILESTONE, S_TYPE_STOCK, S_TYPE_NEWUSER,
-    S_TYPE_FLASH, S_TYPE_NEWPROD,
+    S_TYPE_FLASH, S_TYPE_NEWPROD, S_TYPE_FREEBIE,
 )
 
 logger = logging.getLogger(__name__)
@@ -1292,6 +1292,8 @@ _TYPE_MAP = {
     "price_drop": ("pua_type_price_drop", "📉 Price Drop"),
     # 🆕 v110: Fake Free-via-Referrals claim broadcasts (uses per-product fc_btn)
     "freeclaim":  ("pua_type_freeclaim", "🎁 Free-Claim (Fake)"),
+    # 🆕 v170.14: fake freebie claims
+    "freebie":    (S_TYPE_FREEBIE, "🎁 Freebie Claim"),
 }
 
 

@@ -2233,7 +2233,8 @@ def main():
         ("^bdisc_page_", bdisc_page_callback),
         ("^bdisc_prod_", bdisc_prod_callback),
         ("^bdisc_addq_", bdisc_addq_callback),
-        ("^bdisc_rm_", bdisc_rm_callback),
+        ("^bdisc_rm_",          bdisc_rm_callback),
+        ("^bdisc_broadcast_",   bdisc_broadcast_callback),  # 🆕 v170.14
         ("^bdisc_cancel$", bdisc_cancel_callback),
         ("^togglemode_", toggle_delivery_mode_callback),
         # 🆕 v71: replacement window picker — MUST come before generic ^editfield_
@@ -2294,6 +2295,8 @@ def main():
         ("^persist_panel$", persist_panel_callback),                       # 🆕 v170.12
         ("^persist_ren_", persist_rename_callback),                        # 🆕 v170.12
         ("^persist_move_.+_(up|down)$", persist_move_callback),            # 🆕 v170.12
+        ("^persist_color_", persist_color_callback),                       # 🆕 v170.14
+        ("^persist_setcol_.+_(green|blue|red|none)$", persist_setcol_callback),  # 🆕 v170.14
         # 🆕 v144: new customization tools
         ("^adm_users_search$",     adm_users_search_callback),
         ("^cz_noop$",              cz_noop_callback),

@@ -8921,11 +8921,67 @@ async def persist_panel_callback(update, context):
             row.append(InlineKeyboardButton("⬇️", callback_data=f"persist_move_{pid}_down"))
         row.append(InlineKeyboardButton("✏️ Rename", callback_data=f"persist_ren_{pid}"))
         kb.append(row)
+        kb.append([InlineKeyboardButton(
+            f"🎨 Color: {_persist_color_label(pid)}",
+            callback_data=f"persist_color_{pid}")])
     lines.append("")
-    lines.append("⚠️ _Reply-keyboard buttons plain text hote hain — background color ya animated premium icon Telegram support nahi karta. Emoji char (e.g. 🎁) rename me daal sakte ho._")
+    lines.append("⚠️ _Reply-keyboard buttons plain text hote hain — Telegram inpar background color ya animated premium icon support NAHI karta. Color option button ke label me colored dot emoji (🟢🔵🔴) lagata hai taake alag nazar aaye. Emoji char (e.g. 🎁) rename me daal sakte ho._")
     kb.append([InlineKeyboardButton("🔙 Back to Customization", callback_data="admin_customization")])
     await _safe_edit(q, "\n".join(lines), parse_mode="Markdown",
                      reply_markup=InlineKeyboardMarkup(kb))
+
+
+def _persist_color_label(pid):
+    """Persistent button ka current color (emoji dot)."""
+    try:
+        from database import get_setting
+        c = (get_setting(f"persist_color_{pid}", "") or "").strip()
+        return {"green": "🟢 Green", "blue": "🔵 Blue", "red": "🔴 Red"}.get(c, "⚪ None")
+    except Exception:
+        return "⚪ None"
+
+
+async def persist_color_callback(update, context):
+    """🎨 Set colored-dot emoji for a persistent button (reply keyboard me
+    background color possible nahi — dot emoji best workaround)."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    pid = q.data.replace("persist_color_", "")
+    try:
+        from database import get_setting
+        cur = (get_setting(f"persist_color_{pid}", "") or "").strip()
+    except Exception:
+        cur = ""
+    kb = [
+        [InlineKeyboardButton("🟢 Green", callback_data=f"persist_setcol_{pid}_green"),
+         InlineKeyboardButton("🔵 Blue", callback_data=f"persist_setcol_{pid}_blue")],
+        [InlineKeyboardButton("🔴 Red", callback_data=f"persist_setcol_{pid}_red"),
+         InlineKeyboardButton("⚪ None", callback_data=f"persist_setcol_{pid}_none")],
+        [InlineKeyboardButton("🔙 Back", callback_data="persist_panel")],
+    ]
+    await _safe_edit(q,
+        f"🎨 *Color for `{pid}`*\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"Current: `{_persist_color_label(pid)}`\n\n"
+        f"_(Reply keyboard background color support nahi karta — colored dot "
+        f"emoji label ke aage lagta hai.)_",
+        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def persist_setcol_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    raw = q.data.replace("persist_setcol_", "")
+    pid, _, color = raw.rpartition("_")
+    try:
+        from database import set_setting
+        set_setting(f"persist_color_{pid}", "" if color == "none" else color)
+    except Exception:
+        await q.answer("❌ Save failed", show_alert=True); return
+    await q.answer("✅ Color saved")
+    await persist_panel_callback(update, context)
 
 
 async def persist_rename_callback(update, context):
@@ -10500,6 +10556,8 @@ async def bdisc_prod_callback(u, c):
         for t in tiers:
             kb.append([InlineKeyboardButton(f"🗑 Remove {int(t['min_qty'])} qty → ${float(t['unit_price']):.2f}",
                                             callback_data=f"bdisc_rm_{pid}_{int(t['min_qty'])}")])
+        # 🆕 v170.14: Save & Broadcast — saare tiers ke baad ek baar broadcast
+        kb.append([InlineKeyboardButton("✅ Save & Broadcast", callback_data=f"bdisc_broadcast_{pid}")])
     kb.append([InlineKeyboardButton("🔙 All Products", callback_data="bdisc_start")])
     await _safe_edit(q, "\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -10583,52 +10641,73 @@ async def bdisc_price_received(update, context):
     except Exception:
         name = str(p['name'] if p else '')
 
-    # 🆕 v161.12: bulk discount laga to fake "people buying" hype fire karo —
-    # destination (selected in Fake Activity) pe Buy Now button ke sath.
-    try:
-        from fake_engagement import _get_lowest_tier, broadcast_store_message
-        _t = _get_lowest_tier(pid)
-        if _t:
-            _tq, _tp = _t
-            _base = float(dict(p).get("price") or _tp) if p else float(_tp)
-            _save = round(max(0.0, _base - _tp), 2)
-            from fake_engagement import generate_fake_username, get_name_style, is_type_enabled
-            _user = generate_fake_username(get_name_style())
-            try:
-                from customization import render_template as _rt
-                _msg = _rt("bc_bulkdeal", {
-                    "user": _user, "product": name, "qty": str(_tq),
-                    "price": f"{_tp:.2f}", "base_price": f"{_base:.2f}",
-                    "saving": f"{_save:.2f}"})
-            except Exception:
-                _msg = None
-            if not _msg:
-                _msg = (f"📊 *Bulk Deal Alert!* 🎉\n\n"
-                        f"👤 {_user} just grabbed {name} at bulk price!\n"
-                        f"🛒 {_tq}+ qty → 💵 ${_tp:.2f} each\n"
-                        f"❌ Base: ${_base:.2f} | 💸 Save ${_save:.2f} per unit\n\n"
-                        f"🔥 Buy more, save more — tap below!")
-            try:
-                import asyncio as _aio
-                _aio.create_task(broadcast_store_message(
-                    context.bot, _msg, pid=pid, tpl_id="bc_bulkdeal"))
-            except Exception:
-                pass
-    except Exception as _bd_err:
-        print(f"[BulkDealAlert] {_bd_err}")
+    # 🐛 v170.14 FIX: pehle HAR tier add par broadcast fire hota tha (user ko
+    # ek-ek tier ki alag broadcast milti thi). Ab broadcast NAHI — sirf tier
+    # save hota hai; admin "✅ Save & Broadcast" button dabaye tab ek baar
+    # broadcast hoga (saare tiers ke baad).
     await update.message.reply_text(
         f"✅ *Tier Added!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📦 {name[:50]}\n"
         f"`{qty} qty` → **${price:.2f}** per unit\n\n"
-        f"Users will see this on the product page and checkout will "
-        f"auto-apply the price for the chosen quantity.\n\n"
-        f"➕ To add another tier, open the product again.",
+        f"➕ Aur tier add karne ke liye neeche *➕ Add Tier* dabao.\n"
+        f"📢 Sab tiers set ho jayen to *✅ Save & Broadcast* dabao (ek baar).",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("📊 This Product's Tiers", callback_data=f"bdisc_prod_{pid}")],
             [InlineKeyboardButton("🔙 All Products", callback_data="bdisc_start")],
         ]))
     return True
+
+
+async def bdisc_broadcast_callback(u, c):
+    """🆕 v170.14: Save & Broadcast — saare tiers set hone ke baad EK baar
+    bulk-deal hype broadcast (selected destination par)."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer("📢 Broadcasting…")
+    try:
+        pid = int(q.data.replace("bdisc_broadcast_", ""))
+    except Exception:
+        return
+    try:
+        from fake_engagement import _get_lowest_tier, broadcast_store_message
+        from fake_engagement import generate_fake_username, get_name_style
+        p = get_product(pid)
+        _t = _get_lowest_tier(pid)
+        if not p or not _t:
+            await q.answer("⚠️ No tiers / product found", show_alert=True)
+            return
+        _tq, _tp = _t
+        _base = float(dict(p).get("price") or _tp)
+        _save = round(max(0.0, _base - _tp), 2)
+        try:
+            from utils import html_strip_tags
+            name = html_strip_tags(str(p['name'] or ''))
+        except Exception:
+            name = str(p['name'] or '')
+        _user = generate_fake_username(get_name_style())
+        try:
+            from customization import render_template as _rt
+            _msg = _rt("bc_bulkdeal", {
+                "user": _user, "product": name, "qty": str(_tq),
+                "price": f"{_tp:.2f}", "base_price": f"{_base:.2f}",
+                "saving": f"{_save:.2f}"})
+        except Exception:
+            _msg = None
+        if not _msg:
+            _msg = (f"📊 *Bulk Deal Alert!* 🎉\n\n"
+                    f"👤 {_user} just grabbed {name} at bulk price!\n"
+                    f"🛒 {_tq}+ qty → 💵 ${_tp:.2f} each\n"
+                    f"❌ Base: ${_base:.2f} | 💸 Save ${_save:.2f} per unit\n\n"
+                    f"🔥 Buy more, save more — tap below!")
+        import asyncio as _aio
+        _aio.create_task(broadcast_store_message(c.bot, _msg, pid=pid,
+                                                 tpl_id="bc_bulkdeal"))
+        await q.answer("✅ Bulk-deal broadcast sent to destination!", show_alert=True)
+    except Exception as _e:
+        await q.answer(f"❌ {_e}", show_alert=True)
+    await bdisc_prod_callback(u, c)
 
 
 async def bdisc_rm_callback(u, c):

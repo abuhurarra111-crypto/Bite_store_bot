@@ -125,6 +125,7 @@ S_TYPE_FLASH     = "pua_type_flash"       # 🛍 Flash sale (real events only)
 S_TYPE_NEWPROD   = "pua_type_newprod"     # 🆕 New product (real + fake)
 S_TYPE_PRICE_DROP= "pua_type_price_drop"  # 🆕 v66 Big Price Drop alerts
 S_TYPE_FREECLAIM = "pua_type_freeclaim"   # 🆕 v110 Fake Free-via-Referrals claim broadcasts
+S_TYPE_FREEBIE   = "pua_type_freebie"     # 🆕 v170.14 Fake freebie claims
 S_TYPE_BULKDEAL  = "pua_type_bulkdeal"    # 🆕 v161.12 Bulk-deal hype (products with tiers)
 S_TYPE_RESELLER  = "pua_type_reseller"    # 🆕 v161.12 Reseller API purchase hype
 
@@ -222,6 +223,7 @@ def is_type_on(type_key):
         "newprod":   S_TYPE_NEWPROD,
         "price_drop": S_TYPE_PRICE_DROP,   # 🆕 v66
         "freeclaim":  S_TYPE_FREECLAIM,    # 🆕 v110
+        "freebie":    S_TYPE_FREEBIE,      # 🆕 v170.14
         "bulkdeal":   S_TYPE_BULKDEAL,     # 🆕 v161.12
         "reseller":   S_TYPE_RESELLER,     # 🆕 v161.12
     }
@@ -493,6 +495,7 @@ async def build_fake_message(bot, user_id: int) -> tuple[str, any]:
         # + admin's custom text / picked template, so it looks IDENTICAL to
         # a real claim broadcast (color, emoji, size, all preserved).
         ("freeclaim", 8),
+        ("freebie",   8),   # 🆕 v170.14 freebie claims
         # 🆕 v161.12: bulk-deal + reseller hype types
         ("bulkdeal",  7),
         ("reseller",  5),
@@ -633,6 +636,58 @@ async def build_fake_message(bot, user_id: int) -> tuple[str, any]:
     # have Free-via-Referrals enabled. Uses the product's own custom text /
     # template + the per-product fc_btn_<pid> styled button (color, emoji,
     # size) so it's IDENTICAL to a real free-claim broadcast.
+    if chosen == "freebie":
+        # 🆕 v170.14: fake freebie claim — freebies table se random enabled+stock
+        # product, bc_freebie template + Claim FREE button.
+        try:
+            from database import (get_all_freebie_products as _gafb,
+                                  get_product as _gp2,
+                                  is_product_hidden as _iph2)
+            eligible = []
+            for f in _gafb():
+                _fpid = int(f.get("product_id") or 0)
+                if not _fpid:
+                    continue
+                try:
+                    _fp = _gp2(_fpid)
+                    if not _fp or int(_fp["stock"] or 0) <= 0:
+                        continue
+                    if _iph2(_fpid):
+                        continue
+                    eligible.append((_fpid, _fp))
+                except Exception:
+                    pass
+            if eligible:
+                fb_pid, fb_prod = random.choice(eligible)
+                fb_name = dict(fb_prod).get("name", "product")
+                try:
+                    from utils import html_strip_tags as _hst
+                    fb_name = _hst(fb_name)
+                except Exception:
+                    pass
+                fb_msg = _render("bc_freebie", {"user": masked, "product": fb_name})
+                if not fb_msg:
+                    fb_msg = (f"🎁 *FREEBIE CLAIMED!* 🎉\n\n"
+                              f"👤 {masked} just got {fb_name} for FREE!\n"
+                              f"🆓 100% free — tap below and grab yours too!")
+                try:
+                    bot_me = await bot.get_me()
+                    bot_username = bot_me.username
+                except Exception:
+                    bot_username = "BiteStoreBot"
+                deep_link = f"https://t.me/{bot_username}?start=buy_{fb_pid}"
+                try:
+                    from button_system import build_button as _bb, wrap_button as _wrap
+                    _btn = _bb("bc_freebie", "🎁 Claim FREE", url=deep_link, force_default=True)
+                    try:
+                        _btn = _wrap("bc_freebie", _btn)
+                    except Exception:
+                        pass
+                except Exception:
+                    _btn = InlineKeyboardButton("🎁 Claim FREE", url=deep_link)
+                return fb_msg, InlineKeyboardMarkup([[_btn]])
+        except Exception:
+            pass
     if chosen == "freeclaim":
         try:
             from database import (get_connection as _gc,

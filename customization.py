@@ -715,11 +715,13 @@ TEMPLATES = [
         "section": "📢 Fake Broadcast",
         "vars":    "{user}, {product}, {qty}, {price}, {base_price}, {saving}",
         "default": (
-            "📊 *Bulk Deal Alert!* 🎉\n\n"
-            "👤 {user} just grabbed {product} at bulk price!\n"
-            "🛒 {qty}+ qty → 💵 ${price} each\n"
-            "❌ Base: ${base_price} | 💸 Save ${saving} per unit\n\n"
-            "🔥 Buy more, save more — tap below!"
+            "📊 *Bulk Deal Alert!* 🎉\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "👤 {user} just grabbed *{product}* at bulk price!\n\n"
+            "🛒 {qty}+ qty → 💵 *${price}* each\n"
+            "❌ Base: ~~${base_price}~~\n"
+            "💸 Save *${saving}* per unit\n\n"
+            "🔥 Buy more, save more — tap below! 🚀"
         ),
         "sample":  {"user": "b***l", "product": "🤖 Gemini Pro", "qty": "10",
                     "price": "0.89", "base_price": "1.00", "saving": "0.11"},
@@ -739,6 +741,21 @@ TEMPLATES = [
         ),
         "sample":  {"user": "r***r", "product": "Acc ChatGPT", "qty": "2",
                     "amount": "13.40", "reseller": "AlexShop"},
+    },
+    {
+        # 🆕 v170.14: Freebies fake broadcast — jab koi user FREE product claim
+        # karta hai (ya random hype) to ye template use hota hai.
+        "id":      "bc_freebie",
+        "name":    "🎁 Freebie Claimed",
+        "section": "📢 Fake Broadcast",
+        "vars":    "{user}, {product}",
+        "default": (
+            "🎁 *FREEBIE CLAIMED!* 🎉\n\n"
+            "👤 {user} just got {product} for FREE!\n"
+            "🆓 100% free — koi payment nahi, koi referral nahi!\n\n"
+            "👉 Tap below and grab yours too!"
+        ),
+        "sample":  {"user": "s***a", "product": "🎨 Canva Pro"},
     },
     {
         "id":      "bc_newprod",
@@ -1099,6 +1116,20 @@ TEMPLATE_VARIANTS = {
         "💎 *Smart Buyers Know This Deal!*\n\n📦 {product}\n🎯 {qty}+ qty → ${price} each\n❌ Normal: ${base_price}\n💸 Save ${saving}/unit\n\n👤 {user} just stocked up!",
         "🛒 *Bulk Discount Running!*\n\n{product}\n📊 {qty}+ qty → 💵 ${price} each\n❌ Regular ${base_price} | 💎 Save ${saving}\n\n🔥 Many orders coming in — grab yours!",
         "🎊 *Big Buy Alert!*\n\n👤 {user} purchased {qty} units of {product}\n💰 Bulk price: ${price} each\n❌ Base: ${base_price}\n💸 Save ${saving}/unit — Buy Now!",
+    ],
+    # 🆕 v170.14: FREEBIES (fake + real hype) — jab user free product claim kare
+    # ya periodic fake. Placeholders: {user}, {product}
+    "bc_freebie": [
+        "🎁 *FREEBIE CLAIMED!* 🎉\n\n👤 {user} just got {product} for FREE!\n🆓 100% free — koi payment nahi!\n\n👉 Tap below and grab yours too!",
+        "🎉 *SOMEONE GOT LUCKY!*\n\n👤 {user} claimed {product} for FREE!\n⚡ Limited free stock — hurry!\n\n🛒 Tap below and claim yours!",
+        "🎁 *FREE PRODUCT ALERT!*\n\n📦 {product}\n👤 {user} just claimed it FREE!\n\n🔥 Tap below — freebies sab ke liye!",
+        "💥 *FREEBIE GONE FAST!*\n\n👤 {user} grabbed {product} for $0!\n🆓 Yes, 100% FREE.\n\n👉 Tap below and claim yours now!",
+        "🎁 *FREE CLAIM!*\n\n👤 {user} just unlocked {product} FREE!\n🆓 No payment needed.\n\n👉 Tap below & grab it!",
+        "🎊 *IT'S FREE!*\n\n👤 {user} claimed {product} for FREE!\n⏰ Free stock limited — jaldi karo!\n\n🛒 Tap below and claim!",
+        "🎁 *FREEBIE DROP!*\n\n📦 {product}\n👤 {user} just claimed it FREE!\n\n🔥 Tap below — aapka bhi ho sakta hai!",
+        "🆓 *FREE PRODUCT!*\n\n👤 {user} just got {product} FREE!\n💯 100% free claim.\n\n👉 Tap below and grab yours!",
+        "🎁 *FREE CLAIM ALERT!*\n\n👤 {user} claimed {product} for FREE!\n⚡ Hurry — freebies limited!\n\n🛒 Tap below!",
+        "🎁 *FREEBIE CLAIMED!*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 {product}\n👤 {user} just claimed it FREE!\n\n🆓 100% FREE — tap below and grab yours too!",
     ],
     # 🆕 v161.12: RESELLER API PURCHASE (fake + real hype) — fired when an order
     # comes through the Reseller API, plus periodic fake ones to hype the API.

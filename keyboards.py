@@ -279,24 +279,38 @@ _PERSIST_IDS = ("home", "howto", "reseller", "freebies")
 
 def get_persist_label(pid, user_id=None):
     """Persistent button ka label: admin override → default → (translate nahi
-    hota kyunki admin ka custom text user-language independent hota hai)."""
+    hota kyunki admin ka custom text user-language independent hota hai).
+    🆕 v170.14: color dot prefix (persist_color_<id>) — reply keyboard sirf
+    text/emoji render karta hai, background color support NAHI, isliye colored
+    dot emoji se visual cue dete hain."""
+    label = ""
     try:
         from database import get_setting
         custom = (get_setting(f"persist_label_{pid}", "") or "").strip()
         if custom:
-            return custom
+            label = custom
     except Exception:
         pass
-    lbl = _PERSIST_DEFAULTS.get(pid, pid)
-    # v137: default labels user language me translate hote hain
+    if not label:
+        label = _PERSIST_DEFAULTS.get(pid, pid)
+        # v137: default labels user language me translate hote hain
+        try:
+            from i18n import tr_user
+            _t = tr_user(label, user_id=user_id)
+            if _t:
+                label = _t
+        except Exception:
+            pass
+    # color dot prefix
     try:
-        from i18n import tr_user
-        _t = tr_user(lbl, user_id=user_id)
-        if _t:
-            return _t
+        from database import get_setting
+        color = (get_setting(f"persist_color_{pid}", "") or "").strip()
+        dot = {"green": "🟢", "blue": "🔵", "red": "🔴"}.get(color, "")
+        if dot:
+            label = f"{dot} {label}"
     except Exception:
         pass
-    return lbl
+    return label
 
 
 def get_persist_order():

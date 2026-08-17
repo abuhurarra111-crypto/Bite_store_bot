@@ -89,8 +89,7 @@ async def _show_freebies_menu(target, uid, from_text=False):
                  "🎁 *Freebies*\n━━━━━━━━━━━━━━━━━━━━\n\n"
                  "_Abhi koi free product available nahi. Wapis aana!_")
         kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🛍️ Shop", callback_data="shop"),
-            InlineKeyboardButton("🏠 Home", callback_data="main_menu"),
+            InlineKeyboardButton("🔙 Back", callback_data="main_menu"),
         ]])
     else:
         lines = ["🎁 *Freebies*", "━━━━━━━━━━━━━━━━━━━━",
@@ -185,7 +184,7 @@ async def _show_freebie_product(q, uid, pid):
         lines.append("❌ You reached the claim limit for this product.")
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("🎁 Freebies", callback_data="freebies_menu"),
-            InlineKeyboardButton("🔙 Home", callback_data="main_menu"),
+            InlineKeyboardButton("🔙 Back", callback_data="main_menu"),
         ]])
     elif required_refs > 0 and refs_have < required_refs:
         lines.append(f"🔁 Dobara claim ke liye *{required_refs} referrals* chahiye.")
@@ -194,7 +193,7 @@ async def _show_freebie_product(q, uid, pid):
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔗 Refer & Earn", callback_data="referral")],
             [InlineKeyboardButton("🎁 Freebies", callback_data="freebies_menu"),
-             InlineKeyboardButton("🔙 Home", callback_data="main_menu")],
+             InlineKeyboardButton("🔙 Back", callback_data="main_menu")],
         ])
     else:
         lines.append("✅ Ready to claim — FREE!")
@@ -203,7 +202,7 @@ async def _show_freebie_product(q, uid, pid):
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🎉 Claim FREE Now", callback_data=f"freebie_do_{pid}")],
             [InlineKeyboardButton("🎁 Freebies", callback_data="freebies_menu"),
-             InlineKeyboardButton("🔙 Home", callback_data="main_menu")],
+             InlineKeyboardButton("🔙 Back", callback_data="main_menu")],
         ])
 
     txt = "\n".join(lines)
@@ -312,8 +311,7 @@ async def freebie_do_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         _st, _sm = smart_text_and_mode(confirm, "Markdown")
         await context.bot.send_message(uid, _st, parse_mode=_sm,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🎁 Freebies", callback_data="freebies_menu"),
-                 InlineKeyboardButton("🛍️ Shop", callback_data="shop")]]))
+                [InlineKeyboardButton("🎁 Freebies", callback_data="freebies_menu")]]))
     except Exception:
         pass
 
@@ -323,41 +321,55 @@ async def freebie_do_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 # ════════════════════════════════════════════════════════════════
 
 async def freebies_admin_panel_callback(update, context):
-    """🎁 Admin freebies panel — list products, toggle freebie, set rules."""
+    """🎁 Admin freebies panel — warranty/refund style product list
+    (premium emoji + green/red toggle) + tap → rules."""
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
     await q.answer()
     from database import get_all_products, get_freebie_config
     prods = get_all_products()
+    try:
+        from button_system import make_premium_button, extract_emoji_from_html
+        _have = True
+    except Exception:
+        _have = False
     lines = ["🎁 *Freebies Admin*",
              "━━━━━━━━━━━━━━━━━━━━",
-             "_(Tap a product → freebie ON/OFF + rules)_", ""]
+             "_(🟢 = freebie ON · 🔴 = OFF — tap kar ke rules set karo)_", ""]
     kb = []
-    for p in prods[:12]:
+    for p in prods[:14]:
         pid = int(p["id"])
         cfg = get_freebie_config(pid)
-        on = "✅" if cfg.get("enabled") else "⬜"
-        name = _clean_name(p.get("name") or "", 26)
-        lines.append(f"{on} #{pid} · {name}")
-        kb.append([InlineKeyboardButton(
-            f"{on} #{pid} {name[:20]}",
-            callback_data=f"freebie_cfg_{pid}")])
+        on = bool(cfg.get("enabled"))
+        raw = str(p.get("name") or f"#{pid}")
+        plain, eid = raw, ""
+        if _have:
+            try:
+                _eid, _plain = extract_emoji_from_html(raw)
+                if _plain:
+                    plain = _plain
+                eid = _eid or ""
+            except Exception:
+                pass
+        lines.append(f"{'✅' if on else '⛔'} #{pid} · {plain[:28]}")
+        if _have:
+            kb.append([make_premium_button(
+                f"{'🟢 ON' if on else '🔴 OFF'} — {plain[:20]}",
+                emoji_id=eid or None,
+                style="success" if on else "danger",
+                callback_data=f"freebie_cfg_{pid}")])
+        else:
+            kb.append([InlineKeyboardButton(
+                f"{'🟢 ON' if on else '🔴 OFF'} — {plain[:20]}",
+                callback_data=f"freebie_cfg_{pid}")])
     kb.append([InlineKeyboardButton("🔙 Back", callback_data="admin_panel")])
     await _safe_edit(q, "\n".join(lines), parse_mode="Markdown",
                      reply_markup=InlineKeyboardMarkup(kb))
 
 
-async def freebie_config_callback(update, context):
-    """Per-product freebie config: toggle + claim limit + reclaim refs."""
-    q = update.callback_query
-    if q.from_user.id != ADMIN_ID:
-        await q.answer("❌", show_alert=True); return
-    await q.answer()
-    try:
-        pid = int(q.data.replace("freebie_cfg_", ""))
-    except Exception:
-        return
+async def _render_freebie_config(q, pid):
+    """Shared render — freebie config screen (toggle + rules)."""
     from database import get_product, get_freebie_config
     prod = get_product(pid)
     cfg = get_freebie_config(pid)
@@ -381,6 +393,19 @@ async def freebie_config_callback(update, context):
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 
+async def freebie_config_callback(update, context):
+    """Per-product freebie config: toggle + claim limit + reclaim refs."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        pid = int(q.data.replace("freebie_cfg_", ""))
+    except Exception:
+        return
+    await _render_freebie_config(q, pid)
+
+
 async def freebie_toggle_callback(update, context):
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
@@ -393,7 +418,10 @@ async def freebie_toggle_callback(update, context):
     from database import get_freebie_config, set_freebie_config
     cfg = get_freebie_config(pid)
     set_freebie_config(pid, enabled=not cfg.get("enabled"))
-    await freebie_config_callback(update, context)
+    # 🐛 v170.14 FIX: pehle freebie_config_callback ko call karta tha jo q.data
+    # se "freebie_cfg_" parse karti thi → "freebie_toggle_101" par int() fail →
+    # silent return → screen kabhi refresh nahi hoti. Ab shared render directly.
+    await _render_freebie_config(q, pid)
 
 
 async def freebie_limit_callback(update, context):
