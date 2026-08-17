@@ -8,6 +8,29 @@
 
 ---
 
+# 🚀 v170.30 (2026-08-17) — FREEBIE CHOICE BEFORE STEP 10 + PREMIUM EMOJI IN BROADCASTS
+
+## 1. 🎁 "Make This a Freebie" ab Step 10 se PEHLE (user demand)
+- Add-Product wizard me ab Step 9 (format) ke BAAD "🎁 Make This a Freebie?"
+  (Yes/No) poocha jata hai — Step 10 se pehle.
+- Final confirm me "Make This a Freebie" button HATA di (ab wizard me decide).
+- `_finalize_product_add`: p_freebie=1 par set_freebie_config (enabled, limit 1,
+  refs 0) + FREEBIE broadcast (NEW FREEBIE DROP) — normal "fresh stock" alert
+  pehle nahi chalti. Paid product par normal NEW PRODUCT broadcast.
+
+## 2. 🎖️ Premium emoji ab har broadcast me (custom templates + placeholders bhi)
+- `_product_name_with_fixed_emoji` use hota hai taake product ka premium emoji
+  (<tg-emoji>) broadcast text me render ho:
+  - make_freebie_callback (NEW FREEBIE DROP)
+  - build_real_freebie_message (real claim broadcast)
+  - fake freebie broadcasts (fake_engagement run_fake_broadcast + per_user_activity
+    build_fake_message) — pehle html_strip_tags emoji hata deta tha.
+- Custom templates + {product} placeholder par bhi premium emoji render hota hai.
+
+## 3. 🧪 Tests: premium preserve (real/fake/finalize) + freebie choice helpers — pass.
+
+---
+
 # 🚀 v170.29 (2026-08-17) — FREEBIES: PREMIUM EMOJI + EDITABLE BUTTONS + FREEBIE MSG + ADD-ITEM FREEBIE
 
 ## 1. 🎖️ Freebie product screen — premium emoji render

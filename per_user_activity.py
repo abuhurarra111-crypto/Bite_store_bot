@@ -659,12 +659,12 @@ async def build_fake_message(bot, user_id: int) -> tuple[str, any]:
                     pass
             if eligible:
                 fb_pid, fb_prod = random.choice(eligible)
-                fb_name = dict(fb_prod).get("name", "product")
+                # 🆕 v170.30: PREMIUM emoji ke saath naam (pehle strip hota tha)
                 try:
-                    from utils import html_strip_tags as _hst
-                    fb_name = _hst(fb_name)
+                    from fake_engagement import _product_name_with_fixed_emoji
+                    fb_name = _product_name_with_fixed_emoji(fb_prod)
                 except Exception:
-                    pass
+                    fb_name = dict(fb_prod).get("name", "product")
                 fb_msg = _render("bc_freebie", {"user": masked, "product": fb_name})
                 if not fb_msg:
                     fb_msg = (f"🎁 *FREEBIE CLAIMED!* 🎉\n\n"

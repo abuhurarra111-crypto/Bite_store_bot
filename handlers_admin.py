@@ -597,21 +597,64 @@ async def pfmt_callback(u, c):
     await q.answer()
     fmt = q.data.replace("pfmt_", "")
     c.user_data['p_format'] = normalize_product_format(fmt)
+    # 🆕 v170.30: Step 10 se PEHLE freebie choice (user demand)
+    return await _ask_freebie_choice(q, c, is_query=True)
 
-    if c.user_data.get('p_dmode', 'auto') == 'auto':
-        await _safe_edit(q,
-            "📦 *Step 10:* Static Delivery Text / Link?\n"
-            "If you want to deliver the SAME text/link/code to EVERY buyer, enter it here.\n"
-            "To deliver unique stock items from the pool instead, tap *Skip*.",
-            parse_mode="Markdown", reply_markup=_prod_step_kb("format", skip="delivery"))
+
+async def _ask_freebie_choice(u_or_q, c, is_query=False):
+    """🆕 v170.30: 'Make This a Freebie?' — Step 10 sy pehle poocha jata hai."""
+    kb = [
+        [InlineKeyboardButton("🎁 Yes — Make it FREE", callback_data="pfb_yes")],
+        [InlineKeyboardButton("❌ No — Paid Product", callback_data="pfb_no")],
+        [InlineKeyboardButton("🔙 Back", callback_data="prodback_format")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="conv_cancel")],
+    ]
+    text = (
+        "🎁 *Make This a Freebie?*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "• *Yes* → product Freebies menu me jayega — sab users FREE claim kar sakenge.\n"
+        "• *No* → normal paid product."
+    )
+    if is_query:
+        await _safe_edit(u_or_q, text, parse_mode="Markdown",
+                         reply_markup=InlineKeyboardMarkup(kb))
     else:
+        await u_or_q.message.reply_text(text, parse_mode="Markdown",
+                                        reply_markup=InlineKeyboardMarkup(kb))
+    from bot import PROD_DELIVERY_TEXT
+    return PROD_DELIVERY_TEXT
+
+
+async def pfb_freebie_callback(u, c):
+    """🆕 v170.30: freebie Yes/No (Step 10 se pehle). Callback: pfb_yes / pfb_no"""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    val = q.data.replace("pfb_", "")
+    c.user_data['p_freebie'] = 1 if val == "yes" else 0
+    return await _ask_step10_delivery(q, c, is_query=True)
+
+
+async def _ask_step10_delivery(u_or_q, c, is_query=False):
+    """Step 10 prompt (static delivery text ya manual type)."""
+    if c.user_data.get('p_dmode', 'auto') == 'auto':
+        text = ("📦 *Step 10:* Static Delivery Text / Link?\n"
+                "If you want to deliver the SAME text/link/code to EVERY buyer, enter it here.\n"
+                "To deliver unique stock items from the pool instead, tap *Skip*.")
+        kb = _prod_step_kb("format", skip="delivery")
+    else:
+        text = "📦 *Step 10:* Select Manual Type:"
         kb = [
             [InlineKeyboardButton("🛍️ Readymade Account", callback_data="pmt_readymade")],
             [InlineKeyboardButton("📬 Own Mail", callback_data="pmt_ownmail")],
             [InlineKeyboardButton("🔙 Back", callback_data="prodback_format")],
             [InlineKeyboardButton("❌ Cancel", callback_data="conv_cancel")],
         ]
-        await _safe_edit(q, "📦 *Step 10:* Select Manual Type:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    if is_query:
+        await _safe_edit(u_or_q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    else:
+        await u_or_q.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
     from bot import PROD_DELIVERY_TEXT
     return PROD_DELIVERY_TEXT
 
@@ -840,8 +883,16 @@ async def _finalize_product_add(u_or_q, c, is_query=False):
         summary += f"✅ Manual delivery configured.\n"
         kb.append([InlineKeyboardButton("⚙️ Delivery Settings", callback_data=f"delset_{new_pid}")])
         
-    # 🆕 v170.29: yahin se product ko FREEBIE banao (freebies items me direct add)
-    kb.append([InlineKeyboardButton("🎁 Make This a Freebie", callback_data=f"make_freebie_{new_pid}")])
+    # 🆕 v170.30: freebie choice ab Step 10 se PEHLE liya ja chuka hai (p_freebie).
+    # Yahan final confirm me sirf status dikhate hain.
+    p_freebie = int(c.user_data.get('p_freebie', 0) or 0)
+    if p_freebie:
+        try:
+            from database import set_freebie_config
+            set_freebie_config(new_pid, enabled=1, claim_limit=1, reclaim_refs=0)
+            summary += f"🎁 *Freebie:* ENABLED — FREE claim (limit 1/user)\n"
+        except Exception:
+            summary += f"🎁 *Freebie:* ENABLED ✅\n"
     kb.append([InlineKeyboardButton("🔙 Back to Add Products", callback_data="admin_products")])
     
     markup = InlineKeyboardMarkup(kb)
@@ -861,20 +912,33 @@ async def _finalize_product_add(u_or_q, c, is_query=False):
             except Exception:
                 await u_or_q.message.reply_text("✅ Product Added!", reply_markup=markup)
         
-    for k in ['pc','pn','pd','pp','pcp','ps','pw','pq','pph','p_dmode','p_mtype','p_req_account','p_req_pass','p_format','pdt','p_static_file_id','p_static_file_type','p_static_file_name','p_static_caption']: c.user_data.pop(k,None)
+    for k in ['pc','pn','pd','pp','pcp','ps','pw','pq','pph','p_dmode','p_mtype','p_req_account','p_req_pass','p_format','pdt','p_static_file_id','p_static_file_type','p_static_file_name','p_static_caption','p_freebie']: c.user_data.pop(k,None)
 
-    # 🆕 Announce the NEW product to the configured destination (bot/group/both),
-    # same place where fake activity goes. Gated by the 'New Product' toggle.
+    # 🆕 v170.30: broadcast — FREEBIE product par "NEW FREEBIE" jata hai (premium
+    # emoji ke saath), warna normal "NEW PRODUCT" (bhi premium emoji ke saath).
     try:
-        from per_user_activity import is_type_on
-        if is_type_on("newprod"):
-            from fake_engagement import build_newproduct_message, broadcast_store_message
-            prod = get_product(new_pid)
-            if prod:
-                text = build_newproduct_message(prod)
-                await broadcast_store_message(c.bot, text, pid=new_pid)
+        from fake_engagement import broadcast_store_message
+        prod = get_product(new_pid)
+        if prod:
+            if p_freebie:
+                from fake_engagement import _product_name_with_fixed_emoji
+                _pname = _product_name_with_fixed_emoji(prod)
+                ftext = (
+                    f"🎁 *NEW FREEBIE DROP!* 🎉\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📦 {_pname} is now 100% FREE!\n"
+                    f"🆓 No payment needed — just claim it!\n\n"
+                    f"👉 Tap below and grab yours FREE!"
+                )
+                await broadcast_store_message(c.bot, ftext, pid=new_pid, tpl_id="bc_freebie")
+            else:
+                from per_user_activity import is_type_on
+                if is_type_on("newprod"):
+                    from fake_engagement import build_newproduct_message
+                    text = build_newproduct_message(prod)
+                    await broadcast_store_message(c.bot, text, pid=new_pid)
     except Exception as e:
-        print(f"[NewProductBroadcast] failed: {e}")
+        print(f"[ProductBroadcast] failed: {e}")
 
     from telegram.ext import ConversationHandler
     return ConversationHandler.END
@@ -900,12 +964,17 @@ async def make_freebie_callback(u, c):
         await q.answer("⚠️ Could not enable freebie", show_alert=True); return
 
     stock = int((dict(prod) or {}).get("stock") or 0)
-    pname = (dict(prod) or {}).get("name") or f"#{pid}"
+    # 🆕 v170.30: broadcast me PREMIUM emoji ke saath naam; confirm me clean naam.
+    try:
+        from fake_engagement import _product_name_with_fixed_emoji
+        pname_show = _product_name_with_fixed_emoji(prod)
+    except Exception:
+        pname_show = str((dict(prod) or {}).get("name") or f"#{pid}")
     try:
         from utils import html_strip_tags
-        pname_clean = html_strip_tags(str(pname)) or str(pname)
+        pname_clean = html_strip_tags(str((dict(prod) or {}).get("name") or f"#{pid}")) or str(pname_show)
     except Exception:
-        pname_clean = str(pname)
+        pname_clean = str(pname_show)
 
     msg = (
         f"🎁 *Freebie Enabled!* ✅\n"
@@ -928,7 +997,7 @@ async def make_freebie_callback(u, c):
         text = (
             f"🎁 *NEW FREEBIE DROP!* 🎉\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"📦 {pname_clean[:80]} is now 100% FREE!\n"
+            f"📦 {pname_show} is now 100% FREE!\n"
             f"🆓 No payment needed — just claim it!\n\n"
             f"👉 Tap below and grab yours FREE!"
         )

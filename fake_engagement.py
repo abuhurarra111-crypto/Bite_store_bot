@@ -940,12 +940,8 @@ async def run_fake_broadcast(bot, force_type=None):
             fb_pid = random.choice(eligible)
             from database import get_product as _gp2
             fb_prod = _gp2(fb_pid)
-            fb_name = (dict(fb_prod).get("name", "product") if fb_prod else "product")
-            try:
-                from utils import html_strip_tags as _hst2
-                fb_name = _hst2(fb_name)
-            except Exception:
-                pass
+            # 🆕 v170.30: PREMIUM emoji ke saath naam (pehle strip hota tha)
+            fb_name = _product_name_with_fixed_emoji(fb_prod) if fb_prod else "a free product"
             fb_msg = _rt("bc_freebie", {"user": user, "product": fb_name})
             if not fb_msg:
                 fb_msg = (f"🎁 *FREEBIE CLAIMED!* 🎉\\n\\n"
@@ -3985,14 +3981,22 @@ def build_real_purchase_message(product_name, qty=1, amount=None, pid=None):
 def build_real_freebie_message(product_name, pid=None):
     """🆕 v170.25: REAL freebie claim → admin's bc_freebie template (masked
     username), so destination par "freebies" wala alert jaye — "new purchase"
-    wala nahi."""
+    wala nahi.
+
+    🆕 v170.30: product name PREMIUM emoji ke saath render hota hai (custom
+    templates + {product} placeholder par bhi) — pehle html_strip_tags emoji
+    hata deta tha."""
     import random
     masked = random.choice(["a•••i", "m•••d", "s•••a", "z•••n", "h•••a", "k•••l", "f•••z"])
+    product = str(product_name or "a free product")
     try:
-        from utils import html_strip_tags as _hst
-        product = _hst(str(product_name or "")) or "a free product"
+        if pid:
+            from database import get_product
+            _p = get_product(pid)
+            if _p:
+                product = _product_name_with_fixed_emoji(_p)
     except Exception:
-        product = str(product_name or "a free product")
+        pass
     product = product.strip()
     if len(product) > 200:
         product = product[:200]

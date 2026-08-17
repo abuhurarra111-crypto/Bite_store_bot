@@ -95,7 +95,7 @@ from handlers_stars import (
     stars_successful_payment,
 )
 from handlers_support import (adm_upacct_callback, upacct_skip_inst_callback, adm_chat_callback, adm_ownmaildone_callback, user_reply_to_admin_callback, cancel_user_chat_callback)
-from handlers_admin import (flash_toggle_callback, manual_hist_callback, edit_manual_order_callback, delivery_settings_callback, pdm_callback, pfmt_callback, pmt_callback, pmail_callback, ppass_callback, ds_toggle_callback, ds_format_pick_callback, ds_set_format_callback, ds_template_pick_callback, ds_set_template_callback, cb_style_callback,
+from handlers_admin import (flash_toggle_callback, manual_hist_callback, edit_manual_order_callback, delivery_settings_callback, pdm_callback, pfmt_callback, pmt_callback, pmail_callback, ppass_callback, pfb_freebie_callback, ds_toggle_callback, ds_format_pick_callback, ds_set_format_callback, ds_template_pick_callback, ds_set_template_callback, cb_style_callback,
     stars_rate_start_callback, stars_rate_received)  # ⭐ v161.25 Stars rate
 from handlers_admin import (flash_toggle_callback, adm_manage_pts_callback, adm_pts_uid_received, adm_pts_amt_received)
 from handlers_admin import *
@@ -1743,6 +1743,7 @@ def main():
                 CallbackQueryHandler(prod_back_callback, pattern="^prodback_"),
                 CallbackQueryHandler(pdm_callback, pattern="^pdm_"),
                 CallbackQueryHandler(pfmt_callback, pattern="^pfmt_"),
+                CallbackQueryHandler(pfb_freebie_callback, pattern="^pfb_"),
                 CallbackQueryHandler(pmt_callback, pattern="^pmt_"),
                 CallbackQueryHandler(pmail_callback, pattern="^pmail_"),
                 CallbackQueryHandler(ppass_callback, pattern="^ppass_"),
