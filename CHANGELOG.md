@@ -8,6 +8,27 @@
 
 ---
 
+# 🚀 v170.10 (2026-08-17) — BATCH 3: DELIVERED NOTIFICATIONS (username + full details)
+
+## 1. 👤 Supplier delivered notification — ab USERNAME bhi (user demand)
+- Supplier product deliver hone par admin ko naya "🎉 Order Delivered!" alert
+  (pehle sirf customer ko milta tha, admin ko kuch nahi aata tha).
+- Customer ka first_name + @username + user_id + qty + supplier name + sold +
+  cost + profit + time. Customer ko supplier info kabhi nahi milti (sirf admin).
+
+## 2. 🏪 Own products delivered notification (user demand)
+- Khud ke (static/accounts) product deliver hone par bhi same admin alert:
+  customer name + @username + user_id + qty + time + sold price + profit +
+  **stock before → after** (account-pool deduction visible). Static media bhi.
+
+## 3. 🔒 Username HTML-safe rendering
+- `_`/`*`/`[`/`]`/backtick username me ho to HTML entities me convert (markdownish
+  italic/bold leak fix) — literal dikhta hai.
+
+## 4. ⚠️ FRESH DEPLOY: version bump v170.9 → v170.10.
+
+---
+
 # 🚀 v170.9 (2026-08-17) — BATCH 2: REFERRAL COUNT AFTER MATH + TOP REFERRERS
 
 ## 1. 🧮 Referral count ab MATH VERIFY ke BAAD (user demand)

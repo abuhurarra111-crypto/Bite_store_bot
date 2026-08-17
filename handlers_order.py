@@ -947,6 +947,86 @@ async def _send_deposit_success(bot, order, paid_amount):
     await _bot_send_smart(bot, order['user_id'], text, parse_mode="Markdown", reply_markup=kb)
 
 
+async def _notify_admin_order_delivered(bot, order, qty=1, supplier_name="",
+                                        cost_usd=None, stock_before=None, stock_after=None):
+    """🆕 v170.10: ADMIN notification jab koi PRODUCT order deliver ho —
+    supplier product ya own (static/accounts) product. Full details:
+    customer name + @username + user id + qty + time + sold price + profit +
+    (own products) stock before/after + supplier name (supplier products)."""
+    try:
+        from utils import notify_admin
+        oid = int(order.get('id') or 0)
+        uid = int(order.get('user_id') or 0)
+        sold = float(order.get('price') or 0)
+        qty = max(1, int(qty or 1))
+        # customer name + username
+        fname = str(order.get('user_name') or '').strip()
+        uname = ""
+        try:
+            from database import get_user
+            u = get_user(uid)
+            if u:
+                uname = str(u.get('username') or '').strip()
+                if not fname:
+                    fname = str(u.get('first_name') or '').strip()
+        except Exception:
+            pass
+        # profit
+        try:
+            if cost_usd is None:
+                from database import get_product
+                _p = get_product(order.get('product_id') or 0)
+                cost = float((dict(_p) if _p else {}).get('cost_price') or 0)
+            else:
+                cost = float(cost_usd)
+        except Exception:
+            cost = 0.0
+        profit = round((sold - cost) * qty, 6)
+        # 🐛 v170.10: ye message HTML mode me render hota hai (premium emoji).
+        # markdownish_to_html `_`/`*` ko italic/bold bana deta hai (escape respect
+        # nahi karta) → isliye unhe HTML entities mein convert karo (&#95; etc.)
+        # taake literal dikhe. Backtick bhi clean karo.
+        def _safe_plain(s):
+            try:
+                import html as _html
+                from utils import html_strip_tags as _hst
+                s = _html.escape(_hst(s or "") or "")
+            except Exception:
+                pass
+            return (s.replace("`", "'")
+                     .replace("_", "&#95;")
+                     .replace("*", "&#42;")
+                     .replace("[", "&#91;").replace("]", "&#93;"))
+        fname = _safe_plain(fname)
+        uname = _safe_plain(uname)
+        name_line = f"{fname} (@{uname})" if (fname and uname) else (fname or uname or "—")
+        lines = [
+            "🎉 *Order Delivered!* ✅",
+            "━━━━━━━━━━━━━━━━━━━━",
+            f"🧾 Order: `#{oid}`",
+            f"👤 Customer: `{name_line}` (`{uid}`)",
+            f"📦 Product: {_fmt_msg_name(order.get('product_name'))}",
+            f"🔢 Qty: *{qty}*",
+            f"💰 Sold: *${sold:.4g}* · Cost: *${cost:.4g}*",
+            f"📈 Profit: *${profit:.4g}*",
+        ]
+        if supplier_name:
+            try:
+                import html as _html2
+                from utils import html_strip_tags as _hst2
+                supplier_name = _html2.escape(_hst2(str(supplier_name)))
+            except Exception:
+                pass
+            lines.append(f"🏭 Supplier: *{supplier_name}*")
+        if stock_before is not None and stock_after is not None:
+            lines.append(f"📊 Stock: *{stock_before}* → *{stock_after}*")
+        lines.append(f"🕐 Time: {_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        await notify_admin(bot, "\n".join(lines))
+    except Exception as e:
+        import logging as _l
+        _l.getLogger(__name__).debug(f"[admin-delivered-notify] {e}")
+
+
 async def _send_static_media_delivery(bot, order, product, method, amount, pts_bonus=0):
     """Send static media/file delivery to customer instantly.
        🆕 v66: 10pts bonus REMOVED. Tier progress hint appended instead."""
@@ -970,6 +1050,11 @@ async def _send_static_media_delivery(bot, order, product, method, amount, pts_b
     if file_id:
         set_order_delivery_file(order['id'], file_id)
     update_order_status(order['id'], 'delivered')
+    # 🆕 v170.10: ADMIN notification — static media delivered (username + qty + profit)
+    try:
+        await _notify_admin_order_delivered(bot, order, qty=1)
+    except Exception:
+        pass
     # 🆕 v66: bonus 10pts removed — no add_points call here.
 
     header = (
@@ -1140,6 +1225,11 @@ async def fulfill_paid_product_order(bot, order, paid_amount=None, *, payment_me
     # 🔧 AUDIT-FIX C1/C2 (2026-07-31): use the structured result so an order is
     # NEVER marked 'delivered' when the stock pool couldn't cover the full qty.
     from database import build_delivery_detailed, save_order_delivery_content, add_order_delivery
+    # 🆕 v170.10: stock BEFORE capture (admin delivered-notification ke liye)
+    try:
+        _stock_before = int(dict(get_product(order['product_id'])).get('stock') or 0)
+    except Exception:
+        _stock_before = None
     dres = build_delivery_detailed(order['product_id'], order['id'], qty, order['user_id'])
     delivery = dres['text']
     save_order_delivery_content(order['id'], delivery)
@@ -1189,6 +1279,18 @@ async def fulfill_paid_product_order(bot, order, paid_amount=None, *, payment_me
         return True
 
     update_order_status(order['id'], 'delivered')
+
+    # 🆕 v170.10: ADMIN notification — own product delivered (username + qty +
+    # stock before/after + sold/profit).
+    try:
+        _stock_after = int(dict(get_product(order['product_id']) or {}).get('stock') or 0)
+    except Exception:
+        _stock_after = None
+    try:
+        await _notify_admin_order_delivered(
+            bot, order, qty=qty, stock_before=_stock_before, stock_after=_stock_after)
+    except Exception:
+        pass
 
     # 🆕 v66: bonus 10pts removed entirely — no add_points here.
 

@@ -4074,6 +4074,17 @@ async def route_order_to_supplier(bot, order):
         pass
     update_order_status(order['id'], 'delivered')
 
+    # 🆕 v170.10: ADMIN notification — supplier delivered (username + qty +
+    # supplier name + sold/cost/profit). Customer ko kabhi supplier info nahi.
+    try:
+        from handlers_order import _notify_admin_order_delivered
+        await _notify_admin_order_delivered(
+            bot, order, qty=qty,
+            supplier_name=str(sup.get('name') or ''),
+            cost_usd=(float(ep.get('cost_usd') or 0) or None))
+    except Exception as _nfe:
+        logger.warning(f"[router] admin delivered notify failed: {_nfe}")
+
     # Send to customer
     # If bulk (>3 items), also send as .txt file for convenience
     from utils import smart_text_and_mode
