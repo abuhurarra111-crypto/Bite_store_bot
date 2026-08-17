@@ -1507,20 +1507,135 @@ async def admin_responses_category_callback(u, c):
     else:
         await _show_responses_category(u, c, category=data, page=1)
 
+def _resp_editor_buttons(key):
+    """✏️ v170.22: 2 readymade templates + custom + reset + REAL cancel."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📄 Template 1", callback_data=f"resptpl_1_{key}"),
+         InlineKeyboardButton("✨ Template 2", callback_data=f"resptpl_2_{key}")],
+        [InlineKeyboardButton("✍️ Custom Text", callback_data=f"respcustom_{key}"),
+         InlineKeyboardButton("♻️ Reset to Default", callback_data=f"respreset_{key}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="conv_cancel")],
+    ])
+
+
+async def _render_response_editor(u, c, key):
+    """v170.22: shared renderer — current value + placeholders + template buttons.
+
+    🐛 Fix: HTML <pre> for the preview so unbalanced markdown chars in the
+    stored value can't crash edit_message_text (same v58 fix as Screen Editor).
+    🐛 Fix: ❌ Cancel ab `conv_cancel` hai (pehle `noop` tha — cancel hota hi nahi).
+    """
+    import html as _hlib
+    from database import get_response_with_auto_register
+    from response_templates import get_key_placeholders
+    from utils import is_html_value, contains_premium_markup
+
+    q = u.callback_query
+    default = DEFAULT_RESPONSES.get(key, "")
+    cur = get_response_with_auto_register(key, default)
+    c.user_data['erk'] = key
+    c.user_data['return_to'] = 'admin_responses'
+
+    if is_html_value(cur) or contains_premium_markup(cur):
+        preview_text, _ = smart_text_and_mode(cur, "HTML")
+        preview_is_html = True
+    else:
+        preview_text = cur or "(empty)"
+        preview_is_html = False
+    if len(preview_text) > 1200:
+        preview_text = preview_text[:1200] + "\n\n… (truncated for preview)"
+    if preview_is_html:
+        preview_block = preview_text
+    else:
+        preview_block = f"<pre>{_hlib.escape(preview_text)}</pre>"
+
+    placeholders = get_key_placeholders(key, cur, default)
+    ph_line = "  ".join("{" + p + "}" for p in placeholders) if placeholders else "—"
+
+    header = (
+        f"✏️ <b>{_hlib.escape(key.replace('_', ' ').title())}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔑 Key: <code>{_hlib.escape(key)}</code>\n\n"
+        f"<b>Current value:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"{preview_block}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🔖 <b>Placeholders:</b> {_hlib.escape(ph_line)}\n\n"
+        f"⚙️ <i>Template tap karein, ya ✍️ Custom se apna text likhein.</i>"
+    )
+    await _safe_edit(q, header, parse_mode="HTML", reply_markup=_resp_editor_buttons(key))
+
+
 async def edit_response_callback(u,c):
     q=u.callback_query
     if q.from_user.id!=ADMIN_ID: await q.answer("❌",show_alert=True); return ConversationHandler.END
     await q.answer(); key=q.data.replace("editresp_","")
-    cur=get_response(key,DEFAULT_RESPONSES.get(key,""))
-    c.user_data['erk']=key
-    preview=cur[:400]+"..." if len(cur)>400 else cur
+    await _render_response_editor(u, c, key)
+    return EDIT_RESP_VALUE
+
+
+async def resp_custom_callback(u, c):
+    """✍️ Custom — admin types text using placeholders (stays in EDIT_RESP_VALUE)."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return EDIT_RESP_VALUE
+    await q.answer()
+    key = q.data.replace("respcustom_", "", 1)
+    from response_templates import get_key_placeholders
+    default = DEFAULT_RESPONSES.get(key, "")
+    cur = get_response(key, default)
+    placeholders = get_key_placeholders(key, cur, default)
+    ph_line = "  ".join("{" + p + "}" for p in placeholders) if placeholders else "—"
+    c.user_data['erk'] = key
+    c.user_data['return_to'] = 'admin_responses'
     await _safe_edit(q,
-        f"✏️ *{key.replace('_',' ').title()}*\n\nCurrent:\n```\n{preview}\n```\n\n"
-        f"Type new text:",
+        f"✍️ *{key.replace('_',' ').title()}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔖 Placeholders: {ph_line}\n\n"
+        f"📥 Ab naya text type karein — placeholders copy karke use kar sakte hain.\n"
+        f"⭐ Premium emojis + Markdown (*bold* _italic_ `code`) supported.\n\n"
+        f"_Save hone par preview wapas mil jayega._",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Cancel", callback_data="noop")],
-        ])); return EDIT_RESP_VALUE
+        reply_markup=inline_cancel_btn())
+    return EDIT_RESP_VALUE
+
+
+async def resp_template_apply_callback(u, c):
+    """📄/✨ Apply one of the 2 readymade templates instantly."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return EDIT_RESP_VALUE
+    data = q.data.replace("resptpl_", "", 1)
+    try:
+        idx_str, key = data.split("_", 1)
+        idx = int(idx_str)
+    except Exception:
+        await q.answer("⚠️ Invalid template", show_alert=True); return EDIT_RESP_VALUE
+    from response_templates import get_response_templates
+    default = DEFAULT_RESPONSES.get(key, "")
+    tpls = get_response_templates(key, default)
+    if idx < 1 or idx > len(tpls):
+        await q.answer("⚠️ Template nahi mila", show_alert=True); return EDIT_RESP_VALUE
+    label, text = tpls[idx - 1]
+    old = get_response(key, default)
+    log_change("response", key, old, text, f"Response: {key} ({label})")
+    set_response(key, text)
+    await q.answer(f"✅ {label} applied!", show_alert=True)
+    await _render_response_editor(u, c, key)
+    return EDIT_RESP_VALUE
+
+
+async def resp_reset_callback(u, c):
+    """♻️ Reset a response back to its default value."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return EDIT_RESP_VALUE
+    await q.answer()
+    key = q.data.replace("respreset_", "", 1)
+    default = DEFAULT_RESPONSES.get(key, "")
+    old = get_response(key, default)
+    log_change("response", key, old, default, f"Response: {key} (reset to default)")
+    set_response(key, default)
+    await q.answer("♻️ Default restored!", show_alert=True)
+    await _render_response_editor(u, c, key)
+    return EDIT_RESP_VALUE
 
 async def response_value_received(u,c):
     if u.effective_user.id!=ADMIN_ID: return ConversationHandler.END
@@ -1559,8 +1674,13 @@ async def response_value_received(u,c):
             f"{disp}\n"
             f"━━━━━━━━━━━━━━━━━━━━"
         )
-    await u.message.reply_text(msg, parse_mode=disp_mode, reply_markup=back_btn())
-    c.user_data.pop('erk',None); return ConversationHandler.END
+    # 🆕 v170.22: after save, return to the Edit Responses editor (not generic back)
+    after_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 Back to Edit Responses", callback_data="admin_responses")],
+        [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")],
+    ])
+    await u.message.reply_text(msg, parse_mode=disp_mode, reply_markup=after_kb)
+    c.user_data.pop('erk',None); c.user_data.pop('return_to',None); return ConversationHandler.END
 
 # ── Terms ──
 async def admin_terms_callback(u,c):
@@ -4113,7 +4233,8 @@ async def conv_cancel_callback(u, c):
     await q.answer("Cancelled ✅")
 
     # 🆕 v81.1: WIPE all user_data except safe keys (matches force_main_menu)
-    _SAFE_KEYS = {"language", "nav_stack"}
+    # 🆕 v170.22: 'return_to' bhi safe — taake cancel admin ko sahi screen par le jaye
+    _SAFE_KEYS = {"language", "nav_stack", "return_to"}
     try:
         ud = c.user_data
         if ud is not None:
@@ -4183,6 +4304,7 @@ async def conv_cancel_callback(u, c):
         "admin_pages":         ("📄 Back to Pages", "admin_pages"),
         "tpl_panel":           ("📝 Back to Templates", "tpl_panel"),
         "fj_panel":            ("🔗 Back to Force Join", "fj_panel"),
+        "admin_responses":     ("✏️ Back to Edit Responses", "admin_responses"),
     }
 
     if _return_hint and _return_hint in _RETURN_MAP:

@@ -127,6 +127,7 @@ from handlers_support import (support_menu_callback, st_list_callback, st_view_c
                                adm_pending_delivery_callback, adm_delivery_mode_callback, adm_restock_reqs_callback,
                                adm_deliver_callback, adm_delivery_text_received)
 from handlers_admin import admin_deposit_history_callback, admin_deposit_page_callback, admin_deposit_detail_callback, admin_responses_category_callback, bybit_test_callback  # 📊 Deposit + ✏️ Responses
+from handlers_admin import resp_template_apply_callback, resp_custom_callback, resp_reset_callback  # 🆕 v170.22: response templates
 # 🆕 v37: Language, Reviews, Loyalty, Analytics
 from ui_extras import language_menu_callback, set_language_callback
 from handlers_reviews import (
@@ -1737,10 +1738,15 @@ def main():
                    CallbackQueryHandler(conv_cancel_callback, pattern="^conv_cancel$")],
     ))
 
-    # 4. Edit Responses
+    # 4. Edit Responses  (🆕 v170.22: + 2 readymade templates, custom, reset, real cancel)
     app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(edit_response_callback, pattern="^editresp_")],
-        states={EDIT_RESP_VALUE: [MessageHandler(filters.TEXT & ~filters.COMMAND, response_value_received)]},
+        states={EDIT_RESP_VALUE: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, response_value_received),
+            CallbackQueryHandler(resp_template_apply_callback, pattern="^resptpl_"),
+            CallbackQueryHandler(resp_custom_callback, pattern="^respcustom_"),
+            CallbackQueryHandler(resp_reset_callback, pattern="^respreset_"),
+        ]},
         fallbacks=[CommandHandler("cancel", cancel_conversation),
                    CallbackQueryHandler(conv_cancel_callback, pattern="^conv_cancel$")],
     ))

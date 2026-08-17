@@ -8,6 +8,38 @@
 
 ---
 
+# 🚀 v170.22 (2026-08-17) — EDIT RESPONSES: 2 READYMADE TEMPLATES + CUSTOM + CANCEL FIX
+
+## 1. 🎨 Edit Responses — har response ke 2 readymade templates (user demand)
+- ✏️ Edit Responses (Admin → ⚙️ Settings → ✏️ Edit Bot Responses) ab har
+  response kholne par ye buttons dikhata hai:
+  - 📄 **Template 1** (Style A — classic/default)
+  - ✨ **Template 2** (Style B — naya alternative)
+  - ✍️ **Custom Text** — apna text type karo (placeholders ke saath)
+  - ♻️ **Reset to Default** — ek tap me default wapas
+- Naya module `response_templates.py`: 78 response keys ke liye Style B
+  alternative templates (placeholders-safe — sirf wahi placeholders jo default
+  me hain, warna runtime `.format()` crash ho sakta hai).
+- Editor ab **placeholders** bhi dikhata hai (e.g. `{shop_name} {user_id}`) +
+  current value ka HTML-safe `<pre>` preview (unbalanced markdown crash-fix).
+
+## 2. 🐛 CANCEL BUG FIX (user report: "cancel hota hi ni")
+- Root cause: ❌ Cancel button ka `callback_data="noop"` tha → conversation
+  `EDIT_RESP_VALUE` state me atki rehti thi, cancel kuch nahi karta tha.
+- Fix: Cancel ab `conv_cancel` use karta hai (universal cancel handler —
+  conversation END + state wipe). Sath me `return_to` breadcrumb add kiya —
+  cancel karne par admin wapas "✏️ Edit Responses" list par jata hai (main
+  menu nahi).
+- Save hone ke baad bhi "🔙 Back to Edit Responses" button milta hai.
+
+## 3. 🧪 Tests
+- 78/78 keys ke templates placeholders-subset verified (0 extra placeholders).
+- Markdown balance (placeholders strip karke) 0 unbalanced.
+- Mock flow test: template apply / custom / reset / cancel sab pass.
+- Real-DB integration test: set_response/get_response persistence pass.
+
+---
+
 # 🚀 v170.21 (2026-08-17) — SCREEN EDITOR BUTTONS + @@TG@@ FIX + ORDER #729
 
 ## 1. 🎛️ Screen Editor — Product Detail buttons (user demand)
