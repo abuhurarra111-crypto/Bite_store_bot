@@ -8,6 +8,22 @@
 
 ---
 
+# 🚀 v170.24 (2026-08-17) — COMPLETED ORDERS (per-user) ab WARRANTY-STYLE
+
+## 🎨 User demand: "Completed Orders → user click → orders screen warranty refund wali jesi"
+- `_build_user_orders_kb` (completed_orders_v2.py) ab har order ko WARRANTY-style
+  button me render karta hai:
+  - premium emoji ICON (product ke naam se extract)
+  - clean product name + price (raw [[HTML]]<tg-emoji> nahi)
+  - colored button: delivered=green(success), refunded=blue(primary),
+    cancelled/rejected=red(danger)
+  - status emoji ✅/💸/❌ label ke END par (admin clarity)
+- 🐛 Fix: make_premium_button ka leading-emoji strip `#`/emoji kha jata tha —
+  ab button manually build hota hai (icon_custom_emoji_id + style) taake
+  label/status/icon/color sab consistent rahe.
+
+---
+
 # 🚀 v170.23 (2026-08-17) — NOTIFICATIONS: EK HI (UNIFIED) + USERNAME/PREMIUM EMOJI + OWN PRODUCTS
 
 ## 1. 🐛 Duplicate notification FIX (user: "2 dfa notifications a rhy")

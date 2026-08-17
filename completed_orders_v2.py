@@ -375,7 +375,10 @@ def _build_user_list_text(rows, search: str, status_filter: str = "all") -> str:
 # USER SCREEN — orders of that user
 # ------------------------------------------------------------
 def _build_user_orders_kb(uid: int, orders, page: int) -> InlineKeyboardMarkup:
-    from utils import name_for_button
+    """🆕 v170.24: user's orders ab WARRANTY-style render hote hain — GREEN
+    (success) premium-emoji buttons + clean product name + price, waisa hi
+    jaise 🛡️ Warranty & Refund screen me (user demand). Status ke hisaab se
+    color: delivered=green, refunded=blue, cancelled/rejected=red."""
     kb = []
     total = len(orders)
     total_pages = max(1, (total + ORDERS_PER_PAGE - 1) // ORDERS_PER_PAGE)
@@ -384,15 +387,61 @@ def _build_user_orders_kb(uid: int, orders, page: int) -> InlineKeyboardMarkup:
     end = start + ORDERS_PER_PAGE
     page_rows = orders[start:end]
 
+    try:
+        from button_system import extract_emoji_from_html
+        _have_helpers = True
+    except Exception:
+        _have_helpers = False
+    from utils import fmt_price as _fmt_price
+
     for o in page_rows:
-        em = _status_emoji(o.get("status", ""))
-        pname = name_for_button(o.get("product_name") or "Product") or "Product"
-        pname = pname[:24]
-        price = float(o.get("price") or 0)
-        dt = _fmt_date(o.get("created_at") or "")
-        label = f"{em} #{o['id']} • {pname} • ${price:.2f} • {dt}"
-        kb.append([InlineKeyboardButton(label,
-                                         callback_data=f"ac2_order_{o['id']}")])
+        oid = o['id']
+        status = str(o.get('status') or '')
+        em = _status_emoji(status)
+        raw_name = str(o.get('product_name') or 'Product')
+        plain = raw_name
+        eid = ""
+        if _have_helpers:
+            try:
+                _eid, _plain = extract_emoji_from_html(raw_name)
+                if _plain:
+                    plain = _plain
+                eid = _eid or ""
+            except Exception:
+                pass
+        plain = (plain or 'Product').strip()[:26]
+        price = _fmt_price(o.get('price'))
+        label = f"#{oid} {plain} — {price}  {em}"
+        style = {
+            'delivered': 'success',
+            'refunded': 'primary',
+            'cancelled': 'danger',
+            'rejected': 'danger',
+        }.get(status, 'primary')
+        # 🆕 v170.24: button MANUALLY build (make_premium_button ka leading
+        # emoji-strip `#`/emoji kha jata tha) — taake label + status emoji +
+        # premium icon + color sab consistent rahe.
+        try:
+            if eid:
+                kb.append([InlineKeyboardButton(label, icon_custom_emoji_id=eid,
+                                                style=style,
+                                                callback_data=f"ac2_order_{oid}")])
+            else:
+                kb.append([InlineKeyboardButton(label, style=style,
+                                                callback_data=f"ac2_order_{oid}")])
+            continue
+        except TypeError:
+            pass
+        try:
+            ak = {"style": style}
+            if eid:
+                ak["icon_custom_emoji_id"] = eid
+            kb.append([InlineKeyboardButton(label, api_kwargs=ak,
+                                            callback_data=f"ac2_order_{oid}")])
+            continue
+        except Exception:
+            pass
+        kb.append([InlineKeyboardButton(label, callback_data=f"ac2_order_{oid}")])
 
     if not page_rows:
         kb.append([InlineKeyboardButton("📭 No completed orders",
