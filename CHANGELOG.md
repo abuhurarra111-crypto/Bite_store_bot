@@ -8,6 +8,30 @@
 
 ---
 
+# 🚀 v170.26 (2026-08-17) — WHERE TO SEND FIX + EMPTY-MESSAGE SPAM FIX
+
+## 1. 🐛 "📤 Where to Send?" button temporary-error FIX
+- Root cause: `DEST_OPTIONS` dict code me GHAYAB thi (merge/cleanup me delete ho
+  gayi) — button tap karte hi `NameError` → "temporary error".
+- Fix: `ui_extras.py` me `DEST_OPTIONS` dobara define (bot_only / group_only /
+  both + names/descriptions). Ab Destinations panel sahi khulta hai.
+
+## 2. 🐛 "Message text is empty" error + bar bar admin alert FIX
+- Root cause: `build_fake_message()` jab koi type eligible data na paye to
+  `(None, None)` return karta hai (v170.5 skip). Per-user job ise guard karta
+  tha, lekin `schedule_group_activity_job` ka CENTRAL GROUP JOB nahi — wo
+  destination par EMPTY text send karta tha → "Message text is empty" + har
+  interval par "Fake Activity — destination failed" alert spam.
+- Fix:
+  - group job ab `if not msg: re-schedule + return` (skip silently).
+  - group job admin alert par 30-min cooldown.
+  - freebie type me eligible product na mile to `chosen="deposit"` fallback.
+  - `broadcast_store_message` (dono copies) empty-text guard → return 0.
+
+## 3. 🧪 Tests: DEST_OPTIONS + dest panel render + empty-text guard — sab pass.
+
+---
+
 # 🚀 v170.25 (2026-08-17) — HOW TO USE (EDITABLE) + BULK COLOR PER SCREEN + FREEBIES BROADCAST
 
 ## 1. 📚 How to Use ab Screen Editor me (user demand)

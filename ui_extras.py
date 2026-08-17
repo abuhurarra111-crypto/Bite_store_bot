@@ -1851,6 +1851,14 @@ S_DEST_BOT    = "dest_bot"            # "1"/"0" send to user's bot chat
 S_DEST_GROUP  = "dest_group"          # "1"/"0" send to group
 S_DEST_CHAT   = "dest_chat_id"        # group/channel @username or id for activity
 
+# 🐛 v170.26 FIX: DEST_OPTIONS GHAYAB thi (merge me delete) → "📤 Where to Send?"
+# button tap karte hi NameError → "temporary error". Ab define.
+DEST_OPTIONS = {
+    "bot_only":   ("🤖 Bot Only", "Messages go to each user's private chat with the bot. (default)"),
+    "group_only": ("👥 Group/Channel Only", "Messages go to a group/channel where all users see them."),
+    "both":       ("🤖+👥 Both", "Messages go to users' private chats AND the group/channel."),
+}
+
 
 # 🐛 v95.2 REMOVED duplicate helper definitions here — they were silently
 # overriding the primary definitions at lines ~735, ~743, ~730:

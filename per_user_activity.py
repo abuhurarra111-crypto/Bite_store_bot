@@ -688,6 +688,10 @@ async def build_fake_message(bot, user_id: int) -> tuple[str, any]:
                 return fb_msg, InlineKeyboardMarkup([[_btn]])
         except Exception:
             pass
+        # 🐛 v170.26 FIX: freebie eligible product nahi mila → deposit par
+        # fallback (warna function None return karta tha → empty message spam).
+        if chosen == "freebie":
+            chosen = "deposit"
     if chosen == "freeclaim":
         try:
             from database import (get_connection as _gc,
@@ -1375,6 +1379,13 @@ def schedule_group_activity_job(app):
                 # Generate and send message directly to group
                 # Build fake message (using a dummy user_id 0)
                 msg, kb = await build_fake_message(context.bot, 0)
+                # 🐛 v170.26 FIX: build_fake_message (None, None) return kar
+                # sakta hai (e.g. koi type eligible data nahi) — pehle yahan
+                # empty text destination par send hota tha → "Message text is
+                # empty" error + admin ko bar bar alert. Ab skip + re-schedule.
+                if not msg or not str(msg).strip():
+                    schedule_group_activity_job(context.application)
+                    return
                 from ui_extras import _resolve_chat_id
                 resolved_chat = await _resolve_chat_id(context.bot, dest_chat)
                 # 🆕 Premium/custom emoji aware (see _send_activity_to_user)
@@ -1391,16 +1402,32 @@ def schedule_group_activity_job(app):
                     except Exception as e2:
                         logger.warning(f"[Activity] Central group job send failed: {e2}")
                         # 🔧 v131: notify admin so the problem is VISIBLE, not silent
+                        # 🐛 v170.26 FIX: cooldown add kiya (pehle har interval
+                        # par alert spam hota tha)
                         try:
                             from config import ADMIN_ID
                             if ADMIN_ID:
-                                await context.bot.send_message(
-                                    ADMIN_ID,
-                                    f"⚠️ *Fake Activity — destination failed*\n"
-                                    f"Dest: `{dest_chat}` (resolved `{resolved_chat}`)\n"
-                                    f"Error: `{str(e2)[:150]}`\n\n"
-                                    f"_Check the bot is ADMIN in that chat, or fix dest_chat_id._",
-                                    parse_mode="Markdown")
+                                import time as _t
+                                _cd_key = "pua_dest_alerted"
+                                _last = 0.0
+                                try:
+                                    from database import get_setting as _gs, set_setting as _ss
+                                    _last = float(_gs(_cd_key, "0") or 0)
+                                except Exception:
+                                    pass
+                                if _t.time() - _last >= 30 * 60:
+                                    try:
+                                        from database import set_setting as _ss
+                                        _ss(_cd_key, f"{_t.time()}")
+                                    except Exception:
+                                        pass
+                                    await context.bot.send_message(
+                                        ADMIN_ID,
+                                        f"⚠️ *Fake Activity — destination failed*\n"
+                                        f"Dest: `{dest_chat}` (resolved `{resolved_chat}`)\n"
+                                        f"Error: `{str(e2)[:150]}`\n\n"
+                                        f"_Check the bot is ADMIN in that chat, or fix dest_chat_id._",
+                                        parse_mode="Markdown")
                         except Exception:
                             pass
             except Exception as e:

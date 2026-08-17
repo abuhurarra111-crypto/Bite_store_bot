@@ -4504,6 +4504,11 @@ async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None
 
     Returns number of successful sends (0 if broadcast was skipped).
     """
+    # 🐛 v170.26 FIX: empty/blank text guard — "Message text is empty" API
+    # error + destination-failed admin alert spam rokne ke liye.
+    if not text or not str(text).strip():
+        logger.info("[broadcast_store_message] SKIPPED — empty text")
+        return 0
     # 🆕 v96: maintenance mode gate — nothing goes out during maintenance
     try:
         from maintenance_mode import is_maintenance_on
@@ -5168,6 +5173,11 @@ async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None
 
     Returns number of successful sends (0 if broadcast was skipped).
     """
+    # 🐛 v170.26 FIX: empty/blank text guard — "Message text is empty" API
+    # error + destination-failed admin alert spam rokne ke liye.
+    if not text or not str(text).strip():
+        logger.info("[broadcast_store_message] SKIPPED — empty text")
+        return 0
     # 🆕 v96: maintenance mode gate — nothing goes out during maintenance
     try:
         from maintenance_mode import is_maintenance_on
