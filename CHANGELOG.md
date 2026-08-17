@@ -8,6 +8,28 @@
 
 ---
 
+# 🚀 v170.21 (2026-08-17) — SCREEN EDITOR BUTTONS + @@TG@@ FIX + ORDER #729
+
+## 1. 🎛️ Screen Editor — Product Detail buttons (user demand)
+- product_detail_screen ab ye buttons bhi dikhata hai (rename/premium emoji/
+  color/color editor ke liye): prod_favorite (Add/Remove Favorite),
+  prod_req (Notify When Available), prod_share (Share Product).
+- prod_share naya editable key (button_system EXTRA_KEYS) + get_share_button
+  ab rename/style/premium emoji ke saath render hota hai.
+
+## 2. 🐛 @@TG@@ / (name) weird coding FIX
+- Gemini translate ab placeholder integrity check karta hai: {name}/{price} etc.
+  gayab ho ya @@TG markers aaye to translation REJECT (original rehta hai).
+- markdownish_to_html: leftover @@XX<n>@@ markers ka safety cleanup.
+
+## 3. 📦 Ready DB: order #729 added (delivered via ProdSeller, binance, $0.73,
+   profit $0.31) + ProdSeller balance 17.65 -> 17.23 baked.
+
+## ⚠️ FRESH DEPLOY: version bump v170.20 -> v170.21.
+
+---
+
+
 # 🚀 v170.20 (2026-08-17) — ⚡ SUPER FAST (force-join gate speed fix)
 
 ## 🐛 ROOT CAUSE (bot slow after updates):

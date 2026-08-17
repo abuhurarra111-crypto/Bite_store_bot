@@ -1336,6 +1336,7 @@ EXTRA_KEYS = [
     ("prod_buy",         "🛒 Product Detail — Buy Now"),
     ("prod_buyx",        "🛒× Product Detail — Buy Multiple"),
     ("prod_req",         "🔔 Product Detail — Notify When Available"),
+    ("prod_share",       "🔗 Product Detail — Share Product"),   # 🆕 v170.21
     ("prod_review",      "⭐ Product Detail — View Reviews"),
     ("prod_back_shop",   "🔙 Product Detail — Back to Shop"),
     ("prod_home",        "🏠 Product Detail — Home"),

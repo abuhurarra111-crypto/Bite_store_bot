@@ -115,6 +115,20 @@ def _gemini_translate_blocking(text, target, key):
     if not out:
         return None
     out = out.strip('`').strip()
+    # 🐛 v170.21 FIX: Gemini kabhi {name} → (name) ya <tg-emoji> → @@TG0@@ mangle
+    # kar deta tha. Placeholder integrity check — agar koi {placeholder} gayab
+    # ho ya @@TG markers aa jayen to translation REJECT (original text rehta hai).
+    try:
+        import re as _re_pl
+        _in_ph = set(_re_pl.findall(r'\{[A-Za-z_][A-Za-z0-9_]*\}', text))
+        if _in_ph:
+            _out_ph = set(_re_pl.findall(r'\{[A-Za-z_][A-Za-z0-9_]*\}', out))
+            if not _in_ph.issubset(_out_ph):
+                return None
+        if '@@' in out:
+            return None
+    except Exception:
+        pass
     _cache_put(key, out)
     try:
         from database import set_setting

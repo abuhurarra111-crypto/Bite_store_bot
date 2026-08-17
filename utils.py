@@ -218,6 +218,14 @@ def markdownish_to_html(text):
     for key, val in protected.items():
         s = s.replace(key, val)
 
+    # 🐛 v170.21 FIX: safety net — koi leftover @@XX<digits>@@ marker (e.g.
+    # @@TG0@@) agar restore se reh gaya ho to hatao (premium emoji ke badle
+    # marker text user ko kabhi na dikhe).
+    try:
+        s = re.sub(r'@@[A-Z]{1,8}\d+@@', '', s)
+    except Exception:
+        pass
+
     # 🆕 v56: BELT + SUSPENDERS — final safety pass. Even if some upstream
     # path slipped a double-escape past us (e.g. legacy data from before v55),
     # collapse any &amp;amp; / &amp;lt; / &amp;gt; / &amp;quot; chains here.

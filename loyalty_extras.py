@@ -701,10 +701,31 @@ def is_share_allowed(product_id: int) -> bool:
 
 def get_share_button(product_id: int) -> InlineKeyboardButton | None:
     """Return the inline button to add to product_detail keyboard.
-       Returns None if Free-via-Referrals is enabled (caller skips)."""
+       Returns None if Free-via-Referrals is enabled (caller skips).
+    🆕 v170.21: editable via prod_share (rename + premium emoji + color)."""
     if not is_share_allowed(int(product_id)):
         return None
-    return InlineKeyboardButton("🔗 Share", callback_data=f"sharep_{int(product_id)}")
+    label = "🔗 Share"
+    style = ""
+    try:
+        from database import get_setting
+        from button_system import resolve_button_style
+        _size = (get_setting("button_size", "medium") or "medium").lower()
+        _alias = {"small": "short", "full": "xl"}
+        _size = _alias.get(_size, _size)
+        _custom = (get_setting(f"btn_label_prod_share_{_size}", "") or "").strip()
+        if _custom:
+            label = _custom
+        style = resolve_button_style("prod_share") or ""
+    except Exception:
+        pass
+    try:
+        from button_system import make_premium_button
+        return make_premium_button(
+            label, style=style or None,
+            callback_data=f"sharep_{int(product_id)}")
+    except Exception:
+        return InlineKeyboardButton(label, callback_data=f"sharep_{int(product_id)}")
 
 
 def _clean_product_name(raw_name: str) -> str:

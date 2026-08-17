@@ -2996,6 +2996,9 @@ SCREEN_TREE = {
         "buttons": [
             {"id": "prod_buy",            "kind": "dynamic"},
             {"id": "prod_buyx",           "kind": "dynamic"},
+            {"id": "prod_favorite",       "kind": "dynamic"},   # 🆕 v170.21
+            {"id": "prod_req",            "kind": "dynamic"},   # 🆕 v170.21 (notify when available)
+            {"id": "prod_share",          "kind": "dynamic"},   # 🆕 v170.21 (share product)
             {"id": "prod_review",         "kind": "dynamic"},
             # 🆕 v52: Back-to-Shop + Home nav buttons are now registry (full editor)
             {"id": "nav_prod_back_shop",  "kind": "registry"},
