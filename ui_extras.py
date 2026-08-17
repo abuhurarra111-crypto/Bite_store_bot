@@ -1903,11 +1903,12 @@ async def _resolve_chat_id(bot, chat_id: str) -> str:
 # get_chat_member per target (3 targets × network latency each tap) which
 # made the bot feel slow/stuck. Cache result per (user, chat) for 300s.
 _FJ_MEMBER_CACHE = {}
-# 🐛 v170.3: TTL 60s → 5s. Pehle 60s ka positive cache tha → user channel LEAVE
-# kar ke 60s ke andar wapis aata to bot purana "member" signal dikhata → force
-# nahi hota (user ka live test yahi fail hua). Ab 5s ka hi short cache — sirf
-# rapid double-tap dedupe ke liye. Leave detection ab ~5s me ho jati hai.
-_FJ_MEMBER_CACHE_TTL = 5
+# 🐛 v170.20 SPEED FIX: TTL 5s → 60s. 5s TTL har 5 second mein user ke tap par
+# 3 channels ka network member-check (500ms-1.5s) chalata tha → bot "slow".
+# Ab positive result 60s cache hota hai (12x kam network). Group leave phir bhi
+# INSTANT detect hota hai (ChatMemberHandler cache invalidate karta hai); channel
+# leave max 60s me detect hota hai (Telegram channel leave ka koi event nahi).
+_FJ_MEMBER_CACHE_TTL = 60
 _FJ_MEMBER_CACHE_LOCK = asyncio.Lock() if False else None  # placeholder
 
 
@@ -1971,10 +1972,12 @@ async def _is_member(bot, user_id: int, chat_id: str) -> bool:
         return hit[1]
     try:
         # Resolve to numeric or @username
-        resolved = await asyncio.wait_for(_resolve_chat_id(bot, chat_id), timeout=4)
+        # 🐛 v170.20: timeout 4s→3s (worst-case tap delay cap kiya — timeout par
+        # fail-open hota hai to user kabhi 4s nahi rukta).
+        resolved = await asyncio.wait_for(_resolve_chat_id(bot, chat_id), timeout=3)
 
         member = await asyncio.wait_for(
-            bot.get_chat_member(chat_id=resolved, user_id=user_id), timeout=4)
+            bot.get_chat_member(chat_id=resolved, user_id=user_id), timeout=3)
         result = member.status in (
             ChatMember.MEMBER,
             ChatMember.ADMINISTRATOR,

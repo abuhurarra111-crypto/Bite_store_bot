@@ -8,6 +8,27 @@
 
 ---
 
+# 🚀 v170.20 (2026-08-17) — ⚡ SUPER FAST (force-join gate speed fix)
+
+## 🐛 ROOT CAUSE (bot slow after updates):
+- Force-join gate (har button tap / text par chalta hai) ka membership cache
+  TTL **5 second** tha (v170.3). Matlab har 5 sec mein user ka pehla tap 3
+  channels ka network member-check (REAL measured 480ms-1500ms) wait karta tha.
+  Yehi "slow" ka asli reason tha — DB sab fast hai (2-3ms).
+
+## ✅ FIX:
+1. `_FJ_MEMBER_CACHE_TTL` 5s → **60s** (positive result ab 60s cache → 12x kam
+   network). Warm check ab **2.6ms** (pehle 500-1500ms).
+2. `get_chat_member` timeout 4s → 3s (worst-case tap delay cap; timeout par
+   fail-open hota hai to user kabhi zyada nahi rukta).
+3. Security intact: GROUP leave abhi bhi INSTANT (ChatMemberHandler cache
+   invalidate karta hai); CHANNEL leave max 60s me detect (Telegram channel
+   leave ka koi event nahi deta — ye limit har bot ki hai).
+
+## ⚠️ FRESH DEPLOY: version bump v170.19 → v170.20.
+
+---
+
 # 🚀 v170.19 (2026-08-17) — PERSISTENT BUTTONS FIX + BLUE MENU BUTTON
 
 ## 🐛 CRITICAL FIX: persistent buttons work nahi kar rahe the
