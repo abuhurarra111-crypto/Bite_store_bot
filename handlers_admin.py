@@ -642,19 +642,22 @@ async def _ask_step10_delivery(u_or_q, c, is_query=False):
         text = ("📦 *Step 10:* Static Delivery Text / Link?\n"
                 "If you want to deliver the SAME text/link/code to EVERY buyer, enter it here.\n"
                 "To deliver unique stock items from the pool instead, tap *Skip*.")
-        kb = _prod_step_kb("format", skip="delivery")
+        # 🐛 v170.31 FIX: _prod_step_kb already InlineKeyboardMarkup return karta
+        # hai — dobara wrap karne se TypeError → "Temporary error" (pfb buttons).
+        markup = _prod_step_kb("format", skip="delivery")
     else:
         text = "📦 *Step 10:* Select Manual Type:"
-        kb = [
+        markup = InlineKeyboardMarkup([
             [InlineKeyboardButton("🛍️ Readymade Account", callback_data="pmt_readymade")],
             [InlineKeyboardButton("📬 Own Mail", callback_data="pmt_ownmail")],
             [InlineKeyboardButton("🔙 Back", callback_data="prodback_format")],
             [InlineKeyboardButton("❌ Cancel", callback_data="conv_cancel")],
-        ]
+        ])
     if is_query:
-        await _safe_edit(u_or_q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        await _safe_edit(u_or_q, text, parse_mode="Markdown", reply_markup=markup)
     else:
-        await u_or_q.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        await u_or_q.message.reply_text(text, parse_mode="Markdown",
+                                        reply_markup=markup)
     from bot import PROD_DELIVERY_TEXT
     return PROD_DELIVERY_TEXT
 

@@ -8,6 +8,17 @@
 
 ---
 
+# 🚀 v170.32 (2026-08-17) — FIX: FREEBIE YES/NO BUTTON TEMPORARY ERROR
+
+## 🐛 "🎁 Yes — Make it FREE" / "No" button temporary-error FIX
+- Root cause: `_ask_step10_delivery` me `_prod_step_kb()` (jo khud
+  InlineKeyboardMarkup return karta hai) ko dobara `InlineKeyboardMarkup()` me
+  wrap kiya tha → TypeError → callback crash → "Temporary error".
+- Fix: markup ko as-is pass karte hain (auto path), manual path apna markup
+  banata hai. Ab Yes/No dono buttons Step 10 par sahi le jate hain.
+
+---
+
 # 🚀 v170.31 (2026-08-17) — FREEBIE SUCCESS PREMIUM EMOJI + AFTER-PURCHASE BUTTONS EDITABLE
 
 ## 1. 🎖️ Freebie success message me premium emoji
