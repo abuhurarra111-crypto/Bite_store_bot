@@ -328,6 +328,13 @@ from handlers_free_claim import (
     fcb_styler_callback, fcb_color_callback, fcb_pickcolor_callback,
     fcb_preview_callback, fcb_reset_callback, fcb_text_received,
 )
+# 🆕 v170.13 — Freebies (free products for every user)
+from handlers_freebies import (
+    freebies_menu_callback, freebies_from_text, freebie_open_callback,
+    freebie_do_callback, freebies_admin_panel_callback, freebie_config_callback,
+    freebie_toggle_callback, freebie_limit_callback, freebie_refs_callback,
+    freebie_step_received,
+)
 # 🆕 v48: Referral Abuse admin panel
 from handlers_referral_admin import (
     refadm_panel_callback, refadm_top_callback, refadm_log_callback, refadm_banlist_callback,
@@ -509,6 +516,10 @@ async def handle_text(update, context):
     if context.user_data.get('persist_ren_pid'):
         from handlers_admin import persist_rename_received
         if await persist_rename_received(update, context): return
+    # 🆕 v170.13: freebie admin text input (claim limit / reclaim refs)
+    if context.user_data.get('freebie_step'):
+        from handlers_freebies import freebie_step_received
+        if await freebie_step_received(update, context): return
     # 🆕 v170.11: dynamic-button rename text input (product-detail buttons etc.)
     if context.user_data.get('bs_ren_key'):
         from handlers_buttons import bs_rename_received
@@ -541,6 +552,10 @@ async def handle_text(update, context):
     if _reply_btn_matches(t, "🔗 Reseller API", update.effective_user.id):
         from handlers_start import handle_reseller_button
         await handle_reseller_button(update, context); return
+    # 🆕 v170.13: 🎁 Freebies button on persistent reply keyboard
+    if _reply_btn_matches(t, "🎁 Freebies", update.effective_user.id):
+        from handlers_start import handle_freebies_button
+        await handle_freebies_button(update, context); return
     # 🆕 v50: Screen-by-Screen Editor text input MUST run BEFORE any other 'erk'
     # consumer so admin's response edits go through our flow (with smart back).
     if context.user_data.get('se_back_sid'):
@@ -2653,6 +2668,15 @@ def main():
         ("^freeclaim_open_",    freeclaim_open_callback),
         ("^freeclaim_do_",      freeclaim_do_callback),
         ("^freeclaim_share_",   freeclaim_share_callback),  # 🆕 v48
+        # 🆕 v170.13 — Freebies
+        ("^freebies_menu$",     freebies_menu_callback),
+        ("^freebie_open_",      freebie_open_callback),
+        ("^freebie_do_",        freebie_do_callback),
+        ("^freebies_admin_panel$", freebies_admin_panel_callback),
+        ("^freebie_cfg_",       freebie_config_callback),
+        ("^freebie_toggle_",    freebie_toggle_callback),
+        ("^freebie_limit_",     freebie_limit_callback),
+        ("^freebie_refs_",      freebie_refs_callback),
         # 🆕 v48: Referral Abuse admin panel
         ("^refadm_panel$",      refadm_panel_callback),
         ("^refadm_top$",        refadm_top_callback),   # 🆕 v170.9 top referrers

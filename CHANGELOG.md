@@ -8,6 +8,27 @@
 
 ---
 
+# 🚀 v170.13 (2026-08-17) — BATCH 6: 🎁 FREEBIES (naya free-claim system)
+
+## 1. 🎁 Freebies — har user FREE claim kar sake (user demand)
+- Naya system `handlers_freebies.py` + tables `freebies` + `freebie_claims`.
+- Persistent reply-keyboard me naya button "🎁 Freebies" (4th button).
+- User flow: Freebies → list (premium emoji + green buttons) → product →
+  "🎉 Claim FREE Now" → order + auto-delivery (account pool / supplier).
+
+## 2. ⚙️ Freebie rules (admin panel, user demand)
+- Admin Panel → **🎁 Freebies** → har product par:
+  - **Toggle ON/OFF** (freebie hai ya nahi)
+  - **🔢 Claim limit** (total kitni baar claim, 0 = unlimited)
+  - **🔁 Re-claim refs** (dobara claim ke liye kitne referrals)
+- Rule: pehli claim FREE (0 referrals); har agli claim = reclaim_refs ×
+  claims_already referrals chahiye (lifetime referral count se). Referrals
+  kharch nahi hoti, gate ban jati hain.
+
+## 3. ⚠️ FRESH DEPLOY: version bump v170.12 → v170.13.
+
+---
+
 # 🚀 v170.12 (2026-08-17) — BATCH 5: RESELLER PRODUCTS + PERSISTENT BUTTONS
 
 ## 1. 🗂️ Reseller products panel (warranty/refund STYLE, user demand)

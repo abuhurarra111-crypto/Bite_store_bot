@@ -337,6 +337,12 @@ BUTTONS = {
         "large": "📊 Analytics Dashboard", "xl": "📊 Analytics Dashboard",
         "callback": "admin_analytics",
     },
+    "admin_freebies": {
+        "group": "admin", "essential": False,
+        "short": "🎁", "medium": "🎁 Freebies",
+        "large": "🎁 Freebies", "xl": "🎁 Freebies — Free products for users",
+        "callback": "freebies_admin_panel",
+    },
     "admin_reviews": {
         "group": "admin", "essential": False,
         "short": "⭐", "medium": "⭐ Reviews",

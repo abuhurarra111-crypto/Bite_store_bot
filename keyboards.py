@@ -271,9 +271,10 @@ _PERSIST_DEFAULTS = {
     "home":     "🏠 Main Menu",
     "howto":    "📚 How to Use",
     "reseller": "🔗 Reseller API",
+    "freebies": "🎁 Freebies",
 }
 
-_PERSIST_IDS = ("home", "howto", "reseller")
+_PERSIST_IDS = ("home", "howto", "reseller", "freebies")
 
 
 def get_persist_label(pid, user_id=None):

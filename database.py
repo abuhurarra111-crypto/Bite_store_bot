@@ -230,7 +230,7 @@ def setup_database():
             # 🆕 v170.6: USER RULE — HAR DEPLOY FRESH (0 data). Is version ko
             # HAR deploy par bump karo taake bot har nayi release par khud reset
             # ho jaye (0 users/orders/suppliers). Admin manual restore karta hai.
-            current_version = "v170.12"
+            current_version = "v170.13"
             version_marker = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), ".deployed_version")
             last_version = ""
             if os.path.exists(version_marker):
@@ -442,6 +442,7 @@ def migrate_all():
         ("ensure_tier_discount_table",    ensure_tier_discount_table),    # 🆕 v158 tiered discounts
         ("migrate_reseller_tables",       migrate_reseller_tables),       # 🆕 v161 reseller API
         ("_ensure_fake_activity_off_column", _ensure_fake_activity_off_column),  # 🆕 v170.5
+        ("setup_freebies_tables",         setup_freebies_tables),         # 🆕 v170.13 freebies
     ):
         try:
             fn(); stats["tables_checked"] += 1
@@ -5607,6 +5608,131 @@ def count_eligible_unused_refs(user_id):
     claim). referral_count remains as a lifetime stat for the Account screen.
     """
     return get_ref_points(user_id)
+
+
+# ════════════════════════════════════════════════════════════════
+# 🎁 v170.13 — FREEBIES (free products, har user free claim kar sake)
+# ════════════════════════════════════════════════════════════════
+# Concept (user demand):
+#   - Admin freebies mein products list karta hai.
+#   - Har user inhe FREE claim kar sakta hai (pehli baar 0 referrals).
+#   - claim_limit: total claims per user (0 = unlimited).
+#   - reclaim_refs: pehli claim FREE; har AGLI claim ke liye itne referrals
+#     chahiye (reclaim_refs × claims_already_done vs lifetime referral count).
+#   - Freebies = free-via-referrals (product_free_claim) se ALAG system.
+# ════════════════════════════════════════════════════════════════
+
+def setup_freebies_tables():
+    """Create freebies + freebie_claims tables (idempotent)."""
+    conn = get_connection(); c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS freebies (
+            product_id     INTEGER PRIMARY KEY,
+            enabled        INTEGER DEFAULT 0,
+            claim_limit    INTEGER DEFAULT 1,   -- total claims per user (0=unlimited)
+            reclaim_refs   INTEGER DEFAULT 0,   -- referrals needed for re-claim (0 = free forever)
+            updated_at     TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS freebie_claims (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id      INTEGER NOT NULL,
+            product_id   INTEGER NOT NULL,
+            order_id     INTEGER DEFAULT 0,
+            refs_used    INTEGER DEFAULT 0,
+            claimed_at   TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    try:
+        c.execute("CREATE INDEX IF NOT EXISTS idx_freebie_claims_uid_pid ON freebie_claims(user_id, product_id)")
+    except Exception:
+        pass
+    conn.commit(); conn.close()
+
+
+def get_freebie_config(pid):
+    """Freebie settings for a product (defaults if not configured)."""
+    setup_freebies_tables()
+    conn = get_connection(); c = conn.cursor()
+    c.execute("SELECT * FROM freebies WHERE product_id=?", (int(pid),))
+    r = c.fetchone(); conn.close()
+    if not r:
+        return {"product_id": int(pid), "enabled": 0, "claim_limit": 1, "reclaim_refs": 0}
+    d = dict(r)
+    return {
+        "product_id": int(d.get("product_id") or pid),
+        "enabled": int(d.get("enabled") or 0),
+        "claim_limit": int(d.get("claim_limit") or 1),
+        "reclaim_refs": int(d.get("reclaim_refs") or 0),
+    }
+
+
+def set_freebie_config(pid, *, enabled=None, claim_limit=None, reclaim_refs=None):
+    """Set freebie settings for a product (upsert)."""
+    setup_freebies_tables()
+    from datetime import datetime
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("SELECT product_id FROM freebies WHERE product_id=?", (int(pid),))
+        exists = c.fetchone()
+        if not exists:
+            c.execute("""INSERT INTO freebies (product_id, enabled, claim_limit, reclaim_refs, updated_at)
+                         VALUES (?, 0, 1, 0, ?)""",
+                      (int(pid), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        sets, vals = [], []
+        if enabled is not None:
+            sets.append("enabled=?"); vals.append(1 if enabled else 0)
+        if claim_limit is not None:
+            sets.append("claim_limit=?"); vals.append(int(claim_limit))
+        if reclaim_refs is not None:
+            sets.append("reclaim_refs=?"); vals.append(int(reclaim_refs))
+        if sets:
+            sets.append("updated_at=?")
+            vals.append(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            vals.append(int(pid))
+            c.execute(f"UPDATE freebies SET {', '.join(sets)} WHERE product_id=?", vals)
+        conn.commit(); conn.close()
+        return True
+    except Exception:
+        try: conn.rollback(); conn.close()
+        except Exception: pass
+        return False
+
+
+def get_all_freebie_products(include_disabled=False):
+    """All products with freebie config (enabled-only ya sab)."""
+    setup_freebies_tables()
+    conn = get_connection(); c = conn.cursor()
+    if include_disabled:
+        c.execute("""SELECT f.*, p.name, p.stock, p.price FROM freebies f
+                     LEFT JOIN products p ON p.id = f.product_id ORDER BY f.product_id""")
+    else:
+        c.execute("""SELECT f.*, p.name, p.stock, p.price FROM freebies f
+                     LEFT JOIN products p ON p.id = f.product_id
+                     WHERE f.enabled=1 ORDER BY f.product_id""")
+    rows = [dict(r) for r in c.fetchall()]; conn.close()
+    return rows
+
+
+def freebie_claims_count(user_id, product_id):
+    """Kitni baar user ne ye freebie claim kiya."""
+    setup_freebies_tables()
+    conn = get_connection(); c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM freebie_claims WHERE user_id=? AND product_id=?",
+              (int(user_id), int(product_id)))
+    n = c.fetchone()[0]; conn.close()
+    return int(n or 0)
+
+
+def record_freebie_claim(user_id, product_id, order_id, refs_used):
+    """Log a successful freebie claim."""
+    setup_freebies_tables()
+    conn = get_connection(); c = conn.cursor()
+    c.execute("""INSERT INTO freebie_claims (user_id, product_id, order_id, refs_used)
+                 VALUES (?, ?, ?, ?)""",
+              (int(user_id), int(product_id), int(order_id or 0), int(refs_used or 0)))
+    conn.commit(); conn.close()
 
 
 def get_user_free_claims(user_id, limit=20):

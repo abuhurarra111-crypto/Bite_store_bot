@@ -1079,6 +1079,16 @@ async def handle_reseller_button(update: Update, context: ContextTypes.DEFAULT_T
         logging.getLogger(__name__).debug(f"[persist-reseller] {e}")
 
 
+async def handle_freebies_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🆕 v170.13: Handler for the 🎁 Freebies persistent reply-keyboard button."""
+    try:
+        from handlers_freebies import freebies_from_text
+        await freebies_from_text(update, context)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug(f"[persist-freebies] {e}")
+
+
 async def handle_main_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """🔧 BUG #8 FIX: Show welcome (persistent keyboard already attached on /start)
     Inline keyboard goes in the welcome message itself.
