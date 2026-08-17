@@ -505,6 +505,10 @@ async def handle_text(update, context):
         if await cz_import_received(update, context): return
     if context.user_data.get('cz_banner_text'):
         if await cz_banner_text_received(update, context): return
+    # 🆕 v170.11: dynamic-button rename text input (product-detail buttons etc.)
+    if context.user_data.get('bs_ren_key'):
+        from handlers_buttons import bs_rename_received
+        if await bs_rename_received(update, context): return
     # 🆕 v144.3: replacement upload text
     if context.user_data.get('rep_upload_oid'):
         if await admin_replace_upload_received(update, context): return

@@ -427,6 +427,21 @@ async def _show_editor(q, key, c=None):
     # ── Preview ──
     kb.append([InlineKeyboardButton("👁️ LIVE PREVIEW", callback_data=f"bs_preview_{key}")])
 
+    # ── 🆕 v170.11: Rename + premium emoji + background color ──
+    try:
+        from database import get_setting as _gs_bs
+        _cur_lbl = _gs_bs(f"btn_label_{key}_medium", "") or ""
+        _cur_style = _gs_bs(f"btn_style_{key}", "") or ""
+    except Exception:
+        _cur_lbl, _cur_style = "", ""
+    _mark_lbl = "✏️" if _cur_lbl else ""
+    kb.append([InlineKeyboardButton(f"✏️ Rename (Medium){_mark_lbl}",
+                                    callback_data=f"bs_rename_{key}_medium")])
+    _style_lbl = {"primary": "🔵 Blue", "success": "🟢 Green",
+                  "danger": "🔴 Red", "": "⬜ Default"}.get(_cur_style, "⬜ Default")
+    kb.append([InlineKeyboardButton(f"🎨 Background Color: {_style_lbl}",
+                                    callback_data=f"bs_color_{key}")])
+
     # ── Reset / back ──
     kb.append([InlineKeyboardButton("♻️ Reset this button", callback_data=f"bs_reset_{key}")])
     # Smart back: return to the group this button belongs to
@@ -606,6 +621,166 @@ async def bs_noop_callback(u, c):
 
 
 # ════════════════════════════════════════════════════════════
+# 🆕 v170.11: RENAME + COLOR for dynamic keys (prod_buy, prod_favorite, ...)
+# ════════════════════════════════════════════════════════════
+async def bs_rename_callback(u, c):
+    """✏️ Start rename for a dynamic (or any) button key."""
+    q = u.callback_query
+    if not _admin_only(q):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    # data: bs_rename_<key>_<size>
+    raw = q.data[len("bs_rename_"):]
+    if "_" in raw:
+        key, size = raw.rsplit("_", 1)
+    else:
+        key, size = raw, "medium"
+    if size not in ("short", "medium", "large", "xl"):
+        size = "medium"
+    try:
+        from database import get_setting
+        cur = get_setting(f"btn_label_{key}_{size}", "") or ""
+    except Exception:
+        cur = ""
+    c.user_data["bs_ren_key"] = key
+    c.user_data["bs_ren_size"] = size
+    if cur:
+        from utils import smart_text_and_mode, contains_premium_markup, is_html_value
+        if is_html_value(cur) or contains_premium_markup(cur):
+            disp, _m = smart_text_and_mode(cur, "HTML")
+            await _safe_edit(q,
+                f"✏️ <b>Rename Button</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+                f"<b>Key:</b> <code>{key}</code> · size {size.upper()}\n\n"
+                f"<b>Current:</b> {disp}\n\n"
+                f"📝 Type the new label (premium emojis supported):\n"
+                f"_(Send <code>-</code> to reset, /cancel to abort)_",
+                parse_mode="HTML")
+            return
+        await _safe_edit(q,
+            f"✏️ *Rename Button*\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"Key: `{key}` · size {size.upper()}\n\n"
+            f"Current: `{cur}`\n\n"
+            f"📝 Type the new label (premium emojis supported):\n"
+            f"_(Send `-` to reset, /cancel to abort)_",
+            parse_mode="Markdown")
+        return
+    await _safe_edit(q,
+        f"✏️ *Rename Button*\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"Key: `{key}` · size {size.upper()}\n\n"
+        f"_(no custom label yet — default used)_\n\n"
+        f"📝 Type the new label (premium emojis supported):\n"
+        f"_(Send `-` to reset, /cancel to abort)_",
+        parse_mode="Markdown")
+
+
+async def bs_rename_received(u, c):
+    """📝 Save renamed label (premium-emoji aware). Called from bot.py handle_text."""
+    key = c.user_data.get("bs_ren_key")
+    size = c.user_data.get("bs_ren_size")
+    if not key or not size:
+        c.user_data.pop("bs_ren_key", None)
+        c.user_data.pop("bs_ren_size", None)
+        return False
+    val = (u.message.text or "").strip()
+    if val == "/cancel":
+        c.user_data.pop("bs_ren_key", None)
+        c.user_data.pop("bs_ren_size", None)
+        await u.message.reply_text("❌ Cancelled.")
+        return True
+    try:
+        from database import get_setting, set_setting
+    except Exception:
+        return True
+    if val == "-":
+        for _sz in ("short", "medium", "large", "xl"):
+            set_setting(f"btn_label_{key}_{_sz}", "")
+        c.user_data.pop("bs_ren_key", None)
+        c.user_data.pop("bs_ren_size", None)
+        await u.message.reply_text("♻️ Reset to default (all sizes) ✅")
+        return True
+    if len(val) > 64:
+        await u.message.reply_text("❌ Too long (max 64 chars). Try again or /cancel")
+        return True
+    # premium emoji capture
+    try:
+        html_v = (u.message.text_html_urled or "").strip()
+        ce_list = [e for e in (u.message.entities or [])
+                   if getattr(e, "type", "") == "custom_emoji"]
+        has_ce = bool(ce_list)
+        val_to_save = ("[[HTML]]" + html_v) if (html_v and has_ce) else val
+    except Exception:
+        val_to_save = val
+        has_ce = False
+    # apply to ALL sizes (rename full replace, registry jaisa behavior)
+    for _sz in ("short", "medium", "large", "xl"):
+        set_setting(f"btn_label_{key}_{_sz}", val_to_save)
+    c.user_data.pop("bs_ren_key", None)
+    c.user_data.pop("bs_ren_size", None)
+    note = ""
+    if has_ce:
+        note = "\n⭐ Premium emoji detected — will render as button icon."
+    from utils import safe_display
+    disp, disp_mode = safe_display(val, preferred_mode="Markdown", message=u.message)
+    try:
+        if disp_mode == "HTML":
+            await u.message.reply_text(f"✅ <b>Renamed!</b>\n\n<b>New label:</b> {disp}{note}",
+                                       parse_mode="HTML")
+        else:
+            await u.message.reply_text(f"✅ Renamed!\n\n*New label:* `{disp}`{note}",
+                                       parse_mode="Markdown")
+    except Exception:
+        await u.message.reply_text("✅ Renamed!")
+    return True
+
+
+async def bs_color_callback(u, c):
+    """🎨 Background color picker for a dynamic key."""
+    q = u.callback_query
+    if not _admin_only(q):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    key = q.data[len("bs_color_"):]
+    try:
+        from database import get_setting
+        cur = get_setting(f"btn_style_{key}", "") or ""
+    except Exception:
+        cur = ""
+    cur_lbl = {"primary": "🔵 Blue", "success": "🟢 Green",
+               "danger": "🔴 Red", "": "⬜ Default"}.get(cur, "⬜ Default")
+    kb = [
+        [InlineKeyboardButton("🔵 Blue", callback_data=f"bs_setcol_{key}_primary"),
+         InlineKeyboardButton("🟢 Green", callback_data=f"bs_setcol_{key}_success")],
+        [InlineKeyboardButton("🔴 Red", callback_data=f"bs_setcol_{key}_danger"),
+         InlineKeyboardButton("⬜ Default", callback_data=f"bs_setcol_{key}_none")],
+        [InlineKeyboardButton("🔙 Back", callback_data=f"bs_edit_{key}")],
+    ]
+    await _safe_edit(q,
+        f"🎨 *Button Background Color*\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"Key: `{key}`\nCurrent: `{cur_lbl}`\n\n"
+        f"⭐ Colors render sirf jab bot owner ke paas Telegram Premium ho.",
+        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def bs_setcol_callback(u, c):
+    """🎨 Save color for a dynamic key."""
+    q = u.callback_query
+    if not _admin_only(q):
+        await q.answer("❌", show_alert=True); return
+    raw = q.data[len("bs_setcol_"):]
+    key, _, style = raw.rpartition("_")
+    try:
+        from database import set_setting
+        save_style = "" if style == "none" else style
+        set_setting(f"btn_style_{key}", save_style)
+    except Exception:
+        await q.answer("❌ Save failed", show_alert=True); return
+    nice = {"primary": "🔵 Blue", "success": "🟢 Green",
+            "danger": "🔴 Red", "none": "⬜ Default"}.get(style, style)
+    await q.answer(f"Color set: {nice} ✅")
+    await _show_editor(q, key, c)
+
+
+# ════════════════════════════════════════════════════════════
 # HANDLER REGISTRATION HELPER
 # ════════════════════════════════════════════════════════════
 def get_button_styler_handlers():
@@ -620,6 +795,9 @@ def get_button_styler_handlers():
         (r"^bs_pad_.+$",       bs_pad_callback),
         (r"^bs_reset_.+$",     bs_reset_callback),
         (r"^bs_preview_.+$",   bs_preview_callback),
+        (r"^bs_rename_.+$",    bs_rename_callback),      # 🆕 v170.11 rename
+        (r"^bs_color_.+$",     bs_color_callback),       # 🆕 v170.11 color
+        (r"^bs_setcol_.+$",    bs_setcol_callback),      # 🆕 v170.11 color save
         (r"^bs_resetall$",     bs_resetall_confirm_callback),
         (r"^bs_resetall_yes$", bs_resetall_yes_callback),
         (r"^bs_noop$",         bs_noop_callback),

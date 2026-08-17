@@ -8,6 +8,28 @@
 
 ---
 
+# 🚀 v170.11 (2026-08-17) — BATCH 4: SUPPLIER NAME IN EDIT ITEMS + PRODUCT-DETAIL BUTTONS EDITABLE
+
+## 1. 🏭 Edit Items mein supplier name (user demand)
+- Admin product detail (Edit Items) ab "🏭 Supplier: <name>" dikhata hai jab product
+  kisi ext supplier se link ho. Customer ko kabhi nahi.
+
+## 2. 🎛️ Product-detail buttons editable (rename + premium emoji + color)
+- **Rename bug FIX:** `_translate_btn_label` custom override return nahi karta tha
+  (`return default_label`) → dynamic keys (prod_buy/prod_favorite/prod_buyx/
+  prod_req/prod_review) rename kabhi apply nahi hota tha. Ab `return custom`.
+- **Color bug FIX:** `'resolve_button_style' in dir()` inline check function ke
+  local scope me False hota tha → product-detail buttons ka color kabhi apply
+  nahi hota tha. Ab keyboards.py top-level import + direct call.
+- **Naya editor:** Button Styler (bs_edit) me ab "✏️ Rename (Medium)" + "🎨
+  Background Color" options. Rename premium-emoji aware, ALL sizes par apply,
+  `-` se reset. Color picker (Blue/Green/Red/Default). Callbacks: bs_rename_/
+  bs_color_/bs_setcol_ + text hook bs_ren_key.
+
+## 3. ⚠️ FRESH DEPLOY: version bump v170.10 → v170.11.
+
+---
+
 # 🚀 v170.10 (2026-08-17) — BATCH 3: DELIVERED NOTIFICATIONS (username + full details)
 
 ## 1. 👤 Supplier delivered notification — ab USERNAME bhi (user demand)

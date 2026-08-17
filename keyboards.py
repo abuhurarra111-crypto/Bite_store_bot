@@ -3,6 +3,15 @@
 # ============================================
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from button_system import decorate
+# 🆕 v170.11 FIX: pehle inline `if 'resolve_button_style' in dir()` checks module
+# level pe False hote the (import lazy tha) → product-detail buttons ka color
+# (prod_buy/prod_favorite...) kabhi apply nahi hota tha. Ab top-level import.
+try:
+    from button_system import resolve_button_style, get_button_style, set_button_style
+except Exception:
+    def resolve_button_style(btn_id, group=None): return ""
+    def get_button_style(btn_id): return ""
+    def set_button_style(btn_id, style): pass
 from utils import get_product_delivery_mode, get_product_mode_tag, build_manual_order_whatsapp_url, fmt_price
 
 # 🆕 v40: Per-button visual styler (size / align / padding)
@@ -45,10 +54,13 @@ def _translate_btn_label(btn_id, default_label, user_id=None):
         from i18n import t, get_user_lang
         from database import get_setting
         # If admin has set a custom label for this size, respect it
+        # 🐛 v170.11 FIX: pehle `return default_label` hota tha (custom ignore
+        # ho jata tha) → dynamic keys (prod_buy/prod_favorite...) rename hota
+        # hi nahi tha. Ab custom return hota hai (premium emoji ke saath).
         size = _get_size()
         custom = get_setting(f"btn_label_{btn_id}_{size}", "")
         if custom:
-            return default_label  # admin override wins
+            return custom  # admin override wins (premium emoji included)
         key = _BTN_I18N_MAP.get(btn_id)
         if not key:
             return default_label
@@ -501,7 +513,7 @@ def product_detail_keyboard(product, user=None):
             fav = is_favorite(user_id, pid)
             fav_lbl = _translate_btn_label("prod_favorite", "💔 Remove Favorite" if fav else "⭐ Add to Favorites", user_id=user_id)
             fav_lbl = _apply_styler("prod_favorite", fav_lbl)
-            fav_style = resolve_button_style("prod_favorite") if 'resolve_button_style' in dir() else ""
+            fav_style = resolve_button_style("prod_favorite")
             rows.append([_make_btn(fav_lbl, callback_data=f"fav_toggle_{pid}", style=fav_style)])
     except Exception:
         pass
@@ -511,17 +523,17 @@ def product_detail_keyboard(product, user=None):
         buyx_lbl = _apply_styler("prod_buyx", _translate_btn_label("prod_buyx", {"small": "🛒×", "medium": "🛒× Buy Multiple",
                       "large": "🛒× Buy Multiple (Bulk)", "xl": "🛒× Buy Multiple — Bulk order"}.get(size, "🛒× Buy Multiple"), user_id=user_id))
         # 🎨 v169: Apply background color and premium emoji support
-        buy_style = resolve_button_style("prod_buy") if 'resolve_button_style' in dir() else ""
-        buyx_style = resolve_button_style("prod_buyx") if 'resolve_button_style' in dir() else ""
+        buy_style = resolve_button_style("prod_buy")
+        buyx_style = resolve_button_style("prod_buyx")
         rows.append([_make_btn(buy_lbl, callback_data=f"buy_{pid}", style=buy_style)])
         rows.append([_make_btn(buyx_lbl, callback_data=f"buyx_{pid}", style=buyx_style)])
     else:
         req_lbl = _apply_styler("prod_req", _translate_btn_label("prod_req", "🔔 Notify Me When Available", user_id=user_id))
-        req_style = resolve_button_style("prod_req") if 'resolve_button_style' in dir() else ""
+        req_style = resolve_button_style("prod_req")
         rows.append([_make_btn(req_lbl, callback_data=f"req_restock_{pid}", style=req_style)])
         
     rev_lbl = _apply_styler("prod_review", _translate_btn_label("prod_review", "⭐ View Reviews", user_id=user_id))
-    rev_style = resolve_button_style("prod_review") if 'resolve_button_style' in dir() else ""
+    rev_style = resolve_button_style("prod_review")
     rows.append([_make_btn(rev_lbl, callback_data=f"prodrev_{pid}", style=rev_style)])
 
     # 🆕 v70: Share Product button — hidden if Free-via-Referrals is enabled

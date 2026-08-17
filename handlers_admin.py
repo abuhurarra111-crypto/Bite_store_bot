@@ -7077,11 +7077,29 @@ async def view_product_callback(u, c):
     except Exception:
         clean_desc = p['description']
         display_note = dict(p).get('customer_note', '')
+    # 🆕 v170.11: supplier name (product kis supplier se link hai) — admin ko
+    # edit items mein dikhta hai. Customer ko kabhi nahi.
+    supplier_line = ""
+    try:
+        _esid = int(dict(p).get("ext_supplier_id") or 0)
+        if _esid:
+            from database import get_connection as _gc3
+            _conn3 = _gc3(); _c3 = _conn3.cursor()
+            _c3.execute("SELECT name FROM ext_suppliers WHERE id=?", (_esid,))
+            _r3 = _c3.fetchone(); _conn3.close()
+            if _r3:
+                _sname = str((dict(_r3) if not isinstance(_r3, dict) else _r3).get("name") or "")
+                if _sname:
+                    supplier_line = f"🏭 *Supplier:* {escape_md(_sname)}\n"
+    except Exception:
+        supplier_line = ""
+
     text = (
         f"📦 *Product Details*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📦 *Name:* {escape_md(p['name'])}\n"
         f"🚦 *Status:* {active_label} | {hidden_label}\n"
+        f"{supplier_line}"
         f"📦 *Delivery Type:* {dmode_label}\n"
         f"🧩 *Format:* {delivery_format_label(product_format)}\n"
         f"🎁 *Template:* #{template_id} {escape_md(get_template_style(template_id)['name'])}\n"
