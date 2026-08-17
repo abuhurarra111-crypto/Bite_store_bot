@@ -357,6 +357,7 @@ from customization import (
     se_btns_callback, se_sub_callback, se_subbtn_callback,
     se_edittext_callback, se_text_received,
     se_preview_callback, se_reset_callback,
+    se_allcolor_callback, se_setallcol_callback,
     se_noop_callback,
     bypl_apply_callback, bypl_preview_callback,
     scl_apply_callback, scl_preview_callback,
@@ -779,7 +780,10 @@ async def _flash_expiry_job(context):
 async def _purchase_broadcast_job(context):
     if _jobs_paused_for_maintenance():
         return
-    """🆕 Drain queued REAL purchases → broadcast to fake-activity destination."""
+    """🆕 Drain queued REAL purchases → broadcast to fake-activity destination.
+
+    🆕 v170.25: real FREEBIE claims bhi yahan drain hote hain (bc_freebie
+    template, gated by fbc_type_freebie toggle) — "new purchase" nahi."""
     try:
         from database import pop_pending_purchase_broadcasts
         from fake_engagement import build_real_purchase_message, broadcast_store_message
@@ -789,6 +793,23 @@ async def _purchase_broadcast_job(context):
                 await broadcast_store_message(context.bot, text, pid=item["product_id"])
             except Exception as e:
                 print(f"[PurchaseBroadcast] item failed: {e}")
+    except Exception:
+        pass
+    # 🆕 v170.25: FREEBIE broadcasts (toggle-gated)
+    try:
+        from database import pop_pending_freebie_broadcasts
+        from fake_engagement import (build_real_freebie_message,
+                                     broadcast_store_message, is_type_enabled)
+        if is_type_enabled("freebie"):
+            for item in pop_pending_freebie_broadcasts():
+                try:
+                    text = build_real_freebie_message(item["product_name"], pid=item["product_id"])
+                    await broadcast_store_message(context.bot, text, pid=item["product_id"],
+                                                  tpl_id="bc_freebie")
+                except Exception as e:
+                    print(f"[FreebieBroadcast] item failed: {e}")
+        else:
+            pop_pending_freebie_broadcasts()  # toggle OFF → clear queue
     except Exception:
         pass
 
@@ -2852,6 +2873,8 @@ def main():
         ("^se_edittext_",       se_edittext_callback),
         ("^se_preview_",        se_preview_callback),
         ("^se_reset_",          se_reset_callback),
+        ("^se_allcolor_",       se_allcolor_callback),
+        ("^se_setallcol_",      se_setallcol_callback),
         ("^se_noop$",           se_noop_callback),
     ] + get_button_styler_handlers():  # 🆕 v40: Inline Button Styler handlers
         app.add_handler(CallbackQueryHandler(fn, pattern=pat))

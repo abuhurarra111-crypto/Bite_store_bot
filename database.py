@@ -230,7 +230,7 @@ def setup_database():
             # 🆕 v170.6: USER RULE — HAR DEPLOY FRESH (0 data). Is version ko
             # HAR deploy par bump karo taake bot har nayi release par khud reset
             # ho jaye (0 users/orders/suppliers). Admin manual restore karta hai.
-            current_version = "v170.24"
+            current_version = "v170.25"
             version_marker = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), ".deployed_version")
             last_version = ""
             if os.path.exists(version_marker):
@@ -2214,7 +2214,7 @@ def update_order_status(oid, s):
     prev = None
     try:
         ensure_column(c, "orders", "order_qty", "INTEGER DEFAULT 1")
-        c.execute("SELECT status, user_id, price, product_id, product_name, order_qty FROM orders WHERE id=?", (oid,))
+        c.execute("SELECT status, user_id, price, product_id, product_name, order_qty, payment_method FROM orders WHERE id=?", (oid,))
         prev = c.fetchone()
     except Exception:
         pass
@@ -2229,10 +2229,13 @@ def update_order_status(oid, s):
         except Exception:
             pass
         # 🆕 Increment the product's REAL sold counter (once per delivered order)
-        # + queue a real-purchase broadcast to the fake-activity destination.
+        # + queue a real broadcast to the fake-activity destination.
+        # 🆕 v170.25: FREEBIE orders (payment_method='freebie') → freebie
+        # broadcast (bc_freebie template), NOT "new purchase" (bc_purchase).
         try:
             pid = prev['product_id'] if 'product_id' in prev.keys() else None
             pname = (prev['product_name'] if 'product_name' in prev.keys() else '') or ''
+            is_freebie = str((prev['payment_method'] if 'payment_method' in prev.keys() else '') or '').strip().lower() == 'freebie'
             if pid:
                 # Prefer explicit order_qty; fallback to legacy name suffix.
                 try:
@@ -2240,8 +2243,13 @@ def update_order_status(oid, s):
                 except Exception:
                     qty = _infer_order_qty_from_name(pname)
                 qty = max(1, min(100, int(qty or 1)))
-                increment_real_sold(pid, qty)
-                _queue_purchase_broadcast(pid, pname, qty)
+                if not is_freebie:
+                    increment_real_sold(pid, qty)
+                    _queue_purchase_broadcast(pid, pname, qty)
+                else:
+                    # freebie → sirf freebie broadcast (real sold counter nahi,
+                    # kyunki ye asal sale nahi; user demand v170.25)
+                    _queue_freebie_broadcast(pid, pname)
         except Exception as e:
             print(f"[sold] update_order_status hook failed: {e}")
 
@@ -3508,6 +3516,24 @@ def pop_pending_purchase_broadcasts():
     global _PENDING_PURCHASE_BROADCASTS
     items = list(_PENDING_PURCHASE_BROADCASTS)
     _PENDING_PURCHASE_BROADCASTS = []
+    return items
+
+
+# ── 🆕 v170.25: Real-freebie-claim broadcast queue (bc_freebie template,
+# NOT bc_purchase) — jab koi user FREEBIE claim kare to destination par
+# "freebies" wala template jaye, "new purchase" wala nahi. ──
+_PENDING_FREEBIE_BROADCASTS = []
+
+def _queue_freebie_broadcast(product_id, product_name):
+    _PENDING_FREEBIE_BROADCASTS.append({
+        "product_id": product_id, "product_name": product_name,
+    })
+
+def pop_pending_freebie_broadcasts():
+    """Return and clear pending real-freebie-claim broadcasts."""
+    global _PENDING_FREEBIE_BROADCASTS
+    items = list(_PENDING_FREEBIE_BROADCASTS)
+    _PENDING_FREEBIE_BROADCASTS = []
     return items
 
 

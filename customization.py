@@ -2170,6 +2170,25 @@ from database import get_response_with_auto_register
 logger = logging.getLogger(__name__)
 
 
+def _resp_default(key):
+    """🆕 v170.25: default for a response key, with How-to-Use guide fallback.
+    Guide texts (guide_<k>, howto_hub_header) ui_extras._GUIDES me rehte hain —
+    isliye import-order independent fallback (DEFAULT_RESPONSES me registration
+    ho ya na ho, default sahi milega)."""
+    d = DEFAULT_RESPONSES.get(key, "")
+    if d:
+        return d
+    if key == "howto_hub_header" or key.startswith("guide_"):
+        try:
+            import ui_extras as _ue
+            if key == "howto_hub_header":
+                return DEFAULT_RESPONSES.get("howto_hub_header", "")
+            return (_ue._GUIDES or {}).get(key[len("guide_"):], "")
+        except Exception:
+            pass
+    return ""
+
+
 async def _safe_edit(q, text, **kwargs):
     """🆕 v57: Robust message editor with logging + plain-text fallback so the
     bot NEVER appears 'stuck' to the admin (silent failures fixed)."""
@@ -2444,7 +2463,7 @@ async def _show_screen(q, sid, context):
                                         callback_data="se_noop")])
         for resp_key, friendly in texts:
             cur = get_response_with_auto_register(
-                resp_key, DEFAULT_RESPONSES.get(resp_key, ""))
+                resp_key, _resp_default(resp_key))
             preview = _short_preview(cur, 35)
             # Truncate the label to fit Telegram button width
             lbl = f"{friendly}  ·  {preview}"
@@ -2478,6 +2497,12 @@ async def _show_screen(q, sid, context):
             kb.append([InlineKeyboardButton(
                 f"{ch_icon} {ch_title}  ⏵",
                 callback_data=f"se_open_{ch_id}")])
+
+    # ── C2. 🆕 v170.25: Bulk color — ek click me is screen (+sub) ke sab buttons
+    n_btns = len(_collect_subtree_button_ids(sid))
+    if n_btns:
+        kb.append([InlineKeyboardButton(f"🎨 Color ALL Buttons ({n_btns})",
+                                        callback_data=f"se_allcolor_{sid}")])
 
     # ── D. Footer (parent / root) ──
     kb.append([InlineKeyboardButton("━━━━━━━━━━━━━━", callback_data="se_noop")])
@@ -2604,7 +2629,7 @@ async def se_edittext_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Show current value + Edit button (taps into existing flow)
     cur = get_response_with_auto_register(
-        resp_key, DEFAULT_RESPONSES.get(resp_key, ""))
+        resp_key, _resp_default(resp_key))
 
     # 🐞 v58 FIX: When the raw value contains Markdown special chars (e.g.
     # `{qty_text}` has an underscore, or `*{product}*` has asterisks), the
@@ -2710,7 +2735,7 @@ async def se_text_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Save via existing API
     try:
         from database import set_response, log_change, get_response
-        old = get_response(erk, DEFAULT_RESPONSES.get(erk, ""))
+        old = get_response(erk, _resp_default(erk))
         log_change("response", erk, old, val, f"Response: {erk} (via Screen Editor)")
         set_response(erk, val)
     except Exception as e:
@@ -2768,7 +2793,7 @@ async def se_preview_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await q.answer("❌", show_alert=True); return
     await q.answer("📤 Sending preview...", show_alert=False)
     erk = q.data.replace("se_preview_", "", 1)
-    val = get_response_with_auto_register(erk, DEFAULT_RESPONSES.get(erk, ""))
+    val = get_response_with_auto_register(erk, _resp_default(erk))
 
     send_text, send_mode = smart_text_and_mode(val or "_(empty)_", "Markdown")
     try:
@@ -2798,7 +2823,7 @@ async def se_reset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(q.from_user.id):
         await q.answer("❌", show_alert=True); return
     erk = q.data.replace("se_reset_", "", 1)
-    default = DEFAULT_RESPONSES.get(erk, "")
+    default = _resp_default(erk)
     try:
         from database import set_response, log_change, get_response
         old = get_response(erk, "")
@@ -2818,6 +2843,102 @@ async def se_reset_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _show_screen(q, back_sid, context)
     else:
         await _show_screen(q, ROOT_SCREEN, context)
+
+
+# ════════════════════════════════════════════════════════════════
+# 7b. 🆕 v170.25: BULK COLOR — ek click me kisi bhi screen + uske
+#     sub-screens ke SAB buttons ka background color set karo.
+# ════════════════════════════════════════════════════════════════
+
+def _collect_subtree_button_ids(sid):
+    """Screen + uske saare descendant screens ke sab button ids (registry +
+    dynamic). Avoids cycles with a visited set."""
+    seen_screens, btn_ids = set(), []
+    stack = [sid]
+    while stack:
+        cur = stack.pop()
+        if cur in seen_screens:
+            continue
+        seen_screens.add(cur)
+        node = SCREEN_TREE.get(cur)
+        if not node:
+            continue
+        for b in (node.get("buttons") or []):
+            bid = b.get("id") if isinstance(b, dict) else b
+            if bid and bid not in btn_ids:
+                btn_ids.append(bid)
+        for ch in (node.get("children") or []):
+            if ch not in seen_screens:
+                stack.append(ch)
+    return btn_ids
+
+
+async def se_allcolor_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🎨 Open color picker to apply ONE color to ALL buttons on this screen
+    (including sub-screens). Callback: se_allcolor_<sid>"""
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    sid = q.data.replace("se_allcolor_", "", 1)
+    if not is_valid_screen(sid):
+        await q.answer("⚠️ Invalid screen", show_alert=True); return
+    node = SCREEN_TREE.get(sid, {})
+    title = node.get("title", sid)
+    btn_ids = _collect_subtree_button_ids(sid)
+    n_btns = len(btn_ids)
+    text = (
+        f"🎨 *Bulk Color — {escape_md(title)}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎛️ Buttons affected (screen + sub-screens): *{n_btns}*\n\n"
+        f"Ek color chunein — is screen ke SAB buttons (aur sub-menus) us "
+        f"background color me ho jayenge, ek click me. (Per-button color "
+        f"override hota hai.)\n\n"
+        f"⭐ Color bot owner ke Telegram Premium se show hota hai."
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🟢 Green (success)", callback_data=f"se_setallcol_{sid}_success")],
+        [InlineKeyboardButton("🔵 Blue (primary)",  callback_data=f"se_setallcol_{sid}_primary")],
+        [InlineKeyboardButton("🔴 Red (danger)",    callback_data=f"se_setallcol_{sid}_danger")],
+        [InlineKeyboardButton("⬜ Default (no color)", callback_data=f"se_setallcol_{sid}_none")],
+        [InlineKeyboardButton("🔙 Back", callback_data=f"se_open_{sid}")],
+    ])
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
+
+
+async def se_setallcol_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🎨 Apply bulk color to ALL buttons in a screen subtree.
+    Callback: se_setallcol_<sid>_<success|primary|danger|none>"""
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌", show_alert=True); return
+    raw = q.data.replace("se_setallcol_", "", 1)
+    sid, _, style = raw.rpartition("_")
+    if not is_valid_screen(sid):
+        await q.answer("⚠️ Invalid screen", show_alert=True); return
+    save_style = "" if style == "none" else style
+    if save_style not in ("", "success", "primary", "danger"):
+        await q.answer("⚠️ Invalid color", show_alert=True); return
+    btn_ids = _collect_subtree_button_ids(sid)
+    try:
+        from button_system import set_button_style
+        from database import log_change, get_setting
+        applied = 0
+        for bid in btn_ids:
+            try:
+                old = get_setting(f"btn_style_{bid}", "")
+                log_change("setting", f"btn_style_{bid}", old, save_style,
+                           f"Bulk color: {sid}")
+                set_button_style(bid, save_style)
+                applied += 1
+            except Exception:
+                pass
+        nice = {"success": "🟢 Green", "primary": "🔵 Blue",
+                "danger": "🔴 Red", "none": "⬜ Default"}.get(style, style)
+        await q.answer(f"✅ {applied} buttons → {nice}", show_alert=True)
+    except Exception as e:
+        await q.answer(f"⚠️ {e}", show_alert=True)
+    await _show_screen(q, sid, context)
 
 
 # ════════════════════════════════════════════════════════════════
@@ -2911,7 +3032,43 @@ SCREEN_TREE = {
             "loyalty_screen",
             "language_screen",
             "reseller_api_screen",   # 🆕 v161.11
+            "howto_screen",          # 🆕 v170.25
         ],
+    },
+
+    # ═══════════════════════════════════════════════════════════
+    # 🆕 v170.25: HOW TO USE (guides — ab editable)
+    # ═══════════════════════════════════════════════════════════
+    "howto_screen": {
+        "icon": "📚",
+        "title": "How to Use (Guide)",
+        "description": "📚 How to Use — hub header + har guide topic (editable text)",
+        "texts": [
+            ("howto_hub_header",      "📝 Hub Header"),
+            ("guide_buy_product",     "🛒 How to Buy a Product"),
+            ("guide_deposit",         "💎 How to Buy Points / Deposit"),
+            ("guide_pay_overview",    "💳 Payment Methods Overview"),
+            ("guide_pay_stars",       "⭐ Pay with Telegram Stars"),
+            ("guide_freebies",        "🎁 Freebies"),
+            ("guide_reseller_api",    "🔗 Reseller API"),
+            ("guide_pay_binance",     "🔶 Binance Payments"),
+            ("guide_pay_bybit",       "🟡 Bybit Payments"),
+            ("guide_pay_easypaisa",   "📱 EasyPaisa"),
+            ("guide_pay_jazzcash",    "💵 JazzCash"),
+            ("guide_pay_points",      "💎 Points Wallet"),
+            ("guide_ticket",          "🎫 Support Ticket"),
+            ("guide_warranty",        "🛡️ Warranty & Refund"),
+            ("guide_replacement",     "🔁 Replacement"),
+            ("guide_review",          "⭐ Reviews"),
+            ("guide_referral",        "🎁 Referral Program"),
+            ("guide_tier",            "🏆 Loyalty Tiers"),
+            ("guide_orders",          "📜 Order History & Tracking"),
+            ("guide_price_list",      "📊 Price List & Filters"),
+            ("guide_language",        "🌐 Language Settings"),
+            ("guide_faq",             "❓ Common Issues / FAQ"),
+        ],
+        "buttons": [],
+        "children": [],
     },
 
     # ═══════════════════════════════════════════════════════════
@@ -4280,7 +4437,7 @@ async def se_sub_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from database import get_response_with_auto_register
             from config import DEFAULT_RESPONSES
             rk = texts[0][0]
-            t = get_response_with_auto_register(rk, DEFAULT_RESPONSES.get(rk, ""))
+            t = get_response_with_auto_register(rk, _resp_default(rk))
             body += "\n\n" + t[:300]
         except Exception:
             pass

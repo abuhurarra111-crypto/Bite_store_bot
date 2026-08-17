@@ -3982,6 +3982,32 @@ def build_real_purchase_message(product_name, qty=1, amount=None, pid=None):
             f"⚡ Delivered instantly ✅")
 
 
+def build_real_freebie_message(product_name, pid=None):
+    """🆕 v170.25: REAL freebie claim → admin's bc_freebie template (masked
+    username), so destination par "freebies" wala alert jaye — "new purchase"
+    wala nahi."""
+    import random
+    masked = random.choice(["a•••i", "m•••d", "s•••a", "z•••n", "h•••a", "k•••l", "f•••z"])
+    try:
+        from utils import html_strip_tags as _hst
+        product = _hst(str(product_name or "")) or "a free product"
+    except Exception:
+        product = str(product_name or "a free product")
+    product = product.strip()
+    if len(product) > 200:
+        product = product[:200]
+    try:
+        from customization import render_template
+        msg = render_template("bc_freebie", {"user": masked, "product": product})
+        if msg:
+            return msg
+    except Exception:
+        pass
+    return (f"🎁 *FREEBIE CLAIMED!* 🎉\n\n"
+            f"👤 {masked} just got {product} for FREE!\n"
+            f"🆓 100% free — tap below and grab yours too!")
+
+
 def _fill_placeholders_ci(template, mapping):
     """🐛 v149 FIX: fill {Placeholders} CASE-INSENSITIVELY.
 

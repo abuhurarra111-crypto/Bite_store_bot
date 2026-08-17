@@ -233,16 +233,32 @@ def _nav_kb(extra_rows=None, user_id=None):
 
 def _build_how_to_hub_text_and_kb(user_id=None):
     """🆕 v78: shared between callback + reply-keyboard entry.
-    🆕 v137: hub text + button labels translate to the user's language."""
-    text = (
-        "📚 *How to Use — Complete Guide*\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Welcome! This guide is updated for the latest Bite Store flow. Pick any topic below.\n\n"
-        "_Every guide shows exact buttons to tap, what to type, and what to expect._\n\n"
-        "📌 *Quick rules:* Buy Now = 1 item, Buy Multiple = quantity you type, "
-        "and Points are calculated exactly from USD (no rounding down).\n\n"
-        "🏠 *Main Menu* always resets the bot if you get stuck."
-    )
+    🆕 v137: hub text + button labels translate to the user's language.
+    🆕 v170.25: hub header ab admin-editable hai (bot_responses)."""
+    try:
+        from database import get_response_with_auto_register
+        from config import DEFAULT_RESPONSES as _DR
+        text = get_response_with_auto_register(
+            "howto_hub_header",
+            _DR.get("howto_hub_header", (
+                "📚 *How to Use — Complete Guide*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Welcome! This guide is updated for the latest Bite Store flow. Pick any topic below.\n\n"
+                "_Every guide shows exact buttons to tap, what to type, and what to expect._\n\n"
+                "📌 *Quick rules:* Buy Now = 1 item, Buy Multiple = quantity you type, "
+                "and Points are calculated exactly from USD (no rounding down).\n\n"
+                "🏠 *Main Menu* always resets the bot if you get stuck."
+            )))
+    except Exception:
+        text = (
+            "📚 *How to Use — Complete Guide*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Welcome! This guide is updated for the latest Bite Store flow. Pick any topic below.\n\n"
+            "_Every guide shows exact buttons to tap, what to type, and what to expect._\n\n"
+            "📌 *Quick rules:* Buy Now = 1 item, Buy Multiple = quantity you type, "
+            "and Points are calculated exactly from USD (no rounding down).\n\n"
+            "🏠 *Main Menu* always resets the bot if you get stuck."
+        )
     try:
         from i18n import tr_user
         text = tr_user(text, user_id=user_id) or text
@@ -706,13 +722,38 @@ _GUIDES = {
     ),
 }
 
+# 🆕 v170.25: How-to-Use guides ab EDITABLE hain (Screen Editor + Edit Responses).
+# Har guide key (guide_<key>) bot_responses me save hoti hai; default = _GUIDES.
+try:
+    from config import DEFAULT_RESPONSES as _DR
+    for _gk, _gt in _GUIDES.items():
+        _DR.setdefault(f"guide_{_gk}", _gt)
+    _DR.setdefault("howto_hub_header", (
+        "📚 *How to Use — Complete Guide*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Welcome! This guide is updated for the latest Bite Store flow. Pick any topic below.\n\n"
+        "_Every guide shows exact buttons to tap, what to type, and what to expect._\n\n"
+        "📌 *Quick rules:* Buy Now = 1 item, Buy Multiple = quantity you type, "
+        "and Points are calculated exactly from USD (no rounding down).\n\n"
+        "🏠 *Main Menu* always resets the bot if you get stuck."
+    ))
+except Exception:
+    pass
+
 
 async def guide_screen_callback(update, context):
-    """Generic handler for any guide_<key> callback (v137: translated)."""
+    """Generic handler for any guide_<key> callback (v137: translated).
+
+    🆕 v170.25: guide text ab admin-editable hai (bot_responses se; default
+    _GUIDES). Screen Editor / Edit Responses me ja kar badal sakte hain."""
     q = update.callback_query
     await q.answer()
     key = (q.data or "").replace("guide_", "", 1)
-    text = _GUIDES.get(key)
+    try:
+        from database import get_response_with_auto_register
+        text = get_response_with_auto_register(f"guide_{key}", _GUIDES.get(key, ""))
+    except Exception:
+        text = _GUIDES.get(key)
     if not text:
         text = "❓ Guide not found.\n\nTap 🔙 to return to the guides list."
     else:

@@ -8,6 +8,44 @@
 
 ---
 
+# 🚀 v170.25 (2026-08-17) — HOW TO USE (EDITABLE) + BULK COLOR PER SCREEN + FREEBIES BROADCAST
+
+## 1. 📚 How to Use ab Screen Editor me (user demand)
+- customization.py SCREEN_TREE me naya node `howto_screen` — main menu ke
+  children me. Hub header + 21 guides ab EDITABLE hain (Screen Editor +
+  Edit Responses dono me).
+- ui_extras.py: `_GUIDES` ab DEFAULT_RESPONSES me register (`guide_<key>` +
+  `howto_hub_header`); guide_screen_callback + hub header ab bot_responses se
+  read karte hain (admin edit persist hota hai).
+- customization.py `_resp_default()`: guide default ka import-order-independent
+  fallback (ui_extras._GUIDES se) — screen editor hamesha sahi default dikhata.
+
+## 2. 🎨 Bulk color — ek click me kisi bhi screen + sub-screens ke SAB buttons
+- Screen Editor ke har screen view me naya button: `🎨 Color ALL Buttons (N)`.
+- `se_allcolor_<sid>` → color picker (🟢 Green / 🔵 Blue / 🔴 Red / ⬜ Default).
+- `se_setallcol_<sid>_<style>` → us screen + saare sub-screens ke har button
+  (registry + dynamic) ka `btn_style_<id>` set — jaise admin panel green hai.
+- `_collect_subtree_button_ids(sid)` tree-walk helper (cycle-safe).
+
+## 3. 🎁 Freebies claim → broadcast (freebie template, NOT new purchase)
+- Root cause: freebie claim (`freebie_do_callback`) se `fulfill` → order
+  delivered → `update_order_status` hook "new purchase" (bc_purchase) broadcast
+  queue karta tha destination par.
+- Fix: `update_order_status` hook ab `payment_method='freebie'` detect karta hai
+  → `_queue_freebie_broadcast` (bc_freebie template) + `increment_real_sold`
+  skip (freebie sale nahi). `_purchase_broadcast_job` freebie queue drain karta
+  hai, `fbc_type_freebie` toggle ke sath (OFF = no broadcast).
+- `build_real_freebie_message()` (fake_engagement.py): masked username + admin
+  ka `bc_freebie` template. Fake freebie broadcasts (v170.14) waise hi hain;
+  ab REAL freebie claim bhi same template/toggle use karta hai.
+
+## 4. 🧪 Tests (sab pass)
+- freebie order → freebie queue (NOT purchase); normal order → purchase queue.
+- build_real_freebie_message render; _collect_subtree_button_ids; howto_screen
+  render + guide keys; se_allcolor picker + se_setallcol apply (47 buttons).
+
+---
+
 # 🚀 v170.24 (2026-08-17) — COMPLETED ORDERS (per-user) ab WARRANTY-STYLE
 
 ## 🎨 User demand: "Completed Orders → user click → orders screen warranty refund wali jesi"
