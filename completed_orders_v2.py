@@ -40,6 +40,7 @@ _COMPLETED_STATUSES = ("delivered", "refunded", "cancelled", "rejected")
 # In-memory search text keyed by admin id (transient, resets on restart —
 # fine because admin usually searches once per session).
 _SEARCH_CACHE = {}   # admin_id → search string (lowercased)
+_STATUS_CACHE = {}  # admin_id → status filter (all/delivered/refunded/cancelled)
 
 # Conversation state for search input
 AC2_SEARCH_TEXT = 9285
@@ -62,7 +63,7 @@ async def _safe_edit(q, text, **kw):
 # ------------------------------------------------------------
 # Data helpers
 # ------------------------------------------------------------
-def _fetch_users_with_completed_orders(search: str = ""):
+def _fetch_users_with_completed_orders(search: str = "", status_filter: str = "all"):
     """
     Returns list of dicts sorted by most-recent order desc:
       { user_id, name, orders_count, total_spend, last_order_at }
@@ -72,6 +73,13 @@ def _fetch_users_with_completed_orders(search: str = ""):
     """
     conn = get_connection()
     c = conn.cursor()
+    statuses = _COMPLETED_STATUSES
+    if status_filter in ("delivered", "refunded", "cancelled"):
+        statuses = {
+            "delivered": ("delivered",),
+            "refunded": ("refunded",),
+            "cancelled": ("cancelled", "rejected"),
+        }[status_filter]
     # Aggregate per user_id from orders. Join to users table for name.
     sql = f"""
         SELECT o.user_id,
@@ -86,11 +94,11 @@ def _fetch_users_with_completed_orders(search: str = ""):
                MAX(COALESCE(o.created_at, ''))                 AS last_order_at
         FROM orders o
         LEFT JOIN users u ON u.user_id = o.user_id
-        WHERE o.status IN ({",".join("?" * len(_COMPLETED_STATUSES))})
+        WHERE o.status IN ({",".join("?" * len(statuses))})
         GROUP BY o.user_id
         ORDER BY last_order_at DESC, orders_count DESC
     """
-    c.execute(sql, _COMPLETED_STATUSES)
+    c.execute(sql, statuses)
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
 
@@ -105,6 +113,30 @@ def _fetch_users_with_completed_orders(search: str = ""):
             return s in hay
         rows = [r for r in rows if _match(r)]
     return rows
+
+
+def _completed_summary():
+    """v170.17: top summary - total orders, delivered spend, profit, refunds."""
+    conn = get_connection(); c = conn.cursor()
+    c.execute(f"""SELECT COUNT(*),
+                         COALESCE(SUM(CASE WHEN status='delivered' THEN price ELSE 0 END),0),
+                         COALESCE(SUM(CASE WHEN status='refunded' THEN price ELSE 0 END),0)
+                  FROM orders WHERE status IN ({" ,".join("?"*len(_COMPLETED_STATUSES))})""",
+              _COMPLETED_STATUSES)
+    total, spend, refunds = c.fetchone()
+    conn.close()
+    conn = get_connection(); c = conn.cursor()
+    c.execute("""SELECT COALESCE(SUM(o.price - COALESCE(p.cost_price,0) * COALESCE(o.order_qty,1)),0)
+                 FROM orders o LEFT JOIN products p ON p.id = o.product_id
+                 WHERE o.status='delivered'""")
+    profit = c.fetchone()[0] or 0
+    conn.close()
+    return {
+        "total": int(total or 0),
+        "spend": float(spend or 0),
+        "profit": float(profit or 0),
+        "refunds": float(refunds or 0),
+    }
 
 
 def _fetch_orders_of_user(uid: int):
@@ -161,6 +193,100 @@ def _fmt_date(dt: str) -> str:
         return dt
 
 
+# ════════════════════════════════════════════════════════════════
+# 🆕 v170.17: PAYMENT BADGE (real premium emoji jo admin ne Buy Points
+# wale payment buttons par set kiya hai) + PROFIT helper
+# ════════════════════════════════════════════════════════════════
+
+# orders.payment_method → payment registry button id (jiska premium emoji
+# admin ne set kiya hai btn_label_pay_<id>_<size> mein)
+_PAY_BTN_MAP = {
+    "binance":           "pay_binance",
+    "easypaisa":         "pay_easypaisa",
+    "jazzcash":          "pay_jazzcash",
+    "usdt_trc20":        "pay_usdt_trc20",
+    "usdt_bep20":        "pay_usdt_bep20",
+    "bybit_pay":         "pay_bybit_pay",
+    "bybit":             "pay_group_bybit",
+    "bybit_usdt_trc20":  "pay_bybit_usdt_trc20",
+    "bybit_usdt_bep20":  "pay_bybit_usdt_bep20",
+    "points":            "pay_pts",
+    "wallet":            "pay_pts",
+    "telegram_stars":    "pay_stars",
+    "free_referral":     None,
+    "freebie":           None,
+}
+
+
+def _pay_badge_html(method):
+    """🆕 v170.17: payment method ka PREMIUM EMOJI badge (HTML). Admin ne jo
+    premium emoji Buy Points ke payment button par set kiya hai wahi use hota
+    hai; koi custom nahi to registry default label. Returns HTML string."""
+    method = (method or "").strip().lower()
+    btn_id = _PAY_BTN_MAP.get(method)
+    label = ""
+    emoji_id = ""
+    if method == "free_referral":
+        return "🎁 Free (Referrals)"
+    if method == "freebie":
+        return "🎁 Freebie"
+    if btn_id:
+        try:
+            from database import get_setting
+            # custom premium-emoji label (sab sizes mein ek hi hota hai)
+            for size in ("medium", "large", "short", "xl"):
+                raw = (get_setting(f"btn_label_{btn_id}_{size}", "") or "").strip()
+                if raw and ("<tg-emoji" in raw or raw.startswith("[[HTML]]")):
+                    import re as _re
+                    m = _re.search(
+                        r'<tg-emoji\s+emoji-id=["\'](\d+)["\']\s*>([^<]*)</tg-emoji>',
+                        raw, flags=_re.I)
+                    if m:
+                        emoji_id = m.group(1)
+                        fallback = m.group(2)
+                        rest = _re.sub(r"<[^>]+>", "", raw.replace("[[HTML]]", ""))
+                        rest = _re.sub(r"^\s*[^\w\s]+\uFE0F?\s*", "", rest).strip()
+                        label = rest or label
+                        if label and fallback:
+                            return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji> {label}'
+                        if fallback:
+                            return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
+        except Exception:
+            pass
+    # fallback: PAYMENT_METHODS label
+    try:
+        from database import PAYMENT_METHODS
+        label = PAYMENT_METHODS.get(method, {}).get("label", "")
+        if label:
+            return label
+    except Exception:
+        pass
+    return (method or "—").title()
+
+
+def _order_profit(o) -> float:
+    """🆕 v170.17: profit = sold price − product cost (orders table me cost nahi,
+    products table se). Returns float."""
+    try:
+        sold = float(o.get("price") or 0)
+        pid = int(o.get("product_id") or 0)
+        cost = 0.0
+        if pid:
+            from database import get_product
+            p = get_product(pid)
+            if p:
+                cost = float((dict(p) if p else {}).get("cost_price") or 0)
+        # qty (bulk orders)
+        qty = 1
+        try:
+            qty = int(o.get("order_qty") or 1)
+        except Exception:
+            qty = 1
+        return round((sold - cost) * qty, 4)
+    except Exception:
+        return 0.0
+
+
 # ------------------------------------------------------------
 # TOP SCREEN — user list
 # ------------------------------------------------------------
@@ -168,11 +294,18 @@ def _build_user_list_kb(rows, page: int, search: str) -> InlineKeyboardMarkup:
     from utils import name_for_button
     kb = []
     kb.append([InlineKeyboardButton(
-        "🔎 Search Users…" if not search else f"🔎 Search: {search[:20]}",
+        "🔎 Search (user ya order #ID)…" if not search else f"🔎 Search: {search[:20]}",
         callback_data="ac2_search")])
     if search:
         kb.append([InlineKeyboardButton("🧹 Clear Search",
                                          callback_data="ac2_clear_search")])
+    # v170.17: status tabs
+    kb.append([
+        InlineKeyboardButton("📋 All", callback_data="ac2_sf_all"),
+        InlineKeyboardButton("✅ Delivered", callback_data="ac2_sf_delivered"),
+        InlineKeyboardButton("💸 Refunded", callback_data="ac2_sf_refunded"),
+        InlineKeyboardButton("❌ Cancelled", callback_data="ac2_sf_cancelled"),
+    ])
 
     total = len(rows)
     total_pages = max(1, (total + USERS_PER_PAGE - 1) // USERS_PER_PAGE)
@@ -213,16 +346,28 @@ def _build_user_list_kb(rows, page: int, search: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(kb)
 
 
-def _build_user_list_text(rows, search: str) -> str:
+def _build_user_list_text(rows, search: str, status_filter: str = "all") -> str:
     total = len(rows)
     tail = f"\n🔎 Filter: `{search}`" if search else ""
+    try:
+        _sm = _completed_summary()
+        summary = (
+            f"📦 Orders: *{_sm['total']}*  💵 Spend: *${_sm['spend']:.2f}*\n"
+            f"📈 Profit: *${_sm['profit']:.2f}*  💸 Refunds: *${_sm['refunds']:.2f}*\n\n"
+        )
+    except Exception:
+        summary = ""
+    _sf_lbl = {"all": "All", "delivered": "✅ Delivered", "refunded": "💸 Refunded",
+               "cancelled": "❌ Cancelled"}.get(status_filter, "All")
     return (
-        "✅ *Completed Orders — Users*\n"
+        "✅ *Completed Orders*\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        f"👥 Total customers with completed orders: *{total}*\n"
+        f"{summary}"
+        f"📂 View: *{_sf_lbl}*\n"
+        f"👥 Customers: *{total}*\n"
         "📅 Sorted by most-recent order\n"
         f"{tail}\n\n"
-        "_Tap any user to see all their purchases with delivered account details._"
+        "_Tap any user to see all their purchases + delivered details._"
     )
 
 
@@ -314,6 +459,10 @@ def _build_order_detail_kb(order: dict) -> InlineKeyboardMarkup:
     if order.get("status") == "delivered":
         kb.append([InlineKeyboardButton("📥 Get Delivered File(s)",
                                          callback_data=f"ac2_allfiles_{oid}")])
+        # v170.17: one-click resend delivered content to CUSTOMER (agar usne
+        # delete kar diya ho ya dobara chahiye)
+        kb.append([InlineKeyboardButton("📤 Resend to Customer",
+                                         callback_data=f"ac2_resend_{oid}")])
     # 🐛 v145: bulk .txt delivery file — re-open / download from Completed Orders
     if order.get("delivery_file_id"):
         kb.append([InlineKeyboardButton("📎 Download Delivery File (.txt)",
@@ -359,8 +508,11 @@ def _build_order_detail_text(order: dict) -> str:
     pname = _render_product_name(order.get("product_name"))
     dt = _fmt_date(order.get("created_at") or "")
     price = float(order.get("price") or 0)
-    pay = escape_html(order.get("payment_method") or "—")
+    # v170.17: payment badge = admin ka set kiya hua PREMIUM EMOJI (Buy Points
+    # payment buttons wala). HTML-safe (tg-emoji), escape nahi karte.
+    pay = _pay_badge_html(order.get("payment_method"))
     uname = escape_html(order.get("user_name") or "")
+    profit = _order_profit(order)
     # 🆕 v170.5: supplier name (ADMIN-ONLY — customer kabhi nahi dekhta). Product
     # ka ext_supplier_id → ext_suppliers.name. Sirf completed_orders (admin view)
     # mein dikhta hai; user-side delivery untouched → no supplier leak.
@@ -392,11 +544,17 @@ def _build_order_detail_text(order: dict) -> str:
         f"📦 <b>Product:</b> {pname}\n"
         f"💵 <b>Price:</b> ${price:.2f}\n"
         f"💳 <b>Payment:</b> {pay}\n"
+        f"📈 <b>Profit:</b> ${profit:.4g}\n"
         f"📅 <b>When:</b> {dt}\n"
         f"🆔 <b>Order ID:</b> <code>#{order['id']}</code>\n"
         f"🧑 <b>Customer:</b> {uname or ('user ' + str(order.get('user_id')))}\n"
         f"🔖 <b>Status:</b> {order.get('status','?')}\n"
     )
+    # v170.17: refund/cancel reason (agar saved ho)
+    _ref_reason = (order.get("supplier_failure_reason") or "").strip() or \
+                  (order.get("replacement_reason") or "").strip()
+    if _ref_reason:
+        body += f"⚠️ <b>Reason:</b> {escape_html(_ref_reason[:120])}\n"
     # 🆕 v170.5: supplier name (admin-only)
     if supplier_name:
         body += f"🏭 <b>Supplier:</b> {escape_html(supplier_name)}\n"
@@ -431,9 +589,10 @@ async def admin_completed_v2_callback(update, context):
         await q.answer("❌", show_alert=True); return
     await q.answer()
     search = _SEARCH_CACHE.get(q.from_user.id, "")
-    rows = _fetch_users_with_completed_orders(search=search)
+    sf = _STATUS_CACHE.get(q.from_user.id, "all")
+    rows = _fetch_users_with_completed_orders(search=search, status_filter=sf)
     kb = _build_user_list_kb(rows, page=0, search=search)
-    await _safe_edit(q, _build_user_list_text(rows, search),
+    await _safe_edit(q, _build_user_list_text(rows, search, sf),
                      parse_mode="Markdown", reply_markup=kb)
 
 
@@ -447,9 +606,30 @@ async def ac2_page_callback(update, context):
     except Exception:
         page = 0
     search = _SEARCH_CACHE.get(q.from_user.id, "")
-    rows = _fetch_users_with_completed_orders(search=search)
+    sf = _STATUS_CACHE.get(q.from_user.id, "all")
+    rows = _fetch_users_with_completed_orders(search=search, status_filter=sf)
     kb = _build_user_list_kb(rows, page=page, search=search)
-    await _safe_edit(q, _build_user_list_text(rows, search),
+    await _safe_edit(q, _build_user_list_text(rows, search, sf),
+                     parse_mode="Markdown", reply_markup=kb)
+
+
+async def ac2_sf_callback(update, context):
+    """v170.17: status filter tabs (all/delivered/refunded/cancelled)."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        sf = (q.data or "").replace("ac2_sf_", "")
+    except Exception:
+        sf = "all"
+    if sf not in ("all", "delivered", "refunded", "cancelled"):
+        sf = "all"
+    _STATUS_CACHE[q.from_user.id] = sf
+    search = _SEARCH_CACHE.get(q.from_user.id, "")
+    rows = _fetch_users_with_completed_orders(search=search, status_filter=sf)
+    kb = _build_user_list_kb(rows, page=0, search=search)
+    await _safe_edit(q, _build_user_list_text(rows, search, sf),
                      parse_mode="Markdown", reply_markup=kb)
 
 
@@ -488,6 +668,52 @@ async def ac2_order_callback(update, context):
     # HTML because we use [[HTML]] prefix and <code>
     await _safe_edit(q, text, parse_mode="HTML",
                      reply_markup=kb, disable_web_page_preview=True)
+
+
+async def ac2_resend_callback(update, context):
+    """v170.17: resend delivered content (file/text) to the CUSTOMER."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer("📤 Resending…")
+    try:
+        oid = int((q.data or "").replace("ac2_resend_", ""))
+    except Exception:
+        return
+    o = _fetch_single_order(oid)
+    if not o or o.get("status") != "delivered":
+        await q.answer("⚠️ Not a delivered order", show_alert=True)
+        return
+    try:
+        uid = int(o.get("user_id") or 0)
+        dc = (o.get("delivery_content") or "").strip()
+        # file delivery (delivery_file_id)
+        from database import get_order, get_order_deliveries
+        full = get_order(oid)
+        sent_any = False
+        if full and full.get("delivery_file_id"):
+            try:
+                await context.bot.send_document(
+                    uid, document=str(full["delivery_file_id"]),
+                    caption=f"📦 <i>Your delivery — Order #{oid}</i>",
+                    parse_mode="HTML")
+                sent_any = True
+            except Exception:
+                pass
+        if dc:
+            try:
+                from utils import smart_text_and_mode
+                _txt, _mode = smart_text_and_mode(dc, "HTML")
+                await context.bot.send_message(uid, _txt, parse_mode=_mode)
+                sent_any = True
+            except Exception:
+                pass
+        if not sent_any:
+            await q.answer("⚠️ No stored delivery to resend", show_alert=True)
+            return
+        await q.answer("✅ Resent to customer", show_alert=True)
+    except Exception as e:
+        await q.answer(f"❌ {e}", show_alert=True)
 
 
 async def ac2_userview_callback(update, context):
@@ -623,6 +849,16 @@ async def ac2_search_received(update, context):
                                   InlineKeyboardButton("✅ Open Users",
                                                         callback_data="admin_completed_v2")]]))
         return -1
+    # v170.17: agar admin ne ORDER ID (#123) di to direct us order par jao
+    _digits = txt.lstrip("#").strip()
+    if _digits.isdigit():
+        _o = _fetch_single_order(int(_digits))
+        if _o:
+            await msg.reply_text(
+                _build_order_detail_text(_o), parse_mode="HTML",
+                reply_markup=_build_order_detail_kb(_o),
+                disable_web_page_preview=True)
+            return -1
     _SEARCH_CACHE[msg.from_user.id] = txt
     rows = _fetch_users_with_completed_orders(search=txt)
     await msg.reply_text(f"🔎 Filter set → `{txt}` — {len(rows)} user(s) matched.",

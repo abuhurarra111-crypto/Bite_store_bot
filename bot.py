@@ -201,6 +201,7 @@ from completed_orders_v2 import (
     admin_completed_v2_callback, ac2_page_callback,
     ac2_user_callback, ac2_order_callback, ac2_userview_callback, ac2_noop_callback,
     ac2_dlfile_callback, ac2_allfiles_callback, ac2_dlv_callback, ac2_dlvopen_callback,  # v161.20 + v170.5
+    ac2_sf_callback, ac2_resend_callback,  # 🆕 v170.17
     ac2_clear_search_callback,
     ac2_search_entry, ac2_search_received, ac2_search_cancel,
     AC2_SEARCH_TEXT,
@@ -2510,6 +2511,8 @@ def main():
         # 🆕 v101: user-side delivery preview (admin sees exactly what customer got)
         ("^ac2_userview_",               ac2_userview_callback),
         ("^ac2_allfiles_",               ac2_allfiles_callback),   # 🆕 v170.5
+        ("^ac2_sf_(all|delivered|refunded|cancelled)$", ac2_sf_callback),  # 🆕 v170.17
+        ("^ac2_resend_",                 ac2_resend_callback),      # 🆕 v170.17
         ("^ac2_dlfile_",                 ac2_dlfile_callback),
         # 🆕 v161.20: delivered-items audit (voice/video/pic/file/text)
         ("^ac2_dlv_",                    ac2_dlv_callback),

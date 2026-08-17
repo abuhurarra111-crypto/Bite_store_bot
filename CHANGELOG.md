@@ -8,6 +8,23 @@
 
 ---
 
+# 🚀 v170.17 (2026-08-17) — COMPLETED ORDERS FULL UPGRADE
+
+## ✅ Completed Orders (admin) — naya upgrade:
+- **Payment badge** (💳 Payment line): admin ne jo PREMIUM EMOJI Buy Points ke
+  payment button par set kiya hai wahi render hota hai (tg-emoji). Fallback:
+  PAYMENT_METHODS label. Free = 🎁 Free (Referrals)/🎁 Freebie.
+- **Profit column**: har order par sold − cost (products.cost_price × qty).
+- **Top summary header**: total orders · spend · profit · refunds.
+- **Status tabs**: 📋 All / ✅ Delivered / 💸 Refunded / ❌ Cancelled.
+- **Order-ID search**: 🔎 Search me "#637" type karo → direct order khul jata.
+- **Refund reason**: supplier_failure_reason/replacement_reason order detail me.
+- **📤 Resend to Customer**: delivered content customer ko dobara bhejo.
+
+## ⚠️ FRESH DEPLOY: version bump v170.16 → v170.17.
+
+---
+
 # 🚀 v170.16 (2026-08-17) — FREEBIE SHOP HIDE + TOGGLE RESPONSE
 
 ## 1. 🙈 Freebie products shop list me NAHI aate (user demand)
