@@ -230,7 +230,7 @@ def setup_database():
             # 🆕 v170.6: USER RULE — HAR DEPLOY FRESH (0 data). Is version ko
             # HAR deploy par bump karo taake bot har nayi release par khud reset
             # ho jaye (0 users/orders/suppliers). Admin manual restore karta hai.
-            current_version = "v170.15"
+            current_version = "v170.16"
             version_marker = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), ".deployed_version")
             last_version = ""
             if os.path.exists(version_marker):
@@ -1438,6 +1438,13 @@ def get_products_filtered(filter_mode="all"):
     base = ("SELECT p.*, cat.name as category_name, cat.emoji as category_emoji "
             "FROM products p LEFT JOIN categories cat ON p.category_id=cat.id "
             "WHERE p.is_active=1 AND COALESCE(p.is_hidden, 0)=0")
+    # 🆕 v170.16: freebie products (freebies.enabled=1) shop list me NAHI aate
+    # — wo sirf 🎁 Freebies menu se claim hote hain.
+    try:
+        setup_freebies_tables()
+        base += " AND p.id NOT IN (SELECT product_id FROM freebies WHERE enabled=1)"
+    except Exception:
+        pass
     if filter_mode == "available":
         base += " AND p.stock > 0"
     elif filter_mode == "unavailable":

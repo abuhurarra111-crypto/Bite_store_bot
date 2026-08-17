@@ -8,6 +8,24 @@
 
 ---
 
+# 🚀 v170.16 (2026-08-17) — FREEBIE SHOP HIDE + TOGGLE RESPONSE
+
+## 1. 🙈 Freebie products shop list me NAHI aate (user demand)
+- `get_products_filtered()` ab freebies.enabled=1 wale products ko EXCLUDE karta
+  hai (user-facing shop list + carousel + available/unavailable filters).
+- Freebie OFF karne par product wapas shop me aa jata hai.
+- Admin panels (Edit Items/Reseller/Freebies admin) abhi bhi sab products
+  dekhte hain.
+
+## 2. 🔔 Freebie toggle par clear response (user demand)
+- freebie_toggle_callback ab q.answer(show_alert=True) toast deta hai:
+  "🟢 Freebie ON ✅" / "🔴 Freebie OFF ❌" + screen refresh (Status line update).
+- Pehle sirf screen silently refresh hoti thi — admin ko pata nahi chalta.
+
+## 3. ⚠️ FRESH DEPLOY: version bump v170.15 → v170.16.
+
+---
+
 # 🚀 v170.15 (2026-08-17) — PERSISTENT BUTTONS: REAL BACKGROUND COLOR
 
 ## 🎨 FIX (maine pehle galat kaha tha — research ke baad confirm):

@@ -410,14 +410,22 @@ async def freebie_toggle_callback(update, context):
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
-    await q.answer()
     try:
         pid = int(q.data.replace("freebie_toggle_", ""))
     except Exception:
         return
     from database import get_freebie_config, set_freebie_config
     cfg = get_freebie_config(pid)
-    set_freebie_config(pid, enabled=not cfg.get("enabled"))
+    new_on = not bool(cfg.get("enabled"))
+    set_freebie_config(pid, enabled=new_on)
+    # 🐛 v170.16 FIX: pehle koi response nahi aata tha (screen refresh kafi
+    # nahi tha admin ko pata nahi chalta on hua ya off). Ab clear TOAST/ALERT:
+    try:
+        await q.answer(
+            f"{'🟢 Freebie ON ✅' if new_on else '🔴 Freebie OFF ❌'}",
+            show_alert=True)
+    except Exception:
+        pass
     # 🐛 v170.14 FIX: pehle freebie_config_callback ko call karta tha jo q.data
     # se "freebie_cfg_" parse karti thi → "freebie_toggle_101" par int() fail →
     # silent return → screen kabhi refresh nahi hoti. Ab shared render directly.
