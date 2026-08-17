@@ -8,7 +8,7 @@
 
 ---
 
-# 🚀 v170.19 (2026-08-17) — PERSISTENT BUTTONS FIX + SCREENSHOT MENU
+# 🚀 v170.19 (2026-08-17) — PERSISTENT BUTTONS FIX + BLUE MENU BUTTON
 
 ## 🐛 CRITICAL FIX: persistent buttons work nahi kar rahe the
 - Root cause: admin ne buttons ke custom labels emoji KE BINA save kiye the
@@ -16,17 +16,17 @@
   ("🎁 Freebies" etc.) se match karta tha → match fail → kuch nahi hota tha.
 - FIX: naya `persist_button_from_text(text, user_id)` — CURRENT label (custom
   rename + translation + legacy alias) se match karta hai. bot.py dispatch ab
-  isi se hota hai.
+  isi se hota hai. Persistent keyboard WAPAS 4 buttons (Menu/How to Use/
+  Reseller API/Freebies).
 
-## 🆕 Screenshot-style persistent menu (user demand)
-- Persistent reply keyboard ab 2-col grid:
-  🏠 Menu | 🛍️ Shop | 💰 Balance | 💎 Deposit | 📜 History | 🌐 Language
-  + 🎁 Freebies | 🔗 API Key | 📚 How to Use.
-- Naye handlers: handle_shop_button (shop list), handle_balance_button
-  (wallet+refs), handle_deposit_button (Buy Points), handle_history_button
-  (receipt orders), handle_language_button (language picker).
-- Ready DB me persist_order bake: home,shop,balance,deposit,history,language,
-  freebies,reseller,howto.
+## 🔵 BLUE MENU BUTTON — bot command menu (screenshot wala)
+- `set_my_commands` + `MenuButtonCommands` (post_init): Telegram input ke left
+  side wala blue "Menu" button ab commands kholta hai:
+  /start 🛍️ Open Shop · /balance 💰 My Balance · /deposit 💎 Buy Points ·
+  /orders 📜 My Orders · /freebies 🎁 Free Products · /apikey 🔗 Reseller API Key ·
+  /language 🌐 Change Language · /support 🎫 Support & Contact · /help 📚 How to Use.
+- Command handlers: shop/balance/deposit/orders/language (screens) + help/
+  apikey/freebies/support (text entry) — sab kaam karte hain.
 
 ## ⚠️ FRESH DEPLOY: version bump v170.18 → v170.19.
 

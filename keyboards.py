@@ -269,18 +269,12 @@ def _apply_screen_pad_markup(markup, location):
 #   home / howto / reseller  (freebies Batch 6 me add hoga)
 _PERSIST_DEFAULTS = {
     "home":     "🏠 Menu",
-    "shop":     "🛍️ Shop",
-    "balance":  "💰 Balance",
-    "deposit":  "💎 Deposit",
-    "history":  "📜 History",
-    "language": "🌐 Language",
-    "freebies": "🎁 Freebies",
-    "reseller": "🔗 API Key",
     "howto":    "📚 How to Use",
+    "reseller": "🔗 Reseller API",
+    "freebies": "🎁 Freebies",
 }
 
-_PERSIST_IDS = ("home", "shop", "balance", "deposit", "history",
-                "language", "freebies", "reseller", "howto")
+_PERSIST_IDS = ("home", "howto", "reseller", "freebies")
 
 
 def persist_button_from_text(text, user_id=None):

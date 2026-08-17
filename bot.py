@@ -1049,6 +1049,28 @@ async def post_init(app):
         import logging as _l
         _l.getLogger(__name__).warning(f"[SelfHeal] outer failure (safe to ignore): {_sh_e}")
 
+    # 🆕 v170.19: BLUE MENU BUTTON — bot command menu (Telegram input ke left
+    # side wala blue Menu button). Commands set + menu button = commands list.
+    try:
+        from telegram import BotCommand, MenuButtonCommands
+        _cmds = [
+            BotCommand("start",    "🛍️ Open Shop"),
+            BotCommand("balance",  "💰 My Balance"),
+            BotCommand("deposit",  "💎 Buy Points"),
+            BotCommand("orders",   "📜 My Orders"),
+            BotCommand("freebies", "🎁 Free Products"),
+            BotCommand("apikey",   "🔗 Reseller API Key"),
+            BotCommand("language", "🌐 Change Language"),
+            BotCommand("support",  "🎫 Support & Contact"),
+            BotCommand("help",     "📚 How to Use"),
+        ]
+        await app.bot.set_my_commands(_cmds)
+        await app.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        print("[Commands] ✅ Blue Menu Button commands set")
+    except Exception as _ce:
+        import logging as _l
+        _l.getLogger(__name__).warning(f"[Commands] set_my_commands failed: {_ce}")
+
     # 🆕 v24: No more Gmail loop. Binance API verifies on-demand only.
     # 🆕 v37: Periodic tier upgrade notifier (every 30s)
     try:
@@ -1533,6 +1555,63 @@ async def _reseller_pending_reminder_job(context):
         pass
 
 
+async def _cmd_help(update, context):
+    """📚 How to Use — blue menu button command."""
+    try:
+        from ui_extras import how_to_hub_from_text
+        await how_to_hub_from_text(update, context)
+    except Exception as e:
+        logging.getLogger(__name__).debug(f"[cmd help] {e}")
+
+
+async def _cmd_apikey(update, context):
+    """🔗 Reseller API Key — blue menu button command."""
+    try:
+        from handlers_admin import reseller_api_from_text
+        await reseller_api_from_text(update, context)
+    except Exception as e:
+        logging.getLogger(__name__).debug(f"[cmd apikey] {e}")
+
+
+async def _cmd_freebies(update, context):
+    """🎁 Freebies — blue menu button command."""
+    try:
+        from handlers_freebies import freebies_from_text
+        await freebies_from_text(update, context)
+    except Exception as e:
+        logging.getLogger(__name__).debug(f"[cmd freebies] {e}")
+
+
+async def _cmd_support(update, context):
+    """🎫 Support & Contact — blue menu button command."""
+    try:
+        from handlers_support import get_user_tickets
+        from database import get_response_with_auto_register
+        from config import DEFAULT_RESPONSES, WHATSAPP_NUMBER
+        uid = update.effective_user.id
+        tickets = get_user_tickets(uid)
+        open_count = sum(1 for t in tickets if t.get("status") in ("open", "in_progress"))
+        try:
+            text = get_response_with_auto_register(
+                "support_menu_header",
+                DEFAULT_RESPONSES.get("support_menu_header", "")).format(
+                whatsapp=WHATSAPP_NUMBER, total=len(tickets), open=open_count)
+        except Exception:
+            text = (f"🎫 *Support Center*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"Need help? Create a support ticket!\n"
+                    f"📞 *WhatsApp Support:* `+{WHATSAPP_NUMBER}`\n\n"
+                    f"📋 *Your Tickets:* {len(tickets)} total\n"
+                    f"🟡 *Open:* {open_count}\n\nChoose an option:")
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎫 New Ticket", callback_data="st_new")],
+            [InlineKeyboardButton("📋 My Tickets", callback_data="st_list")],
+            [InlineKeyboardButton("🔙 Back", callback_data="main_menu")],
+        ])
+        await update.message.reply_text(text, parse_mode="Markdown", reply_markup=kb)
+    except Exception as e:
+        logging.getLogger(__name__).debug(f"[cmd support] {e}")
+
 def main():
     print("=" * 50)
     print("🤖 BITE STORE")
@@ -2007,6 +2086,23 @@ def main():
         except Exception as e:
             await update.message.reply_text(f"❌ Diag failed: {e}")
     app.add_handler(CommandHandler("diagbtn", _diagbtn_command))
+
+    # ── 🆕 v170.19: BLUE MENU BUTTON commands (bot command menu) ──
+    try:
+        from handlers_start import (handle_shop_button, handle_balance_button,
+                                    handle_deposit_button, handle_history_button,
+                                    handle_language_button)
+        app.add_handler(CommandHandler("shop", handle_shop_button))
+        app.add_handler(CommandHandler("balance", handle_balance_button))
+        app.add_handler(CommandHandler("deposit", handle_deposit_button))
+        app.add_handler(CommandHandler("orders", handle_history_button))
+        app.add_handler(CommandHandler("language", handle_language_button))
+        app.add_handler(CommandHandler("help", _cmd_help))
+        app.add_handler(CommandHandler("apikey", _cmd_apikey))
+        app.add_handler(CommandHandler("freebies", _cmd_freebies))
+        app.add_handler(CommandHandler("support", _cmd_support))
+    except Exception as _ce:
+        print(f"[Commands] register failed: {_ce}")
 
     # ── Callback handlers ──
     for pat, fn in [
