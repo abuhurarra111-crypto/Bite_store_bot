@@ -8,6 +8,24 @@
 
 ---
 
+# 🚀 v170.15 (2026-08-17) — PERSISTENT BUTTONS: REAL BACKGROUND COLOR
+
+## 🎨 FIX (maine pehle galat kaha tha — research ke baad confirm):
+- Telegram Bot API 9.4 (Feb 2026) ne `style` field **KeyboardButton (reply
+  keyboard)** par bhi add kiya hai — sirf InlineKeyboardButton par nahi:
+  success(green)/primary(blue)/danger(red). PTB 22.8 isko support karta hai.
+- `persistent_menu()` ab REAL background color lagata hai:
+  - `get_persist_style(pid)`: persist_color_<pid> = green|blue|red → style
+  - `get_persist_emoji(pid)`: persist_emoji_<pid> → icon_custom_emoji_id
+- **Emoji-dot workaround REMOVED** (ab real color).
+- Premium emoji ICON bhi ab persistent button par render hota hai (rename
+  wakt custom emoji bhejo → icon ban jata hai).
+- Admin panel notes update (ab "support nahi" wali baat hata di).
+
+## ⚠️ FRESH DEPLOY: version bump v170.14 → v170.15.
+
+---
+
 # 🚀 v170.14 (2026-08-17) — BATCH 7: FREEBIES UI + BROADCAST + BULK TIERS SAVE
 
 ## 1. ⌨️ Persistent buttons color (honest workaround)

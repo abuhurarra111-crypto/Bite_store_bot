@@ -8925,7 +8925,7 @@ async def persist_panel_callback(update, context):
             f"🎨 Color: {_persist_color_label(pid)}",
             callback_data=f"persist_color_{pid}")])
     lines.append("")
-    lines.append("⚠️ _Reply-keyboard buttons plain text hote hain — Telegram inpar background color ya animated premium icon support NAHI karta. Color option button ke label me colored dot emoji (🟢🔵🔴) lagata hai taake alag nazar aaye. Emoji char (e.g. 🎁) rename me daal sakte ho._")
+    lines.append("🎨 _Color = REAL background (Bot API 9.4: 🟢green/🔵blue/🔴red). Premium emoji icon rename ke saath lg jata hai._")
     kb.append([InlineKeyboardButton("🔙 Back to Customization", callback_data="admin_customization")])
     await _safe_edit(q, "\n".join(lines), parse_mode="Markdown",
                      reply_markup=InlineKeyboardMarkup(kb))
@@ -8942,8 +8942,8 @@ def _persist_color_label(pid):
 
 
 async def persist_color_callback(update, context):
-    """🎨 Set colored-dot emoji for a persistent button (reply keyboard me
-    background color possible nahi — dot emoji best workaround)."""
+    """🎨 v170.15: REAL background color for a persistent reply-keyboard button
+    (Bot API 9.4 KeyboardButton.style — success/primary/danger)."""
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
@@ -8958,14 +8958,14 @@ async def persist_color_callback(update, context):
         [InlineKeyboardButton("🟢 Green", callback_data=f"persist_setcol_{pid}_green"),
          InlineKeyboardButton("🔵 Blue", callback_data=f"persist_setcol_{pid}_blue")],
         [InlineKeyboardButton("🔴 Red", callback_data=f"persist_setcol_{pid}_red"),
-         InlineKeyboardButton("⚪ None", callback_data=f"persist_setcol_{pid}_none")],
+         InlineKeyboardButton("⚪ Default", callback_data=f"persist_setcol_{pid}_none")],
         [InlineKeyboardButton("🔙 Back", callback_data="persist_panel")],
     ]
     await _safe_edit(q,
-        f"🎨 *Color for `{pid}`*\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"🎨 *Background Color for `{pid}`*\n━━━━━━━━━━━━━━━━━━━━\n"
         f"Current: `{_persist_color_label(pid)}`\n\n"
-        f"_(Reply keyboard background color support nahi karta — colored dot "
-        f"emoji label ke aage lagta hai.)_",
+        f"_(REAL button background — Bot API 9.4 support. Owner ke paas "
+        f"Telegram Premium ho to colors render hote hain.)_",
         parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 
@@ -8997,13 +8997,15 @@ async def persist_rename_callback(update, context):
     await _safe_edit(q,
         f"✏️ *Rename Persistent Button*\n━━━━━━━━━━━━━━━━━━━━\n"
         f"ID: `{pid}`\nCurrent: `{cur}`\n\n"
-        f"Type new label (emoji allowed, max 40 chars).\n"
+        f"Type new label (max 40 chars). Premium emoji bhejo to wo button ka "
+        f"*icon* ban jayega (Bot API 9.4).\n"
         f"_(Send `-` to reset to default, /cancel to abort)_",
         parse_mode="Markdown")
 
 
 async def persist_rename_received(update, context):
-    """🆕 v170.12: save renamed persistent button label."""
+    """🆕 v170.15: save renamed persistent button label + PREMIUM EMOJI ICON
+    (KeyboardButton.icon_custom_emoji_id — Bot API 9.4 support)."""
     pid = context.user_data.get("persist_ren_pid")
     if not pid:
         context.user_data.pop("persist_ren_pid", None)
@@ -9017,20 +9019,42 @@ async def persist_rename_received(update, context):
         from database import set_setting
         if val == "-":
             set_setting(f"persist_label_{pid}", "")
+            set_setting(f"persist_emoji_{pid}", "")
             context.user_data.pop("persist_ren_pid", None)
             await update.message.reply_text("♻️ Reset to default ✅")
             return True
         if len(val) > 40:
             await update.message.reply_text("❌ Too long (max 40 chars). Try again or /cancel")
             return True
-        set_setting(f"persist_label_{pid}", val)
+        # premium emoji capture → icon_custom_emoji_id (first custom emoji)
+        emoji_id = ""
+        try:
+            ce = [e for e in (update.message.entities or [])
+                  if getattr(e, "type", "") == "custom_emoji"]
+            if ce:
+                emoji_id = str(ce[0].custom_emoji_id or "")
+        except Exception:
+            emoji_id = ""
+        # button TEXT clean (custom emoji fallback char hata do jab icon laga)
+        label_text = val
+        if emoji_id:
+            try:
+                import re as _re
+                # pehla emoji cluster hatao (icon replace karega)
+                label_text = _re.sub(r'^\s*[^\w\s]+\uFE0F?\s*', '', label_text, count=1).strip()
+                label_text = label_text or val
+            except Exception:
+                label_text = val
+        set_setting(f"persist_label_{pid}", label_text)
+        set_setting(f"persist_emoji_{pid}", emoji_id)
     except Exception:
         context.user_data.pop("persist_ren_pid", None)
         return True
     context.user_data.pop("persist_ren_pid", None)
+    note = "\n⭐ Premium emoji icon bhi set ho gaya." if emoji_id else ""
     await update.message.reply_text(
-        f"✅ Persistent button `{pid}` → `{val}` saved.\n"
-        f"_Agli baar user ka menu open hoga to naya label dikhega._",
+        f"✅ Persistent button `{pid}` → `{label_text}` saved.{note}\n"
+        f"_Agli baar user ka menu open hoga to naya label + color + icon dikhega._",
         parse_mode="Markdown")
     return True
 

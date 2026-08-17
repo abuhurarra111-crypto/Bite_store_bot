@@ -279,38 +279,47 @@ _PERSIST_IDS = ("home", "howto", "reseller", "freebies")
 
 def get_persist_label(pid, user_id=None):
     """Persistent button ka label: admin override → default → (translate nahi
-    hota kyunki admin ka custom text user-language independent hota hai).
-    🆕 v170.14: color dot prefix (persist_color_<id>) — reply keyboard sirf
-    text/emoji render karta hai, background color support NAHI, isliye colored
-    dot emoji se visual cue dete hain."""
-    label = ""
+    hota kyunki admin ka custom text user-language independent hota hai)."""
     try:
         from database import get_setting
         custom = (get_setting(f"persist_label_{pid}", "") or "").strip()
         if custom:
-            label = custom
+            return custom
     except Exception:
         pass
-    if not label:
-        label = _PERSIST_DEFAULTS.get(pid, pid)
-        # v137: default labels user language me translate hote hain
-        try:
-            from i18n import tr_user
-            _t = tr_user(label, user_id=user_id)
-            if _t:
-                label = _t
-        except Exception:
-            pass
-    # color dot prefix
+    label = _PERSIST_DEFAULTS.get(pid, pid)
+    # v137: default labels user language me translate hote hain
     try:
-        from database import get_setting
-        color = (get_setting(f"persist_color_{pid}", "") or "").strip()
-        dot = {"green": "🟢", "blue": "🔵", "red": "🔴"}.get(color, "")
-        if dot:
-            label = f"{dot} {label}"
+        from i18n import tr_user
+        _t = tr_user(label, user_id=user_id)
+        if _t:
+            label = _t
     except Exception:
         pass
     return label
+
+
+def get_persist_style(pid):
+    """🆕 v170.15: REAL background color for a persistent reply-keyboard button.
+    Bot API 9.4 ne KeyboardButton par bhi `style` add kiya hai:
+      success (green) / primary (blue) / danger (red).
+    Setting: persist_color_<pid> = green|blue|red (khali = default white)."""
+    try:
+        from database import get_setting
+        c = (get_setting(f"persist_color_{pid}", "") or "").strip()
+        return {"green": "success", "blue": "primary", "red": "danger"}.get(c, "")
+    except Exception:
+        return ""
+
+
+def get_persist_emoji(pid):
+    """🆕 v170.15: optional premium emoji ICON for a persistent button
+    (KeyboardButton.icon_custom_emoji_id). Setting: persist_emoji_<pid>."""
+    try:
+        from database import get_setting
+        return (get_setting(f"persist_emoji_{pid}", "") or "").strip()
+    except Exception:
+        return ""
 
 
 def get_persist_order():
@@ -331,18 +340,27 @@ def get_persist_order():
 
 
 def persistent_menu(user_id=None):
-    """🆕 v170.12: configurable persistent reply keyboard.
-    Buttons: 🏠 Main Menu · 📚 How to Use · 🔗 Reseller API (rename/reorder
-    admin panel se). Telegram reply-keyboard buttons sirf PLAIN TEXT hote
-    hain — background color / animated premium icon inpar support NAHI."""
+    """🆕 v170.15: configurable persistent reply keyboard — REAL background
+    colors (green/blue/red) + premium emoji icons (Bot API 9.4 KeyboardButton
+    style + icon_custom_emoji_id). Buttons: home/howto/reseller/freebies."""
     order = get_persist_order()
-    labels = [(pid, get_persist_label(pid, user_id=user_id)) for pid in order]
-    labels = [(pid, lbl) for pid, lbl in labels if lbl]
-    # buttons ko rows me baanto (2 per row, phone par achi lagti hai)
+    buttons = []
+    for pid in order:
+        lbl = get_persist_label(pid, user_id=user_id)
+        if not lbl:
+            continue
+        style = get_persist_style(pid) or None
+        emoji_id = get_persist_emoji(pid) or None
+        kw = {}
+        if style:
+            kw["style"] = style
+        if emoji_id:
+            kw["icon_custom_emoji_id"] = emoji_id
+        buttons.append(KeyboardButton(lbl, **kw))
+    # buttons ko rows me baanto (2 per row)
     rows = []
-    for i in range(0, len(labels), 2):
-        row = [KeyboardButton(lbl) for _, lbl in labels[i:i + 2]]
-        rows.append(row)
+    for i in range(0, len(buttons), 2):
+        rows.append(buttons[i:i + 2])
     return ReplyKeyboardMarkup(
         rows, resize_keyboard=True, is_persistent=True
     )
