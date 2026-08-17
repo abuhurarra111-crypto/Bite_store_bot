@@ -318,10 +318,10 @@ ID: `{user_id}`""",
     # ══════════════════════════════════════
     # 🆕 v170.13 — Freebies (free products for every user)
     # ══════════════════════════════════════
-    "freebies_menu_header": "🎁 *Freebies*\n━━━━━━━━━━━━━━━━━━━━\n\n_Ye products bilkul FREE hain — claim karo!_",
-    "freebies_empty": "🎁 *Freebies*\n━━━━━━━━━━━━━━━━━━━━\n\n_Abhi koi free product available nahi. Wapis aana!_",
-    "freebie_success": "🎉 *Freebie Claimed!*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 {product}\n✅ Delivered FREE above.\n\n🔁 Dobara claim ke liye: {reclaim} referrals.",
-    "freebie_need_refs": "🔁 Dobara claim ke liye *{required} referrals* chahiye.\n👥 Aapke referrals: *{have}*\n⭐ Aur *{missing}* chahiye.",
+    "freebies_menu_header": "🎁 *Freebies*\n━━━━━━━━━━━━━━━━━━━━\n\n_These products are 100% FREE — claim yours now!_",
+    "freebies_empty": "🎁 *Freebies*\n━━━━━━━━━━━━━━━━━━━━\n\n_No free products available right now. Check back soon!_",
+    "freebie_success": "🎉 *Freebie Claimed!*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 {product}\n✅ Delivered FREE above.\n\n🔁 To claim again: {reclaim} referrals.",
+    "freebie_need_refs": "🔁 To claim again you need *{required} referrals*.\n👥 Your referrals: *{have}*\n⭐ You need *{missing}* more.",
     "freebie_claim_limit": "❌ You reached the claim limit for this product.",
     "freebie_out_of_stock": "😔 Out of stock right now. Please try later.",
 

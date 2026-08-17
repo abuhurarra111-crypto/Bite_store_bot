@@ -245,28 +245,28 @@ Apni pasand ki language select karein:""",
     "freebies_menu_header": """🎁 *Freebies*
 ━━━━━━━━━━━━━━━━━━━━
 
-_Ye products bilkul FREE hain — abhi claim karo!_""",
+_These products are 100% FREE — grab yours now!_""",
 
     "freebies_empty": """🎁 *Freebies*
 ━━━━━━━━━━━━━━━━━━━━
 
-_Abhi koi free product nahi. Baad mein aana!_""",
+_No free products right now. Check back soon!_""",
 
     "freebie_success": """🎉 *Freebie Claimed!*
 ━━━━━━━━━━━━━━━━━━━━
 
 📦 {product}
-✅ Upar FREE deliver ho gaya.
+✅ Delivered FREE above.
 
-🔁 Dobara claim ke liye: {reclaim} referrals.""",
+🔁 To claim again: {reclaim} referrals.""",
 
-    "freebie_need_refs": """🔁 Dobara claim ke liye *{required} referrals* chahiye.
-👥 Aapke referrals: *{have}*
-⭐ Aur *{missing}* chahiye.""",
+    "freebie_need_refs": """🔁 To claim again you need *{required} referrals*.
+👥 Your referrals: *{have}*
+⭐ You need *{missing}* more.""",
 
-    "freebie_claim_limit": "❌ Is product ki claim limit poori ho gayi.",
+    "freebie_claim_limit": "❌ You reached the claim limit for this product.",
 
-    "freebie_out_of_stock": "😔 Abhi out of stock hai. Thori dair baad try karein.",
+    "freebie_out_of_stock": "😔 Out of stock right now. Please try again later.",
 
     "freeclaim_share_message": """🎁 Mein {product} FREE le raha hoon {shop} par!
 

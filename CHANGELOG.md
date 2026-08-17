@@ -8,6 +8,19 @@
 
 ---
 
+# 🚀 v170.27 (2026-08-17) — FREEBIES INSTRUCTIONS ENGLISH + READY DB
+
+## 🌐 Freebies button ki instructions ab ENGLISH (user demand)
+- config.py: freebies_menu_header, freebies_empty, freebie_success,
+  freebie_need_refs → English (pehle Roman Urdu).
+- handlers_freebies.py: _show_freebies_menu ab freebies_menu_header response
+  use karta hai (hardcoded Roman Urdu hata di); claim screen + success confirm
+  ke Roman Urdu lines English.
+- response_templates.py: freebies keys ke Style B templates bhi English.
+- READY DB me freebies English values bake (restore ke baad seedha English).
+
+---
+
 # 🚀 v170.26 (2026-08-17) — WHERE TO SEND FIX + EMPTY-MESSAGE SPAM FIX
 
 ## 1. 🐛 "📤 Where to Send?" button temporary-error FIX

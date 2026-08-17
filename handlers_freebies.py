@@ -87,13 +87,15 @@ async def _show_freebies_menu(target, uid, from_text=False):
     if not freebies:
         txt = _r("freebies_empty",
                  "🎁 *Freebies*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                 "_Abhi koi free product available nahi. Wapis aana!_")
+                 "_No free products available right now. Check back soon!_")
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("🔙 Back", callback_data="main_menu"),
         ]])
     else:
-        lines = ["🎁 *Freebies*", "━━━━━━━━━━━━━━━━━━━━",
-                 "_Ye products bilkul FREE hain — claim karo!_", ""]
+        header = _r("freebies_menu_header",
+                    "🎁 *Freebies*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                    "_These products are 100% FREE — claim yours now!_")
+        lines = header.split("\n") + [""]
         kb_rows = []
         for f in freebies:
             pid = int(f.get("product_id") or 0)
@@ -187,9 +189,9 @@ async def _show_freebie_product(q, uid, pid):
             InlineKeyboardButton("🔙 Back", callback_data="main_menu"),
         ]])
     elif required_refs > 0 and refs_have < required_refs:
-        lines.append(f"🔁 Dobara claim ke liye *{required_refs} referrals* chahiye.")
-        lines.append(f"👥 Aapke referrals: *{refs_have}*")
-        lines.append(f"⭐ Aur *{required_refs - refs_have}* chahiye.")
+        lines.append(f"🔁 To claim again you need *{required_refs} referrals*.")
+        lines.append(f"👥 Your referrals: *{refs_have}*")
+        lines.append(f"⭐ You need *{required_refs - refs_have}* more.")
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔗 Refer & Earn", callback_data="referral")],
             [InlineKeyboardButton("🎁 Freebies", callback_data="freebies_menu"),
@@ -227,7 +229,7 @@ async def freebie_do_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     prod = get_product(pid)
     cfg = get_freebie_config(pid)
     if not prod or not cfg.get("enabled"):
-        await _safe_edit(q, "ℹ️ Freebie ab available nahi.")
+        await _safe_edit(q, "ℹ️ This freebie is not available right now.")
         return
 
     claims = freebie_claims_count(uid, pid)
@@ -305,7 +307,7 @@ async def freebie_do_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         confirm = _r("freebie_success",
                      "🎉 *Freebie Claimed!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
                      "📦 {product}\n✅ Delivered FREE above.\n\n"
-                     "🔁 Dobara claim ke liye: {reclaim} referrals.")
+                     "🔁 To claim again: {reclaim} referrals.")
         confirm = confirm.replace("{product}", escape_md(_clean_name(prod.get('name') or '', 60)))
         confirm = confirm.replace("{reclaim}", str(reclaim))
         _st, _sm = smart_text_and_mode(confirm, "Markdown")
