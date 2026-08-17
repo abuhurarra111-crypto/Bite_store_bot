@@ -1529,6 +1529,16 @@ async def adm_delivery_text_received(update, context):
         add_order_delivery(oid, kind='text', content=delivery_text)
         # 🆕 v69 BUG FIX: NO points credit on product delivery.
         pts = 0
+        # 🆕 v170.23: manual (own) product delivered → SAME unified admin
+        # notification jo supplier products ki aati hai (username + premium
+        # emoji + payment + wallet + profit). Pehle koi notification nahi aati thi.
+        try:
+            from handlers_order import _notify_admin_order_delivered
+            await _notify_admin_order_delivered(
+                context.bot, o, qty=1,
+                payment_method=str(o.get('payment_method') or ''))
+        except Exception:
+            pass
 
         msg = _render_delivery_message_for_order(o, p, delivery_text)
         complete_header = (

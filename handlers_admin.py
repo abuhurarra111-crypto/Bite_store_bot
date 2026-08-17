@@ -986,6 +986,10 @@ async def approve_order_callback(u,c):
             # 🔧 AUDIT-FIX C1/C2 (2026-07-31): structured result — never mark
             # 'delivered' when the stock pool couldn't cover the full qty.
             from database import build_delivery_detailed, save_order_delivery_content, add_order_delivery
+            try:
+                _appr_stock_before = int(dict(get_product(o['product_id']) or {}).get('stock') or 0)
+            except Exception:
+                _appr_stock_before = None
             _dres = build_delivery_detailed(o['product_id'], o['id'], order_qty, o['user_id'])
             delivery = _dres['text']
             # 🐛 v161.20 FIX: this approval path never saved the delivery content
@@ -996,6 +1000,17 @@ async def approve_order_callback(u,c):
                 # 🆕 v69: NO add_points here
                 update_order_status(o['id'], 'delivered')
                 msg = _r("payment_verified_product").format(order_id=o['id'], product=o['product_name'], delivery=delivery, points=pts)
+                # 🆕 v170.23: own-product delivered → SAME unified admin
+                # notification (pehle approve path me koi notification nahi aati thi).
+                try:
+                    from handlers_order import _notify_admin_order_delivered
+                    _appr_stock_after = int(dict(get_product(o['product_id']) or {}).get('stock') or 0)
+                    await _notify_admin_order_delivered(
+                        c.bot, o, qty=order_qty,
+                        stock_before=_appr_stock_before, stock_after=_appr_stock_after,
+                        payment_method=str(o.get('payment_method') or ''))
+                except Exception:
+                    pass
             else:
                 _got, _want = _dres.get('delivered', 0), _dres.get('requested', order_qty)
                 update_order_status(o['id'], 'paid_pending_delivery')
@@ -8286,6 +8301,15 @@ async def deliver_command(update, context):
 
         # 🆕 v69 BUG FIX: NO points credit on /deliver (was a free-refund bug)
         pts = 0
+        # 🆕 v170.23: /deliver se deliver hone par bhi unified admin
+        # notification (pehle nahi aati thi).
+        try:
+            from handlers_order import _notify_admin_order_delivered
+            await _notify_admin_order_delivered(
+                context.bot, o, qty=1,
+                payment_method=str(o.get('payment_method') or ''))
+        except Exception:
+            pass
         
     # 🆕 v72: wrap delivery_text in byte-preserving HTML <code> block.
     from templates_bundle import wrap_raw_for_telegram

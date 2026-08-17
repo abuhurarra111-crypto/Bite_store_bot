@@ -4074,16 +4074,10 @@ async def route_order_to_supplier(bot, order):
         pass
     update_order_status(order['id'], 'delivered')
 
-    # 🆕 v170.10: ADMIN notification — supplier delivered (username + qty +
-    # supplier name + sold/cost/profit). Customer ko kabhi supplier info nahi.
-    try:
-        from handlers_order import _notify_admin_order_delivered
-        await _notify_admin_order_delivered(
-            bot, order, qty=qty,
-            supplier_name=str(sup.get('name') or ''),
-            cost_usd=(float(ep.get('cost_usd') or 0) or None))
-    except Exception as _nfe:
-        logger.warning(f"[router] admin delivered notify failed: {_nfe}")
+    # 🐛 v170.23 FIX: pehle yahan EK notification bheji jaati thi aur neeche
+    # "Supplier order delivered!" block SE DOOSRI bheji jaati thi → admin ko
+    # 2 notifications. Ab yahan koi notification NAHI — sirf neeche ek hi
+    # (unified, username + premium emoji + full detail ke saath).
 
     # Send to customer
     # If bulk (>3 items), also send as .txt file for convenience
@@ -4203,31 +4197,23 @@ async def route_order_to_supplier(bot, order):
     except Exception:
         pass
 
-    pk_time = datetime.now(timezone(timedelta(hours=5))).strftime("%Y-%m-%d %I:%M:%S %p PKT")
-
-    # Notify admin
+    # 🐛 v170.23 FIX: sirf EK unified admin notification (pehle 2 aati thin).
+    # Ab username + premium emoji + payment + wallet + API balance + PKT time
+    # sab isi EK notification me hain (customer ko kabhi supplier info nahi).
     try:
-        from config import ADMIN_ID as _AID
-        sold_usd = float(order.get('price') or 0)
-        warn_line = f"\n\n⚠️ {escape_md(overdelivery_note)}" if overdelivery_note else ""
-        await bot.send_message(_AID,
-            f"✅ *Supplier order delivered!*\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🛒 Order: `#{order['id']}`\n"
-            f"🕒 Time: `{pk_time}`\n"
-            f"👤 User ID: `{order['user_id']}`\n"
-            f"🏬 Supplier: {sup['name']}\n"
-            f"📦 Product: {escape_md(ep['name'][:40])}\n"
-            f"🔢 Qty: {qty}\n"
-            f"💳 Payment: `{escape_md(order.get('payment_method') or '-')}`\n"
-            f"💎 User Wallet: `{fmt_points(user_wallet_before)}` → `{fmt_points(user_wallet_after)}`\n"
-            f"🔌 API Balance: `{fmt_price(supplier_balance_before)}` → `{fmt_price(supplier_balance_after)}`\n"
-            f"💰 Cost: `{fmt_price(supplier_cost)}` · Sold: `{fmt_price(sold_usd)}`\n"
-            f"📈 Profit: `{fmt_price(sold_usd - supplier_cost)}`"
-            f"{warn_line}",
-            parse_mode="Markdown")
-    except Exception:
-        pass
+        from handlers_order import _notify_admin_order_delivered
+        await _notify_admin_order_delivered(
+            bot, order, qty=qty,
+            supplier_name=str(sup.get('name') or ''),
+            cost_usd=(float(ep.get('cost_usd') or 0) or None),
+            payment_method=str(order.get('payment_method') or ''),
+            user_wallet_before=user_wallet_before,
+            user_wallet_after=user_wallet_after,
+            api_balance_before=supplier_balance_before,
+            api_balance_after=supplier_balance_after,
+            extra_note=str(overdelivery_note or ''))
+    except Exception as _nfe:
+        logger.warning(f"[router] admin delivered notify failed: {_nfe}")
 
     return True
 

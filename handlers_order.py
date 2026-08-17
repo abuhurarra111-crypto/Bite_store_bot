@@ -948,18 +948,30 @@ async def _send_deposit_success(bot, order, paid_amount):
 
 
 async def _notify_admin_order_delivered(bot, order, qty=1, supplier_name="",
-                                        cost_usd=None, stock_before=None, stock_after=None):
-    """🆕 v170.10: ADMIN notification jab koi PRODUCT order deliver ho —
-    supplier product ya own (static/accounts) product. Full details:
-    customer name + @username + user id + qty + time + sold price + profit +
-    (own products) stock before/after + supplier name (supplier products)."""
+                                        cost_usd=None, stock_before=None, stock_after=None,
+                                        payment_method="", user_wallet_before=None,
+                                        user_wallet_after=None, api_balance_before=None,
+                                        api_balance_after=None, extra_note=""):
+    """🆕 v170.23: SINGLE unified admin notification for EVERY product delivery
+    (supplier + own/manual). Full detail: buyer name + @username + ID, premium-
+    emoji product name, qty, payment, user wallet before/after, supplier + API
+    balance (supplier products), stock before/after (own products), cost/sold/
+    profit, PKT time.
+
+    🐛 v170.23 FIX: pehle supplier products par 2 notifications aati thin
+    ("Order Delivered!" + "Supplier order delivered!"). Ab sirf EK aati hai.
+    🐛 v170.23 FIX: buyer username + product premium emoji ab har notification
+    me hain (user demand — pehle bottom wale me dono missing the).
+    🛡️ v170.23: customer ko kabhi supplier ka naam nahi jaata — ye sirf ADMIN
+    notification hai (notify_admin → ADMIN_ID)."""
     try:
         from utils import notify_admin
+        from datetime import datetime, timezone, timedelta
         oid = int(order.get('id') or 0)
         uid = int(order.get('user_id') or 0)
         sold = float(order.get('price') or 0)
         qty = max(1, int(qty or 1))
-        # customer name + username
+        # ── customer name + @username ──
         fname = str(order.get('user_name') or '').strip()
         uname = ""
         try:
@@ -971,7 +983,7 @@ async def _notify_admin_order_delivered(bot, order, qty=1, supplier_name="",
                     fname = str(u.get('first_name') or '').strip()
         except Exception:
             pass
-        # profit
+        # ── profit ──
         try:
             if cost_usd is None:
                 from database import get_product
@@ -982,6 +994,18 @@ async def _notify_admin_order_delivered(bot, order, qty=1, supplier_name="",
         except Exception:
             cost = 0.0
         profit = round((sold - cost) * qty, 6)
+        # ── user wallet before/after (auto-compute when not provided) ──
+        if user_wallet_before is None or user_wallet_after is None:
+            try:
+                from database import get_user
+                _uw = get_user(uid)
+                _w_after = float((_uw.get('points') or 0) if _uw else 0)
+                _w_before = _w_after
+                if str(order.get('payment_method') or '').lower() == 'wallet':
+                    _w_before = _w_after + float(order.get('binance_amount') or 0)
+                user_wallet_before, user_wallet_after = _w_before, _w_after
+            except Exception:
+                pass
         # 🐛 v170.10: ye message HTML mode me render hota hai (premium emoji).
         # markdownish_to_html `_`/`*` ko italic/bold bana deta hai (escape respect
         # nahi karta) → isliye unhe HTML entities mein convert karo (&#95; etc.)
@@ -1000,16 +1024,23 @@ async def _notify_admin_order_delivered(bot, order, qty=1, supplier_name="",
         fname = _safe_plain(fname)
         uname = _safe_plain(uname)
         name_line = f"{fname} (@{uname})" if (fname and uname) else (fname or uname or "—")
+        # ── PKT time (user's timezone) ──
+        pk_time = datetime.now(timezone(timedelta(hours=5))).strftime("%Y-%m-%d %I:%M:%S %p PKT")
+        title = "✅ *Supplier order delivered!*" if supplier_name else "🎉 *Order Delivered!* ✅"
         lines = [
-            "🎉 *Order Delivered!* ✅",
+            title,
             "━━━━━━━━━━━━━━━━━━━━",
-            f"🧾 Order: `#{oid}`",
+            f"🛒 Order: `#{oid}`",
+            f"🕒 Time: `{pk_time}`",
             f"👤 Customer: `{name_line}` (`{uid}`)",
             f"📦 Product: {_fmt_msg_name(order.get('product_name'))}",
             f"🔢 Qty: *{qty}*",
-            f"💰 Sold: *${sold:.4g}* · Cost: *${cost:.4g}*",
-            f"📈 Profit: *${profit:.4g}*",
         ]
+        pm = str(payment_method or order.get('payment_method') or '').strip()
+        if pm:
+            lines.append(f"💳 Payment: `{_safe_plain(pm)}`")
+        if user_wallet_before is not None and user_wallet_after is not None:
+            lines.append(f"💎 User Wallet: `{fmt_points(user_wallet_before)}` → `{fmt_points(user_wallet_after)}`")
         if supplier_name:
             try:
                 import html as _html2
@@ -1017,10 +1048,16 @@ async def _notify_admin_order_delivered(bot, order, qty=1, supplier_name="",
                 supplier_name = _html2.escape(_hst2(str(supplier_name)))
             except Exception:
                 pass
-            lines.append(f"🏭 Supplier: *{supplier_name}*")
+            lines.append(f"🏬 Supplier: *{supplier_name}*")
+            if api_balance_before is not None and api_balance_after is not None:
+                lines.append(f"🔌 API Balance: `{fmt_price(api_balance_before)}` → `{fmt_price(api_balance_after)}`")
         if stock_before is not None and stock_after is not None:
             lines.append(f"📊 Stock: *{stock_before}* → *{stock_after}*")
-        lines.append(f"🕐 Time: {_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(f"💰 Cost: `{fmt_price(cost)}` · Sold: `{fmt_price(sold)}`")
+        lines.append(f"📈 Profit: `{fmt_price(profit)}`")
+        if extra_note:
+            lines.append("")
+            lines.append(f"⚠️ {extra_note}")
         await notify_admin(bot, "\n".join(lines))
     except Exception as e:
         import logging as _l
@@ -1050,9 +1087,12 @@ async def _send_static_media_delivery(bot, order, product, method, amount, pts_b
     if file_id:
         set_order_delivery_file(order['id'], file_id)
     update_order_status(order['id'], 'delivered')
-    # 🆕 v170.10: ADMIN notification — static media delivered (username + qty + profit)
+    # 🆕 v170.23: ADMIN notification — static media delivered (full detail:
+    # username + premium emoji + payment + wallet + profit).
     try:
-        await _notify_admin_order_delivered(bot, order, qty=1)
+        await _notify_admin_order_delivered(
+            bot, order, qty=1,
+            payment_method=str(order.get('payment_method') or ''))
     except Exception:
         pass
     # 🆕 v66: bonus 10pts removed — no add_points call here.
@@ -1288,7 +1328,8 @@ async def fulfill_paid_product_order(bot, order, paid_amount=None, *, payment_me
         _stock_after = None
     try:
         await _notify_admin_order_delivered(
-            bot, order, qty=qty, stock_before=_stock_before, stock_after=_stock_after)
+            bot, order, qty=qty, stock_before=_stock_before, stock_after=_stock_after,
+            payment_method=str(order.get('payment_method') or ''))
     except Exception:
         pass
 

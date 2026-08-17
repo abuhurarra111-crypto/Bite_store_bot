@@ -8,6 +8,44 @@
 
 ---
 
+# 🚀 v170.23 (2026-08-17) — NOTIFICATIONS: EK HI (UNIFIED) + USERNAME/PREMIUM EMOJI + OWN PRODUCTS
+
+## 1. 🐛 Duplicate notification FIX (user: "2 dfa notifications a rhy")
+- Root cause: supplier product deliver hone par 2 ADMIN notifications aati thin —
+  (a) `_notify_admin_order_delivered` ("🎉 Order Delivered! ✅") router ke andar se,
+  (b) alag "✅ Supplier order delivered!" block. Dono ek hi delivery event par.
+- Fix: router se duplicate call HATAYI. Ab sirf EK unified notification aati hai.
+
+## 2. 👤 Username + 🎖️ premium emoji in notification (user demand)
+- Bottom wale ("Supplier order delivered!") me pehle sirf `User ID` tha (username
+  nahi) aur product ka premium emoji nahi tha.
+- Ab `_notify_admin_order_delivered` (unified) me:
+  - `👤 Customer: Name (@username) (ID)` — username ke saath
+  - `📦 Product:` premium-emoji aware (`_fmt_msg_name`)
+  - `💳 Payment`, `💎 User Wallet before→after`, `🔌 API Balance` (supplier),
+    `📊 Stock` (own), `💰 Cost · Sold`, `📈 Profit`, `🕒 Time (PKT)`.
+
+## 3. 🛒 OWN products (Edit Items se add kiye, no supplier) — notification fix
+- Pehle own products ke deliver hone par kuch paths me notification NAHI aati thi.
+- Ab sab paths unified notification bhejte hain:
+  - auto/accounts delivery (`fulfill_paid_product_order`)
+  - static media delivery (`_send_static_media_delivery`)
+  - admin approve path (`approve_order_callback`)
+  - manual delivery (`adm_delivery_text_received` — Pending Manual Delivery)
+  - `/deliver` command
+
+## 4. 🛡️ Supplier name leak — VERIFIED
+- Customer ko supplier ka naam KABHI nahi dikhta (verify kiya): customer delivery
+  (render_v83_delivery), order detail (my_order_detail), refund/retry messages —
+  sab supplier-name-free. Supplier name sirf ADMIN notifications + admin
+  "Completed Orders" panel me hai (admin-only, v170.5 se).
+
+## 5. 🧪 Tests
+- Unified notification (supplier + own) mock test pass: username, premium emoji,
+  payment, wallet, API balance/stock, PKT time — sab sahi jagah.
+
+---
+
 # 🚀 v170.22 (2026-08-17) — EDIT RESPONSES: 2 READYMADE TEMPLATES + CUSTOM + CANCEL FIX
 
 ## 1. 🎨 Edit Responses — har response ke 2 readymade templates (user demand)
