@@ -4047,7 +4047,9 @@ def _product_name_with_fixed_emoji(product):
     Rules:
       - name already contains premium <tg-emoji> markup → leave as-is (the
         shop name emoji is already there; no double emoji).
-      - name already starts with the emoji char → leave as-is.
+      - name already starts with the emoji char → strip it and prepend the
+        PREMIUM fixed emoji (🐛 v170.34: pehle yahan raw simple emoji return
+        hota tha → premium render nahi hota tha).
       - otherwise prepend the fixed emoji (premium when an id exists)."""
     try:
         d = dict(product) if product else {}
@@ -4060,12 +4062,13 @@ def _product_name_with_fixed_emoji(product):
         eid, ech = _product_buy_emoji(int(pid))
         if not ech:
             return raw
-        plain = raw.replace("[[HTML]]", "")
-        if plain.lstrip().startswith(ech):
-            return raw
+        # strip [[HTML]] sentinel + leading emoji char (agar name me hai)
+        plain = raw.replace("[[HTML]]", "").lstrip()
+        if plain.startswith(ech):
+            plain = plain[len(ech):].lstrip()
         if eid:
-            return f'[[HTML]]<tg-emoji emoji-id="{eid}">{ech}</tg-emoji> {raw}'
-        return f"{ech} {raw}"
+            return f'[[HTML]]<tg-emoji emoji-id="{eid}">{ech}</tg-emoji> {plain}'
+        return f"{ech} {plain}"
     except Exception:
         return str(product.get("name") or "Product") if product else "Product"
 

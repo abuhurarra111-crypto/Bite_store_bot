@@ -8,6 +8,19 @@
 
 ---
 
+# 🚀 v170.34 (2026-08-17) — FIX: FREEBIE BROADCAST ME PREMIUM EMOJI (FIXED YA NAME)
+
+## 🎖️ Freebie claim broadcast me product ka premium emoji
+- Root: `_fmt_msg_name` sirf NAME ke andar ka premium emoji dekhta tha — FIXED
+  emoji (supplier ext emoji) wale products par broadcast/admin-notify me simple
+  emoji render hota tha.
+- Fix: freebie claim broadcast + admin notification + product screen ab
+  `_product_name_with_fixed_emoji` use karte hain (fixed emoji YA name — dono).
+- `_product_name_with_fixed_emoji` edge-case fix: agar name emoji char se START
+  ho to bhi ab premium fixed emoji prepend hota hai (pehle raw simple return).
+
+---
+
 # 🚀 v170.33 (2026-08-17) — FIX: FREEBIE PAR "ORDER DELIVERED" DUPLICATE NOTIFICATION
 
 ## 🐛 Freebie claim par admin ko 2 notifications (Order Delivered + Freebie Claimed)

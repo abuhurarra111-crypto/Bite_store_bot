@@ -190,12 +190,17 @@ async def _show_freebie_product(q, uid, pid):
     def _menu_btn():
         return _btn("freebie_menu_back", "🎁 Freebies", "freebies_menu")
 
-    # 🆕 v170.29: product name PREMIUM emoji ke saath render (pehle simple emoji)
+    # 🆕 v170.34: product name PREMIUM emoji ke saath render — FIXED emoji ya
+    # name ke andar ka emoji, dono support (pehle sirf name wala).
     try:
-        from handlers_order import _fmt_msg_name
-        name_line = _fmt_msg_name(prod.get("name") or "")
+        from fake_engagement import _product_name_with_fixed_emoji
+        name_line = _product_name_with_fixed_emoji(prod)
     except Exception:
-        name_line = escape_md(_clean_name(prod.get("name") or "", 40))
+        try:
+            from handlers_order import _fmt_msg_name
+            name_line = _fmt_msg_name(prod.get("name") or "")
+        except Exception:
+            name_line = escape_md(_clean_name(prod.get("name") or "", 40))
 
     lines = [
         f"🎁 {name_line}",
@@ -309,7 +314,14 @@ async def freebie_do_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         from utils import notify_admin, fmt_price
         from datetime import datetime, timezone, timedelta
-        from handlers_order import _fmt_msg_name
+        # 🆕 v170.34: product premium emoji (FIXED ya name) — _fmt_msg_name sirf
+        # name dekhta tha; fixed emoji products par simple emoji aata tha.
+        try:
+            from fake_engagement import _product_name_with_fixed_emoji as _pfn
+            _prod_line = _pfn(prod)
+        except Exception:
+            from handlers_order import _fmt_msg_name
+            _prod_line = _fmt_msg_name(prod.get('name'))
         # buyer name + @username
         fname = user_obj.first_name or ''
         uname = user_obj.username or ''
@@ -344,7 +356,7 @@ async def freebie_do_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"🛒 Order: `#{oid}`\n"
             f"🕒 Time: `{pk_time}`\n"
             f"👤 Customer: `{name_line}` (`{uid}`)\n"
-            f"📦 Product: {_fmt_msg_name(prod.get('name'))}\n"
+            f"📦 Product: {_prod_line}\n"
             f"🔁 Claim: #{claims + 1}\n"
             f"💳 Payment: `freebie`\n"
             f"💰 Cost: `{fmt_price(cost)}` · Sold: `$0`\n"
@@ -372,12 +384,16 @@ async def freebie_do_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                      "🎉 *Freebie Claimed!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
                      "📦 {product}\n✅ Delivered FREE above.\n\n"
                      "🔁 To claim again: {reclaim} referrals.")
-        # 🆕 v170.31: product PREMIUM emoji ke saath render (pehle simple emoji)
+        # 🆕 v170.34: product PREMIUM emoji (fixed ya name) ke saath render
         try:
-            from handlers_order import _fmt_msg_name
-            pname_line = _fmt_msg_name(prod.get('name') or "")
+            from fake_engagement import _product_name_with_fixed_emoji
+            pname_line = _product_name_with_fixed_emoji(prod)
         except Exception:
-            pname_line = escape_md(_clean_name(prod.get('name') or '', 60))
+            try:
+                from handlers_order import _fmt_msg_name
+                pname_line = _fmt_msg_name(prod.get('name') or "")
+            except Exception:
+                pname_line = escape_md(_clean_name(prod.get('name') or '', 60))
         confirm = confirm.replace("{product}", pname_line)
         confirm = confirm.replace("{reclaim}", str(reclaim))
         _st, _sm = smart_text_and_mode(confirm, "Markdown")
