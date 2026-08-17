@@ -493,10 +493,13 @@ async def _process_referral_attribution(context, new_user, referrer_id, is_new_u
         try:
             add_pending_referral(referrer_id, new_user.id, int(product_id or 0), 'start_complete')
             log_referral_attempt(referrer_id, new_user.id, 'pending', f'pending_pid_{int(product_id or 0)}')
-            # 🆕 v161.16: fast 5s fallback (was 30s × 5 rounds = 2.5 min lock).
+            # 🆕 v170.9: math verification ON ho to fast-approve job MAT schedule
+            # karo — math ka sahi jawab hi referral count karega (wrong/abandon
+            # par count nahi hota). Math OFF ho to 5s fallback se stuck nahi hota.
             try:
-                if getattr(context, 'job_queue', None):
-                    context.job_queue.run_once(_pending_referral_job, 5, data={'uid': int(new_user.id)}, name=f'pending_ref_{int(new_user.id)}')
+                if not _referral_math_enabled():
+                    if getattr(context, 'job_queue', None):
+                        context.job_queue.run_once(_pending_referral_job, 5, data={'uid': int(new_user.id)}, name=f'pending_ref_{int(new_user.id)}')
             except Exception:
                 pass
         except Exception:
@@ -868,14 +871,18 @@ async def continue_after_force_join_verified(update, context, u):
     except Exception:
         is_new = False
     if rid and int(rid) != int(u.id):
+        # 🆕 v170.9: math verification PEHLE, count BAAD
+        _math_on = _referral_math_enabled()
         try:
             await _process_referral_attribution(context, u, int(rid), is_new,
-                                                 product_id=int(open_pid or 0))
+                                                 product_id=int(open_pid or 0),
+                                                 approve_now=(not _math_on))
         except Exception:
             pass
         # Math gate (referral users only)
-        try:
-            if _referral_math_enabled():
+        if _math_on:
+            asked = False
+            try:
                 asked = await _ask_math_question(update.effective_message, context,
                                                  u.id, u.first_name)
                 if asked:
@@ -883,8 +890,13 @@ async def continue_after_force_join_verified(update, context, u):
                     if open_pid:
                         context.user_data['_start_pid'] = int(open_pid)
                     return True
-        except Exception:
-            pass
+            except Exception:
+                asked = False
+            if not asked:
+                try:
+                    await approve_pending_referral_for_user(context, u.id, reason='math_ask_failed')
+                except Exception:
+                    pass
         # Math done / disabled → finish the start (product or welcome)
         # 🐛 v147 FIX (Bug7): checkout deep link wins
         if chk_pid:
@@ -989,20 +1001,32 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # +/− question before the bot starts. Reward only unlocks after the bot
     # observes real-human activity (~30s) → BOTH users get the set points.
     if rid and int(rid) != int(u.id):
+        # 🆕 v170.9: math verification PEHLE, count BAAD (user demand).
+        # Math ON → pending (no count) → math sahi jawab par hi count.
+        # Math OFF → turant count (pehle jaisa).
+        _math_on = _referral_math_enabled()
         try:
             await _process_referral_attribution(context, u, int(rid), is_new,
-                                                 product_id=int(open_pid or 0))
+                                                 product_id=int(open_pid or 0),
+                                                 approve_now=(not _math_on))
         except Exception as _e:
             import logging
             logging.getLogger(__name__).error(f"[referral] {_e}")
-        try:
-            if _referral_math_enabled():
+        if _math_on:
+            asked = False
+            try:
                 asked = await _ask_math_question(update.message, context,
                                                  u.id, u.first_name)
                 if asked:
                     return  # wait for the math answer
-        except Exception:
-            pass
+            except Exception:
+                asked = False
+            if not asked:
+                # math question bhejna fail → pending approve (bot stuck na ho)
+                try:
+                    await approve_pending_referral_for_user(context, u.id, reason='math_ask_failed')
+                except Exception:
+                    pass
 
     # ─── Deep-link to product detail / checkout ───
     # 🐛 v147 FIX (Bug7): chk_<pid> → direct checkout screen (payment methods)

@@ -8,6 +8,27 @@
 
 ---
 
+# 🚀 v170.9 (2026-08-17) — BATCH 2: REFERRAL COUNT AFTER MATH + TOP REFERRERS
+
+## 1. 🧮 Referral count ab MATH VERIFY ke BAAD (user demand)
+- Pehle: referral link se aate hi count ho jata tha (math se pehle).
+- Ab: math verification ON ho to referral PENDING record hota hai (no count, no
+  points) → math ka sahi jawab aane par hi count + reward. Wrong/abandon par
+  count NAHI hota. Math OFF ho to turant count (pehle jaisa).
+- 5s fast-approve fallback job ab sirf math OFF par schedule hota hai (math ON
+  par math answer hi approval driver hai) → bot stuck nahi hota.
+- math question bhejna fail ho jaye to pending turant approve (stuck nahi).
+
+## 2. 🏆 Abuse panel — Top Referrers (user demand)
+- Naya button "🏆 Top Referrers" + callback refadm_top.
+- `top_referrers(limit)` DB helper: DIRECT counted referrals (product-mode
+  excluded), user first_name + username + user_id + total referral points earned
+  (points_ledger tx_type='referral' SUM), sorted by refs desc.
+
+## 3. ⚠️ FRESH DEPLOY: version bump v170.8 → v170.9.
+
+---
+
 # 🚀 v170.8 (2026-08-17) — BATCH 1 BUG FIXES (analytics + decimal + delivered file)
 
 ## 1. 📊 Analytics dashboard "Temporary error" FIX

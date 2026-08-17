@@ -230,7 +230,7 @@ def setup_database():
             # 🆕 v170.6: USER RULE — HAR DEPLOY FRESH (0 data). Is version ko
             # HAR deploy par bump karo taake bot har nayi release par khud reset
             # ho jaye (0 users/orders/suppliers). Admin manual restore karta hai.
-            current_version = "v170.8"
+            current_version = "v170.9"
             version_marker = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), ".deployed_version")
             last_version = ""
             if os.path.exists(version_marker):
@@ -5268,6 +5268,43 @@ def get_referral_log(limit=50, status=None):
                   (int(limit),))
     rows = c.fetchall(); conn.close()
     return [dict(r) for r in rows]
+
+
+def top_referrers(limit=10):
+    """🆕 v170.9: top referrers by DIRECT counted referrals (product-mode refs
+    excluded), with user first_name + username + total referral points earned
+    (points_ledger tx_type='referral' SUM). Abuse panel ke liye."""
+    conn = get_connection(); c = conn.cursor()
+    try:
+        ensure_points_ledger_table(c)
+    except Exception:
+        pass
+    try:
+        c.execute("""
+            SELECT r.referrer_id AS user_id,
+                   COUNT(*) AS total_refs,
+                   COALESCE(u.first_name,'') AS first_name,
+                   COALESCE(u.username,'') AS username,
+                   COALESCE((SELECT SUM(amount) FROM points_ledger pl
+                             WHERE pl.user_id = r.referrer_id
+                               AND pl.tx_type='referral'), 0) AS referral_points
+            FROM referral_log r
+            LEFT JOIN users u ON u.user_id = r.referrer_id
+            WHERE r.status='counted'
+              AND (r.reason IS NULL OR r.reason=''
+                   OR (r.reason NOT LIKE 'product_ref_pid_%'
+                       AND r.reason NOT LIKE 'dup_product_ref_pid_%'))
+            GROUP BY r.referrer_id
+            ORDER BY total_refs DESC, referral_points DESC
+            LIMIT ?
+        """, (int(limit),))
+        rows = [dict(r) for r in c.fetchall()]
+        conn.close()
+        return rows
+    except Exception:
+        try: conn.close()
+        except Exception: pass
+        return []
 
 
 def count_referrals_by_referrer_recent(referrer_id, minutes=60):

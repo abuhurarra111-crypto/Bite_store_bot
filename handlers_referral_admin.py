@@ -179,6 +179,7 @@ def _panel_kb():
     except Exception:
         _bonus_txt = "20 refs → +10 pts"
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏆 Top Referrers", callback_data="refadm_top")],
         [InlineKeyboardButton("📜 Recent Referral Log", callback_data="refadm_log_all")],
         [InlineKeyboardButton("✅ Counted Only", callback_data="refadm_log_counted"),
          InlineKeyboardButton("🚫 Blocked Only", callback_data="refadm_log_blocked")],
@@ -240,6 +241,45 @@ async def refadm_panel_callback(update: Update, context: ContextTypes.DEFAULT_TY
         "For product-specific referrals see: Product → 🎁 Free via Referrals → 👥 Referrals for This Product._"
     )
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=_panel_kb())
+
+
+async def refadm_top_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🆕 v170.9: top referrers — konsa user sabse zyada refer kiya + uske
+    username + total referral points earned."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        from database import top_referrers
+        top = top_referrers(limit=15)
+    except Exception as e:
+        await _safe_edit(q, f"❌ {e}"); return
+    if not top:
+        await _safe_edit(q, "🏆 *Top Referrers*\n━━━━━━━━━━━━━━━━━━━━\n\n_Abhi koi counted referrals nahi._",
+                         parse_mode="Markdown",
+                         reply_markup=InlineKeyboardMarkup([[
+                             InlineKeyboardButton("🔙 Back", callback_data="refadm_panel")]]))
+        return
+    try:
+        from utils import fmt_points
+    except Exception:
+        fmt_points = lambda v, suffix="": f"{float(v):g}{suffix}"
+    lines = ["🏆 *Top Referrers*", "━━━━━━━━━━━━━━━━━━━━", ""]
+    medals = ["🥇", "🥈", "🥉"] + ["▫️"] * 20
+    for i, r in enumerate(top):
+        name = (str(r.get("first_name") or "") or "").strip() or "—"
+        uname = (str(r.get("username") or "") or "").strip()
+        uid = r.get("user_id")
+        refs = int(r.get("total_refs") or 0)
+        pts = float(r.get("referral_points") or 0)
+        line = f"{medals[i]} *{escape_md(name[:20])}*"
+        if uname:
+            line += f" (@{escape_md(uname)})"
+        lines.append(line)
+        lines.append(f"   🆔 `{uid}` · 👥 Refs: *{refs}* · 💎 Pts earned: *{fmt_points(pts)}*")
+    kb = [[InlineKeyboardButton("🔙 Back", callback_data="refadm_panel")]]
+    await _safe_edit(q, "\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 
 async def refadm_log_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

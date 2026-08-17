@@ -330,7 +330,7 @@ from handlers_free_claim import (
 )
 # 🆕 v48: Referral Abuse admin panel
 from handlers_referral_admin import (
-    refadm_panel_callback, refadm_log_callback, refadm_banlist_callback,
+    refadm_panel_callback, refadm_top_callback, refadm_log_callback, refadm_banlist_callback,
     refadm_ban_start, refadm_unban_start, refadm_adjust_start,
     refadm_tpl_panel_callback, refadm_tpl_edit_callback,
     refadm_tpl_ready_callback, refadm_tpl_apply_callback,
@@ -2639,6 +2639,7 @@ def main():
         ("^freeclaim_share_",   freeclaim_share_callback),  # 🆕 v48
         # 🆕 v48: Referral Abuse admin panel
         ("^refadm_panel$",      refadm_panel_callback),
+        ("^refadm_top$",        refadm_top_callback),   # 🆕 v170.9 top referrers
         ("^refadm_set_points_start$", refadm_set_points_start),
         ("^refadm_bonus_start$",      refadm_bonus_start),  # 🆕 v161.20 milestone bonus
         ("^refadm_prod_panel$",       refadm_prod_panel_callback),
