@@ -1595,8 +1595,9 @@ def _admin_extract_media_payload(msg):
         body = html_text
     else:
         body = html_escape_plain(raw_text or "")
-    title = "📢 <b>Announcement</b>"
-    text = f"{title}\n\n{body}" if body else title
+    # 🐛 v170.18 FIX: pehle "📢 Announcement" title khud prepend hota tha.
+    # User demand: ab jo bhejo WESA hi jaye — koi automatic announcement nahi.
+    text = body or ""
     return {"media_type": media_type, "media_id": media_id, "file_name": file_name, "text": text, "parse_mode": "HTML", "raw_text": raw_text}
 
 
@@ -1607,8 +1608,10 @@ def _admin_button_from_state(context, bot_username=""):
     label = data.get('label') or 'Open Bot'
     color = data.get('color') or ''
     action = data.get('action') or 'bot'
-    prefix = {'red': '🔴', 'blue': '🔵', 'green': '🟢'}.get(color, '')
-    label_for_button = f"{prefix} {label}".strip()
+    # 🐛 v170.18 FIX: pehle color emoji DOT (🔴🔵🟢) label me lagta tha — REAL
+    # background color nahi hota tha. Ab REAL style (danger/primary/success)
+    # pass karte hain (Bot API 9.4 InlineKeyboardButton.style).
+    style = {'red': 'danger', 'blue': 'primary', 'green': 'success'}.get(color, None)
     # 🐛 v147 FIX (Bug7): button action — open bot / custom link / product checkout
     try:
         from button_system import make_premium_button
@@ -1617,32 +1620,32 @@ def _admin_button_from_state(context, bot_username=""):
             if not url:
                 url = f"https://t.me/{bot_username}" if bot_username else "https://t.me/"
             try:
-                btn = make_premium_button(label_for_button, url=url)
+                btn = make_premium_button(label, style=style, url=url)
             except Exception:
-                btn = InlineKeyboardButton(label_for_button, url=url)
+                btn = InlineKeyboardButton(label, url=url)
         elif action == 'product':
             pid = int(data.get('pid') or 0)
             if pid:
                 deep = f"https://t.me/{bot_username}?start=chk_{pid}" if bot_username else f"https://t.me/?start=chk_{pid}"
                 try:
-                    btn = make_premium_button(label_for_button, url=deep)
+                    btn = make_premium_button(label, style=style, url=deep)
                 except Exception:
-                    btn = InlineKeyboardButton(label_for_button, url=deep)
+                    btn = InlineKeyboardButton(label, url=deep)
             else:
                 url = f"https://t.me/{bot_username}" if bot_username else "https://t.me/"
                 try:
-                    btn = make_premium_button(label_for_button, url=url)
+                    btn = make_premium_button(label, style=style, url=url)
                 except Exception:
-                    btn = InlineKeyboardButton(label_for_button, url=url)
+                    btn = InlineKeyboardButton(label, url=url)
         else:  # 'bot' default
             url = f"https://t.me/{bot_username}" if bot_username else "https://t.me/"
             try:
-                btn = make_premium_button(label_for_button, url=url)
+                btn = make_premium_button(label, style=style, url=url)
             except Exception:
-                btn = InlineKeyboardButton(label_for_button, url=url)
+                btn = InlineKeyboardButton(label, url=url)
     except Exception:
         url = f"https://t.me/{bot_username}" if bot_username else "https://t.me/"
-        btn = InlineKeyboardButton(label_for_button, url=url)
+        btn = InlineKeyboardButton(label, url=url)
     return InlineKeyboardMarkup([[btn]])
 
 
@@ -1802,7 +1805,8 @@ async def broadcast_button_action_callback(update, context):
 
 
 async def _show_broadcast_product_picker(update, context, page=0):
-    """Show a paged list of buyable products for the broadcast checkout button."""
+    """v170.18: warranty/refund STYLE product picker (premium emoji + green
+    buttons + stock) for the broadcast checkout button."""
     from database import get_all_products, is_product_hidden
     try:
         products = [p for p in get_all_products()
@@ -1817,38 +1821,53 @@ async def _show_broadcast_product_picker(update, context, page=0):
                          reply_markup=InlineKeyboardMarkup(
                              [[InlineKeyboardButton("🔙 Cancel", callback_data='bcbtn_cancel')]]))
         return
+    try:
+        from button_system import make_premium_button, extract_emoji_from_html
+        _have = True
+    except Exception:
+        _have = False
     per = 8
     total = len(products)
     pages = max(1, (total + per - 1) // per)
     page = max(0, min(page, pages - 1))
     chunk = products[page * per:(page + 1) * per]
     rows = []
+    lines = ["🛒 *Product Checkout Button*", "━━━━━━━━━━━━━━━━━━━━",
+             "_(User button tap karega to us product ka payment screen khulega.)_", ""]
     for p in chunk:
         pid = p['id']
-        name = str(dict(p).get('name', f'Product #{pid}'))
-        try:
-            from utils import html_escape_plain
-            name = html_escape_plain(name)
-        except Exception:
-            pass
-        if len(name) > 34:
-            name = name[:33] + '…'
-        rows.append([InlineKeyboardButton(f"🛒 {name}", callback_data=f"bcbtn_pick_{pid}")])
+        raw = str(dict(p).get('name', f'Product #{pid}'))
+        stock = int(dict(p).get('stock', 0) or 0)
+        plain, eid = raw, ""
+        if _have:
+            try:
+                _eid, _plain = extract_emoji_from_html(raw)
+                if _plain:
+                    plain = _plain
+                eid = _eid or ""
+            except Exception:
+                pass
+        lines.append(f"✅ #{pid} · {plain[:28]} (stock {stock})")
+        if _have:
+            rows.append([make_premium_button(
+                f"🛒 {plain[:26]}", emoji_id=eid or None, style="success",
+                callback_data=f"bcbtn_pick_{pid}")])
+        else:
+            rows.append([InlineKeyboardButton(
+                f"🛒 {plain[:26]}", callback_data=f"bcbtn_pick_{pid}")])
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("⬅️", callback_data=f"bcbtn_ppage_{page-1}"))
+        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"bcbtn_ppage_{page-1}"))
     nav.append(InlineKeyboardButton(f"📄 {page+1}/{pages}", callback_data='bcbtn_noop'))
     if page < pages - 1:
-        nav.append(InlineKeyboardButton("➡️", callback_data=f"bcbtn_ppage_{page+1}"))
+        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"bcbtn_ppage_{page+1}"))
     rows.append(nav)
     rows.append([InlineKeyboardButton("❌ Cancel", callback_data='bcbtn_cancel')])
     await _safe_edit(update.callback_query,
-                     "🛒 *Product Checkout Button*\\n\\n"
-                     "Jis product ka checkout button chahiye usay chuno — "
-                     "user us button pe tap karega to us product ka payment "
-                     "screen direct khulega.",
+                     "\n".join(lines),
                      parse_mode="Markdown",
                      reply_markup=InlineKeyboardMarkup(rows))
+
 
 
 async def broadcast_button_product_page_callback(update, context):
@@ -10495,39 +10514,60 @@ async def bulk_discount_start_callback(u, c):
 
 
 async def _bdiscount_prod_list(u, c, page=0):
+    """v170.18: warranty/refund STYLE list — sirf in-stock + manual products
+    (out-of-stock nahi). Premium emoji + green buttons + stock + tiers count."""
     q = u.callback_query
     products = list(get_all_products(include_hidden=True, include_inactive=True))
+    # sirf buyable: in-stock (stock>0) YA manual delivery
+    products = [p for p in products
+                if (int(dict(p).get('stock', 0) or 0) > 0
+                    or (dict(p).get('delivery_mode') or '') == 'manual')]
+    try:
+        from button_system import make_premium_button, extract_emoji_from_html
+        _have = True
+    except Exception:
+        _have = False
     per = 8
     pages = max(1, (len(products) + per - 1) // per)
     page = max(0, min(int(page or 0), pages - 1))
     chunk = products[page * per:(page + 1) * per]
-    text = (
-        "🎉 *Bulk Discount — Tiered Pricing*\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "Pick a product and add *multiple quantity tiers* to it.\n"
-        "Example — Gemini:\n"
-        "`1 qty → $1.00`\n`10 qty → $0.89`\n`30 qty → $0.52`\n\n"
-        f"Page: *{page + 1}/{pages}*\n"
-    )
+    lines = [
+        "🎉 *Bulk Discount — Tiered Pricing*",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "_(Sirf in-stock + manual products. Tap kar ke quantity tiers add karo.)_",
+        "",
+    ]
     kb = []
     for p in chunk:
         pid = int(p['id'])
-        try:
-            from utils import html_strip_tags
-            name = html_strip_tags(str(p['name'] or f'#{pid}'))
-        except Exception:
-            import re as _reh
-            name = _reh.sub(r'<[^>]+>', '', str(p['name'] or '')).replace('[[HTML]]', '').strip()
-        name = (name or f'#{pid}').replace('\n', ' ')
-        if len(name) > 44:
-            name = name[:41] + '...'
+        raw = str(dict(p).get('name') or f'#{pid}')
+        stock = int(dict(p).get('stock', 0) or 0)
+        is_manual = (dict(p).get('delivery_mode') or '') == 'manual'
+        plain, eid = raw, ""
+        if _have:
+            try:
+                _eid, _plain = extract_emoji_from_html(raw)
+                if _plain:
+                    plain = _plain
+                eid = _eid or ""
+            except Exception:
+                pass
+        plain = (plain or f'#{pid}').replace('\n', ' ').strip()
+        stock_txt = "🟢 Unlimited (manual)" if is_manual else f"📦 {stock}"
         try:
             from database import get_product_tiers
             _tc = len(get_product_tiers(pid))
         except Exception:
             _tc = 0
-        kb.append([InlineKeyboardButton(f"📊 {name} ({_tc} tiers)" if _tc else f"☐ {name}",
-                                        callback_data=f"bdisc_prod_{pid}")])
+        lines.append(f"{'✅' if _tc else '⬜'} #{pid} · {plain[:28]} · {stock_txt}" + (f" · {_tc} tiers" if _tc else ""))
+        if _have:
+            kb.append([make_premium_button(
+                f"{'📊' if _tc else '➕'} {plain[:24]}", emoji_id=eid or None,
+                style="success" if _tc else "primary",
+                callback_data=f"bdisc_prod_{pid}")])
+        else:
+            kb.append([InlineKeyboardButton(
+                f"{'📊' if _tc else '➕'} {plain[:24]}", callback_data=f"bdisc_prod_{pid}")])
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton('⬅️ Prev', callback_data=f'bdisc_page_{page - 1}'))
@@ -10536,7 +10576,9 @@ async def _bdiscount_prod_list(u, c, page=0):
     if nav:
         kb.append(nav)
     kb.append([InlineKeyboardButton('🔙 Back to Edit Items', callback_data='admin_products')])
-    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    await _safe_edit(q, "\n".join(lines), parse_mode="Markdown",
+                     reply_markup=InlineKeyboardMarkup(kb))
+
 
 
 async def bdisc_prod_callback(u, c):

@@ -316,6 +316,16 @@ ID: `{user_id}`""",
     "freeclaim_not_enough":  "🎁 *Get this product FREE!*\n\n📦 *{product}*\n👥 Required Referrals: *{required}*\n📊 Your Available Referrals: *{available}*\n📉 Need *{missing}* more referrals.\n\n🔗 Share your referral link with friends — when they /start the bot, your referral count goes up!",
 
     # ══════════════════════════════════════
+    # 🆕 v170.13 — Freebies (free products for every user)
+    # ══════════════════════════════════════
+    "freebies_menu_header": "🎁 *Freebies*\n━━━━━━━━━━━━━━━━━━━━\n\n_Ye products bilkul FREE hain — claim karo!_",
+    "freebies_empty": "🎁 *Freebies*\n━━━━━━━━━━━━━━━━━━━━\n\n_Abhi koi free product available nahi. Wapis aana!_",
+    "freebie_success": "🎉 *Freebie Claimed!*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 {product}\n✅ Delivered FREE above.\n\n🔁 Dobara claim ke liye: {reclaim} referrals.",
+    "freebie_need_refs": "🔁 Dobara claim ke liye *{required} referrals* chahiye.\n👥 Aapke referrals: *{have}*\n⭐ Aur *{missing}* chahiye.",
+    "freebie_claim_limit": "❌ You reached the claim limit for this product.",
+    "freebie_out_of_stock": "😔 Out of stock right now. Please try later.",
+
+    # ══════════════════════════════════════
     # 🆕 v48 — Smart Share + Referral Points
     # ══════════════════════════════════════
     "freeclaim_share_message": "🎁 I'm getting {product} for FREE on {shop}!\n\nWant one too? Super easy:\n1️⃣ Click my link below\n2️⃣ Open it in Telegram\n3️⃣ Tap Start — and you're in!\n\n👇 My personal link:\n{link}",

@@ -264,6 +264,7 @@ def _build_how_to_hub_text_and_kb(user_id=None):
         [InlineKeyboardButton(_tr("🔁 How to Request Replacement"),     callback_data="guide_replacement")],
         [InlineKeyboardButton(_tr("⭐ How to Leave a Review"),          callback_data="guide_review")],
         [InlineKeyboardButton(_tr("🎁 Free Account / Referrals"),       callback_data="guide_referral")],
+        [InlineKeyboardButton(_tr("🎁 Freebies — Free Products"),           callback_data="guide_freebies")],
         [InlineKeyboardButton(_tr("🔗 Reseller API — Step-by-Step"),      callback_data="guide_reseller_api")],
         [InlineKeyboardButton(_tr("🏆 Tier System & Loyalty"),          callback_data="guide_tier")],
         [InlineKeyboardButton(_tr("📜 Order History & Tracking"),       callback_data="guide_orders")],
@@ -380,11 +381,25 @@ _GUIDES = {
         "*Step 5:* The payment is verified instantly inside Telegram! The bot credits your Points or delivers your product immediately.\n\n"
         "✨ *Why use Stars?* No screenshots, no copying UIDs or TXIDs, and no waiting for blockchain confirmation!"
     ),
+    "freebies": (
+        "🎁 *Freebies — Free Products*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Bite Store gives away FREE products that every user can claim!\n\n"
+        "*Step 1:* Tap the *🎁 Freebies* button at the bottom of your chat (persistent keyboard).\n\n"
+        "*Step 2:* You will see the free product list. Tap *🎁 Claim* on any product.\n\n"
+        "*Step 3:* Tap *🎉 Claim FREE Now* — the product is delivered instantly to your chat, FREE!\n\n"
+        "*Claim rules (set by the store):*\n"
+        "  • First claim of each freebie is 100% FREE (no referrals needed).\n"
+        "  • To claim the SAME freebie again, you may need a certain number of referrals (the bot shows exactly how many).\n"
+        "  • Some freebies have a total claim limit.\n\n"
+        "⚠️ Freebie products appear ONLY in the Freebies menu — they are not shown in the regular shop list.\n\n"
+        "🎉 Claim fast — free stock is limited!"
+    ),
     "reseller_api": (
         "🔗 *Reseller API — Step-by-Step*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "Bite Store provides a ProdSeller-compatible REST API so you can connect your own bot or website and sell products automatically.\n\n"
-        "*Step 1:* From Main Menu, tap *🔗 Reseller API*.\n\n"
+        "*Step 1:* Tap the *🔗 Reseller API* button at the bottom of your chat (persistent keyboard, next to 🏠 Main Menu).\n\n"
         "*Step 2:* Tap *🔑 Generate / View API Key* to create your secret API key.\n\n"
         "*Step 3:* Tap *📖 API Documentation* to open the interactive Swagger UI (`/api-docs/`).\n\n"
         "*Step 4:* Configure your bot or application with:\n"

@@ -8,6 +8,35 @@
 
 ---
 
+# 🚀 v170.18 (2026-08-17) — BROADCAST EXACT + WARRANTY-STYLE LISTS + ENGLISH
+
+## 1. 🌐 Global broadcast — EXACT content (user demand)
+- `_admin_extract_media_payload` ab "📢 Announcement" title prepend NAHI karta —
+  jo text/photo/video/voice/file admin upload kare WESA hi jata hai.
+
+## 2. 🎨 Broadcast button — REAL background color (user demand)
+- `_admin_button_from_state` ab emoji-dot (🔴🔵🟢) nahi — REAL style
+  (danger/primary/success) InlineKeyboardButton.style (Bot API 9.4).
+
+## 3. 🛒 Broadcast product picker — warranty/refund style
+- `_show_broadcast_product_picker`: premium emoji names + green buttons + stock
+  + pagination (pehle plain list thi).
+
+## 4. 🎉 Bulk Discount product list — warranty/refund style (user demand)
+- `_bdiscount_prod_list`: sirf IN-STOCK + MANUAL products (out-of-stock nahi),
+  premium emoji + green(has tiers)/blue(add) buttons + stock + tiers count.
+
+## 5. 📚 How to Use + responses English update (user demand)
+- Naya guide "🎁 Freebies — Free Products" (claim rules + referral re-claim).
+- Reseller API guide Step 1 update: persistent keyboard button (Main Menu nahi).
+- config.py: naye freebies responses (freebies_menu_header/freebies_empty/
+  freebie_success/freebie_need_refs/freebie_claim_limit/freebie_out_of_stock) —
+  Edit Responses mein editable (English).
+
+## 6. ⚠️ FRESH DEPLOY: version bump v170.17 → v170.18.
+
+---
+
 # 🚀 v170.17 (2026-08-17) — COMPLETED ORDERS FULL UPGRADE
 
 ## ✅ Completed Orders (admin) — naya upgrade:
