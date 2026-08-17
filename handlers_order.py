@@ -1378,10 +1378,24 @@ async def fulfill_paid_product_order(bot, order, paid_amount=None, *, payment_me
             if tier_line:
                 text += f"\n\n{tier_line}"
         except Exception: pass
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛒 Buy More", callback_data="shop")],
-        [InlineKeyboardButton("📜 Order History", callback_data="my_orders")],
-    ])
+    # 🆕 v170.31: after-purchase buttons EDITABLE (registry) — freebie par nahi.
+    if is_freebie:
+        kb = None
+    else:
+        try:
+            from keyboards import _rb
+        except Exception:
+            _rb = None
+        def _ab(reg, fallback, cb):
+            if _rb:
+                b = _rb(reg, callback_data=cb)
+                if b:
+                    return b
+            return InlineKeyboardButton(fallback, callback_data=cb)
+        kb = InlineKeyboardMarkup([
+            [_ab("buy_more_btn", "🛒 Buy More", "shop")],
+            [_ab("order_history_btn", "📜 Order History", "my_orders")],
+        ])
     # First: send the receipt header (Markdown)
     await _bot_send_smart(bot, order['user_id'], text, parse_mode="Markdown")
     # 🆕 v72 BUG FIX: Then send the delivery content in its NATIVE format

@@ -8,6 +8,26 @@
 
 ---
 
+# 🚀 v170.31 (2026-08-17) — FREEBIE SUCCESS PREMIUM EMOJI + AFTER-PURCHASE BUTTONS EDITABLE
+
+## 1. 🎖️ Freebie success message me premium emoji
+- freebie_do_callback ka "🎉 Freebie Claimed!" confirm ab product ka PREMIUM emoji
+  render karta hai (`_fmt_msg_name`) — pehle simple fallback emoji dikhta tha.
+
+## 2. 🛒 After-purchase buttons EDITABLE (Customization)
+- Naye registry buttons group "afterbuy": buy_more_btn (🛒 Buy More) +
+  order_history_btn (📜 Order History). Rename/color/hide/premium emoji editable —
+  Manage Buttons me "🛒 After Purchase Buttons".
+- fulfill_paid_product_order inhe `_rb` se render karta hai.
+
+## 3. 🎁 Freebie par Buy More / Order History NAHI
+- Freebie order delivery par ab koi "Buy More / Order History" button nahi jata
+  (sirf paid purchase par jate hain).
+
+## 4. 🧪 Tests: premium preserve + _rb render + freebie no-buttons — pass.
+
+---
+
 # 🚀 v170.30 (2026-08-17) — FREEBIE CHOICE BEFORE STEP 10 + PREMIUM EMOJI IN BROADCASTS
 
 ## 1. 🎁 "Make This a Freebie" ab Step 10 se PEHLE (user demand)

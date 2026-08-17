@@ -368,6 +368,19 @@ BUTTONS = {
         "large": "🔙 Back", "xl": "🔙 Back",
         "callback": "main_menu",
     },
+    # ── 🆕 v170.31: AFTER PURCHASE buttons (delivery ke neeche) — editable ──
+    "buy_more_btn": {
+        "group": "afterbuy", "essential": False,
+        "short": "🛒", "medium": "🛒 Buy More",
+        "large": "🛒 Buy More", "xl": "🛒 Buy More",
+        "callback": "shop",
+    },
+    "order_history_btn": {
+        "group": "afterbuy", "essential": False,
+        "short": "📜", "medium": "📜 Order History",
+        "large": "📜 Order History", "xl": "📜 Order History",
+        "callback": "my_orders",
+    },
     "admin_reviews": {
         "group": "admin", "essential": False,
         "short": "⭐", "medium": "⭐ Reviews",
@@ -850,6 +863,7 @@ GROUP_NAMES = {
     "navigation": "🔙 Navigation Buttons (Back / Home / Cancel / Prev / Next)",  # 🆕 v52
     "reseller": "🔗 Reseller API Flow",  # 🆕 v161.13
     "freebies": "🎁 Freebies Flow",      # 🆕 v170.29
+    "afterbuy": "🛒 After Purchase Buttons",  # 🆕 v170.31
 }
 
 

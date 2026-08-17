@@ -372,7 +372,13 @@ async def freebie_do_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
                      "🎉 *Freebie Claimed!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
                      "📦 {product}\n✅ Delivered FREE above.\n\n"
                      "🔁 To claim again: {reclaim} referrals.")
-        confirm = confirm.replace("{product}", escape_md(_clean_name(prod.get('name') or '', 60)))
+        # 🆕 v170.31: product PREMIUM emoji ke saath render (pehle simple emoji)
+        try:
+            from handlers_order import _fmt_msg_name
+            pname_line = _fmt_msg_name(prod.get('name') or "")
+        except Exception:
+            pname_line = escape_md(_clean_name(prod.get('name') or '', 60))
+        confirm = confirm.replace("{product}", pname_line)
         confirm = confirm.replace("{reclaim}", str(reclaim))
         _st, _sm = smart_text_and_mode(confirm, "Markdown")
         await context.bot.send_message(uid, _st, parse_mode=_sm,
