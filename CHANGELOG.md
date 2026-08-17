@@ -8,6 +8,33 @@
 
 ---
 
+# 🚀 v170.8 (2026-08-17) — BATCH 1 BUG FIXES (analytics + decimal + delivered file)
+
+## 1. 📊 Analytics dashboard "Temporary error" FIX
+- ROOT: `analytics_summary()` query `SUM(price - cost_price)` orders table par
+  chala rahi thi — `cost_price` orders me NAHI, products me hai → sqlite
+  "no such column: cost_price" → callback crash → Temporary error.
+- FIX: `FROM orders o LEFT JOIN products p ON p.id = o.product_id` + o. alias.
+
+## 2. 💎 Decimal amounts (referral points + supplier prices) FIX
+- ROOT: `add_ref_points`/`deduct_ref_points` me `round(..., 2)` → 0.002 / 0.03 /
+  0.0004 sub-cent rewards 0 ban jate the ("0.1 ke hisab se lagti thi").
+- FIX: `round(..., 6)` (full precision, float noise guard). add_ref_points ab
+  user row na ho to auto-INSERT bhi karta hai (reward kabhi gayab nahi).
+- Supplier fixed-price + markup preview + edit-price current `:.2f` → `fmt_price`
+  (ab $0.004 jaisa sub-cent price sahi dikhta/stho rehta hai).
+
+## 3. 📥 "Get Delivered File" (completed orders) FIX
+- ROOT: text-only deliveries (koi file id nahi) par callback kuch nahi bhejta tha
+  (sent=0) → "kuch nahi hua". Junk file_id ("TXT1") bhi skip hota tha.
+- FIX: koi file nahi to customer ka delivered CONTENT text bhejta hai; real file
+  id (len>6) pehle document bhejta hai; order_deliveries ke photo/video/voice
+  files bhi bhejta hai.
+
+## 4. ⚠️ FRESH DEPLOY: version bump v170.7 → v170.8.
+
+---
+
 # 🚀 v170.7 (2026-08-16) — WARRANTY GREEN + CLEAN NAMES + REMOVE CHANGE LAYOUT
 
 ## 1. 🛡️ Warranty/Refund menu — delivered products (user demand)

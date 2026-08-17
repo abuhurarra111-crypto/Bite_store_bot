@@ -2907,10 +2907,11 @@ async def ext_prod_markup_callback(update, context):
     )
     kb = []
     for pct in [10, 20, 30, 40, 50, 75, 100, 150, 200]:
-        preview = round(p['cost_usd'] * (1 + pct / 100.0), 2)
+        # 🐛 v170.8 FIX: round(...,2) sub-cent price "$0.00" dikhata tha → fmt_price
+        preview = p['cost_usd'] * (1 + pct / 100.0)
         marker = " ✅" if abs(pct - p['markup_pct']) < 0.5 else ""
         kb.append([InlineKeyboardButton(
-            f"📈 {pct}%  →  ${preview:.2f}{marker}",
+            f"📈 {pct}%  →  {fmt_price(preview)}{marker}",
             callback_data=f"ext_prod_set_mkp_{eid}_{pct}"
         )])
     kb.append([InlineKeyboardButton("🔙 Back", callback_data=f"ext_prod_view_{eid}")])
@@ -3311,14 +3312,15 @@ async def ext_prod_fixprice_received(update, context):
                        fixed_price_base=float(p["cost_usd"]))
     context.user_data.pop("ext_prod_fixprice_pending", None)
     p_new = get_ext_product(eid)
+    from utils import fmt_price as _fp
     await update.message.reply_text(
         f"✅ *Fixed Price Locked!*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📦 {escape_md(p['name'][:60])}\n"
-        f"🔒 Fixed selling price: `${val:.2f}`\n"
-        f"📌 Locked at cost: `${p_new['fixed_price_base']:.2f}`\n\n"
+        f"🔒 Fixed selling price: `{_fp(val)}`\n"
+        f"📌 Locked at cost: `{_fp(p_new['fixed_price_base'])}`\n\n"
         f"✅ Now: if supplier cost rises, your sell price goes up by the same amount.\n"
-        f"✅ If supplier cost drops, your sell price stays at `${val:.2f}` (profit protected).",
+        f"✅ If supplier cost drops, your sell price stays at `{_fp(val)}` (profit protected).",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("🔙 Product", callback_data=f"ext_prod_view_{eid}")

@@ -7545,9 +7545,10 @@ async def edit_product_field_callback(u, c):
     current_block = ""
     if field != 'accounts':
         if p:
+            from utils import fmt_price as _fp1708
             field_map = {
                 "name": p['name'], "description": p['description'], "customernote": dict(p).get('customer_note',''),
-                "price": f"{p['price']:.2f}", "costprice": f"{p['cost_price']:.2f}",
+                "price": _fp1708(p['price']), "costprice": _fp1708(p['cost_price']),
                 "stock": str(p['stock']), "warranty": p['warranty'],
                 "quantity": p['quantity'], "deliverytext": p['delivery_text'],
             }

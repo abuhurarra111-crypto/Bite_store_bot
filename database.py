@@ -230,7 +230,7 @@ def setup_database():
             # 🆕 v170.6: USER RULE — HAR DEPLOY FRESH (0 data). Is version ko
             # HAR deploy par bump karo taake bot har nayi release par khud reset
             # ho jaye (0 users/orders/suppliers). Admin manual restore karta hai.
-            current_version = "v170.7"
+            current_version = "v170.8"
             version_marker = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), ".deployed_version")
             last_version = ""
             if os.path.exists(version_marker):
@@ -3363,8 +3363,13 @@ def analytics_summary(days=None):
     and_where = where[6:] if where else ""   # 'created_at >= ...' without WHERE
 
     # Delivered: count, revenue, profit (price - cost_price per delivered order)
-    q = f"""SELECT COUNT(*), COALESCE(SUM(price),0), COALESCE(SUM(price - COALESCE(cost_price,0)),0)
-            FROM orders WHERE status='delivered' {('AND ' + and_where) if and_where else ''}"""
+    # 🐛 v170.8 FIX: `cost_price` orders table me NAHI hota (products me hota hai).
+    # Pehle query direct `orders.cost_price` use karti thi → OperationalError:
+    # no such column → Analytics button "Temporary error". Ab LEFT JOIN products.
+    q = f"""SELECT COUNT(*), COALESCE(SUM(o.price),0),
+                   COALESCE(SUM(o.price - COALESCE(p.cost_price,0)),0)
+            FROM orders o LEFT JOIN products p ON p.id = o.product_id
+            WHERE o.status='delivered' {('AND ' + and_where.replace('created_at','o.created_at')) if and_where else ''}"""
     c.execute(q)
     row = c.fetchone()
     delivered_count, revenue, profit = (int(row[0] or 0), float(row[1] or 0), float(row[2] or 0))
@@ -5174,8 +5179,16 @@ def add_ref_points(uid, amount):
         c.execute("SELECT COALESCE(points,0) FROM users WHERE user_id=?", (uid,))
         row = c.fetchone()
         before = _points_float(row[0]) if row else 0.0
-        after = round(before + amount, 2)
-        c.execute("UPDATE users SET points=? WHERE user_id=?", (after, uid))
+        # 🐛 v170.8 FIX: round(..., 2) sub-cent rewards (0.002/0.03/0.0004) ko
+        # 0 kar deta tha → "sirf 0.1 ke hisab se lagti hai". Ab full precision
+        # (6 decimals se zyada nahi — float noise rokne ke liye).
+        after = round(before + amount, 6)
+        if row:
+            c.execute("UPDATE users SET points=? WHERE user_id=?", (after, uid))
+        else:
+            # user row nahi bani ho (edge case) — INSERT karo taake reward gayab na ho
+            c.execute("""INSERT INTO users (user_id, username, first_name, wallet_balance, points)
+                         VALUES (?, '', '', 0.0, ?)""", (uid, after))
         c.execute("""INSERT OR IGNORE INTO points_ledger
                      (user_id, amount, balance_before, balance_after,
                       tx_type, description, event_id, order_id)
@@ -5211,7 +5224,8 @@ def deduct_ref_points(uid, amount):
         c.execute("SELECT COALESCE(points,0) FROM users WHERE user_id=?", (uid,))
         row = c.fetchone()
         pts_before = _points_float(row[0]) if row else 0.0
-        pts_after = round(max(0.0, pts_before - amount), 2)
+        # 🐛 v170.8 FIX: round(..., 2) → round(..., 6) — decimal rewards preserve
+        pts_after = round(max(0.0, pts_before - amount), 6)
         c.execute("UPDATE users SET ref_points = MAX(0, COALESCE(ref_points,0) - ?) WHERE user_id = ?",
                   (amount, uid))
         c.execute("UPDATE users SET points=? WHERE user_id=?", (pts_after, uid))

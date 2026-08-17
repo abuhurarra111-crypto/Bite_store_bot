@@ -659,11 +659,12 @@ async def ac2_allfiles_callback(update, context):
         await q.answer("Order not found", show_alert=True); return
     sent = 0
     caption = f"📥 <i>Delivered file(s) — Order #{oid}</i>"
-    # 1) bulk .txt file (orders.delivery_file_id)
-    if o.get("delivery_file_id"):
+    # 1) bulk .txt file (orders.delivery_file_id) — sirf real file id bhejo
+    _dfid = (o.get("delivery_file_id") or "").strip()
+    if _dfid and len(_dfid) > 6:
         try:
             await context.bot.send_document(q.from_user.id,
-                                            document=str(o["delivery_file_id"]),
+                                            document=str(_dfid),
                                             caption=caption, parse_mode="HTML")
             sent += 1
         except Exception as e:
@@ -688,6 +689,22 @@ async def ac2_allfiles_callback(update, context):
             sent += 1
         except Exception as e:
             logging.getLogger(__name__).warning(f"[ac2_allfiles] item send fail: {e}")
+    # 🐛 v170.8 FIX: jab koi FILE nahi (text-only delivery) to customer ka
+    # DELIVERED CONTENT text bhejo — pehle kuch bhi nahi aata tha (sent=0).
+    if sent == 0:
+        dc = (o.get("delivery_content") or "").strip()
+        if dc:
+            try:
+                from utils import smart_text_and_mode
+                _txt, _mode = smart_text_and_mode(dc, "HTML")
+                await context.bot.send_message(
+                    q.from_user.id, _txt, parse_mode=_mode,
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔙 Back to Order",
+                                             callback_data=f"ac2_order_{oid}")]]))
+                sent += 1
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"[ac2_allfiles] text send fail: {e}")
     if sent == 0:
         await q.answer("No delivered files stored for this order", show_alert=True)
 
