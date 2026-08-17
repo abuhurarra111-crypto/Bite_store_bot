@@ -65,6 +65,10 @@ BUTTONS = {
     },
     "main_reseller_api": {
         "group": "main", "essential": False,
+        # 🆕 v170.12: inline main menu se HATA diya (user demand) — ab persistent
+        # reply keyboard par hai (🔗 Reseller API). Registry entry callback ke
+        # liye rehti hai (backward compat).
+        "hidden": True,
         "short": "🔗", "medium": "🔗 Reseller API",
         "large": "🔗 Reseller API Key", "xl": "🔗 Reseller API Key — Sell our products on your own bot",
         "callback": "reseller_api_user",

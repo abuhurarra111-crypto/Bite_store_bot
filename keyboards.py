@@ -262,20 +262,74 @@ def _apply_screen_pad_markup(markup, location):
 # ════════════════════════════════════════════
 # 📋 PERSISTENT KEYBOARD
 # ════════════════════════════════════════════
-def persistent_menu(user_id=None):
-    # 🆕 v78: 📚 How to Use button next to 🏠 Main Menu on the persistent
-    # reply keyboard (always visible at the bottom of the chat).
-    # 🆕 v137: labels follow the user's selected language.
-    mm = "🏠 Main Menu"; hu = "📚 How to Use"
+# ════════════════════════════════════════════════════════════
+# ⌨️ PERSISTENT REPLY KEYBOARD (bottom bar — always visible)
+# ════════════════════════════════════════════════════════════
+# 🆕 v170.12: ab ADMIN configurable (rename + reorder). Buttons:
+#   home / howto / reseller  (freebies Batch 6 me add hoga)
+_PERSIST_DEFAULTS = {
+    "home":     "🏠 Main Menu",
+    "howto":    "📚 How to Use",
+    "reseller": "🔗 Reseller API",
+}
+
+_PERSIST_IDS = ("home", "howto", "reseller")
+
+
+def get_persist_label(pid, user_id=None):
+    """Persistent button ka label: admin override → default → (translate nahi
+    hota kyunki admin ka custom text user-language independent hota hai)."""
     try:
-        from i18n import tr_user
-        mm = tr_user(mm, user_id=user_id) or mm
-        hu = tr_user(hu, user_id=user_id) or hu
+        from database import get_setting
+        custom = (get_setting(f"persist_label_{pid}", "") or "").strip()
+        if custom:
+            return custom
     except Exception:
         pass
+    lbl = _PERSIST_DEFAULTS.get(pid, pid)
+    # v137: default labels user language me translate hote hain
+    try:
+        from i18n import tr_user
+        _t = tr_user(lbl, user_id=user_id)
+        if _t:
+            return _t
+    except Exception:
+        pass
+    return lbl
+
+
+def get_persist_order():
+    """Persistent buttons ka order (admin-configurable, comma list)."""
+    try:
+        from database import get_setting
+        raw = (get_setting("persist_order", "") or "").strip()
+        if raw:
+            ids = [x.strip() for x in raw.split(",") if x.strip() in _PERSIST_IDS]
+            # baqi (naye) ids jo list me nahi, unhe end par add karo
+            for pid in _PERSIST_IDS:
+                if pid not in ids:
+                    ids.append(pid)
+            return ids
+    except Exception:
+        pass
+    return list(_PERSIST_IDS)
+
+
+def persistent_menu(user_id=None):
+    """🆕 v170.12: configurable persistent reply keyboard.
+    Buttons: 🏠 Main Menu · 📚 How to Use · 🔗 Reseller API (rename/reorder
+    admin panel se). Telegram reply-keyboard buttons sirf PLAIN TEXT hote
+    hain — background color / animated premium icon inpar support NAHI."""
+    order = get_persist_order()
+    labels = [(pid, get_persist_label(pid, user_id=user_id)) for pid in order]
+    labels = [(pid, lbl) for pid, lbl in labels if lbl]
+    # buttons ko rows me baanto (2 per row, phone par achi lagti hai)
+    rows = []
+    for i in range(0, len(labels), 2):
+        row = [KeyboardButton(lbl) for _, lbl in labels[i:i + 2]]
+        rows.append(row)
     return ReplyKeyboardMarkup(
-        [[KeyboardButton(mm), KeyboardButton(hu)]],
-        resize_keyboard=True, is_persistent=True
+        rows, resize_keyboard=True, is_persistent=True
     )
 
 

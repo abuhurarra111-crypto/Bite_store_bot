@@ -8885,6 +8885,7 @@ async def _render_customization_hub(q):
         [InlineKeyboardButton("🟢 Admin Panel All-Green", callback_data="cz_admin_all_green")],
         # ── MENU & NAV ──
         [InlineKeyboardButton("━━━ 🧭 Menu ━━━", callback_data="cz_noop")],
+        [InlineKeyboardButton("⌨️ Persistent Buttons", callback_data="persist_panel")],
         [InlineKeyboardButton("🎨 Main Menu Layout (50)", callback_data="admin_main_layout")],
         [InlineKeyboardButton("🎨 Menu Styles", callback_data="admin_menu_style")],
         [InlineKeyboardButton("📱 Screen Editor (43 screens)", callback_data="se_root")],
@@ -8895,6 +8896,113 @@ async def _render_customization_hub(q):
         [InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_panel")],
     ]
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def persist_panel_callback(update, context):
+    """🆕 v170.12: Persistent (reply keyboard) buttons — rename + reorder."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    from keyboards import get_persist_order, get_persist_label
+    order = get_persist_order()
+    lines = ["⌨️ *Persistent Buttons*",
+             "━━━━━━━━━━━━━━━━━━━━",
+             "_Ye reply-keyboard (chat ke niche) ke buttons hain._",
+             ""]
+    kb = []
+    for i, pid in enumerate(order):
+        lbl = get_persist_label(pid)
+        lines.append(f"{i+1}. {pid}: `{lbl}`")
+        row = []
+        if i > 0:
+            row.append(InlineKeyboardButton("⬆️", callback_data=f"persist_move_{pid}_up"))
+        if i < len(order) - 1:
+            row.append(InlineKeyboardButton("⬇️", callback_data=f"persist_move_{pid}_down"))
+        row.append(InlineKeyboardButton("✏️ Rename", callback_data=f"persist_ren_{pid}"))
+        kb.append(row)
+    lines.append("")
+    lines.append("⚠️ _Reply-keyboard buttons plain text hote hain — background color ya animated premium icon Telegram support nahi karta. Emoji char (e.g. 🎁) rename me daal sakte ho._")
+    kb.append([InlineKeyboardButton("🔙 Back to Customization", callback_data="admin_customization")])
+    await _safe_edit(q, "\n".join(lines), parse_mode="Markdown",
+                     reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def persist_rename_callback(update, context):
+    """🆕 v170.12: start rename for one persistent button."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    pid = q.data.replace("persist_ren_", "")
+    from keyboards import get_persist_label
+    cur = get_persist_label(pid)
+    context.user_data["persist_ren_pid"] = pid
+    await _safe_edit(q,
+        f"✏️ *Rename Persistent Button*\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"ID: `{pid}`\nCurrent: `{cur}`\n\n"
+        f"Type new label (emoji allowed, max 40 chars).\n"
+        f"_(Send `-` to reset to default, /cancel to abort)_",
+        parse_mode="Markdown")
+
+
+async def persist_rename_received(update, context):
+    """🆕 v170.12: save renamed persistent button label."""
+    pid = context.user_data.get("persist_ren_pid")
+    if not pid:
+        context.user_data.pop("persist_ren_pid", None)
+        return False
+    val = (update.message.text or "").strip()
+    if val == "/cancel":
+        context.user_data.pop("persist_ren_pid", None)
+        await update.message.reply_text("❌ Cancelled.")
+        return True
+    try:
+        from database import set_setting
+        if val == "-":
+            set_setting(f"persist_label_{pid}", "")
+            context.user_data.pop("persist_ren_pid", None)
+            await update.message.reply_text("♻️ Reset to default ✅")
+            return True
+        if len(val) > 40:
+            await update.message.reply_text("❌ Too long (max 40 chars). Try again or /cancel")
+            return True
+        set_setting(f"persist_label_{pid}", val)
+    except Exception:
+        context.user_data.pop("persist_ren_pid", None)
+        return True
+    context.user_data.pop("persist_ren_pid", None)
+    await update.message.reply_text(
+        f"✅ Persistent button `{pid}` → `{val}` saved.\n"
+        f"_Agli baar user ka menu open hoga to naya label dikhega._",
+        parse_mode="Markdown")
+    return True
+
+
+async def persist_move_callback(update, context):
+    """🆕 v170.12: reorder persistent buttons (up/down)."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    # persist_move_<pid>_<dir>
+    raw = q.data.replace("persist_move_", "")
+    pid, _, direction = raw.rpartition("_")
+    try:
+        from keyboards import get_persist_order
+        from database import set_setting
+        order = get_persist_order()
+        if pid not in order:
+            await q.answer("❌ Unknown button", show_alert=True); return
+        i = order.index(pid)
+        j = i - 1 if direction == "up" else i + 1
+        if j < 0 or j >= len(order):
+            await q.answer("⚠️ Already at edge", show_alert=True); return
+        order[i], order[j] = order[j], order[i]
+        set_setting("persist_order", ",".join(order))
+    except Exception as e:
+        await q.answer(f"❌ {e}", show_alert=True); return
+    await persist_panel_callback(update, context)
 
 
 async def cz_noop_callback(update, context):
@@ -11932,6 +12040,76 @@ def _reseller_docs_url() -> str:
     return "https://bite-store-bot-production.up.railway.app/api-docs/"
 
 
+async def reseller_api_from_text(update, context):
+    """🆕 v170.12: 🔗 Reseller API persistent reply-keyboard button se entry —
+    same landing/panel, reply_text ke through (text trigger)."""
+    msg = update.message
+    uid = int(update.effective_user.id)
+    try:
+        from reseller_api import (get_user_reseller_key, generate_reseller_key,
+                                  reveal_reseller_key)
+        from database import get_user_points, get_setting
+    except Exception as e:
+        await msg.reply_text(f"❌ {e}")
+        return
+    key = get_user_reseller_key(uid)
+    docs_url = _reseller_docs_url()
+    if not key:
+        kb = []
+        _g = _rb("reseller_api_generate_btn")
+        kb.append([_g] if _g else [InlineKeyboardButton("🛠️ Generate API Key", callback_data="reseller_api_generate")])
+        if docs_url:
+            _d = _rb("reseller_api_docs_btn", url=docs_url)
+            kb.append([_d] if _d else [InlineKeyboardButton("📚 API Documentation", url=docs_url)])
+        kb.append([_rb("nav_prod_home") or InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
+        try:
+            _txt = get_response_with_auto_register(
+                "reseller_api_landing",
+                "🔗 *Reseller API*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                "👉 Sell our products on your own bot or website!\n\n"
+                "🔑 Tap **Generate API Key** to create your personal key.\n"
+                "💳 Your key is linked to your wallet (💎 Buy Points to top up).\n"
+                "📦 Every order is auto-delivered to your bot.\n\n"
+                "_Your key is shown only ONCE after generating — save it!_")
+            _st, _sm = smart_text_and_mode(_txt, "Markdown")
+            await msg.reply_text(_st, parse_mode=_sm, reply_markup=InlineKeyboardMarkup(kb))
+        except Exception:
+            await msg.reply_text("🔗 *Reseller API*\n\nTap *Generate API Key* to create your key.",
+                                 parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        return
+    # has key → simple access panel (masked)
+    kid = int(key.get("id") or 0)
+    prefix = str(key.get("key_prefix") or "")
+    reqs = int(key.get("request_count") or 0)
+    created = str(key.get("created_at") or "")[:10]
+    try:
+        ppd = float(get_setting("reseller_points_per_dollar") or 10)
+        bal = float(get_user_points(uid) or 0) / ppd if ppd else 0
+    except Exception:
+        bal = 0.0
+    kb = []
+    _s = _rb("reseller_api_show_btn")
+    _r = _rb("reseller_api_regenerate_btn")
+    if _s and _r:
+        kb.append([_s, _r])
+    else:
+        kb.append([InlineKeyboardButton("👁️ Show Full Key", callback_data="reseller_api_show"),
+                   InlineKeyboardButton("🔄 Regenerate", callback_data="reseller_api_regenerate")])
+    if docs_url:
+        _d = _rb("reseller_api_docs_btn", url=docs_url)
+        kb.append([_d] if _d else [InlineKeyboardButton("📚 API Documentation", url=docs_url)])
+    kb.append([_rb("nav_prod_home") or InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
+    text = (
+        "🔗 *API Access*\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔑 Key: `{prefix}....`\n"
+        f"💳 Balance: *${bal:.2f}*\n"
+        f"📨 Requests: {reqs}\n"
+        f"📅 Created: {created}"
+    )
+    _st, _sm = smart_text_and_mode(text, "Markdown")
+    await msg.reply_text(_st, parse_mode=_sm, reply_markup=InlineKeyboardMarkup(kb))
+
+
 async def reseller_api_user_callback(update, context):
     """🔗 Reseller API Key (main menu button) — any user."""
     q = update.callback_query
@@ -12222,6 +12400,8 @@ async def reseller_api_regenerate_callback(update, context):
 # ════════════════════════════════════════════════════════════════
 
 async def reseller_admin_products_callback(update, context, page=0):
+    """🆕 v170.12: Reseller products — warranty/refund STYLE list (premium
+    emoji name + green/red toggle + stock + reseller price) + bulk ALL ON/OFF."""
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
@@ -12229,39 +12409,78 @@ async def reseller_admin_products_callback(update, context, page=0):
     try:
         from database import get_connection
         conn = get_connection(); c = conn.cursor()
-        c.execute("SELECT id, name, reseller_enabled, COALESCE(reseller_price,0) AS rp "
-                  "FROM products WHERE is_active=1 ORDER BY id LIMIT 12 OFFSET ?", (page * 12,))
+        c.execute("SELECT id, name, stock, reseller_enabled, COALESCE(reseller_price,0) AS rp "
+                  "FROM products WHERE is_active=1 ORDER BY id LIMIT 8 OFFSET ?", (page * 8,))
         rows = [dict(r) for r in c.fetchall()]; conn.close()
         c2 = get_connection(); c3 = c2.cursor()
         total = c3.execute("SELECT COUNT(*) FROM products WHERE is_active=1").fetchone()[0]
         c2.close()
     except Exception as e:
         await q.edit_message_text(f"❌ {e}"); return
-    lines = ["🗂️ *Reseller Products* (page {}/{}):\n".format(page + 1, max(1, (total + 11) // 12))]
+    try:
+        from button_system import make_premium_button, extract_emoji_from_html
+        _have = True
+    except Exception:
+        _have = False
+    lines = ["🗂️ *Reseller Products*\n",
+             "_(✅ = API key par available · ⛔ = API par nahi aayega)_\n"]
     kb = []
     for r in rows:
-        on = "✅" if int(r.get("reseller_enabled") or 1) == 1 else "⛔"
+        on = int(r.get("reseller_enabled") if r.get("reseller_enabled") is not None else 1) == 1
         price = f"${float(r.get('rp') or 0):g}" if float(r.get("rp") or 0) > 0 else "auto"
-        # 🔧 v161.6: clean premium-emoji HTML from the name (no [[HTML]]/tg-emoji tags)
-        try:
-            from utils import html_strip_tags
-            _nm = html_strip_tags(r.get("name") or "") or f"#{r['id']}"
-        except Exception:
-            _nm = str(r.get("name") or f"#{r['id']}")
-        lines.append(f"{on} #{r['id']} · {_nm[:24]}")
+        raw_name = str(r.get("name") or f"#{r['id']}")
+        plain, eid = raw_name, ""
+        if _have:
+            try:
+                _eid, _plain = extract_emoji_from_html(raw_name)
+                if _plain:
+                    plain = _plain
+                eid = _eid or ""
+            except Exception:
+                pass
+        icon = "✅" if on else "⛔"
+        lines.append(f"{icon} #{r['id']} · {plain[:30]}")
+        toggle_lbl = "✅ ON" if on else "⛔ OFF"
         kb.append([
-            InlineKeyboardButton(f"{on}", callback_data=f"reseller_prod_toggle_{r['id']}"),
+            make_premium_button(toggle_lbl, emoji_id=eid or None,
+                                style="success" if on else "danger",
+                                callback_data=f"reseller_prod_toggle_{r['id']}")
+            if _have else InlineKeyboardButton(toggle_lbl, callback_data=f"reseller_prod_toggle_{r['id']}"),
             InlineKeyboardButton(f"💰 {price}", callback_data=f"reseller_prod_price_{r['id']}"),
         ])
+    # bulk buttons
+    kb.append([
+        InlineKeyboardButton("🟢 ALL ON", callback_data="reseller_prod_all_on"),
+        InlineKeyboardButton("🔴 ALL OFF", callback_data="reseller_prod_all_off"),
+    ])
     nav = []
     if page > 0:
-        nav.append(InlineKeyboardButton("⬅️", callback_data=f"reseller_prod_page_{page-1}"))
+        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"reseller_prod_page_{page-1}"))
     nav.append(InlineKeyboardButton("🔙 Back", callback_data="reseller_panel"))
-    if (page + 1) * 12 < total:
-        nav.append(InlineKeyboardButton("➡️", callback_data=f"reseller_prod_page_{page+1}"))
+    if (page + 1) * 8 < total:
+        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"reseller_prod_page_{page+1}"))
     kb.append(nav)
+    lines.append(f"\n_page {page+1} of {max(1, (total+7)//8)}_")
     await q.edit_message_text("\n".join(lines), parse_mode="Markdown",
                               reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def reseller_prod_all_callback(update, context):
+    """🆕 v170.12: bulk enable/disable ALL products for reseller API."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    data = q.data
+    new = 1 if data == "reseller_prod_all_on" else 0
+    try:
+        from database import get_connection
+        conn = get_connection(); c = conn.cursor()
+        c.execute("UPDATE products SET reseller_enabled=? WHERE is_active=1", (new,))
+        conn.commit(); conn.close()
+    except Exception as e:
+        await q.edit_message_text(f"❌ {e}"); return
+    await reseller_admin_products_callback(update, context)
 
 
 async def reseller_prod_toggle_callback(update, context):

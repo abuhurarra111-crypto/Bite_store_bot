@@ -8,6 +8,30 @@
 
 ---
 
+# 🚀 v170.12 (2026-08-17) — BATCH 5: RESELLER PRODUCTS + PERSISTENT BUTTONS
+
+## 1. 🗂️ Reseller products panel (warranty/refund STYLE, user demand)
+- `reseller_admin_products_callback` rebuilt: premium emoji product names +
+  stock + reseller price + **colored toggle** (🟢 ON=success / 🔴 OFF=danger)
+  per product + **🟢 ALL ON / 🔴 ALL OFF** bulk buttons + pagination.
+- Callback `reseller_prod_all_(on|off)`.
+
+## 2. ⌨️ Reseller API Key → persistent reply keyboard (user demand)
+- `main_reseller_api` inline main-menu button **hidden** (registry hidden flag) —
+  ab inline menu me nahi.
+- `persistent_menu()` rebuilt: configurable buttons home/howto/reseller
+  (rename via `persist_label_<id>` + reorder via `persist_order`).
+- Naya text handler `handle_reseller_button` + `reseller_api_from_text`
+  (landing/access panel reply_text se).
+- Admin panel: Customization → **⌨️ Persistent Buttons** → rename + move up/down.
+- ⚠️ HONEST NOTE: Telegram reply-keyboard buttons PLAIN TEXT hote hain — background
+  color / animated premium icon inpar support NAHI. Emoji char (e.g. 🎁) rename me
+  chalega, lekin colored/animated nahi hoga.
+
+## 3. ⚠️ FRESH DEPLOY: version bump v170.11 → v170.12.
+
+---
+
 # 🚀 v170.11 (2026-08-17) — BATCH 4: SUPPLIER NAME IN EDIT ITEMS + PRODUCT-DETAIL BUTTONS EDITABLE
 
 ## 1. 🏭 Edit Items mein supplier name (user demand)

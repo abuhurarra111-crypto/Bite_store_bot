@@ -1064,6 +1064,21 @@ async def handle_how_to_button(update: Update, context: ContextTypes.DEFAULT_TYP
     await how_to_hub_from_text(update, context)
 
 
+async def handle_reseller_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """🆕 v170.12: Handler for the 🔗 Reseller API persistent reply-keyboard
+    button. Opens the same Reseller API screen (landing ya access panel) via
+    reply_text — inline main menu wala button ab persistent par hai."""
+    u = update.effective_user
+    if not u:
+        return
+    try:
+        from handlers_admin import reseller_api_from_text
+        await reseller_api_from_text(update, context)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).debug(f"[persist-reseller] {e}")
+
+
 async def handle_main_menu_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """🔧 BUG #8 FIX: Show welcome (persistent keyboard already attached on /start)
     Inline keyboard goes in the welcome message itself.

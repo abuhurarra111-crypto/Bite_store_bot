@@ -505,6 +505,10 @@ async def handle_text(update, context):
         if await cz_import_received(update, context): return
     if context.user_data.get('cz_banner_text'):
         if await cz_banner_text_received(update, context): return
+    # 🆕 v170.12: persistent button rename text input
+    if context.user_data.get('persist_ren_pid'):
+        from handlers_admin import persist_rename_received
+        if await persist_rename_received(update, context): return
     # 🆕 v170.11: dynamic-button rename text input (product-detail buttons etc.)
     if context.user_data.get('bs_ren_key'):
         from handlers_buttons import bs_rename_received
@@ -533,6 +537,10 @@ async def handle_text(update, context):
     if _reply_btn_matches(t, "📚 How to Use", update.effective_user.id):
         from handlers_start import handle_how_to_button
         await handle_how_to_button(update, context); return
+    # 🆕 v170.12: 🔗 Reseller API button on persistent reply keyboard
+    if _reply_btn_matches(t, "🔗 Reseller API", update.effective_user.id):
+        from handlers_start import handle_reseller_button
+        await handle_reseller_button(update, context); return
     # 🆕 v50: Screen-by-Screen Editor text input MUST run BEFORE any other 'erk'
     # consumer so admin's response edits go through our flow (with smart back).
     if context.user_data.get('se_back_sid'):
@@ -2268,6 +2276,9 @@ def main():
         ("^profit_all$", profit_all_callback),
         # 🆕 Customization handlers
         ("^admin_customization$", admin_customization_callback),
+        ("^persist_panel$", persist_panel_callback),                       # 🆕 v170.12
+        ("^persist_ren_", persist_rename_callback),                        # 🆕 v170.12
+        ("^persist_move_.+_(up|down)$", persist_move_callback),            # 🆕 v170.12
         # 🆕 v144: new customization tools
         ("^adm_users_search$",     adm_users_search_callback),
         ("^cz_noop$",              cz_noop_callback),
@@ -2448,6 +2459,7 @@ def main():
         ("^reseller_stats_panel$", reseller_stats_panel_callback),
         ("^reseller_dashboard_panel$", reseller_dashboard_callback),
         ("^reseller_admin_products$", reseller_admin_products_callback),
+        ("^reseller_prod_all_(on|off)$", reseller_prod_all_callback),  # 🆕 v170.12
         ("^reseller_prod_toggle_\\d+$", reseller_prod_toggle_callback),
         ("^reseller_prod_price_\\d+$", reseller_prod_price_callback),
         ("^reseller_prod_page_\\d+$", reseller_prod_page_callback),
