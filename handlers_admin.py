@@ -840,6 +840,8 @@ async def _finalize_product_add(u_or_q, c, is_query=False):
         summary += f"✅ Manual delivery configured.\n"
         kb.append([InlineKeyboardButton("⚙️ Delivery Settings", callback_data=f"delset_{new_pid}")])
         
+    # 🆕 v170.29: yahin se product ko FREEBIE banao (freebies items me direct add)
+    kb.append([InlineKeyboardButton("🎁 Make This a Freebie", callback_data=f"make_freebie_{new_pid}")])
     kb.append([InlineKeyboardButton("🔙 Back to Add Products", callback_data="admin_products")])
     
     markup = InlineKeyboardMarkup(kb)
@@ -876,6 +878,64 @@ async def _finalize_product_add(u_or_q, c, is_query=False):
 
     from telegram.ext import ConversationHandler
     return ConversationHandler.END
+
+
+async def make_freebie_callback(u, c):
+    """🆕 v170.29: Add Product confirmation se 1-click me product ko FREEBIE
+    banao + destination par broadcast. Callback: make_freebie_<pid>"""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌ Admin only!", show_alert=True); return
+    try:
+        pid = int(q.data.replace("make_freebie_", ""))
+    except Exception:
+        await q.answer("⚠️ Bad id", show_alert=True); return
+    await q.answer()
+    from database import set_freebie_config, get_product, get_freebie_config
+    prod = get_product(pid)
+    if not prod:
+        await q.answer("⚠️ Product not found", show_alert=True); return
+    ok = set_freebie_config(pid, enabled=1, claim_limit=1, reclaim_refs=0)
+    if not ok:
+        await q.answer("⚠️ Could not enable freebie", show_alert=True); return
+
+    stock = int((dict(prod) or {}).get("stock") or 0)
+    pname = (dict(prod) or {}).get("name") or f"#{pid}"
+    try:
+        from utils import html_strip_tags
+        pname_clean = html_strip_tags(str(pname)) or str(pname)
+    except Exception:
+        pname_clean = str(pname)
+
+    msg = (
+        f"🎁 *Freebie Enabled!* ✅\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📦 {escape_md(pname_clean[:50])}\n"
+        f"🔢 Claim limit: *1* per user\n"
+        f"🔁 Re-claim refs: *0* (free forever)\n"
+    )
+    if stock <= 0:
+        msg += f"\n⚠️ *Stock 0 hai* — pehle accounts/stock add karo warna users claim nahi kar payenge."
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎁 Freebies Settings", callback_data="freebies_admin_panel")],
+        [InlineKeyboardButton("📦 View / Edit Product", callback_data=f"viewprod_{pid}")],
+    ])
+    await _safe_edit(q, msg, parse_mode="Markdown", reply_markup=kb)
+
+    # 🆕 Broadcast "NEW FREEBIE" to fake-activity destination (bot/group/both).
+    try:
+        from fake_engagement import broadcast_store_message
+        text = (
+            f"🎁 *NEW FREEBIE DROP!* 🎉\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📦 {pname_clean[:80]} is now 100% FREE!\n"
+            f"🆓 No payment needed — just claim it!\n\n"
+            f"👉 Tap below and grab yours FREE!"
+        )
+        await broadcast_store_message(c.bot, text, pid=pid, tpl_id="bc_freebie")
+    except Exception as e:
+        print(f"[MakeFreebieBroadcast] failed: {e}")
+
 
 # 🔧 BUG FIX (Issues #2 & #3): There used to be a SECOND, duplicate
 # `prod_delivery_received` here (plus dead photo code) that Python loaded LAST,

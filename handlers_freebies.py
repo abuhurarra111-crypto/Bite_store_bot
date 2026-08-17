@@ -84,13 +84,22 @@ async def _show_freebies_menu(target, uid, from_text=False):
     except Exception:
         _have = False
 
+    try:
+        from keyboards import _rb
+    except Exception:
+        _rb = None
+
+    def _back_btn():
+        if _rb:
+            b = _rb("freebie_back", callback_data="main_menu")
+            return b if b else InlineKeyboardButton("🔙 Back", callback_data="main_menu")
+        return InlineKeyboardButton("🔙 Back", callback_data="main_menu")
+
     if not freebies:
         txt = _r("freebies_empty",
                  "🎁 *Freebies*\n━━━━━━━━━━━━━━━━━━━━\n\n"
                  "_No free products available right now. Check back soon!_")
-        kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🔙 Back", callback_data="main_menu"),
-        ]])
+        kb = InlineKeyboardMarkup([[_back_btn()]])
     else:
         header = _r("freebies_menu_header",
                     "🎁 *Freebies*\n━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -117,7 +126,7 @@ async def _show_freebies_menu(target, uid, from_text=False):
             else:
                 kb_rows.append([InlineKeyboardButton(
                     f"🎁 Claim — {plain[:22]}", callback_data=f"freebie_open_{pid}")])
-        kb_rows.append([InlineKeyboardButton("🔙 Back", callback_data="main_menu")])
+        kb_rows.append([_back_btn()])
         txt = "\n".join(lines)
         kb = InlineKeyboardMarkup(kb_rows)
 
@@ -167,9 +176,29 @@ async def _show_freebie_product(q, uid, pid):
     # Required refs for THIS claim: pehli claim 0, har agli claim reclaim × claims
     required_refs = 0 if claims == 0 else reclaim * claims
 
-    name = _clean_name(prod.get("name") or "", 40)
+    try:
+        from keyboards import _rb
+    except Exception:
+        _rb = None
+    def _btn(reg_id, fallback_label, cb):
+        if _rb:
+            b = _rb(reg_id, callback_data=cb)
+            return b if b else InlineKeyboardButton(fallback_label, callback_data=cb)
+        return InlineKeyboardButton(fallback_label, callback_data=cb)
+    def _back_btn():
+        return _btn("freebie_back", "🔙 Back", "main_menu")
+    def _menu_btn():
+        return _btn("freebie_menu_back", "🎁 Freebies", "freebies_menu")
+
+    # 🆕 v170.29: product name PREMIUM emoji ke saath render (pehle simple emoji)
+    try:
+        from handlers_order import _fmt_msg_name
+        name_line = _fmt_msg_name(prod.get("name") or "")
+    except Exception:
+        name_line = escape_md(_clean_name(prod.get("name") or "", 40))
+
     lines = [
-        f"🎁 *{escape_md(name)}*",
+        f"🎁 {name_line}",
         "━━━━━━━━━━━━━━━━━━━━",
         f"👥 Your claims: *{claims}*"
     ]
@@ -185,30 +214,29 @@ async def _show_freebie_product(q, uid, pid):
     if limit > 0 and claims >= limit and reclaim == 0:
         lines.append("❌ You reached the claim limit for this product.")
         kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("🎁 Freebies", callback_data="freebies_menu"),
-            InlineKeyboardButton("🔙 Back", callback_data="main_menu"),
+            _menu_btn(),
+            _back_btn(),
         ]])
     elif required_refs > 0 and refs_have < required_refs:
         lines.append(f"🔁 To claim again you need *{required_refs} referrals*.")
         lines.append(f"👥 Your referrals: *{refs_have}*")
         lines.append(f"⭐ You need *{required_refs - refs_have}* more.")
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔗 Refer & Earn", callback_data="referral")],
-            [InlineKeyboardButton("🎁 Freebies", callback_data="freebies_menu"),
-             InlineKeyboardButton("🔙 Back", callback_data="main_menu")],
+            [_btn("freebie_refer_earn", "🔗 Refer & Earn", "referral")],
+            [_menu_btn(), _back_btn()],
         ])
     else:
         lines.append("✅ Ready to claim — FREE!")
         if required_refs > 0:
             lines.append(f"🔁 ({required_refs} referrals requirement met)")
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🎉 Claim FREE Now", callback_data=f"freebie_do_{pid}")],
-            [InlineKeyboardButton("🎁 Freebies", callback_data="freebies_menu"),
-             InlineKeyboardButton("🔙 Back", callback_data="main_menu")],
+            [_btn("freebie_claim_now", "🎉 Claim FREE Now", f"freebie_do_{pid}")],
+            [_menu_btn(), _back_btn()],
         ])
 
     txt = "\n".join(lines)
-    await _safe_edit(q, txt, parse_mode="Markdown", reply_markup=kb)
+    _st, _sm = smart_text_and_mode(txt, "Markdown")
+    await _safe_edit(q, _st, parse_mode=_sm, reply_markup=kb)
 
 
 async def freebie_do_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

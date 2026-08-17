@@ -1346,22 +1346,38 @@ async def fulfill_paid_product_order(bot, order, paid_amount=None, *, payment_me
     # escape_md()'d the entire pre-rendered delivery which MANGLED special
     # chars in user content (URLs, passwords, codes etc.).
     delivery_label = "Your Product Details" if not has_static_text else "Your Delivery"
-    text = (
-        f"🎉 *Thanks for purchasing!*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"✅ Payment confirmed and your product is delivered below.\n"
-        f"🧾 Order ID: `#{order['id']}`\n"
-        f"📦 Product: *{_fmt_msg_name(order['product_name'])}*\n"
-        f"💳 Payment: *{escape_md(method)}*\n\n"
-        f"📨 *{delivery_label}* — see the next message."
-    )
+    # 🆕 v170.29: FREEBIE orders → "Thanks for purchasing" NAHI; freebie wala
+    # header (user ko pata chale ke FREE claim kiya).
+    is_freebie = str(order.get('payment_method') or '').strip().lower() == 'freebie' \
+                 or str(payment_method_label or '').startswith('🎁 FREEBIE')
+    if is_freebie:
+        text = (
+            f"🎁 *Freebie Claimed — FREE!*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"✅ Your FREE product is delivered below — no payment needed!\n"
+            f"🧾 Order ID: `#{order['id']}`\n"
+            f"📦 Product: *{_fmt_msg_name(order['product_name'])}*\n\n"
+            f"📨 *{delivery_label}* — see the next message."
+        )
+    else:
+        text = (
+            f"🎉 *Thanks for purchasing!*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"✅ Payment confirmed and your product is delivered below.\n"
+            f"🧾 Order ID: `#{order['id']}`\n"
+            f"📦 Product: *{_fmt_msg_name(order['product_name'])}*\n"
+            f"💳 Payment: *{escape_md(method)}*\n\n"
+            f"📨 *{delivery_label}* — see the next message."
+        )
     # v121: Tier progress hint only. No extra points on payment success.
-    try:
-        from loyalty_extras import build_tier_progress_line
-        tier_line = build_tier_progress_line(order['user_id'])
-        if tier_line:
-            text += f"\n\n{tier_line}"
-    except Exception: pass
+    # 🆕 v170.29: freebie par tier hint skip (koi spend nahi).
+    if not is_freebie:
+        try:
+            from loyalty_extras import build_tier_progress_line
+            tier_line = build_tier_progress_line(order['user_id'])
+            if tier_line:
+                text += f"\n\n{tier_line}"
+        except Exception: pass
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🛒 Buy More", callback_data="shop")],
         [InlineKeyboardButton("📜 Order History", callback_data="my_orders")],

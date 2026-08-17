@@ -8,6 +8,34 @@
 
 ---
 
+# 🚀 v170.29 (2026-08-17) — FREEBIES: PREMIUM EMOJI + EDITABLE BUTTONS + FREEBIE MSG + ADD-ITEM FREEBIE
+
+## 1. 🎖️ Freebie product screen — premium emoji render
+- `_show_freebie_product` ab product name `_fmt_msg_name` se render karta hai →
+  premium emoji (🤖 custom emoji) dikhta hai, simple fallback emoji nahi.
+
+## 2. 🎛️ Freebie flow buttons EDITABLE (Customization/Manage Buttons)
+- button_system.py: naye registry buttons group "freebies" me — freebie_claim_now,
+  freebie_refer_earn, freebie_menu_back, freebie_back. GROUP_NAMES me "🎁 Freebies Flow".
+- handlers_freebies.py ab inhe `_rb` se render karta hai (rename/color/hide/premium
+  emoji — bilkul binance flow jese editable).
+
+## 3. 🎁 Freebie claim → "Thanks for purchasing" NAHI, freebie wala msg
+- fulfill_paid_product_order ab FREEBIE orders par "🎁 Freebie Claimed — FREE!"
+  header bhejta hai ("Your FREE product is delivered below") — "Thanks for
+  purchasing" nahi. Tier progress hint bhi skip.
+
+## 4. ➕ Add Item → "🎁 Make This a Freebie" (1-click) + broadcast
+- Add Product confirmation me naya button `make_freebie_<pid>` → set_freebie_config
+  (enabled, limit 1, refs 0) + "NEW FREEBIE DROP!" broadcast destination par
+  (bc_freebie button ke saath). Fake freebie claims (random) + real claim broadcast
+  pehle se active hain (v170.14/v170.25).
+
+## 5. 🧪 Tests: registry buttons, _rb render, premium emoji, freebie detection,
+   make_freebie enable+broadcast — sab pass.
+
+---
+
 # 🚀 v170.28 (2026-08-17) — DESTINATION SET FIX + FREEBIE DETAILED ADMIN NOTIFY
 
 ## 1. 🐛 "Add/Change Channel" temporary-error + destination set nahi hoti FIX

@@ -128,6 +128,7 @@ from handlers_support import (support_menu_callback, st_list_callback, st_view_c
                                adm_deliver_callback, adm_delivery_text_received)
 from handlers_admin import admin_deposit_history_callback, admin_deposit_page_callback, admin_deposit_detail_callback, admin_responses_category_callback, bybit_test_callback  # 📊 Deposit + ✏️ Responses
 from handlers_admin import resp_template_apply_callback, resp_custom_callback, resp_reset_callback  # 🆕 v170.22: response templates
+from handlers_admin import make_freebie_callback  # 🆕 v170.29: Add Product → Make This a Freebie
 # 🆕 v37: Language, Reviews, Loyalty, Analytics
 from ui_extras import language_menu_callback, set_language_callback
 from handlers_reviews import (
@@ -2826,6 +2827,7 @@ def main():
         ("^freebie_toggle_",    freebie_toggle_callback),
         ("^freebie_limit_",     freebie_limit_callback),
         ("^freebie_refs_",      freebie_refs_callback),
+        ("^make_freebie_",      make_freebie_callback),
         # 🆕 v48: Referral Abuse admin panel
         ("^refadm_panel$",      refadm_panel_callback),
         ("^refadm_top$",        refadm_top_callback),   # 🆕 v170.9 top referrers

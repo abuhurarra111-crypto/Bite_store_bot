@@ -343,6 +343,31 @@ BUTTONS = {
         "large": "🎁 Freebies", "xl": "🎁 Freebies — Free products for users",
         "callback": "freebies_admin_panel",
     },
+    # ── 🆕 v170.29: FREEBIES FLOW buttons (editable — rename/color/premium emoji) ──
+    "freebie_claim_now": {
+        "group": "freebies", "essential": False,
+        "short": "🎉 Claim", "medium": "🎉 Claim FREE Now",
+        "large": "🎉 Claim FREE Now", "xl": "🎉 Claim FREE Now",
+        "callback": None,  # dynamic (freebie_do_<pid>)
+    },
+    "freebie_refer_earn": {
+        "group": "freebies", "essential": False,
+        "short": "🔗 Refer", "medium": "🔗 Refer & Earn",
+        "large": "🔗 Refer & Earn", "xl": "🔗 Refer & Earn — invite friends",
+        "callback": "referral",
+    },
+    "freebie_menu_back": {
+        "group": "freebies", "essential": False,
+        "short": "🎁", "medium": "🎁 Freebies",
+        "large": "🎁 Freebies", "xl": "🎁 Freebies",
+        "callback": "freebies_menu",
+    },
+    "freebie_back": {
+        "group": "freebies", "essential": False,
+        "short": "🔙", "medium": "🔙 Back",
+        "large": "🔙 Back", "xl": "🔙 Back",
+        "callback": "main_menu",
+    },
     "admin_reviews": {
         "group": "admin", "essential": False,
         "short": "⭐", "medium": "⭐ Reviews",
@@ -824,6 +849,7 @@ GROUP_NAMES = {
     "customization": "🎨 Customization",
     "navigation": "🔙 Navigation Buttons (Back / Home / Cancel / Prev / Next)",  # 🆕 v52
     "reseller": "🔗 Reseller API Flow",  # 🆕 v161.13
+    "freebies": "🎁 Freebies Flow",      # 🆕 v170.29
 }
 
 
