@@ -1174,46 +1174,60 @@ class CanbosoAdapter(SupplierAdapterBase):
             return []
         out = []
         for p in arr:
-            # Canboso tenants vary slightly. Support both legacy Mongo-style
-            # fields and documented/simple fields.
+            # 🐛 v170.39 CRITICAL FIX: Canboso Buyer API v2.1.0 schema change.
+            # OLD fields: _id, product_name, usdPricing, stats{available, sold}
+            # NEW fields: productId, name, price{amount,currency,text},
+            #             availability{available, sold}, productType, emoji
+            # Pehle adapter sirf OLD fields parhta tha → remote_id = "None"
+            # (sab products ek row me collide ho jate the) + stock hamesha 0.
+
+            # ── remote_id (new productId → old _id/id/product_id) ──
+            rid = (p.get("productId") or p.get("_id") or p.get("id")
+                   or p.get("product_id") or "")
+            rid = str(rid).strip()
+            # defensive: bina real id wale products skip (warna sab "None" par
+            # collide karte hain — yahi "kuch products gayab" ka root cause tha)
+            if not rid or rid.lower() == "none":
+                continue
+
+            # ── name (new name → old product_name/title) ──
+            name = (p.get("name") or p.get("product_name")
+                    or p.get("title") or "").strip()
+
+            # ── price / cost_usd (new price{amount} → old usdPricing/base/cost)
+            # _safe_float already handles dict {"amount": x, "currency": "USD"}
             usd = _safe_float(p.get("usdPricing")
                                or p.get("price")
                                or p.get("base_price")
                                or p.get("cost_usd"))
-            # 🐛 v97 CRITICAL FIX: Canboso API does NOT return a top-level
-            # "stock" field. Real stock lives in `stats.available`.
-            # Old code: p.get("stock", 0) → always 0 → ALL products showed
-            # stock=0 → bot marked everything out-of-stock → user couldn't
-            # buy anything from Canboso supplier.
-            #
-            # Live API response schema (verified 2026-07-20 via curl):
-            #   {
-            #     "_id": "...",
-            #     "product_name": "...",
-            #     "usdPricing": 13,
-            #     "stats": {"total": 7126, "sold": 6990, "available": 136},
-            #     ...
-            #   }
-            #
-            # Resolution order (defensive — supports API changes):
-            #   1. stats.available (canonical Canboso field)
-            #   2. top-level "stock" (in case Canboso adds it later)
-            #   3. top-level "available" (alternate field seen in some tenants)
-            #   4. fall back to 0
+
+            # ── stock (new availability{available} → old stats.available/
+            #    stock/available) ──
             stock_val = 0
-            stats = p.get("stats") if isinstance(p.get("stats"), dict) else {}
-            for cand in (stats.get("available"),
-                         p.get("stock"),
-                         p.get("available")):
-                if cand is not None:
-                    try:
-                        stock_val = int(cand)
-                        break
-                    except (TypeError, ValueError):
-                        continue
+            _avail = p.get("availability")
+            if isinstance(_avail, dict):
+                for cand in (_avail.get("available"), _avail.get("stock")):
+                    if cand is not None:
+                        try:
+                            stock_val = int(cand)
+                            break
+                        except (TypeError, ValueError):
+                            continue
+            if stock_val == 0:
+                stats = p.get("stats") if isinstance(p.get("stats"), dict) else {}
+                for cand in (stats.get("available"),
+                             p.get("stock"),
+                             p.get("available")):
+                    if cand is not None:
+                        try:
+                            stock_val = int(cand)
+                            break
+                        except (TypeError, ValueError):
+                            continue
+
             out.append({
-                "remote_id": str(p.get("_id") or p.get("id") or p.get("product_id")),
-                "name": p.get("product_name") or p.get("name") or p.get("title") or "",
+                "remote_id": rid,
+                "name": name,
                 "description": (p.get("description") or "") + (
                     "\n\nUsage: " + p.get("usageGuide", "") if p.get("usageGuide") else ""
                 ),
@@ -1236,7 +1250,11 @@ class CanbosoAdapter(SupplierAdapterBase):
         """
         import uuid as _uu
         qty = max(1, min(9999, int(quantity or 1)))
-        body = {"key": self.api_key, "product_id": str(remote_id), "quantity": qty}
+        # 🆕 v170.39: Canboso v2.1.0 camelCase fields — `productId` + `quantity`.
+        # Purana `product_id` bhi bhejte hain (backward-compat) — API ignore
+        # karta hai jo usay nahi chahiye.
+        body = {"key": self.api_key, "product_id": str(remote_id),
+                "productId": str(remote_id), "quantity": qty}
         internal_oid = str(getattr(self, "_current_internal_order_id", "") or "").strip()
         # Stable idempotency for the same bot order prevents duplicate paid
         # supplier purchases if a retry happens after a timeout.

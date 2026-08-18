@@ -8,6 +8,32 @@
 
 ---
 
+# 🚀 v170.39 (2026-08-18) — 🐛 FIX: CANBOSO v2.1.0 SCHEMA (AI TOOLS PRODUCTS)
+
+## 🐛 Root cause: Canboso Buyer API v2.1.0 schema change
+- Purana: `_id`, `product_name`, `usdPricing`, `stats.available`
+- Naya: `productId`, `name`, `price.amount`, `availability.available`
+- Adapter purane fields parhta tha → remote_id = "None" (SAB products ek hi
+  row me collide → sirf 1 product bachta) + stock hamesha 0 → "kuch products
+  show, kuch nahi".
+
+## ✅ Fix (ext_suppliers.py CanbosoAdapter)
+- fetch_products ab NAYE + purane dono schemas support karta hai:
+  - remote_id: productId → _id → id → product_id (empty/'None' SKIP)
+  - name: name → product_name → title
+  - price: _safe_float (price{amount} dict + purane fields)
+  - stock: availability.available → stats.available → stock → available
+- create_order body ab `productId` + `product_id` dono bhejta hai (backward-compat).
+
+## 📦 Ready DB (latest backup 20260818_180325 se)
+- Canboso suppliers (Shop Cron / sinh le / Ai Tools) re-synced live API se:
+  - Ai Tools: 21 active products (sab import me aate hain, stock+price sahi)
+  - Shop Cron: 17 active | sinh le: 38 active
+  - 3 corrupted remote_id='None' rows delete + stale products active=0
+- 1640 users / 957 orders / 36 products / 212 ext_products / 7 suppliers.
+
+---
+
 # 🚀 v170.38 (2026-08-18) — 🐛 FIX: DELETED/UNSYNCED FREEBIES NA DIKHEN
 
 ## 🐛 Deleted / unsynced / hidden freebies ab FREEBIES menu se gayab
