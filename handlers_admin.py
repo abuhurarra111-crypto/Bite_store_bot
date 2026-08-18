@@ -20,7 +20,7 @@ from templates_bundle import (
 (CAT_NAME, CAT_EMOJI,
  PROD_CAT, PROD_NAME, PROD_DESC, PROD_PRICE, PROD_COST, PROD_STOCK,
  PROD_WARRANTY, PROD_QUANTITY, PROD_PHOTO, PROD_DELIVERY_TEXT,
- SET_VALUE, EDIT_RESP_VALUE) = range(14)
+ SET_VALUE, EDIT_RESP_VALUE, BAN_INPUT, UNBAN_INPUT) = range(16)
 
 def _r(key):
     from database import get_response_with_auto_register
@@ -1220,6 +1220,123 @@ async def profit_all_callback(u,c):
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=admin_profit_keyboard(get_all_products(include_hidden=True)))
 
 # ── Users ──
+# ════════════════════════════════════════════
+# 🚫 v170.37: BANNED USERS PANEL (scam protection)
+# ════════════════════════════════════════════
+async def ban_panel_callback(u, c):
+    """🚫 Admin panel → Banned Users: list + Ban/Unban buttons."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    from database import list_banned_users
+    bans = list_banned_users()
+    if bans:
+        lines = [f"🚫 *Banned Users ({len(bans)})*", "━━━━━━━━━━━━━━━━━━━━"]
+        for b in bans[:40]:
+            uid = b.get("user_id")
+            reason = str(b.get("reason") or "—")
+            at = str(b.get("banned_at") or "")[:16]
+            lines.append(f"• `{uid}` — {reason}\n  _banned: {at}_")
+        text = "\n".join(lines)
+    else:
+        text = "🚫 *Banned Users*\n━━━━━━━━━━━━━━━━━━━━\n\n_No banned users._"
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Ban User (ID)", callback_data="ban_input")],
+        [InlineKeyboardButton("🔓 Unban User (ID)", callback_data="unban_input")],
+        [InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_panel")],
+    ])
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
+
+
+async def ban_input_start(u, c):
+    """🚫 Ask admin for user ID to ban. Conversation entry."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return ConversationHandler.END
+    await q.answer()
+    await _safe_edit(q,
+        "🚫 *Ban User*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "User ka Telegram ID bhejo (sirf number):\n\n"
+        "_Tip: kisi user ka ID Users list se, ya forwarded message se milega._\n"
+        "_Banned user ka sab kuch block ho jata hai (orders/freebies/deposit)._",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Cancel", callback_data="ban_panel")]]))
+    return BAN_INPUT
+
+
+async def unban_input_start(u, c):
+    """🔓 Ask admin for user ID to unban. Conversation entry."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return ConversationHandler.END
+    await q.answer()
+    await _safe_edit(q,
+        "🔓 *Unban User*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "User ka Telegram ID bhejo (sirf number):",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Cancel", callback_data="ban_panel")]]))
+    return UNBAN_INPUT
+
+
+async def ban_input_received(u, c):
+    """🚫 Receive user ID → ban."""
+    if u.effective_user.id != ADMIN_ID:
+        return ConversationHandler.END
+    raw = (u.message.text or "").strip()
+    try:
+        uid = int(raw.lstrip("@"))
+    except Exception:
+        await u.message.reply_text("❌ Sirf number bhejo (Telegram ID).",
+                                   parse_mode="Markdown")
+        return BAN_INPUT
+    if uid == ADMIN_ID:
+        await u.message.reply_text("❌ Apne aap ko ban nahi kar sakte.",
+                                   parse_mode="Markdown")
+        return BAN_INPUT
+    from database import ban_user, get_user
+    try:
+        usr = get_user(uid)
+        who = " ".join(x for x in ((usr.get("first_name") or ""),
+                                   (f"@{usr['username']}" if usr and usr.get("username") else "")) if x)
+    except Exception:
+        who = ""
+    ban_user(uid, "Admin ban (panel)")
+    await u.message.reply_text(
+        f"🚫 *Banned!*\n👤 {who or uid} (`{uid}`)\n\n"
+        f"_Ab ye user bot use nahi kar sakta._",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🚫 Banned Users", callback_data="ban_panel")]]))
+    return ConversationHandler.END
+
+
+async def unban_input_received(u, c):
+    """🔓 Receive user ID → unban."""
+    if u.effective_user.id != ADMIN_ID:
+        return ConversationHandler.END
+    raw = (u.message.text or "").strip()
+    try:
+        uid = int(raw.lstrip("@"))
+    except Exception:
+        await u.message.reply_text("❌ Sirf number bhejo (Telegram ID).",
+                                   parse_mode="Markdown")
+        return UNBAN_INPUT
+    from database import unban_user
+    ok = unban_user(uid)
+    await u.message.reply_text(
+        (f"🔓 *Unbanned* `{uid}` — ab ye user dobara bot use kar sakta hai."
+         if ok else f"⚠️ User `{uid}` ban list me nahi tha."),
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🚫 Banned Users", callback_data="ban_panel")]]))
+    return ConversationHandler.END
+
+
 async def admin_users_callback(u,c):
     """v65: paginated users list (50 per page) + per-user 📊 View Activity button."""
     q=u.callback_query

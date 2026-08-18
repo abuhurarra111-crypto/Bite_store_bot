@@ -129,6 +129,8 @@ from handlers_support import (support_menu_callback, st_list_callback, st_view_c
 from handlers_admin import admin_deposit_history_callback, admin_deposit_page_callback, admin_deposit_detail_callback, admin_responses_category_callback, bybit_test_callback  # 📊 Deposit + ✏️ Responses
 from handlers_admin import resp_template_apply_callback, resp_custom_callback, resp_reset_callback  # 🆕 v170.22: response templates
 from handlers_admin import make_freebie_callback  # 🆕 v170.29: Add Product → Make This a Freebie
+from handlers_admin import (ban_panel_callback, ban_input_start, unban_input_start,
+                            ban_input_received, unban_input_received)  # 🆕 v170.37 ban panel
 # 🆕 v37: Language, Reviews, Loyalty, Analytics
 from ui_extras import language_menu_callback, set_language_callback
 from handlers_reviews import (
@@ -1834,6 +1836,20 @@ def main():
                    CallbackQueryHandler(conv_cancel_callback, pattern="^conv_cancel$")],
     ))
 
+    # 3b. 🆕 v170.37: Ban / Unban user input (admin panel buttons)
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=300,
+        entry_points=[
+            CallbackQueryHandler(ban_input_start, pattern="^ban_input$"),
+            CallbackQueryHandler(unban_input_start, pattern="^unban_input$"),
+        ],
+        states={
+            BAN_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, ban_input_received)],
+            UNBAN_INPUT: [MessageHandler(filters.TEXT & ~filters.COMMAND, unban_input_received)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel_conversation),
+                   CallbackQueryHandler(conv_cancel_callback, pattern="^conv_cancel$")],
+    ))
+
     # 4. Edit Responses  (🆕 v170.22: + 2 readymade templates, custom, reset, real cancel)
     app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(edit_response_callback, pattern="^editresp_")],
@@ -2477,6 +2493,7 @@ def main():
         ("^view_order_", view_order_callback),
         ("^approve_", approve_order_callback), ("^reject_", reject_order_callback),
         ("^admin_users$", admin_users_callback),
+        ("^ban_panel$", ban_panel_callback),          # 🆕 v170.37 banned users panel
         # 🆕 v149: refund-by-user-ID + per-user full history
         ("^adm_refund_uid$", adm_refund_uid_callback),
         ("^adm_refund_uid_", adm_refund_uid_callback),

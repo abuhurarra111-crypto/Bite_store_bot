@@ -8,6 +8,16 @@
 
 ---
 
+# 🚀 v170.37 (2026-08-18) — 🚫 BANNED USERS PANEL (ADMIN BUTTONS)
+
+## 🚫 Ban system ab ADMIN PANEL me (buttons, no commands)
+- Naya admin button "🚫 Banned Users" (admin_banlist registry → ban_panel).
+- Panel: banned users list + ➕ Ban User (ID) + 🔓 Unban User (ID) buttons.
+- Conversation input: ID bhejo → turant ban/unban (admin self-ban block).
+- `/ban` + `/unban` commands ab bhi kaam karte hain (backup).
+
+---
+
 # 🚀 v170.36 (2026-08-18) — 🛡️ STRICT USDT-ONLY CURRENCY (ALL CRYPTO METHODS)
 
 ## 🛡️ Sirf USDT verify — BYBIT PAY + BINANCE PAY khas tor par (user demand)

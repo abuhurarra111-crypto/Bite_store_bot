@@ -343,6 +343,13 @@ BUTTONS = {
         "large": "🎁 Freebies", "xl": "🎁 Freebies — Free products for users",
         "callback": "freebies_admin_panel",
     },
+    # 🚫 v170.37: global banned users panel (scam protection)
+    "admin_banlist": {
+        "group": "admin", "essential": False,
+        "short": "🚫", "medium": "🚫 Banned Users",
+        "large": "🚫 Banned Users", "xl": "🚫 Banned Users — Ban / Unban / List",
+        "callback": "ban_panel",
+    },
     # ── 🆕 v170.29: FREEBIES FLOW buttons (editable — rename/color/premium emoji) ──
     "freebie_claim_now": {
         "group": "freebies", "essential": False,
