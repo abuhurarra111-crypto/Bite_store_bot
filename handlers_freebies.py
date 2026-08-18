@@ -167,6 +167,17 @@ async def _show_freebie_product(q, uid, pid):
     if not prod or not cfg.get("enabled"):
         await _safe_edit(q, "ℹ️ This product is not available for free claim right now.")
         return
+    # 🐛 v170.38 FIX: deleted/unsynced/hidden products claim nahi ho sakte
+    try:
+        if int((dict(prod) or {}).get("is_active") or 0) == 0:
+            await _safe_edit(q, "ℹ️ This product is not available right now.")
+            return
+        from database import is_product_hidden
+        if is_product_hidden(pid):
+            await _safe_edit(q, "ℹ️ This product is not available right now.")
+            return
+    except Exception:
+        pass
 
     claims = freebie_claims_count(uid, pid)
     limit = int(cfg.get("claim_limit") or 1)
@@ -264,6 +275,17 @@ async def freebie_do_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not prod or not cfg.get("enabled"):
         await _safe_edit(q, "ℹ️ This freebie is not available right now.")
         return
+    # 🐛 v170.38 FIX: deleted/unsynced/hidden products claim nahi ho sakte
+    try:
+        if int((dict(prod) or {}).get("is_active") or 0) == 0:
+            await _safe_edit(q, "ℹ️ This freebie is not available right now.")
+            return
+        from database import is_product_hidden
+        if is_product_hidden(pid):
+            await _safe_edit(q, "ℹ️ This freebie is not available right now.")
+            return
+    except Exception:
+        pass
 
     claims = freebie_claims_count(uid, pid)
     limit = int(cfg.get("claim_limit") or 1)

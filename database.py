@@ -230,7 +230,7 @@ def setup_database():
             # 🆕 v170.6: USER RULE — HAR DEPLOY FRESH (0 data). Is version ko
             # HAR deploy par bump karo taake bot har nayi release par khud reset
             # ho jaye (0 users/orders/suppliers). Admin manual restore karta hai.
-            current_version = "v170.37"
+            current_version = "v170.38"
             version_marker = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), ".deployed_version")
             last_version = ""
             if os.path.exists(version_marker):
@@ -5802,16 +5802,33 @@ def set_freebie_config(pid, *, enabled=None, claim_limit=None, reclaim_refs=None
 
 
 def get_all_freebie_products(include_disabled=False):
-    """All products with freebie config (enabled-only ya sab)."""
+    """All products with freebie config (enabled-only ya sab).
+
+    🐛 v170.38 FIX: deleted / unsynced / hidden products AB include nahi hote.
+    Pehle LEFT JOIN se deleted product ki row bhi freebies me aa jati thi
+    (delete/unsync karne ke baad bhi show hoti thi).
+    """
     setup_freebies_tables()
+    try:
+        _ensure_is_hidden_column()
+    except Exception:
+        pass
     conn = get_connection(); c = conn.cursor()
+    try:
+        _ensure_column(c, "products", "is_active", "INTEGER DEFAULT 1")
+    except Exception:
+        pass
+    base_where = (
+        "p.id IS NOT NULL AND COALESCE(p.is_active,1)=1 AND COALESCE(p.is_hidden,0)=0"
+    )
     if include_disabled:
-        c.execute("""SELECT f.*, p.name, p.stock, p.price FROM freebies f
-                     LEFT JOIN products p ON p.id = f.product_id ORDER BY f.product_id""")
+        c.execute(f"""SELECT f.*, p.name, p.stock, p.price FROM freebies f
+                     INNER JOIN products p ON p.id = f.product_id
+                     WHERE {base_where} ORDER BY f.product_id""")
     else:
-        c.execute("""SELECT f.*, p.name, p.stock, p.price FROM freebies f
-                     LEFT JOIN products p ON p.id = f.product_id
-                     WHERE f.enabled=1 ORDER BY f.product_id""")
+        c.execute(f"""SELECT f.*, p.name, p.stock, p.price FROM freebies f
+                     INNER JOIN products p ON p.id = f.product_id
+                     WHERE f.enabled=1 AND {base_where} ORDER BY f.product_id""")
     rows = [dict(r) for r in c.fetchall()]; conn.close()
     return rows
 

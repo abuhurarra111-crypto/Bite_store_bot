@@ -8,6 +8,19 @@
 
 ---
 
+# 🚀 v170.38 (2026-08-18) — 🐛 FIX: DELETED/UNSYNCED FREEBIES NA DIKHEN
+
+## 🐛 Deleted / unsynced / hidden freebies ab FREEBIES menu se gayab
+- Root cause: `get_all_freebie_products` LEFT JOIN se deleted product ki row bhi
+  return karta tha → product delete/unsync karne ke baad bhi freebies me show
+  hota tha (naam NULL/ghost).
+- Fix: INNER JOIN + filter `p.id IS NOT NULL AND is_active=1 AND is_hidden=0`.
+- Claim flow bhi harden: `_show_freebie_product` + `freebie_do_callback` ab
+  deleted/unsynced/hidden product par claim allow nahi karte.
+- Fake freebie broadcasts auto-fix (wo bhi get_all_freebie_products use karte hain).
+
+---
+
 # 🚀 v170.37 (2026-08-18) — 🚫 BANNED USERS PANEL (ADMIN BUTTONS)
 
 ## 🚫 Ban system ab ADMIN PANEL me (buttons, no commands)
