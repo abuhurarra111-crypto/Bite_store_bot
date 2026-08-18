@@ -630,6 +630,12 @@ def find_matching_payment(
 
     for t in txns:
         try:
+            # 🛡️ v170.35 FIX (SCAM): currency MUST be USDT. Pehle bot sirf
+            # amount match karta tha — scammer ne BTTC (bekaar token) se same
+            # amount pay kiya aur bot usay USDT samajh kar deliver karta raha.
+            if not _currency_is_usdt(t):
+                continue
+
             # Amount check (always)
             if abs(t["amount"] - expected_amount) > tolerance:
                 continue
@@ -708,6 +714,11 @@ def find_payment_by_order_id(
             if key != txid and key not in txid and key not in raw:
                 continue
 
+            # 🛡️ v170.35 FIX (SCAM): currency MUST be USDT (BTTC ya koi aur
+            # token kabhi accept nahi — sirf real USDT).
+            if not _currency_is_usdt(t):
+                continue
+
             # Amount check if provided
             if expected_amount is not None and expected_amount > 0:
                 if abs(t["amount"] - expected_amount) > tolerance:
@@ -726,6 +737,19 @@ def find_payment_by_order_id(
             logger.warning(f"[BinancePayAPI] order-id match err: {e}")
             continue
     return None
+
+
+def _currency_is_usdt(t: dict) -> bool:
+    """🛡️ v170.35 SCAM FIX: Binance Pay transaction sirf tab accept jab uski
+    currency USDT ho. BTTC / BTC / ETH / koi bhi doosra token → reject.
+
+    Binance Pay /pay/transactions returns `currency` per row. Agar field absent
+    ho to default USDT maan lo (legacy safety), warna STRICT check."""
+    try:
+        cur = str((t or {}).get("currency") or "USDT").strip().upper()
+    except Exception:
+        cur = "USDT"
+    return cur == "USDT"  # STRICT — sirf USDT
 
 
 def _fuzzy_name(a: str, b: str) -> bool:

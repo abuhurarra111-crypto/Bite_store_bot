@@ -1596,6 +1596,79 @@ async def _cmd_apikey(update, context):
         logging.getLogger(__name__).debug(f"[cmd apikey] {e}")
 
 
+async def _cmd_ban(update, context):
+    """🚫 v170.35: admin command — global user ban.
+    Usage: /ban <user_id> [reason]
+    Also accepts a reply to a forwarded message from that user."""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    args = context.args or []
+    uid = None
+    reason = ""
+    try:
+        # reply-to-forward: take the forwarded user's id
+        if update.message.reply_to_message:
+            fwd = update.message.reply_to_message
+            if getattr(fwd, "forward_from", None):
+                uid = fwd.forward_from.id
+            elif getattr(fwd, "from_user", None):
+                uid = fwd.from_user.id
+            reason = " ".join(args) if args else ""
+        if uid is None and args:
+            try:
+                uid = int(str(args[0]).lstrip("@"))
+                reason = " ".join(args[1:])
+            except Exception:
+                uid = None
+    except Exception:
+        uid = None
+    if uid is None:
+        await update.message.reply_text(
+            "❌ *Usage:* `/ban <user_id> [reason]`\n"
+            "Ya kisi forwarded message par reply karke `/ban` bhejo.",
+            parse_mode="Markdown")
+        return
+    if uid == ADMIN_ID:
+        await update.message.reply_text("❌ Apne aap ko ban nahi kar sakte.")
+        return
+    from database import ban_user, get_user
+    try:
+        u = get_user(uid)
+        uname = f"@{u['username']}" if u and u.get("username") else ""
+        fname = (u.get("first_name") or "") if u else ""
+    except Exception:
+        uname, fname = "", ""
+    ok = ban_user(uid, reason)
+    who = " ".join(x for x in (fname, uname) if x) or str(uid)
+    await update.message.reply_text(
+        f"🚫 *Banned!*\n"
+        f"👤 {who} (`{uid}`)\n"
+        f"📝 Reason: {reason or '—'}\n\n"
+        f"_Ab ye user bot use nahi kar sakta (orders/freebies/deposit sab block)._",
+        parse_mode="Markdown")
+
+
+async def _cmd_unban(update, context):
+    """🔓 v170.35: admin command — global user unban. Usage: /unban <user_id>"""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    args = context.args or []
+    try:
+        uid = int(str(args[0]).lstrip("@")) if args else None
+    except Exception:
+        uid = None
+    if uid is None:
+        await update.message.reply_text("❌ *Usage:* `/unban <user_id>`",
+                                        parse_mode="Markdown")
+        return
+    from database import unban_user, is_user_banned
+    ok = unban_user(uid)
+    await update.message.reply_text(
+        f"🔓 *Unbanned* `{uid}` — ab ye user dobara bot use kar sakta hai." if ok
+        else f"⚠️ User `{uid}` ban list me nahi tha.",
+        parse_mode="Markdown")
+
+
 async def _cmd_freebies(update, context):
     """🎁 Freebies — blue menu button command."""
     try:
@@ -1998,6 +2071,9 @@ def main():
     app.add_handler(CommandHandler("admin", admin_command))
     app.add_handler(CommandHandler("resetbot", resetbot_command))
     app.add_handler(CommandHandler("deliver", deliver_command))
+    # 🆕 v170.35: global user ban / unban (scam protection)
+    app.add_handler(CommandHandler("ban", _cmd_ban))
+    app.add_handler(CommandHandler("unban", _cmd_unban))
 
     # 🆕 v161.4: reseller system is BUTTON-DRIVEN (no commands).
     # User: main-menu "🔗 Reseller API Key" button → ProdSeller-style panel.

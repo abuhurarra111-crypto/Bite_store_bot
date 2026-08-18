@@ -8,6 +8,30 @@
 
 ---
 
+# 🚀 v170.35 (2026-08-18) — 🛡️ BTTC SCAM FIX + GLOBAL BAN SYSTEM
+
+## 1. 🛡️ CURRENCY CHECK (SCAM ROOT CAUSE FIX)
+- Root cause: Binance Pay verification (`find_matching_payment` +
+  `find_payment_by_order_id`) sirf AMOUNT + Order ID match karta tha — CURRENCY
+  kabhi check nahi hoti thi. Scammer "Soulhacker" (7360098688) ne BTTC (bekaar
+  token) se same amount pay kiya aur bot usay USDT samajh kar deliver karta raha
+  ($51.96 delivered + auto-refund points misuse).
+- Fix: `_currency_is_usdt()` — sirf `USDT` accept (BTTC/BTC/ETH/etc reject).
+  Dono matchers ab currency check karte hain.
+
+## 2. 🚫 GLOBAL BAN SYSTEM (user demand)
+- database.py: `banned_users` table + `ban_user/unban_user/is_user_banned/
+  list_banned_users/setup_banned_users_table` (migrate_all me registered).
+- maintenance_mode.py: ban gate — banned user har action se block (orders/
+  freebies/deposit/sab), 30s cooldown reply. Admin bypass.
+- bot.py: admin commands `/ban <user_id> [reason]` + `/unban <user_id>`
+  (forwarded message par reply karke bhi ban kar sakte ho).
+
+## 3. 🧪 Tests: currency check, BTTC-reject/USDT-accept, ban/unban/list,
+   migrate_all clean — sab pass.
+
+---
+
 # 🚀 v170.34 (2026-08-17) — FIX: FREEBIE BROADCAST ME PREMIUM EMOJI (FIXED YA NAME)
 
 ## 🎖️ Freebie claim broadcast me product ka premium emoji

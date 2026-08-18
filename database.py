@@ -230,7 +230,7 @@ def setup_database():
             # 🆕 v170.6: USER RULE — HAR DEPLOY FRESH (0 data). Is version ko
             # HAR deploy par bump karo taake bot har nayi release par khud reset
             # ho jaye (0 users/orders/suppliers). Admin manual restore karta hai.
-            current_version = "v170.34"
+            current_version = "v170.35"
             version_marker = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), ".deployed_version")
             last_version = ""
             if os.path.exists(version_marker):
@@ -443,6 +443,7 @@ def migrate_all():
         ("migrate_reseller_tables",       migrate_reseller_tables),       # 🆕 v161 reseller API
         ("_ensure_fake_activity_off_column", _ensure_fake_activity_off_column),  # 🆕 v170.5
         ("setup_freebies_tables",         setup_freebies_tables),         # 🆕 v170.13 freebies
+        ("setup_banned_users_table",      setup_banned_users_table),      # 🆕 v170.35 ban system
     ):
         try:
             fn(); stats["tables_checked"] += 1
@@ -687,6 +688,73 @@ def save_user(user_id, username="", first_name=""):
 def get_user(user_id):
     conn = get_connection(); c = conn.cursor()
     c.execute("SELECT * FROM users WHERE user_id=?", (user_id,)); u = c.fetchone(); conn.close(); return u
+
+
+# ════════════════════════════════════════════
+# 🚫 v170.35: GLOBAL USER BAN (scam protection)
+# ════════════════════════════════════════════
+def setup_banned_users_table():
+    conn = get_connection(); c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS banned_users (
+        user_id      INTEGER PRIMARY KEY,
+        reason       TEXT DEFAULT '',
+        banned_at    TEXT DEFAULT CURRENT_TIMESTAMP
+    )""")
+    conn.commit(); conn.close()
+
+
+def ban_user(user_id, reason=""):
+    """Ban a user globally (block all bot actions)."""
+    setup_banned_users_table()
+    try:
+        uid = int(user_id)
+    except Exception:
+        return False
+    from datetime import datetime
+    conn = get_connection(); c = conn.cursor()
+    c.execute("""INSERT OR REPLACE INTO banned_users (user_id, reason, banned_at)
+                 VALUES (?, ?, ?)""",
+              (uid, str(reason or "")[:200],
+               datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    conn.commit(); conn.close()
+    return True
+
+
+def unban_user(user_id):
+    """Unban a user."""
+    setup_banned_users_table()
+    try:
+        uid = int(user_id)
+    except Exception:
+        return False
+    conn = get_connection(); c = conn.cursor()
+    c.execute("DELETE FROM banned_users WHERE user_id=?", (uid,))
+    conn.commit(); conn.close()
+    return True
+
+
+def is_user_banned(user_id):
+    """True if the user is globally banned."""
+    if user_id is None:
+        return False
+    try:
+        uid = int(user_id)
+    except Exception:
+        return False
+    setup_banned_users_table()
+    conn = get_connection(); c = conn.cursor()
+    c.execute("SELECT 1 FROM banned_users WHERE user_id=?", (uid,))
+    r = c.fetchone(); conn.close()
+    return r is not None
+
+
+def list_banned_users():
+    """Return list of banned users (user_id, reason, banned_at)."""
+    setup_banned_users_table()
+    conn = get_connection(); c = conn.cursor()
+    c.execute("SELECT * FROM banned_users ORDER BY banned_at DESC")
+    rows = [dict(r) for r in c.fetchall()]; conn.close()
+    return rows
 
 def get_all_users():
     """Returns ALL real users only (excludes fake reviewer entries with uid >= 9B)."""

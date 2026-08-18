@@ -132,6 +132,21 @@ def _cooled_down(uid: int) -> bool:
     return True
 
 
+# 🚫 v170.35: banned-user reply cooldown (alag dictionary taake maintenance
+# cooldown ke sath na takraye)
+_BANNED_LAST_SENT = {}
+_BANNED_COOLDOWN = 30.0  # banned user ko har 30s me ek baar hi batana
+
+
+def _banned_cooled_down(uid: int) -> bool:
+    now = time.time()
+    last = _BANNED_LAST_SENT.get(uid, 0)
+    if now - last < _BANNED_COOLDOWN:
+        return False
+    _BANNED_LAST_SENT[uid] = now
+    return True
+
+
 # ------------------------------------------------------------
 # Callback allow-list (running orders allowed to complete)
 # ------------------------------------------------------------
@@ -170,20 +185,41 @@ async def maintenance_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Runs on EVERY incoming update at high priority (group=-90).
     - Admin: always allowed through (return, don't raise).
+    - Banned users: blocked ALWAYS (even jab maintenance OFF ho).
     - Maintenance OFF: allowed through.
-    - Callback matching completion allow-list: allowed through.
     - Everything else: send maintenance message + swallow update.
     """
     try:
-        if not is_maintenance_on():
-            return  # fall through to normal handlers
-
         user = update.effective_user
         if not user:
             return
         uid = user.id
         if uid == ADMIN_ID:
             return  # admin bypass
+
+        # 🚫 v170.35 SCAM FIX: global ban gate — banned users ko har action se
+        # block (orders, freebies, deposits, sab). Admin bypass.
+        try:
+            from database import is_user_banned
+            if is_user_banned(uid):
+                if _banned_cooled_down(uid):
+                    try:
+                        await context.bot.send_message(
+                            chat_id=uid,
+                            text="🚫 *You are banned from this store.*\n\n"
+                                 "Your access has been revoked. If you think "
+                                 "this is a mistake, contact the store owner.",
+                            parse_mode="Markdown")
+                    except Exception as e:
+                        logger.debug(f"[Ban] notify fail: {e}")
+                raise ApplicationHandlerStop
+        except ApplicationHandlerStop:
+            raise
+        except Exception as e:
+            logger.debug(f"[Ban] gate exception: {e}")
+
+        if not is_maintenance_on():
+            return  # fall through to normal handlers
 
         # During maintenance, block ALL non-admin updates (commands, callbacks,
         # payment buttons, shop actions). Admin still bypasses.
