@@ -2684,6 +2684,23 @@ def _usdt_cfg(method):
     return cfg
 
 
+def _is_usdt_txn(row) -> bool:
+    """🛡️ v170.36 SCAM GUARD: kisi bhi payment record (Binance Pay / Bybit /
+    on-chain) ka CURRENCY USDT hona laazmi hai. BTTC/BTC/ETH/koi bhi doosra
+    token → False (reject). Sirf USDT accept (USD bhi — Binance Pay receipt par
+    USDT ka fiat label hota hai)."""
+    try:
+        from payments import _currency_is_usdt
+        if _currency_is_usdt(row):
+            return True
+        # _currency_is_usdt sirf USDT allow karta hai; USD label bhi allow
+        cur = str((row or {}).get('currency') or '').strip().upper()
+        return cur == 'USD'
+    except Exception:
+        cur = str((row or {}).get('currency') or 'USDT').strip().upper()
+        return cur in ('USDT', 'USD')
+
+
 def _usdt_amount_match(actual, expected, tolerance=None, anchored=False):
     """v146: on-chain USDT deposits routinely arrive slightly ABOVE the order
     amount (users add a small fee buffer / round up). The old hard 0.0001
@@ -2743,6 +2760,9 @@ def _find_matching_usdt_deposit(order, lookback_hours=96):
     for d in deps:
         txid = d.get('txid') or ''
         if not txid or is_txid_used(txid):
+            continue
+        # 🛡️ v170.36: sirf USDT currency (BTTC/BTC/etc reject)
+        if not _is_usdt_txn(d):
             continue
         if note and note.lower() not in txid.lower():
             continue
@@ -3197,6 +3217,9 @@ def _find_matching_bybit_payment(order, lookback_hours=720):  # 🆕 v161.18: 30
                     txid = d.get('txid') or ''
                     if not txid or is_txid_used(txid):
                         continue
+                    # 🛡️ v170.36: sirf USDT currency (BTTC/BTC/etc reject)
+                    if not _is_usdt_txn(d):
+                        continue
                     if str(d.get('from_member_id') or '').strip() != cust_uid:
                         continue
                     if not _usdt_amount_match(d.get('amount'), expected, anchored=True):
@@ -3259,6 +3282,9 @@ def _find_matching_bybit_payment(order, lookback_hours=720):  # 🆕 v161.18: 30
             if sig in seen: continue
             seen.add(sig)
             if not txid or is_txid_used(txid): continue
+            # 🛡️ v170.36: sirf USDT currency (BTTC/BTC/etc reject)
+            if not _is_usdt_txn(d):
+                continue
             # 🔧 v116/v118: match by hash, pasted Order ID, or stored Reference ID
             # found anywhere in the record (digits-normalized).
             # 🆕 v161.15 FIX: with NO pasted ID, _bybit_hash_matches(d,"") returns
@@ -3297,6 +3323,9 @@ def _find_matching_bybit_payment(order, lookback_hours=720):  # 🆕 v161.18: 30
         for d in rows:
             txid=d.get('txid') or ''
             if not txid or is_txid_used(txid): continue
+            # 🛡️ v170.36: sirf USDT currency (BTTC/BTC/etc reject)
+            if not _is_usdt_txn(d):
+                continue
             # 🆕 v161.12: TXID optional — if the customer didn't paste one (or
             # Bybit lags), match by network + address + amount + after-order,
             # exactly like the internal fallback. Amount is the primary anchor.

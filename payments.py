@@ -2511,6 +2511,31 @@ def verify_payment_screenshot(image_bytes, expected_amount=None,
     result['amount'] = actual_amount
     result['currency'] = currency
 
+    # 🛡️ v170.36 SCAM FIX: STRICT currency enforcement.
+    #   • JazzCash / EasyPaisa → PKR (Rs / rupees)
+    #   • Telegram Stars       → koi check nahi (native Telegram payment)
+    #   • Baaki SAB (Binance Pay, Bybit Pay, USDT) → sirf USDT
+    #     (USD label bhi allow — Binance Pay receipt par USDT ka fiat label).
+    #   BTTC / BTC / ETH / BNB / koi bhi doosri currency → REJECT.
+    _plat = str(platform or '').lower()
+    _cur = str(currency or '').strip().upper()
+    if _plat in ('jazzcash', 'jazz', 'easypaisa', 'easy'):
+        if _cur and _cur not in ('PKR', 'RS', 'RS.', 'RUPEE', 'RUPEES'):
+            result['status'] = 'currency_mismatch'
+            result['reason'] = (f"❌ Wrong currency: `{currency or '?'}`\n"
+                                f"JazzCash / EasyPaisa payments must be in PKR (Rupees).")
+            return result
+    elif _plat in ('stars', 'telegram_stars', 'telegram stars', 'tg_stars'):
+        pass  # native Telegram Stars — koi currency check nahi
+    else:
+        # Binance Pay / Bybit / USDT etc → USDT only
+        if _cur and _cur not in ('USDT', 'USD'):
+            result['status'] = 'currency_mismatch'
+            result['reason'] = (f"❌ Wrong currency: `{currency or '?'}`\n"
+                                f"Only USDT payments are accepted. "
+                                f"BTTC / BTC / other coins are NOT accepted.")
+            return result
+
     # 7. Amount check (with tolerance)
     if expected_amount is not None and actual_amount > 0:
         try:

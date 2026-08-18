@@ -8,6 +8,23 @@
 
 ---
 
+# 🚀 v170.36 (2026-08-18) — 🛡️ STRICT USDT-ONLY CURRENCY (ALL CRYPTO METHODS)
+
+## 🛡️ Sirf USDT verify — BYBIT PAY + BINANCE PAY khas tor par (user demand)
+- Easypaisa / JazzCash / Telegram Stars = EXCEPTION (PKR / native Stars).
+- Baaki SAB methods (Binance Pay, Binance USDT TRC20/BEP20, Bybit Pay, Bybit
+  USDT TRC20/BEP20) ab sirf **USDT** currency verify karte hain — BTTC/BTC/ETH/
+  koi bhi doosri currency turant REJECT.
+- handlers_order.py: naya helper `_is_usdt_txn()` + guards in
+  `_find_matching_bybit_payment` (UID loop + main scan + bybit_usdt scan) aur
+  `_find_matching_usdt_deposit` (binance on-chain scan). Defense-in-depth:
+  API already coin=USDT filter karti thi, ab match level par bhi strict.
+- payments.py `verify_payment_screenshot`: currency enforcement — JazzCash/
+  EasyPaisa → PKR; Stars → skip; baaki sab → USDT/USD (BTTC/BTC/etc reject).
+- Binance Pay API check (v170.35) + ye naye guards → ab har crypto path USDT-only.
+
+---
+
 # 🚀 v170.35 (2026-08-18) — 🛡️ BTTC SCAM FIX + GLOBAL BAN SYSTEM
 
 ## 1. 🛡️ CURRENCY CHECK (SCAM ROOT CAUSE FIX)
