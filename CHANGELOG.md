@@ -8,6 +8,35 @@
 
 ---
 
+# 🚀 v170.40 (2026-08-19) — RESELLER API: FREEBIES EXCLUDE + ENRICHED NOTIFICATIONS + ORDERS DETAIL
+
+## 1. 🎁 Freebies + $0 products RESELLER API se EXCLUDE (existing + future)
+- `_resellable_products()` ab `price > 0` + `id NOT IN (freebies enabled=1)` filter
+  karta hai → freebie products (existing + future) reseller API ke /v1/products me
+  kabhi nahi aate. $0.01 refund-noise khatam.
+
+## 2. 🔗 Reseller order admin notification ENRICHED
+- `_notify_admin_order` ab HTML me bhejta hai (premium emoji render hota hai) +
+  supplier naam + Cost·Sold·Profit + Reseller Balance before→after (points+USD).
+- `_notify_admin` ab parse_mode support karta hai.
+
+## 3. 💳 Deposit notification (Reseller vs normal — dono full details)
+- `_send_deposit_success` ab admin ko deposit notify karta hai:
+  - Reseller ho → "🔗 Reseller Deposit!" (name + @username + ID + KEY + amount +
+    method + balance before/after)
+  - Normal → "💳 New Deposit!" (same details, no key)
+
+## 4. 📦 Reseller Orders panel — premium emoji + full detail (completed-orders jesa)
+- `_render_reseller_orders_panel` + `reseller_orders_key_callback`: clean names +
+  premium emoji icon buttons + har order ka "📄 #id" detail button.
+- Naya `reseller_order_view_callback`: full order detail — reseller, key, product,
+  supplier, cost/sold/profit, delivered keys, error, timestamps.
+
+## 5. 🧪 Tests: freebie-exclude, enriched notify (premium+supplier+profit+balance),
+   deposit notify — sab pass.
+
+---
+
 # 🚀 v170.39 (2026-08-18) — 🐛 FIX: CANBOSO v2.1.0 SCHEMA (AI TOOLS PRODUCTS)
 
 ## 🐛 Root cause: Canboso Buyer API v2.1.0 schema change

@@ -336,10 +336,20 @@ def _product_payload(pd: dict, key=None) -> dict:
 
 
 def _resellable_products() -> list:
+    # 🛡️ v170.40: FREEBIES + $0 products reseller API se EXCLUDE.
+    # Pehle freebie products (price 0) bhi API me aate the → reseller $0.01 me
+    # order karta tha → out_of_stock → fail → refund noise + confusion.
+    try:
+        from database import setup_freebies_tables
+        setup_freebies_tables()
+    except Exception:
+        pass
     conn = get_connection(); c = conn.cursor()
     c.execute("""SELECT * FROM products
                  WHERE is_active=1 AND COALESCE(is_hidden,0)=0
                    AND COALESCE(reseller_enabled,1)=1
+                   AND COALESCE(price,0) > 0
+                   AND id NOT IN (SELECT product_id FROM freebies WHERE enabled=1)
                  ORDER BY category_id, id""")
     rows = [dict(r) for r in c.fetchall()]; conn.close()
     return rows
@@ -684,36 +694,61 @@ def _webhook_worker_loop():
         _time.sleep(20)
 
 
-def _notify_admin(text: str):
+def _notify_admin(text: str, parse_mode=None):
     """Send a Telegram alert to the store owner (used for API health)."""
     try:
         import requests as _rq
         token = os.getenv("BOT_TOKEN", "").strip()
         aid = os.getenv("ADMIN_ID", "").strip()
         if token and aid:
+            payload = {"chat_id": int(aid), "text": text}
+            if parse_mode:
+                payload["parse_mode"] = parse_mode
             _rq.post(f"https://api.telegram.org/bot{token}/sendMessage",
-                     json={"chat_id": int(aid), "text": text}, timeout=10)
+                     json=payload, timeout=10)
     except Exception:
         pass
 
 
+def _product_name_html(raw):
+    """🆕 v170.40: product name ko HTML mode ke liye render (premium emoji ke
+    saath). [[HTML]] sentinel strip + tg-emoji preserve; plain text escape."""
+    import html as _hlib
+    s = str(raw or "Product")
+    if s.startswith("[[HTML]]"):
+        s = s[len("[[HTML]]"):]
+    # HTML markup present → use as-is (premium emoji render hoga)
+    import re as _re
+    if _re.search(r"<(?:b|i|u|s|code|tg-emoji|a)\b", s, flags=_re.I):
+        return s
+    return _hlib.escape(s)
+
+
 def _notify_admin_order(order_row):
     """🆕 v161.13: Admin notification when a RESELLER API order completes.
-    Same style as normal order notifications — full details so the owner can
-    see which reseller is bringing the most sales."""
+
+    🆕 v170.40 ENRICHED (user demand): ab notification me ye sab hai:
+      • product ka PREMIUM emoji (pehle strip ho jata tha)
+      • supplier ka naam
+      • cost (supplier kya leta hai) · sold (reseller ne kya pay kiya) · profit
+      • reseller ka wallet balance before → after (points + USD)
+    HTML mode me bhejta hai taake premium emoji render ho."""
     try:
         import threading as _th
         def _worker():
             try:
                 oid = int((order_row or {}).get("id") or 0)
                 uid = int((order_row or {}).get("user_id") or 0)
-                pname = str((order_row or {}).get("product_name") or "Product")
+                pid = int((order_row or {}).get("product_id") or 0)
+                pname_raw = str((order_row or {}).get("product_name") or "Product")
                 qty = int((order_row or {}).get("qty") or 1)
                 usd = float((order_row or {}).get("usd_amount") or 0)
+                pts_spent = float((order_row or {}).get("points_amount") or 0)
                 status = str((order_row or {}).get("status") or "delivered")
                 # reseller label/username
                 rlabel = ""
                 runame = ""
+                run = ""
                 try:
                     from database import get_api_key_row, get_user
                     krow = get_api_key_row(int((order_row or {}).get("key_id") or 0))
@@ -722,27 +757,78 @@ def _notify_admin_order(order_row):
                     u = get_user(uid)
                     if u:
                         runame = str(u.get("first_name") or "")
+                        run = str(u.get("username") or "")
                 except Exception:
                     pass
+                # supplier + cost (product → ext_suppliers / ext_products)
+                supplier_name = ""
+                cost = 0.0
                 try:
-                    from utils import html_strip_tags as _hst
-                    pname = _hst(pname)
+                    from database import get_product, get_connection as _gc
+                    pd = get_product(pid) or {}
+                    cost = float((dict(pd) if pd else {}).get("cost_price") or 0)
+                    esid = int((dict(pd) if pd else {}).get("ext_supplier_id") or 0)
+                    if esid:
+                        _c = _gc().cursor()
+                        _c.execute("SELECT name FROM ext_suppliers WHERE id=?", (esid,))
+                        _r = _c.fetchone()
+                        if _r:
+                            supplier_name = str(_r["name"] or "")
+                        _c.connection.close()
                 except Exception:
                     pass
+                if cost <= 0:
+                    try:
+                        from database import get_product, get_connection as _gc2
+                        pd2 = get_product(pid) or {}
+                        epid = int((dict(pd2) if pd2 else {}).get("ext_product_id") or 0)
+                        if epid:
+                            from ext_suppliers import get_ext_product
+                            ep = get_ext_product(epid)
+                            if ep:
+                                cost = float(ep.get("cost_usd") or 0)
+                    except Exception:
+                        pass
+                profit = round(usd - cost, 4)
+                # reseller wallet balance before/after
+                bal_after = 0.0
+                try:
+                    bal_after = float(get_user_points(uid) or 0)
+                except Exception:
+                    pass
+                bal_before = bal_after + pts_spent
+                try:
+                    ppd = float(get_setting("reseller_points_per_dollar") or _CFG_PPD or 10)
+                    if ppd <= 0:
+                        ppd = 10
+                except Exception:
+                    ppd = 10
+                usd_before = bal_before / ppd if ppd else 0.0
+                usd_after = bal_after / ppd if ppd else 0.0
+                import html as _hlib
+                def esc(s):
+                    return _hlib.escape(str(s or "") or "—")
                 st_icon = {"delivered": "✅", "pending": "⏳", "processing": "🔄", "failed": "❌"}.get(status, "❔")
-                msg = (
-                    "🔗 *Reseller API Order*\n"
-                    "━━━━━━━━━━━━━━━━━━━━\n"
-                    f"{st_icon} Order: `#{oid}` · Status: *{status}*\n"
-                    f"👤 Reseller: {runame or uid} (`{uid}`)\n"
-                    f"🔑 Key: `{rlabel}`\n"
-                    f"📦 Product: {pname}\n"
-                    f"🔢 QTY: {qty}\n"
-                    f"💰 Amount: *${usd:.2f}*\n"
-                    f"🕐 Time: {_time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                    f"_Purchased through the Reseller API._"
-                )
-                _notify_admin(msg)
+                name_line = " ".join(x for x in (esc(runame), (f"(@{esc(run)})" if run else "")) if x) or str(uid)
+                lines = [
+                    f"{st_icon} <b>Reseller API Order</b>",
+                    "━━━━━━━━━━━━━━━━━━━━",
+                    f"🛒 Order: <code>#{oid}</code> · Status: <b>{esc(status)}</b>",
+                    f"👤 Reseller: {name_line} (<code>{uid}</code>)",
+                    f"🔑 Key: <code>{esc(rlabel)}</code>",
+                    f"📦 Product: {_product_name_html(pname_raw)}",
+                    f"🔢 QTY: <b>{qty}</b>",
+                ]
+                if supplier_name:
+                    lines.append(f"🏬 Supplier: <b>{esc(supplier_name)}</b>")
+                lines.append(f"💰 Cost: <code>${cost:.4g}</code> · Sold: <code>${usd:.4g}</code>")
+                lines.append(f"📈 Profit: <b>${profit:.4g}</b>")
+                lines.append(f"💎 Reseller Balance: <code>{bal_before:g}</code> → <code>{bal_after:g}</code> points "
+                             f"(${usd_before:.2f} → ${usd_after:.2f})")
+                lines.append(f"🕐 Time: {_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                lines.append("")
+                lines.append("<i>Purchased through the Reseller API.</i>")
+                _notify_admin("\n".join(lines), parse_mode="HTML")
             except Exception:
                 pass
         _th.Thread(target=_worker, daemon=True, name="reseller-admin-order").start()

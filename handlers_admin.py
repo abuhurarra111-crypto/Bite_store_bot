@@ -11930,12 +11930,38 @@ async def reseller_orders_key_callback(update, context):
                                       [[InlineKeyboardButton("🔙 Back", callback_data=f"reseller_keycfg_panel_{kid}")]]))
         return
     lines = [f"📦 *Orders — {k.get('key_prefix')}*\n"]
+    try:
+        from utils import html_strip_tags as _hs
+        from button_system import make_premium_button as _mk, extract_emoji_from_html as _ex
+    except Exception:
+        _hs = _mk = _ex = None
     kb = []
     for r in rows:
         st = {"delivered": "✅", "pending": "⏳", "processing": "🔄", "failed": "❌"}.get(r.get("status"), "❔")
-        lines.append(f"{st} #{r['id']} · {str(r.get('product_name'))[:22]} ×{r.get('qty')} · ${float(r.get('usd_amount') or 0):.2f} · {r.get('status')} · {str(r.get('created_at'))[:10]}")
+        raw = str(r.get("product_name") or "Product")
+        clean = (_hs(raw) if _hs else raw) or "Product"
+        eid = ""
+        if _ex:
+            try:
+                _eid, _plain = _ex(raw)
+                if _plain:
+                    clean = _plain
+                eid = _eid or ""
+            except Exception:
+                pass
+        lines.append(f"{st} #{r['id']} · {clean[:22]} ×{r.get('qty')} · ${float(r.get('usd_amount') or 0):.2f} · {r.get('status')} · {str(r.get('created_at'))[:10]}")
+        row_btns = []
+        lbl = f"📄 #{r['id']}"
+        if _mk and eid:
+            try:
+                row_btns.append(_mk(lbl, emoji_id=eid, callback_data=f"reseller_order_view_{r['id']}"))
+            except Exception:
+                row_btns.append(InlineKeyboardButton(lbl, callback_data=f"reseller_order_view_{r['id']}"))
+        else:
+            row_btns.append(InlineKeyboardButton(lbl, callback_data=f"reseller_order_view_{r['id']}"))
         if r.get("status") in ("pending", "processing"):
-            kb.append([InlineKeyboardButton(f"📤 Deliver #{r['id']}", callback_data=f"reseller_deliver_panel_{r['id']}")])
+            row_btns.append(InlineKeyboardButton(f"📤 Deliver #{r['id']}", callback_data=f"reseller_deliver_panel_{r['id']}"))
+        kb.append(row_btns)
     kb.append([InlineKeyboardButton("🔙 Back", callback_data=f"reseller_keycfg_panel_{kid}")])
     await q.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -12299,11 +12325,22 @@ async def reseller_orders_filter_callback(update, context):
 
 
 async def _render_reseller_orders_panel(update, context, q):
-    """Reseller orders list with status + date filters (v161.6)."""
+    """Reseller orders list with status + date filters (v161.6).
+
+    🆕 v170.40: premium-emoji clean names + har order ka 📄 Details button
+    (full detail: supplier/cost/profit/delivery) — completed orders jesa."""
     try:
         from database import list_reseller_orders, get_connection
     except Exception as e:
         await q.edit_message_text(f"❌ {e}"); return
+    try:
+        from utils import html_strip_tags as _hs, name_for_button as _nfb
+    except Exception:
+        _hs = _nfb = None
+    try:
+        from button_system import make_premium_button as _mk, extract_emoji_from_html as _ex
+    except Exception:
+        _mk = _ex = None
     flt = dict(context.user_data.get("rs_orders") or {"status": "all", "range": "all"})
     status = flt.get("status", "all")
     rng = flt.get("range", "all")
@@ -12311,14 +12348,12 @@ async def _render_reseller_orders_panel(update, context, q):
         rows = list_reseller_orders(limit=200)
     except Exception as e:
         await q.edit_message_text(f"❌ {e}"); return
-    # filter by status
     if status == "delivered":
         rows = [r for r in rows if r.get("status") == "delivered"]
     elif status == "pending":
         rows = [r for r in rows if r.get("status") in ("pending", "processing")]
     elif status == "failed":
         rows = [r for r in rows if r.get("status") == "failed"]
-    # filter by date range
     if rng == "24h":
         from datetime import datetime, timedelta
         cutoff = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
@@ -12334,11 +12369,32 @@ async def _render_reseller_orders_panel(update, context, q):
     kb = []
     for r in rows:
         st = {"delivered": "✅", "pending": "⏳", "processing": "🔄", "failed": "❌"}.get(r.get("status"), "❔")
-        lines.append(f"{st} #{r['id']} · {str(r.get('product_name'))[:20]} ×{r.get('qty')} · ${float(r.get('usd_amount') or 0):.2f} · {str(r.get('created_at'))[:10]}")
+        raw = str(r.get("product_name") or "Product")
+        clean = (_hs(raw) if _hs else raw) or "Product"
+        eid = ""
+        if _ex:
+            try:
+                _eid, _plain = _ex(raw)
+                if _plain:
+                    clean = _plain
+                eid = _eid or ""
+            except Exception:
+                pass
+        lines.append(f"{st} #{r['id']} · {clean[:25]} ×{r.get('qty')} · ${float(r.get('usd_amount') or 0):.2f} · {str(r.get('created_at'))[:10]}")
+        row_btns = []
+        # 🆕 v170.40: full detail button (har order)
+        lbl = f"📄 #{r['id']}"
+        if _mk and eid:
+            try:
+                row_btns.append(_mk(lbl, emoji_id=eid, callback_data=f"reseller_order_view_{r['id']}"))
+            except Exception:
+                row_btns.append(InlineKeyboardButton(lbl, callback_data=f"reseller_order_view_{r['id']}"))
+        else:
+            row_btns.append(InlineKeyboardButton(lbl, callback_data=f"reseller_order_view_{r['id']}"))
         if r.get("status") in ("pending", "processing"):
-            kb.append([InlineKeyboardButton(f"📤 Deliver #{r['id']}",
-                                            callback_data=f"reseller_deliver_panel_{r['id']}")])
-    # filter buttons
+            row_btns.append(InlineKeyboardButton(f"📤 Deliver #{r['id']}",
+                                                 callback_data=f"reseller_deliver_panel_{r['id']}"))
+        kb.append(row_btns)
     kb.append([
         InlineKeyboardButton("📋 All", callback_data="reseller_orders_filter_status_all"),
         InlineKeyboardButton("✅ Del", callback_data="reseller_orders_filter_status_delivered"),
@@ -12352,6 +12408,98 @@ async def _render_reseller_orders_panel(update, context, q):
     ])
     kb.append([InlineKeyboardButton("🔙 Back", callback_data="reseller_panel")])
     await q.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def reseller_order_view_callback(update, context):
+    """🆕 v170.40: full detail of ONE reseller order (completed-orders style)."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        oid = int(q.data.replace("reseller_order_view_", ""))
+    except Exception:
+        return
+    try:
+        from database import get_reseller_order, get_api_key_row, get_user, get_product, get_connection
+        from utils import html_strip_tags as _hs
+        o = get_reseller_order(oid)
+        if not o:
+            await q.edit_message_text("❌ Order not found."); return
+        uid = int(o.get("user_id") or 0)
+        pid = int(o.get("product_id") or 0)
+        kid = int(o.get("key_id") or 0)
+        k = get_api_key_row(kid) or {}
+        u = get_user(uid)
+        rname = (u.get("first_name") if u else None) or str(uid)
+        runame = (u.get("username") if u else "") or ""
+        p = get_product(pid) or {}
+        pclean = (_hs(str(o.get("product_name") or "Product")) or "Product")
+        cost = float((dict(p) if p else {}).get("cost_price") or 0)
+        supplier_name = ""
+        try:
+            esid = int((dict(p) if p else {}).get("ext_supplier_id") or 0)
+            if esid:
+                c2 = get_connection().cursor()
+                c2.execute("SELECT name FROM ext_suppliers WHERE id=?", (esid,))
+                rr = c2.fetchone()
+                if rr:
+                    supplier_name = str(rr["name"] or "")
+                c2.connection.close()
+        except Exception:
+            pass
+        if cost <= 0:
+            try:
+                epid = int((dict(p) if p else {}).get("ext_product_id") or 0)
+                if epid:
+                    from ext_suppliers import get_ext_product
+                    ep = get_ext_product(epid)
+                    if ep:
+                        cost = float(ep.get("cost_usd") or 0)
+            except Exception:
+                pass
+        usd = float(o.get("usd_amount") or 0)
+        profit = round(usd - cost, 4)
+        st = o.get("status")
+        st_icon = {"delivered": "✅", "pending": "⏳", "processing": "🔄", "failed": "❌"}.get(st, "❔")
+        lines = [
+            f"{st_icon} *Reseller Order #{oid}*",
+            "━━━━━━━━━━━━━━━━━━━━",
+            f"👤 Reseller: {escape_md(rname)} (@{escape_md(runame)}) (`{uid}`)",
+            f"🔑 Key: `{k.get('key_prefix') or '—'}`",
+            f"📦 Product: {escape_md(pclean[:50])}",
+            f"🔢 QTY: {o.get('qty')}",
+        ]
+        if supplier_name:
+            lines.append(f"🏬 Supplier: *{escape_md(supplier_name)}*")
+        lines.append(f"💰 Cost: `{fmt_price(cost)}` · Sold: `{fmt_price(usd)}`")
+        lines.append(f"📈 Profit: *{fmt_price(profit)}*")
+        lines.append(f"📊 Status: *{escape_md(st or '—')}*")
+        if o.get("delivered_keys"):
+            try:
+                import json as _j
+                keys = _j.loads(o.get("delivered_keys") or "[]")
+                if keys:
+                    lines.append("📨 *Delivered:*")
+                    for kk in keys[:5]:
+                        lines.append(f"  `{str(kk)[:60]}`")
+            except Exception:
+                pass
+        elif o.get("delivery_text"):
+            lines.append(f"📨 *Delivered:* `{str(o.get('delivery_text'))[:80]}`")
+        if o.get("error"):
+            lines.append(f"❌ Error: `{str(o.get('error'))[:80]}`")
+        lines.append(f"🕐 Created: {str(o.get('created_at') or '—')[:16]}")
+        lines.append(f"✅ Delivered: {str(o.get('delivered_at') or '—')[:16]}")
+        kb = InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔙 Back", callback_data="reseller_orders_panel"),
+        ]])
+        await q.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=kb)
+    except Exception as e:
+        try:
+            await q.edit_message_text(f"❌ {e}")
+        except Exception:
+            pass
 
 
 async def reseller_deliver_panel_callback(update, context):

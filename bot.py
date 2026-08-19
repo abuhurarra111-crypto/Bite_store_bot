@@ -2713,6 +2713,7 @@ def main():
         ("^reseller_orders_panel$", reseller_orders_panel_callback),
         ("^reseller_orders_filter_(status|range)_(.+)$", reseller_orders_filter_callback),
         ("^reseller_deliver_panel_\\d+$", reseller_deliver_panel_callback),
+        ("^reseller_order_view_\\d+$", reseller_order_view_callback),  # 🆕 v170.40 full order detail
         ("^reseller_stats_panel$", reseller_stats_panel_callback),
         ("^reseller_dashboard_panel$", reseller_dashboard_callback),
         ("^reseller_admin_products$", reseller_admin_products_callback),

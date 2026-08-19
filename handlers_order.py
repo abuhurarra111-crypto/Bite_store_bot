@@ -927,9 +927,21 @@ async def _send_deposit_success(bot, order, paid_amount):
     if pts <= 0:
         pts = points_from_usd(float(order['price'] or 0))
     save_user(order['user_id'], '', order['user_name'] or '')
+    # 🆕 v170.40: balance BEFORE capture (admin deposit notification ke liye)
+    _dep_uid = int(order['user_id'] or 0)
+    try:
+        _dep_before = float(get_user_points(_dep_uid) or 0)
+    except Exception:
+        _dep_before = 0.0
     add_points(order['user_id'], pts, tx_type='deposit', description='Points deposit', event_id=f"deposit_order_{order['id']}", order_id=order['id'])
     update_order_status(order['id'], 'delivered')
     total_pts = get_user_points(order['user_id'])
+    # 🆕 v170.40: ADMIN deposit notification — reseller vs normal, full details
+    # (name + @username + ID + key + amount + method + balance before/after)
+    try:
+        await _notify_admin_deposit(bot, order, paid_amount, _dep_before, float(total_pts or 0))
+    except Exception:
+        pass
     text = (
         f"🎉 *Deposit Successful!*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -945,6 +957,76 @@ async def _send_deposit_success(bot, order, paid_amount):
         [InlineKeyboardButton("📊 My Account", callback_data="my_account")],
     ])
     await _bot_send_smart(bot, order['user_id'], text, parse_mode="Markdown", reply_markup=kb)
+
+
+async def _notify_admin_deposit(bot, order, paid_amount, balance_before, balance_after):
+    """🆕 v170.40: admin notification jab koi deposit kare.
+    Reseller ho to alag (key ke saath), warna normal — dono me full details:
+    name + @username + ID, amount, payment method, balance before/after."""
+    try:
+        from utils import notify_admin
+        from datetime import datetime, timezone, timedelta
+        uid = int(order.get('user_id') or 0)
+        amount_usd = float(paid_amount or order.get('price') or 0)
+        method = str(order.get('payment_method') or '—').strip()
+        fname = str(order.get('user_name') or '').strip()
+        uname = ""
+        try:
+            from database import get_user
+            u = get_user(uid)
+            if u:
+                uname = str(u.get('username') or '').strip()
+                if not fname:
+                    fname = str(u.get('first_name') or '').strip()
+        except Exception:
+            pass
+        # reseller key?
+        key_prefix = ""
+        try:
+            from reseller_api import get_user_reseller_key
+            k = get_user_reseller_key(uid)
+            if k and k.get("is_active"):
+                key_prefix = str(k.get("key_prefix") or "")
+        except Exception:
+            key_prefix = ""
+        def _sp(s):
+            try:
+                import html as _h
+                from utils import html_strip_tags as _hst
+                s = _h.escape(_hst(s or '') or '')
+            except Exception:
+                pass
+            return (str(s).replace('`', "'").replace('_', '&#95;')
+                     .replace('*', '&#42;').replace('[', '&#91;').replace(']', '&#93;'))
+        name_line = f"{_sp(fname)} (@{_sp(uname)})" if (fname and uname) else (_sp(fname) or _sp(uname) or '—')
+        pk_time = datetime.now(timezone(timedelta(hours=5))).strftime('%Y-%m-%d %I:%M:%S %p PKT')
+        try:
+            ppd = float(get_setting('points_per_dollar') or 10)
+            if ppd <= 0:
+                ppd = 10
+        except Exception:
+            ppd = 10
+        if key_prefix:
+            title = "🔗 *Reseller Deposit!* 💰"
+        else:
+            title = "💳 *New Deposit!* ✅"
+        lines = [
+            title,
+            "━━━━━━━━━━━━━━━━━━━━",
+            f"🧾 Order: `#{order.get('id')}`",
+            f"🕒 Time: `{pk_time}`",
+            f"👤 User: `{name_line}` (`{uid}`)",
+        ]
+        if key_prefix:
+            lines.append(f"🔑 Reseller Key: `{key_prefix}`")
+        lines.append(f"💰 Amount: `{fmt_price(amount_usd)}`")
+        lines.append(f"💳 Method: `{_sp(method)}`")
+        lines.append(f"💎 Balance: `{fmt_points(balance_before)}` → `{fmt_points(balance_after)}` "
+                     f"(${balance_before/ppd:.2f} → ${balance_after/ppd:.2f})")
+        await notify_admin(bot, "\n".join(lines))
+    except Exception as e:
+        import logging as _l
+        _l.getLogger(__name__).debug(f"[admin-deposit-notify] {e}")
 
 
 async def _notify_admin_order_delivered(bot, order, qty=1, supplier_name="",
