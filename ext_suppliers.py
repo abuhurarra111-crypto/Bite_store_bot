@@ -1007,13 +1007,22 @@ class AkundingAdapter(SupplierAdapterBase):
             return []
         out = []
         for p in (arr if isinstance(arr, list) else []):
+            # 🐛 v170.41 FIX: Akunding API me naye fields (docs update):
+            #   - `your_price` = aapka ACTUAL price (special pricing ke saath)
+            #   - `base_price` = listed price
+            #   - `has_special_price`, `available` (bool), `stock` (number),
+            #     `unit_label`, `bulk_tiers`
+            # Pehle sirf base_price use hota tha → agar supplier ne aapke liye
+            # special price set ki to galat cost aa jati. Ab your_price priority.
+            cost = _safe_float(p.get("your_price") if p.get("your_price") is not None
+                               else p.get("base_price"))
             out.append({
                 "remote_id": str(p.get("id")),
                 "name": p.get("name") or "",
                 "description": (p.get("description") or "") + (
                     "\n\n" + p.get("features", "") if p.get("features") else ""
                 ),
-                "cost_usd": _safe_float(p.get("base_price")),
+                "cost_usd": cost,
                 "stock": int(p.get("stock", 0) or 0),
                 "raw": p,
             })
@@ -1692,7 +1701,11 @@ class ProdSellerAdapter(SupplierAdapterBase):
             rid = str(p.get("id") or "").strip()
             if not rid:
                 continue
-            price = _safe_float(p.get("price"))
+            # 🐛 v170.41: ProdSeller docs me ab `price` (charged) + `publicPrice`
+            # (listed) + `finalPrice` (final charged) teeno hain. `price` official
+            # charged hai; safety ke liye finalPrice fallback.
+            price = _safe_float(p.get("price") if p.get("price") is not None
+                                else p.get("finalPrice"))
             in_stock = bool(p.get("inStock", True))
             # 🆕 v161.18: REAL stock — ProdSeller's NEW API (/v1/products/:id)
             # returns a numeric `stock` field (null for custom-delivery items).

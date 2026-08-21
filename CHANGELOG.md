@@ -8,6 +8,24 @@
 
 ---
 
+# 🚀 v170.41 (2026-08-21) — SUPPLIER DOCS UPDATE (AKUNDING + PRODSELLER)
+
+## 📚 Saare suppliers ke docs check kiye (live API verify)
+1. **Canboso** (Shop Cron / sinh le / Ai Tools) → v2.1.0 schema — kal hi fix ho
+   chuka (v170.39). Koi change nahi.
+2. **TunVNMMO** → same (balance_usdt / products price_usdt / buy). Koi change nahi.
+3. **MMOStore** → same (balance_usd string / stock_available / price_usd). Koi
+   change nahi.
+4. **Akunding** → 🆕 naye fields: `your_price` (aapka ACTUAL price), `base_price`,
+   `has_special_price`, `available` (bool), `unit_label`, `bulk_tiers`.
+   FIX: cost ab `your_price` → fallback `base_price` (special pricing sahi).
+5. **ProdSeller** → 🆕 `finalPrice` field add hua. FIX: price parse me
+   `price` → fallback `finalPrice` (robustness).
+
+## 🧪 Tests: Akunding your_price priority + ProdSeller price parse — pass.
+
+---
+
 # 🚀 v170.40 (2026-08-19) — RESELLER API: FREEBIES EXCLUDE + ENRICHED NOTIFICATIONS + ORDERS DETAIL
 
 ## 1. 🎁 Freebies + $0 products RESELLER API se EXCLUDE (existing + future)
