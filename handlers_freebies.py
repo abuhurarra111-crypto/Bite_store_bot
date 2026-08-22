@@ -139,13 +139,18 @@ async def _show_freebies_menu(target, uid, from_text=False):
             if "<" not in _nm:
                 _nm = _hlib.escape(_nm)
             lines.append(f"• {_nm[:60]}")
+            # 🆕 v170.46: button par FULL product name — "Claim" word hatao.
+            from utils import html_strip_tags
+            _btnlbl = str(html_strip_tags(plain or raw or f"#{pid}")).strip() or f"#{pid}"
+            if len(_btnlbl) > 60:
+                _btnlbl = _btnlbl[:59].rstrip() + "…"
             if _have:
                 kb_rows.append([make_premium_button(
-                    f"🎁 Claim — {plain[:22]}", emoji_id=eid or None,
+                    f"🎁 {_btnlbl}", emoji_id=eid or None,
                     style="success", callback_data=f"freebie_open_{pid}")])
             else:
                 kb_rows.append([InlineKeyboardButton(
-                    f"🎁 Claim — {plain[:22]}", callback_data=f"freebie_open_{pid}")])
+                    f"🎁 {_btnlbl}", callback_data=f"freebie_open_{pid}")])
         kb_rows.append([_back_btn()])
         txt = "\n".join(lines)
         kb = InlineKeyboardMarkup(kb_rows)

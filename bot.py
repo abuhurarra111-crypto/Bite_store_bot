@@ -128,7 +128,6 @@ from handlers_support import (support_menu_callback, st_list_callback, st_view_c
                                adm_deliver_callback, adm_delivery_text_received)
 from handlers_admin import admin_deposit_history_callback, admin_deposit_page_callback, admin_deposit_detail_callback, admin_responses_category_callback, bybit_test_callback  # 📊 Deposit + ✏️ Responses
 from handlers_admin import resp_template_apply_callback, resp_custom_callback, resp_reset_callback  # 🆕 v170.22: response templates
-from handlers_admin import resp_effect_callback, resp_effect_set_callback  # ✨ v170.45: message effects
 from handlers_admin import make_freebie_callback  # 🆕 v170.29: Add Product → Make This a Freebie
 from handlers_admin import (ban_panel_callback, ban_input_start, unban_input_start,
                             ban_input_received, unban_input_received)  # 🆕 v170.37 ban panel
@@ -1786,30 +1785,6 @@ def main():
 
     app.add_error_handler(global_error_handler)
 
-    # ✨ v170.45: TELEGRAM MESSAGE EFFECTS — send_message par effect auto-attach.
-    # database.get_response_with_auto_register() har `_r(key)` call par CURRENT
-    # RESPONSE_KEY contextvar set karta hai; ye wrapper ise parh kar us response
-    # ka saved message_effect_id attach karta hai (agar admin ne set kiya ho).
-    try:
-        from utils import CURRENT_RESPONSE_KEY, response_effect_id
-        _orig_send_message = app.bot.send_message
-
-        async def _send_message_effect(chat_id, text, *args, **kwargs):
-            if "message_effect_id" not in kwargs:
-                try:
-                    _k = CURRENT_RESPONSE_KEY.get()
-                    if _k:
-                        _eff = response_effect_id(_k)
-                        if _eff:
-                            kwargs["message_effect_id"] = _eff
-                except Exception:
-                    pass
-            return await _orig_send_message(chat_id, text, *args, **kwargs)
-
-        app.bot.send_message = _send_message_effect
-        print("[Effects] ✅ send_message effect wrapper installed")
-    except Exception as _fx:
-        print(f"[Effects] ⚠️ send_message wrap failed: {_fx}")
 
     # ── 🆕 v134: Referral activity observation (runs before all others) ──
     app.add_handler(CallbackQueryHandler(_activity_hook_callback), group=-100)
@@ -1909,8 +1884,6 @@ def main():
             CallbackQueryHandler(resp_template_apply_callback, pattern="^resptpl_"),
             CallbackQueryHandler(resp_custom_callback, pattern="^respcustom_"),
             CallbackQueryHandler(resp_reset_callback, pattern="^respreset_"),
-            CallbackQueryHandler(resp_effect_callback, pattern="^respeff_"),
-            CallbackQueryHandler(resp_effect_set_callback, pattern="^respeffset_"),
         ]},
         fallbacks=[CommandHandler("cancel", cancel_conversation),
                    CallbackQueryHandler(conv_cancel_callback, pattern="^conv_cancel$")],

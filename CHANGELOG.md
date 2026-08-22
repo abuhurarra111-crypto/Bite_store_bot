@@ -8,6 +8,35 @@
 
 ---
 
+# 🚀 v170.46 (2026-08-22) — 🎁 Freebies Button Fix + ✨ Message Effect Removed
+
+## 1. 🎁 Freebies list button — full product name
+- User-facing Freebies menu ke har product button par pehle
+  `🎁 Claim — <name truncated 22 chars>` likha aata tha (name katta tha +
+  "Claim" word extra tha).
+- Ab button par **full product name** aata hai, "Claim" word HATA diya.
+  - Premium emoji wale products → product ka apna premium emoji icon + full name.
+  - Bina emoji wale → `🎁 <full name>`.
+  - Sirf 60+ char ke bahut lambe names hi `…` se trim hote hain (Telegram
+    button limit 64 chars ki safety).
+
+## 2. ✨ Message Effects — Edit Responses se REMOVE
+- v170.45 ka per-response "Message Effect" picker **poore tarah remove**:
+  - `_resp_editor_buttons` se "✨ Message Effect" button hatao.
+  - `resp_effect_callback` / `resp_effect_set_callback` delete.
+  - bot.py ka `send_message` wrapper + handlers + import remove.
+  - `database.get_response_with_auto_register` se CURRENT_RESPONSE_KEY set remove.
+- **Kyun remove kiya (root cause):**
+  1. `Message.reply_text()` hamesha `message_effect_id=None` pass karta hai →
+     wrapper ka `"message_effect_id" not in kwargs` check kabhi pass nahi hota
+     tha → 90%+ responses (jo `reply_text` se jaati hain) par effect attach
+     hota hi nahi tha.
+  2. IDs galat thin: Heart↔Party swapped, ek invalid ID (`5044134455711629702`),
+     aur asli Heart ID (`5159385139981059251`) missing.
+  3. `message_effect_id` sirf **private chats** me chalta hai (groups/channels no).
+- `utils.MESSAGE_EFFECTS` me ab sirf **verified** 6 IDs hain (🔥❤️👍👎🎉💩) —
+  aage GLOBAL "Message Effect" setting (admin Settings panel) inhi par banegi.
+
 # 🚀 v170.45 (2026-08-22) — ✨ MESSAGE EFFECTS + 📡 BROADCAST OVERVIEW
 
 ## 1. ✨ Telegram Message Effects (Edit Responses)
