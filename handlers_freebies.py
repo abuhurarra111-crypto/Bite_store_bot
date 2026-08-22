@@ -142,11 +142,11 @@ async def _show_freebies_menu(target, uid, from_text=False):
             # premium <tg-emoji> tag hi 50–60 chars kha leta tha aur visible
             # product name aadha/gaib ho jata tha.
             lines.append(f"• {_nm}")
-            # 🆕 v170.46: button par FULL product name — "Claim" word hatao.
+            # Button par bhi POORA product name bhejo. Telegram client apni
+            # screen width ke mutabiq visually wrap/clip kar sakta hai, lekin
+            # bot ab naam ko 60 chars par khud truncate nahi karta.
             from utils import html_strip_tags
             _btnlbl = str(html_strip_tags(plain or raw or f"#{pid}")).strip() or f"#{pid}"
-            if len(_btnlbl) > 60:
-                _btnlbl = _btnlbl[:59].rstrip() + "…"
             if _have:
                 kb_rows.append([make_premium_button(
                     f"🎁 {_btnlbl}", emoji_id=eid or None,
