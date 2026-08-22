@@ -135,10 +135,13 @@ async def _show_freebies_menu(target, uid, from_text=False):
             except Exception:
                 _nm = ""
             if not _nm:
-                _nm = str(plain or f"#{pid}")[:30]
+                _nm = str(plain or f"#{pid}")
             if "<" not in _nm:
                 _nm = _hlib.escape(_nm)
-            lines.append(f"• {_nm[:60]}")
+            # Product ka POORA naam dikhana hai. Raw HTML ko slice karne se
+            # premium <tg-emoji> tag hi 50–60 chars kha leta tha aur visible
+            # product name aadha/gaib ho jata tha.
+            lines.append(f"• {_nm}")
             # 🆕 v170.46: button par FULL product name — "Claim" word hatao.
             from utils import html_strip_tags
             _btnlbl = str(html_strip_tags(plain or raw or f"#{pid}")).strip() or f"#{pid}"
