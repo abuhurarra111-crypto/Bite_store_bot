@@ -1575,6 +1575,126 @@ async def admin_settings_callback(u,c):
 Tap to edit:"""
     await _safe_edit(q, text,parse_mode="Markdown",reply_markup=admin_settings_keyboard())
 
+
+# ── ✨ v170.46: Message Effects (global + per-command) ──
+async def admin_effects_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        from message_effects import MESSAGE_EFFECTS, FX_COMMANDS, global_effect, command_effect, OFF
+    except Exception:
+        await q.answer("⚠️ Message Effects module error", show_alert=True); return
+    g = global_effect()
+    g_lbl = MESSAGE_EFFECTS.get(g, g) if g else "Off 🚫"
+    lines = [
+        "✨ *Message Effects*",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "Telegram animated effects — sirf *private (1:1) chats* me chalte hain.",
+        "",
+        f"🌍 *Global (default):* `{g_lbl}`",
+        "_Har bot message par ye effect lagega._",
+        "",
+        "*Per-command override:*",
+    ]
+    kb = [[InlineKeyboardButton(f"🌍 Global: {g_lbl}", callback_data="fxeg")]]
+    for cmd, label in FX_COMMANDS:
+        v = command_effect(cmd)
+        if v == OFF:
+            cur = "🚫 Off"
+        elif v:
+            cur = MESSAGE_EFFECTS.get(v, v)
+        else:
+            cur = "🌍 global"
+        lines.append(f"{label} → `{cur}`")
+        kb.append([InlineKeyboardButton(f"{label} → {cur}", callback_data=f"fxec_{cmd}")])
+    kb.append([InlineKeyboardButton("🔙 Back to Settings", callback_data="admin_settings")])
+    await _safe_edit(q, "\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def admin_effects_global_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    from message_effects import MESSAGE_EFFECTS, global_effect
+    cur = global_effect()
+    lines = [
+        "🌍 *Global Message Effect*",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "Har bot message (private chat) par ye effect lagega.",
+        "",
+        f"Current: *{MESSAGE_EFFECTS.get(cur, 'Off 🚫') if cur else 'Off 🚫'}*",
+    ]
+    kb = []
+    row = []
+    for eid, name in MESSAGE_EFFECTS.items():
+        mark = " ✅" if eid == cur else ""
+        row.append(InlineKeyboardButton(name + mark, callback_data=f"fxsetg_{eid}"))
+        if len(row) == 2:
+            kb.append(row); row = []
+    if row:
+        kb.append(row)
+    kb.append([InlineKeyboardButton("🚫 Off (no effect)", callback_data="fxsetg_off")])
+    kb.append([InlineKeyboardButton("🔙 Back to Effects", callback_data="fxpanel")])
+    await _safe_edit(q, "\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def admin_effects_cmd_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    from message_effects import MESSAGE_EFFECTS, command_effect, OFF
+    cmd = q.data.replace("fxec_", "", 1)
+    cur = command_effect(cmd)
+    lines = [
+        f"🎯 *Effect for /{cmd}*",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "Is command ke response par kya effect lage?",
+        "",
+    ]
+    if cur == OFF:
+        lines.append("Current: *🚫 Off (force none)*")
+    elif cur:
+        lines.append(f"Current: *{MESSAGE_EFFECTS.get(cur, cur)}*")
+    else:
+        lines.append("Current: *🌍 Global default*")
+    kb = [[InlineKeyboardButton("🌍 Use Global Default", callback_data=f"fxsetc_{cmd}_inherit")]]
+    row = []
+    for eid, name in MESSAGE_EFFECTS.items():
+        mark = " ✅" if eid == cur else ""
+        row.append(InlineKeyboardButton(name + mark, callback_data=f"fxsetc_{cmd}_{eid}"))
+        if len(row) == 2:
+            kb.append(row); row = []
+    if row:
+        kb.append(row)
+    kb.append([InlineKeyboardButton("🚫 Off (force no effect)", callback_data=f"fxsetc_{cmd}_off")])
+    kb.append([InlineKeyboardButton("🔙 Back to Effects", callback_data="fxpanel")])
+    await _safe_edit(q, "\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def admin_effects_set_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    data = q.data or ""
+    from message_effects import set_global_effect, set_command_effect
+    if data.startswith("fxsetg_"):
+        val = data.replace("fxsetg_", "", 1)
+        set_global_effect("" if val == "off" else val)
+        await q.answer("🌍 Global effect saved ✅", show_alert=True)
+        await admin_effects_callback(u, c)
+    elif data.startswith("fxsetc_"):
+        rest = data.replace("fxsetc_", "", 1)
+        cmd, _, val = rest.rpartition("_")
+        if val == "inherit":
+            set_command_effect(cmd, "")
+        elif val == "off":
+            set_command_effect(cmd, "off")
+        else:
+            set_command_effect(cmd, val)
+        await q.answer(f"✅ /{cmd} effect saved", show_alert=True)
+        await admin_effects_callback(u, c)
+
 async def set_setting_callback(u,c):
     q=u.callback_query
     if q.from_user.id!=ADMIN_ID: await q.answer("❌",show_alert=True); return ConversationHandler.END

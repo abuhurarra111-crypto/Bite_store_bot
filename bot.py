@@ -128,6 +128,8 @@ from handlers_support import (support_menu_callback, st_list_callback, st_view_c
                                adm_deliver_callback, adm_delivery_text_received)
 from handlers_admin import admin_deposit_history_callback, admin_deposit_page_callback, admin_deposit_detail_callback, admin_responses_category_callback, bybit_test_callback  # 📊 Deposit + ✏️ Responses
 from handlers_admin import resp_template_apply_callback, resp_custom_callback, resp_reset_callback  # 🆕 v170.22: response templates
+from handlers_admin import (admin_effects_callback, admin_effects_global_callback,
+                            admin_effects_cmd_callback, admin_effects_set_callback)  # ✨ v170.46: message effects panel
 from handlers_admin import make_freebie_callback  # 🆕 v170.29: Add Product → Make This a Freebie
 from handlers_admin import (ban_panel_callback, ban_input_start, unban_input_start,
                             ban_input_received, unban_input_received)  # 🆕 v170.37 ban panel
@@ -1785,6 +1787,27 @@ def main():
 
     app.add_error_handler(global_error_handler)
 
+    # ✨ v170.46: TELEGRAM MESSAGE EFFECTS — send_message par effect auto-attach
+    # (global default + per-command override). reply_text() bhi bot.send_message
+    # se hi guzarta hai, isliye ye wrapper SAB responses cover karta hai.
+    # NOTE: v170.45 wala bug (message_effect_id=None hone par skip) FIX — ab
+    # truthy check hai. Effects sirf private chats me attach hote hain.
+    try:
+        from message_effects import attach_effect
+        _orig_send_message = app.bot.send_message
+
+        async def _send_fx(chat_id, text, *args, **kwargs):
+            try:
+                attach_effect(kwargs, chat_id)
+            except Exception:
+                pass
+            return await _orig_send_message(chat_id, text, *args, **kwargs)
+
+        app.bot.send_message = _send_fx
+        print("[Effects] ✅ send_message effect wrapper installed (global + per-command)")
+    except Exception as _fx:
+        print(f"[Effects] ⚠️ send_message wrap failed: {_fx}")
+
 
     # ── 🆕 v134: Referral activity observation (runs before all others) ──
     app.add_handler(CallbackQueryHandler(_activity_hook_callback), group=-100)
@@ -2013,6 +2036,30 @@ def main():
     # after click logger). When maintenance is ON, every non-admin update gets
     # the maintenance reply and downstream handlers are skipped. Admin bypasses.
     app.add_handler(TypeHandler(_Upd, maintenance_gate), group=-90)
+
+    # ✨ v170.46: MESSAGE EFFECTS command probe — har update par CURRENT_COMMAND
+    # set karta hai (group=-95 → maintenance gate se bhi pehle). Is se send
+    # wrapper ko pata chalta hai kaunsa /command response bheja ja raha hai.
+    try:
+        from message_effects import set_current_command
+
+        async def _fx_cmd_probe(update, context):
+            try:
+                txt = ""
+                if update.message:
+                    txt = update.message.text or ""
+                elif update.edited_message:
+                    txt = update.edited_message.text or ""
+                cmd = ""
+                if txt.startswith("/"):
+                    cmd = txt.split()[0].split("@")[0].lstrip("/").lower()[:30]
+                set_current_command(cmd)
+            except Exception:
+                pass
+
+        app.add_handler(TypeHandler(_Upd, _fx_cmd_probe), group=-95)
+    except Exception as _fxe:
+        print(f"[Effects] ⚠️ command probe failed: {_fxe}")
 
     # 🆕 v76: UNIVERSAL MAIN MENU FORCE-EXIT — runs BEFORE every ConversationHandler.
     # When user taps any 🏠 / Main Menu button, all active sessions are wiped and
@@ -3027,6 +3074,11 @@ def main():
         ("^se_allcolor_",       se_allcolor_callback),
         ("^se_setallcol_",      se_setallcol_callback),
         ("^se_noop$",           se_noop_callback),
+        # ✨ v170.46: Message Effects (global + per-command)
+        ("^fxpanel$",           admin_effects_callback),
+        ("^fxeg$",              admin_effects_global_callback),
+        ("^fxec_",              admin_effects_cmd_callback),
+        ("^fxset",              admin_effects_set_callback),
     ] + get_button_styler_handlers():  # 🆕 v40: Inline Button Styler handlers
         app.add_handler(CallbackQueryHandler(fn, pattern=pat))
 

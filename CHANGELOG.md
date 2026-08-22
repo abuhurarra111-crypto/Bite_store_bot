@@ -8,6 +8,37 @@
 
 ---
 
+# 🚀 v170.47 (2026-08-22) — ✨ MESSAGE EFFECTS (Global + Per-Command) SETTINGS PANEL
+
+## Naya feature (user ki pasand: per-command + automatic global)
+- **Naya panel:** Settings → "✨ Message Effects".
+- **🌍 Global default** — ek effect choose karo, SAB bot messages (private chat)
+  par auto lagega (ya "Off" = koi effect nahi).
+- **🎯 Per-command override** — /start, /help, /shop, /orders, /balance,
+  /deposit, /freebies, /support, /apikey, /language — har command ka apna
+  effect (ya "Use Global Default" / "Off (force none)").
+- Settings storage (bot_settings):
+  - `fx_global` → global effect id ("" = off)
+  - `fx_cmd_<cmd>` → per-command ("" = inherit global, "off" = force none, id)
+- Resolution: per-command override > global > kuch nahi.
+
+## Technical (root-cause fix — v170.45 wala bug)
+- **Naya module `message_effects.py`** — MESSAGE_EFFECTS (sirf 6 VERIFIED ids),
+  `resolve_effect()`, `attach_effect(kwargs, chat_id)`.
+- **bot.py send wrapper FIXED:** pehle `"message_effect_id" not in kwargs`
+  check tha — `reply_text()` hamesha `message_effect_id=None` pass karta hai
+  → effect attach hota hi nahi tha. Ab truthy check: `kwargs.get("message_effect_id")`.
+- **Private-chat guard:** effect sirf `isinstance(chat_id, int) and chat_id > 0`
+  par attach hota hai (Telegram sirf private chats me allow karta hai).
+- **Command probe:** `TypeHandler` group=-95 har update par CURRENT_COMMAND
+  contextvar set karta hai → send wrapper ko pata hota hai kaunsa /command
+  response ja raha hai. Callback/message me clear ho jata hai.
+- **Live-verified:** sendMessage + `message_effect_id` Fire (5104841245755180586)
+  aur Heart (5159385139981059251) — dono `ok: True` + `effect_id` echo, phir
+  test messages delete kar diye. ✅
+
+---
+
 # 🚀 v170.46 (2026-08-22) — 🎁 Freebies Button Fix + ✨ Message Effect Removed
 
 ## 1. 🎁 Freebies list button — full product name

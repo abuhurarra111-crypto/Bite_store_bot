@@ -1105,6 +1105,10 @@ def admin_settings_keyboard():
     kb.append([
         InlineKeyboardButton(_tr_label, callback_data="admin_translator"),
     ])
+    # 🆕 v170.46: Message Effects (global + per-command)
+    kb.append([
+        InlineKeyboardButton("✨ Message Effects", callback_data="fxpanel"),
+    ])
     kb.append([_btn("🔙", "🔙 Return", "🔙 Return", "🔙 Back to Admin Panel", callback_data="admin_panel")])
     # 📐 v46: whole-screen padding for the settings menu
     return _apply_screen_pad_markup(InlineKeyboardMarkup(kb), "settings")
