@@ -339,6 +339,11 @@ from handlers_freebies import (
     freebie_do_callback, freebies_admin_panel_callback, freebie_config_callback,
     freebie_toggle_callback, freebie_limit_callback, freebie_refs_callback,
     freebie_step_received,
+    # 🆕 v170.42: freebies management upgrade
+    fb_tab_callback, fb_page_callback, fb_addpage_callback, fb_sort_callback,
+    fb_search_callback, fb_clearsearch_callback, fb_bulk_callback,
+    fb_make_callback, fb_remove_callback, fb_claimslog_callback,
+    fb_clpage_callback, fb_claims_callback, fb_dname_callback, fb_noop_callback,
 )
 # 🆕 v48: Referral Abuse admin panel
 from handlers_referral_admin import (
@@ -880,6 +885,15 @@ async def _daily_admin_summary_job(context):
         if get_setting(key, '0') == '1':
             return
         st = get_daily_summary_stats()
+        # 🆕 v170.42: freebies summary line (aaj ke claims + cost)
+        fb_line = ""
+        try:
+            from database import get_freebies_stats
+            fbs = get_freebies_stats()
+            fb_line = (f"🎁 Freebie claims (aaj): *{fbs['today']}* · "
+                       f"Total cost: *${fbs['cost']:.2f}*\n")
+        except Exception:
+            pass
         await context.bot.send_message(
             ADMIN_ID,
             f"📊 *Daily Summary — {pk.strftime('%Y-%m-%d')}*\n"
@@ -888,6 +902,7 @@ async def _daily_admin_summary_job(context):
             f"💰 Revenue: *${st['revenue']:.2f}*\n"
             f"💸 Refunds: *{st['refunds']}*\n"
             f"👥 New users: *{st['new_users']}*\n"
+            f"{fb_line}"
             f"🏆 Top product: *{st['top_product'] or 'N/A'}* ({st['top_count']})",
             parse_mode='Markdown'
         )
@@ -2922,6 +2937,21 @@ def main():
         ("^freebie_toggle_",    freebie_toggle_callback),
         ("^freebie_limit_",     freebie_limit_callback),
         ("^freebie_refs_",      freebie_refs_callback),
+        # 🆕 v170.42: freebies management
+        ("^fb_tab_",            fb_tab_callback),
+        ("^fb_page_",           fb_page_callback),
+        ("^fb_addpage_",        fb_addpage_callback),
+        ("^fb_sort_",           fb_sort_callback),
+        ("^fb_search$",         fb_search_callback),
+        ("^fb_clearsearch$",    fb_clearsearch_callback),
+        ("^fb_bulk_(on|off|limit)$", fb_bulk_callback),
+        ("^fb_make_",           fb_make_callback),
+        ("^fb_remove_",         fb_remove_callback),
+        ("^fb_claimslog$",      fb_claimslog_callback),
+        ("^fb_clpage_",         fb_clpage_callback),
+        ("^fb_claims_",         fb_claims_callback),
+        ("^fb_dname_",          fb_dname_callback),
+        ("^fb_noop$",           fb_noop_callback),
         ("^make_freebie_",      make_freebie_callback),
         # 🆕 v48: Referral Abuse admin panel
         ("^refadm_panel$",      refadm_panel_callback),

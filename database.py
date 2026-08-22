@@ -230,7 +230,7 @@ def setup_database():
             # 🆕 v170.6: USER RULE — HAR DEPLOY FRESH (0 data). Is version ko
             # HAR deploy par bump karo taake bot har nayi release par khud reset
             # ho jaye (0 users/orders/suppliers). Admin manual restore karta hai.
-            current_version = "v170.41"
+            current_version = "v170.42"
             version_marker = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), ".deployed_version")
             last_version = ""
             if os.path.exists(version_marker):
@@ -5851,6 +5851,199 @@ def record_freebie_claim(user_id, product_id, order_id, refs_used):
                  VALUES (?, ?, ?, ?)""",
               (int(user_id), int(product_id), int(order_id or 0), int(refs_used or 0)))
     conn.commit(); conn.close()
+
+
+# ════════════════════════════════════════════
+# 🎁 v170.42: FREEBIES MANAGEMENT (admin panel)
+# ════════════════════════════════════════════
+def _ensure_freebie_display_name_column(c):
+    ensure_column(c, "freebies", "display_name", "TEXT DEFAULT ''")
+
+
+def get_freebie_display_name(pid):
+    """Freebie ka custom display name (khaali ho to None)."""
+    setup_freebies_tables()
+    conn = get_connection(); c = conn.cursor()
+    try:
+        _ensure_freebie_display_name_column(c)
+        c.execute("SELECT COALESCE(display_name,'') FROM freebies WHERE product_id=?",
+                  (int(pid),))
+        r = c.fetchone()
+    except Exception:
+        r = None
+    conn.close()
+    return (str(r[0]) if r and r[0] else "")
+
+
+def set_freebie_display_name(pid, name):
+    """Set/clear freebie ka display name (empty = product name use hoga)."""
+    setup_freebies_tables()
+    conn = get_connection(); c = conn.cursor()
+    _ensure_freebie_display_name_column(c)
+    c.execute("SELECT product_id FROM freebies WHERE product_id=?", (int(pid),))
+    exists = c.fetchone()
+    if not exists:
+        from datetime import datetime
+        c.execute("""INSERT INTO freebies (product_id, enabled, claim_limit, reclaim_refs, display_name, updated_at)
+                     VALUES (?, 0, 1, 0, ?, ?)""",
+                  (int(pid), str(name or "")[:80],
+                   datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+    else:
+        c.execute("UPDATE freebies SET display_name=?, updated_at=CURRENT_TIMESTAMP WHERE product_id=?",
+                  (str(name or "")[:80], int(pid)))
+    conn.commit(); conn.close()
+    return True
+
+
+def get_freebie_total_claims(pid):
+    setup_freebies_tables()
+    conn = get_connection(); c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM freebie_claims WHERE product_id=?", (int(pid),))
+    n = c.fetchone()[0]; conn.close()
+    return int(n or 0)
+
+
+def get_freebie_claims_for_product(pid, limit=30):
+    """Ek freebie ki claim log (username ke saath)."""
+    setup_freebies_tables()
+    conn = get_connection(); c = conn.cursor()
+    c.execute("""SELECT fc.*, u.username, u.first_name
+                 FROM freebie_claims fc
+                 LEFT JOIN users u ON u.user_id = fc.user_id
+                 WHERE fc.product_id=? ORDER BY fc.id DESC LIMIT ?""",
+              (int(pid), int(limit)))
+    rows = [dict(r) for r in c.fetchall()]; conn.close()
+    return rows
+
+
+def get_all_freebie_claims(limit=50):
+    """Global freebie claim log (sab products)."""
+    setup_freebies_tables()
+    conn = get_connection(); c = conn.cursor()
+    c.execute("""SELECT fc.*, u.username, u.first_name, p.name AS product_name
+                 FROM freebie_claims fc
+                 LEFT JOIN users u ON u.user_id = fc.user_id
+                 LEFT JOIN products p ON p.id = fc.product_id
+                 ORDER BY fc.id DESC LIMIT ?""", (int(limit),))
+    rows = [dict(r) for r in c.fetchall()]; conn.close()
+    return rows
+
+
+def get_freebies_stats():
+    """Freebies dashboard: total (enabled), total claims, aaj ke claims, total cost.
+
+    🐛 v170.42: sirf VALID products count hote hain (deleted product ki orphan
+    freebie row nahi)."""
+    setup_freebies_tables()
+    from datetime import datetime, timezone, timedelta
+    conn = get_connection(); c = conn.cursor()
+    c.execute("""SELECT COUNT(*) FROM freebies f
+                 JOIN products p ON p.id = f.product_id WHERE f.enabled=1""")
+    total = int(c.fetchone()[0] or 0)
+    c.execute("SELECT COUNT(*) FROM freebie_claims")
+    claims = int(c.fetchone()[0] or 0)
+    start = datetime.now(timezone(timedelta(hours=5))).replace(
+        hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    c.execute("SELECT COUNT(*) FROM freebie_claims WHERE claimed_at>=?", (start,))
+    today = int(c.fetchone()[0] or 0)
+    c.execute("""SELECT COALESCE(SUM(p.cost_price * (SELECT COUNT(*) FROM freebie_claims fc
+                   WHERE fc.product_id = f.product_id)), 0)
+                 FROM freebies f JOIN products p ON p.id = f.product_id
+                 WHERE f.enabled=1""")
+    cost = float(c.fetchone()[0] or 0)
+    conn.close()
+    return {"total": total, "claims": claims, "today": today, "cost": cost}
+
+
+def get_freebies_management(search="", only_enabled=False, sort="recent",
+                            page=1, per_page=10):
+    """Paginated freebies list (admin) — per product stats: claims, stock, cost."""
+    setup_freebies_tables()
+    conn = get_connection(); c = conn.cursor()
+    _ensure_freebie_display_name_column(c)
+    where = ["1=1"]
+    params = []
+    if only_enabled:
+        where.append("f.enabled=1")
+    if search and str(search).strip():
+        where.append("(LOWER(COALESCE(p.name,'')) LIKE ? OR LOWER(COALESCE(f.display_name,'')) LIKE ?)")
+        s = f"%{str(search).strip().lower()}%"
+        params += [s, s]
+    order = {
+        "recent": "f.updated_at DESC, f.product_id DESC",
+        "popular": "(SELECT COUNT(*) FROM freebie_claims fc WHERE fc.product_id=f.product_id) DESC",
+        "lowstock": "COALESCE(p.stock,0) ASC",
+        "new": "f.product_id DESC",
+    }.get(sort, "f.updated_at DESC, f.product_id DESC")
+    c.execute(f"""SELECT COUNT(*) FROM freebies f JOIN products p ON p.id=f.product_id
+                  WHERE {' AND '.join(where)}""", params)
+    total = int(c.fetchone()[0] or 0)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    page = max(1, min(int(page), total_pages))
+    off = (page - 1) * per_page
+    c.execute(f"""SELECT f.*, p.name, p.stock, p.cost_price,
+                  (SELECT COUNT(*) FROM freebie_claims fc WHERE fc.product_id=f.product_id) AS claims
+                  FROM freebies f JOIN products p ON p.id=f.product_id
+                  WHERE {' AND '.join(where)}
+                  ORDER BY {order} LIMIT ? OFFSET ?""", params + [per_page, off])
+    rows = [dict(r) for r in c.fetchall()]; conn.close()
+    return {"items": rows, "total": total, "page": page, "total_pages": total_pages}
+
+
+def get_products_not_in_freebies(search="", page=1, per_page=10):
+    """All active products jo freebies me NAHI hain (Add Freebie picker)."""
+    setup_freebies_tables()
+    try:
+        _ensure_is_hidden_column()
+    except Exception:
+        pass
+    conn = get_connection(); c = conn.cursor()
+    try:
+        _ensure_column(c, "products", "is_active", "INTEGER DEFAULT 1")
+    except Exception:
+        pass
+    where = ["p.is_active=1 AND COALESCE(p.is_hidden,0)=0 AND p.id NOT IN (SELECT product_id FROM freebies)"]
+    params = []
+    if search and str(search).strip():
+        where.append("LOWER(COALESCE(p.name,'')) LIKE ?")
+        params.append(f"%{str(search).strip().lower()}%")
+    c.execute(f"SELECT COUNT(*) FROM products p WHERE {' AND '.join(where)}", params)
+    total = int(c.fetchone()[0] or 0)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    page = max(1, min(int(page), total_pages))
+    off = (page - 1) * per_page
+    c.execute(f"""SELECT p.id, p.name, p.stock, p.cost_price FROM products p
+                  WHERE {' AND '.join(where)} ORDER BY p.id DESC LIMIT ? OFFSET ?""",
+              params + [per_page, off])
+    rows = [dict(r) for r in c.fetchall()]; conn.close()
+    return {"items": rows, "total": total, "page": page, "total_pages": total_pages}
+
+
+def set_all_freebies_enabled(enabled):
+    setup_freebies_tables()
+    conn = get_connection(); c = conn.cursor()
+    c.execute("UPDATE freebies SET enabled=?", (1 if enabled else 0,))
+    n = c.rowcount
+    conn.commit(); conn.close()
+    return n
+
+
+def set_all_freebies_claim_limit(limit):
+    setup_freebies_tables()
+    conn = get_connection(); c = conn.cursor()
+    c.execute("UPDATE freebies SET claim_limit=?", (int(limit),))
+    n = c.rowcount
+    conn.commit(); conn.close()
+    return n
+
+
+def remove_freebie(pid):
+    """Freebie config delete (product rehta hai, freebies list se hata)."""
+    setup_freebies_tables()
+    conn = get_connection(); c = conn.cursor()
+    c.execute("DELETE FROM freebies WHERE product_id=?", (int(pid),))
+    conn.commit(); conn.close()
+    return True
 
 
 def get_user_free_claims(user_id, limit=20):

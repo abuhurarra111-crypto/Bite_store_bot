@@ -109,6 +109,14 @@ async def _show_freebies_menu(target, uid, from_text=False):
         for f in freebies:
             pid = int(f.get("product_id") or 0)
             raw = str(f.get("name") or f"#{pid}")
+            # 🆕 v170.42: freebie display name (custom) — set ho to use karo
+            try:
+                from database import get_freebie_display_name
+                _dn = get_freebie_display_name(pid)
+                if _dn:
+                    raw = _dn
+            except Exception:
+                pass
             plain, eid = raw, ""
             if _have:
                 try:
@@ -427,70 +435,372 @@ async def freebie_do_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 # ════════════════════════════════════════════════════════════════
-# 🛠️ ADMIN PANEL
+# 🛠️ ADMIN PANEL (v170.42: management upgrade — tabs, search, sort,
+#    pagination, stats, claim log, bulk, add, remove, display name)
 # ════════════════════════════════════════════════════════════════
 
+def _fb_view_state(context):
+    return dict(context.user_data.get("fb_view") or {
+        "tab": "freebies", "search": "", "sort": "recent", "page": 1,
+        "claims_page": 0, "add_page": 0})
+
+
 async def freebies_admin_panel_callback(update, context):
-    """🎁 Admin freebies panel — warranty/refund style product list
-    (premium emoji + green/red toggle) + tap → rules."""
+    """🎁 Freebies admin — management dashboard."""
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
     await q.answer()
-    from database import get_all_products, get_freebie_config
-    prods = get_all_products()
+    st = _fb_view_state(context)
+    st.update({"tab": "freebies", "page": 1, "search": "", "sort": "recent"})
+    context.user_data["fb_view"] = st
+    await _render_freebies_admin(q, context)
+
+
+async def _render_freebies_admin(q, context):
+    from database import get_freebies_management, get_freebies_stats
     try:
         from button_system import make_premium_button, extract_emoji_from_html
         _have = True
     except Exception:
         _have = False
-    lines = ["🎁 *Freebies Admin*",
-             "━━━━━━━━━━━━━━━━━━━━",
-             "_(🟢 = freebie ON · 🔴 = OFF — tap kar ke rules set karo)_", ""]
+    st = _fb_view_state(context)
+    tab = st.get("tab", "freebies")
+    search = st.get("search", "")
+    sort = st.get("sort", "recent")
+    page = int(st.get("page", 1))
+    stats = get_freebies_stats()
+
+    head_lines = [
+        "🎁 *Freebies Admin*",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"📦 Freebies: *{stats['total']}* · 🧾 Claims: *{stats['claims']}* "
+        f"(aaj {stats['today']})",
+        f"💸 Total cost: *${stats['cost']:.2f}*",
+        "",
+    ]
     kb = []
-    for p in prods[:14]:
-        pid = int(p["id"])
-        cfg = get_freebie_config(pid)
-        on = bool(cfg.get("enabled"))
-        raw = str(p.get("name") or f"#{pid}")
-        plain, eid = raw, ""
-        if _have:
-            try:
-                _eid, _plain = extract_emoji_from_html(raw)
-                if _plain:
-                    plain = _plain
-                eid = _eid or ""
-            except Exception:
-                pass
-        lines.append(f"{'✅' if on else '⛔'} #{pid} · {plain[:28]}")
-        if _have:
-            kb.append([make_premium_button(
-                f"{'🟢 ON' if on else '🔴 OFF'} — {plain[:20]}",
-                emoji_id=eid or None,
-                style="success" if on else "danger",
-                callback_data=f"freebie_cfg_{pid}")])
-        else:
-            kb.append([InlineKeyboardButton(
-                f"{'🟢 ON' if on else '🔴 OFF'} — {plain[:20]}",
-                callback_data=f"freebie_cfg_{pid}")])
+
+    kb.append([
+        InlineKeyboardButton(("🟢 " if tab == "freebies" else "⚪ ") + "Freebies",
+                             callback_data="fb_tab_freebies"),
+        InlineKeyboardButton(("🛒 " if tab == "all" else "⚪ ") + "All Products",
+                             callback_data="fb_tab_all"),
+        InlineKeyboardButton(("➕ " if tab == "add" else "⚪ ") + "Add Freebie",
+                             callback_data="fb_tab_add"),
+    ])
+
+    kb.append([
+        InlineKeyboardButton("🔍 Search" + (f": {search[:10]}" if search else ""),
+                             callback_data="fb_search"),
+        InlineKeyboardButton("📜 Claim Log", callback_data="fb_claimslog"),
+    ])
+    if search:
+        kb.append([InlineKeyboardButton("❌ Clear Search", callback_data="fb_clearsearch")])
+
+    if tab == "add":
+        from database import get_products_not_in_freebies
+        res = get_products_not_in_freebies(search=search, page=page)
+        items = res["items"]
+        body = head_lines + [
+            "_➕ Freebie banao — product tap karo:_",
+            f"📄 Page {res['page']}/{res['total_pages']} · Total {res['total']}",
+            "",
+        ]
+        for p in items:
+            pid = int(p["id"])
+            raw = str(p.get("name") or f"#{pid}")
+            plain, eid = raw, ""
+            if _have:
+                try:
+                    _eid, _plain = extract_emoji_from_html(raw)
+                    if _plain:
+                        plain = _plain
+                    eid = _eid or ""
+                except Exception:
+                    pass
+            body.append(f"🎁 #{pid} · {plain[:30]}")
+            if _have:
+                kb.append([make_premium_button(
+                    f"🎁 Make Freebie — {plain[:22]}", emoji_id=eid or None,
+                    style="primary", callback_data=f"fb_make_{pid}")])
+            else:
+                kb.append([InlineKeyboardButton(
+                    f"🎁 Make Freebie — {plain[:22]}", callback_data=f"fb_make_{pid}")])
+        _append_pager(kb, res["page"], res["total_pages"], "fb_addpage_")
+
+    else:
+        only_enabled = (tab == "freebies")
+        res = get_freebies_management(search=search, only_enabled=only_enabled,
+                                      sort=sort, page=page)
+        items = res["items"]
+        label = "Freebies (ON)" if tab == "freebies" else "All Products"
+        body = head_lines + [f"_{label} — Page {res['page']}/{res['total_pages']}_", ""]
+        if not items:
+            body.append("_Koi products nahi milay._")
+        for f in items:
+            pid = int(f["product_id"])
+            raw = str(f.get("display_name") or f.get("name") or f"#{pid}")
+            plain, eid = raw, ""
+            if _have:
+                try:
+                    _eid, _plain = extract_emoji_from_html(raw)
+                    if _plain:
+                        plain = _plain
+                    eid = _eid or ""
+                except Exception:
+                    pass
+            claims = int(f.get("claims") or 0)
+            stock = int(f.get("stock") or 0)
+            cost = float(f.get("cost_price") or 0)
+            on = bool(f.get("enabled"))
+            body.append(
+                f"{'🟢' if on else '🔴'} #{pid} · {plain[:26]}\n"
+                f"    🧾 {claims} claims · 📦 stock {stock} · 💸 ${cost * claims:.2f}")
+            lbl = f"{'🟢 ON' if on else '🔴 OFF'} — {plain[:18]} ({claims})"
+            if _have:
+                kb.append([make_premium_button(
+                    lbl, emoji_id=eid or None,
+                    style="success" if on else "danger",
+                    callback_data=f"freebie_cfg_{pid}")])
+            else:
+                kb.append([InlineKeyboardButton(lbl, callback_data=f"freebie_cfg_{pid}")])
+        _append_pager(kb, res["page"], res["total_pages"], "fb_page_")
+
+    if tab != "add":
+        row = []
+        for lbl, key in (("⏰ Recent", "recent"), ("🔥 Popular", "popular"),
+                         ("📉 Low Stock", "lowstock"), ("🆕 New", "new")):
+            row.append(InlineKeyboardButton(("✅ " if sort == key else "") + lbl,
+                                            callback_data=f"fb_sort_{key}"))
+        kb.append(row)
+
+    kb.append([
+        InlineKeyboardButton("🟢 All ON", callback_data="fb_bulk_on"),
+        InlineKeyboardButton("🔴 All OFF", callback_data="fb_bulk_off"),
+        InlineKeyboardButton("🔢 All Limit", callback_data="fb_bulk_limit"),
+    ])
     kb.append([InlineKeyboardButton("🔙 Back", callback_data="admin_panel")])
+    await _safe_edit(q, "\n".join(body), parse_mode="Markdown",
+                     reply_markup=InlineKeyboardMarkup(kb))
+
+
+def _append_pager(kb, page, total_pages, prefix):
+    if total_pages <= 1:
+        return
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton("◀", callback_data=f"{prefix}{page-1}"))
+    nav.append(InlineKeyboardButton(f"{page}/{total_pages}", callback_data="fb_noop"))
+    if page < total_pages:
+        nav.append(InlineKeyboardButton("▶", callback_data=f"{prefix}{page+1}"))
+    kb.append(nav)
+
+
+async def fb_tab_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    tab = q.data.replace("fb_tab_", "")
+    st = _fb_view_state(context)
+    st.update({"tab": tab, "page": 1, "search": ""})
+    context.user_data["fb_view"] = st
+    await _render_freebies_admin(q, context)
+
+
+async def fb_page_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        page = int(q.data.replace("fb_page_", ""))
+    except Exception:
+        return
+    st = _fb_view_state(context)
+    st["page"] = max(1, page)
+    context.user_data["fb_view"] = st
+    await _render_freebies_admin(q, context)
+
+
+async def fb_addpage_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        page = int(q.data.replace("fb_addpage_", ""))
+    except Exception:
+        return
+    st = _fb_view_state(context)
+    st["add_page"] = max(1, page)
+    st["page"] = st["add_page"]
+    context.user_data["fb_view"] = st
+    await _render_freebies_admin(q, context)
+
+
+async def fb_sort_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    key = q.data.replace("fb_sort_", "")
+    st = _fb_view_state(context)
+    st["sort"] = key
+    st["page"] = 1
+    context.user_data["fb_view"] = st
+    await _render_freebies_admin(q, context)
+
+
+async def fb_clearsearch_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    st = _fb_view_state(context)
+    st["search"] = ""
+    st["page"] = 1
+    context.user_data["fb_view"] = st
+    await _render_freebies_admin(q, context)
+
+
+async def fb_search_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    context.user_data["freebie_step"] = {"action": "search"}
+    await _safe_edit(q,
+        "🔍 *Freebies Search*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Product ka naam (ya part) bhejo — matching freebies/products dikhenge:\n\n"
+        "_(/cancel to cancel)_", parse_mode="Markdown")
+
+
+async def fb_bulk_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    action = q.data.replace("fb_bulk_", "")
+    from database import set_all_freebies_enabled, set_all_freebies_claim_limit
+    if action == "on":
+        n = set_all_freebies_enabled(True)
+        await q.answer(f"🟢 {n} freebies ON ✅", show_alert=True)
+    elif action == "off":
+        n = set_all_freebies_enabled(False)
+        await q.answer(f"🔴 {n} freebies OFF ❌", show_alert=True)
+    elif action == "limit":
+        context.user_data["freebie_step"] = {"action": "bulk_limit"}
+        await _safe_edit(q,
+            "🔢 *All Freebies — Claim Limit*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Sab freebies ke liye ek hi claim limit set karo (number, `0`=unlimited):\n\n"
+            "_(/cancel to cancel)_", parse_mode="Markdown")
+        return
+    await _render_freebies_admin(q, context)
+
+
+async def fb_make_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        pid = int(q.data.replace("fb_make_", ""))
+    except Exception:
+        return
+    from database import set_freebie_config, get_product
+    set_freebie_config(pid, enabled=1, claim_limit=1, reclaim_refs=0)
+    name = _clean_name((get_product(pid) or {}).get("name") or f"#{pid}", 30)
+    await q.answer(f"🎁 Freebie ban gaya: {name} ✅", show_alert=True)
+    await _render_freebies_admin(q, context)
+
+
+async def fb_remove_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        pid = int(q.data.replace("fb_remove_", ""))
+    except Exception:
+        return
+    from database import remove_freebie, get_product
+    name = _clean_name((get_product(pid) or {}).get("name") or f"#{pid}", 30)
+    remove_freebie(pid)
+    await q.answer(f"🗑 Freebie hata diya: {name}", show_alert=True)
+    await _render_freebies_admin(q, context)
+
+
+async def fb_claimslog_callback(update, context):
+    """📜 Global freebie claim log (paginated, 15/page)."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    st = _fb_view_state(context)
+    page = int(st.get("claims_page", 0))
+    from database import get_all_freebie_claims
+    rows = get_all_freebie_claims(limit=500)
+    per = 15
+    total_pages = max(1, (len(rows) + per - 1) // per)
+    page = max(0, min(page, total_pages - 1))
+    st["claims_page"] = page
+    context.user_data["fb_view"] = st
+    chunk = rows[page * per:(page + 1) * per]
+    lines = [f"📜 *Freebie Claims Log* — page {page+1}/{total_pages}",
+             "━━━━━━━━━━━━━━━━━━━━"]
+    if not chunk:
+        lines.append("_Koi claims nahi._")
+    for r in chunk:
+        uid = r.get("user_id")
+        uname = f"@{r.get('username')}" if r.get("username") else (r.get("first_name") or "")
+        who = " ".join(x for x in (uname, f"`{uid}`") if x)
+        pname = _clean_name(r.get("product_name") or f"#{r.get('product_id')}", 20)
+        at = str(r.get("claimed_at") or "")[:16]
+        lines.append(f"• {pname} — {who}\n  #{r.get('id')} · {at}")
+    kb = []
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀", callback_data=f"fb_clpage_{page-1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("▶", callback_data=f"fb_clpage_{page+1}"))
+    if nav:
+        kb.append(nav)
+    kb.append([InlineKeyboardButton("🔙 Freebies Admin", callback_data="freebies_admin_panel")])
     await _safe_edit(q, "\n".join(lines), parse_mode="Markdown",
                      reply_markup=InlineKeyboardMarkup(kb))
 
 
+async def fb_clpage_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        page = int(q.data.replace("fb_clpage_", ""))
+    except Exception:
+        return
+    st = _fb_view_state(context)
+    st["claims_page"] = max(0, page)
+    context.user_data["fb_view"] = st
+    await fb_claimslog_callback(update, context)
+
+
+async def fb_noop_callback(update, context):
+    try:
+        await update.callback_query.answer()
+    except Exception:
+        pass
+
+
 async def _render_freebie_config(q, pid):
-    """Shared render — freebie config screen (toggle + rules)."""
-    from database import get_product, get_freebie_config
+    """Shared render — freebie config screen (toggle + rules + stats + remove)."""
+    from database import (get_product, get_freebie_config, get_freebie_total_claims,
+                          get_freebie_display_name)
     prod = get_product(pid)
     cfg = get_freebie_config(pid)
     name = _clean_name(prod.get("name") or "", 40) if prod else f"#{pid}"
+    claims = get_freebie_total_claims(pid)
+    dname = get_freebie_display_name(pid)
     on = "🟢 ON" if cfg.get("enabled") else "🔴 OFF"
+    dname_line = f"\n🏷️ Display name: *{escape_md(dname)}*" if dname else "\n🏷️ Display name: _(product name)_"
     text = (
         f"🎁 *Freebie — #{pid}*\n━━━━━━━━━━━━━━━━━━━━\n"
         f"📦 {escape_md(name)}\n"
-        f"Status: *{on}*\n"
+        f"Status: *{on}* · 🧾 Claims: *{claims}*\n"
         f"🔢 Claim limit: *{cfg.get('claim_limit')}* (0=unlimited)\n"
-        f"🔁 Re-claim refs: *{cfg.get('reclaim_refs')}* (0=free forever)\n\n"
+        f"🔁 Re-claim refs: *{cfg.get('reclaim_refs')}* (0=free forever)\n"
+        f"{dname_line}\n\n"
         f"_Claim rule: pehli claim FREE; har agli claim ke liye "
         f"reclaim_refs × claims referrals chahiye._"
     )
@@ -498,9 +808,57 @@ async def _render_freebie_config(q, pid):
         [InlineKeyboardButton("🔄 Toggle ON/OFF", callback_data=f"freebie_toggle_{pid}")],
         [InlineKeyboardButton("🔢 Set Claim Limit", callback_data=f"freebie_limit_{pid}"),
          InlineKeyboardButton("🔁 Set Re-claim Refs", callback_data=f"freebie_refs_{pid}")],
+        [InlineKeyboardButton("🏷️ Display Name", callback_data=f"fb_dname_{pid}"),
+         InlineKeyboardButton("📜 Claims", callback_data=f"fb_claims_{pid}")],
+        [InlineKeyboardButton("🗑 Remove Freebie", callback_data=f"fb_remove_{pid}")],
         [InlineKeyboardButton("🔙 Freebies", callback_data="freebies_admin_panel")],
     ]
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def fb_claims_callback(update, context):
+    """📜 Per-product freebie claim log."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        pid = int(q.data.replace("fb_claims_", ""))
+    except Exception:
+        return
+    from database import get_freebie_claims_for_product, get_product, get_freebie_total_claims
+    rows = get_freebie_claims_for_product(pid, limit=30)
+    prod = get_product(pid)
+    pname = _clean_name((prod.get("name") if prod else "") or f"#{pid}", 25)
+    lines = [f"📜 *Claims — #{pid} {pname}*",
+             f"━━━━━━━━━━━━━━━━━━━━",
+             f"Total: *{get_freebie_total_claims(pid)}*", ""]
+    if not rows:
+        lines.append("_Koi claims nahi._")
+    for r in rows:
+        uid = r.get("user_id")
+        uname = f"@{r.get('username')}" if r.get("username") else (r.get("first_name") or "")
+        who = " ".join(x for x in (uname, f"`{uid}`") if x)
+        at = str(r.get("claimed_at") or "")[:16]
+        lines.append(f"• #{r.get('id')} — {who}\n  {at}")
+    kb = [[InlineKeyboardButton("🔙 Freebie Config", callback_data=f"freebie_cfg_{pid}")]]
+    await _safe_edit(q, "\n".join(lines), parse_mode="Markdown",
+                     reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def fb_dname_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        pid = int(q.data.replace("fb_dname_", ""))
+    except Exception:
+        return
+    context.user_data["freebie_step"] = {"action": "dname", "pid": pid}
+    await _safe_edit(q,
+        f"🏷️ *Display Name — #{pid}*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Freebie ka custom naam bhejo (premium emoji ke saath):\n"
+        f"Ya `-` bhejo to product ka asli naam use hoga.\n\n"
+        f"_(/cancel to cancel)_", parse_mode="Markdown")
 
 
 async def freebie_config_callback(update, context):
@@ -575,7 +933,7 @@ async def freebie_refs_callback(update, context):
 
 
 async def freebie_step_received(update, context):
-    """Admin text input: claim limit ya reclaim refs."""
+    """Admin text input: claim limit / reclaim refs / search / bulk limit / display name."""
     step = context.user_data.get("freebie_step")
     if not step:
         return False
@@ -584,6 +942,52 @@ async def freebie_step_received(update, context):
         context.user_data.pop("freebie_step", None)
         await update.message.reply_text("❌ Cancelled.")
         return True
+    action = step.get("action")
+
+    # 🆕 v170.42: search (free text)
+    if action == "search":
+        context.user_data.pop("freebie_step", None)
+        st = _fb_view_state(context)
+        st["search"] = txt
+        st["page"] = 1
+        context.user_data["fb_view"] = st
+        await update.message.reply_text(
+            f"🔍 Search set: *{txt}*",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🎁 Freebies Admin", callback_data="freebies_admin_panel")]]))
+        return True
+
+    # 🆕 v170.42: display name (free text, premium emoji supported)
+    if action == "dname":
+        pid = int(step.get("pid") or 0)
+        context.user_data.pop("freebie_step", None)
+        from database import set_freebie_display_name
+        if txt == "-":
+            set_freebie_display_name(pid, "")
+            await update.message.reply_text(
+                f"🏷️ Display name for #{pid} → *(product name)*",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Back", callback_data=f"freebie_cfg_{pid}")]]))
+        else:
+            try:
+                html_v = (update.message.text_html_urled or "").strip()
+            except Exception:
+                html_v = ""
+            if html_v and update.message.entities:
+                val = "[[HTML]]" + html_v
+            else:
+                val = txt
+            set_freebie_display_name(pid, val)
+            await update.message.reply_text(
+                f"🏷️ Display name for #{pid} saved ✅",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔙 Back", callback_data=f"freebie_cfg_{pid}")]]))
+        return True
+
+    # numeric actions (limit / refs / bulk_limit)
     try:
         val = int(txt)
         if val < 0:
@@ -591,9 +995,21 @@ async def freebie_step_received(update, context):
     except Exception:
         await update.message.reply_text("❌ Enter a whole number ≥ 0.")
         return True
+
+    if action == "bulk_limit":
+        context.user_data.pop("freebie_step", None)
+        from database import set_all_freebies_claim_limit
+        n = set_all_freebies_claim_limit(val)
+        await update.message.reply_text(
+            f"✅ Claim limit for *{n} freebies* → *{val}*" + (" (unlimited)" if val == 0 else ""),
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🎁 Freebies Admin", callback_data="freebies_admin_panel")]]))
+        return True
+
     from database import set_freebie_config
     pid = int(step.get("pid") or 0)
-    if step.get("action") == "limit":
+    if action == "limit":
         set_freebie_config(pid, claim_limit=val)
         await update.message.reply_text(
             f"✅ Claim limit for #{pid} → *{val}*" + (" (unlimited)" if val == 0 else ""),

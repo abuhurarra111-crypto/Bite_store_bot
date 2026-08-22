@@ -8,6 +8,29 @@
 
 ---
 
+# 🚀 v170.42 (2026-08-22) — 🎁 FREEBIES MANAGEMENT UPGRADE (10 improvements)
+
+## Admin panel ab pura management dashboard hai:
+1. **📋 Freebies / All Products / Add tabs** — sirf freebies ya sab products dekho.
+2. **🔍 Search** — naam se dhoondo (freebies + add picker dono me).
+3. **📊 Har freebie ke stats** — claims count, stock, total cost ($ × claims).
+4. **🧾 Claim Log** — global (paginated) + per-product claims (kaun/kab).
+5. **⚡ Bulk actions** — All ON / All OFF / All Claim Limit (ek tap).
+6. **➕ Add Freebie yahan se** — product picker (non-freebie products).
+7. **🗑 Remove Freebie** — freebies list se hatao (product delete nahi).
+8. **🕐 Sorting** — Recent / Popular / Low Stock / New.
+9. **🔔 Daily Summary** — daily admin summary me freebie claims + cost line.
+10. **🏷️ Display Name** — freebie ka custom naam (premium emoji ke saath),
+    user-facing freebies menu me bhi dikhta hai.
+
+## DB: freebies.display_name column (migrate auto), management helpers
+(get_freebies_management, get_products_not_in_freebies, get_freebies_stats,
+get_all_freebie_claims, get_freebie_claims_for_product, set_all_freebies_*,
+remove_freebie, get/set_freebie_display_name). Stats sirf valid products count
+karte hain (orphan rows exclude).
+
+---
+
 # 🚀 v170.41 (2026-08-21) — SUPPLIER DOCS UPDATE (AKUNDING + PRODSELLER)
 
 ## 📚 Saare suppliers ke docs check kiye (live API verify)
