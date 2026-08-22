@@ -344,6 +344,9 @@ from handlers_freebies import (
     fb_search_callback, fb_clearsearch_callback, fb_bulk_callback,
     fb_make_callback, fb_remove_callback, fb_claimslog_callback,
     fb_clpage_callback, fb_claims_callback, fb_dname_callback, fb_noop_callback,
+    # 🆕 v170.43: freebies force-join + stock + restock + analytics + log filters
+    freebie_notify_callback, freebie_maxclaims_callback,
+    fb_clfilter_callback, fb_analytics_callback, fb_restock_list_callback,
 )
 # 🆕 v48: Referral Abuse admin panel
 from handlers_referral_admin import (
@@ -2952,6 +2955,12 @@ def main():
         ("^fb_claims_",         fb_claims_callback),
         ("^fb_dname_",          fb_dname_callback),
         ("^fb_noop$",           fb_noop_callback),
+        # 🆕 v170.43
+        ("^freebie_notify_",    freebie_notify_callback),
+        ("^freebie_maxclaims_", freebie_maxclaims_callback),
+        ("^fb_clfilter_",       fb_clfilter_callback),
+        ("^fb_analytics$",      fb_analytics_callback),
+        ("^fb_restock_list$",   fb_restock_list_callback),
         ("^make_freebie_",      make_freebie_callback),
         # 🆕 v48: Referral Abuse admin panel
         ("^refadm_panel$",      refadm_panel_callback),

@@ -2536,7 +2536,7 @@ TEMPLATE_BUTTONS = {
     "bc_stock":            "🛒 Buy Now",
     "bc_bulkdeal":         "🛒 Buy Now",     # 🆕 v161.12 bulk-deal hype
     "bc_reseller":         "🛒 Buy Now",     # 🆕 v161.12 reseller purchase
-    "bc_freebie":          "🎁 Claim FREE",  # 🆕 v170.14 freebie hype
+    "bc_freebie":          "🎁 Free Claim",  # 🆕 v170.14 freebie hype · v170.43 rename
     "bc_newprod":          "🛒 Buy Now",     # 🆕 v161.19 new product
     "sb_flash":            "🛒 Buy Now",     # 🆕 v161.19 flash sale
     "bc_pricedrop":        "🛒 Buy Now",     # 🆕 v161.19 price drop

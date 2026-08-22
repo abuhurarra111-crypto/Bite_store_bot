@@ -670,21 +670,32 @@ async def build_fake_message(bot, user_id: int) -> tuple[str, any]:
                     fb_msg = (f"🎁 *FREEBIE CLAIMED!* 🎉\n\n"
                               f"👤 {masked} just got {fb_name} for FREE!\n"
                               f"🆓 100% free — tap below and grab yours too!")
-                try:
-                    bot_me = await bot.get_me()
-                    bot_username = bot_me.username
-                except Exception:
-                    bot_username = "BiteStoreBot"
-                deep_link = f"https://t.me/{bot_username}?start=buy_{fb_pid}"
+                # 🛡️ v170.43: per-user freebie fake msg → "🎁 Free Claim" GREEN
+                # button, freebies menu khole (checkout nahi).
                 try:
                     from button_system import build_button as _bb, wrap_button as _wrap
-                    _btn = _bb("bc_freebie", "🎁 Claim FREE", url=deep_link, force_default=True)
+                    _btn = _bb("bc_freebie", "🎁 Free Claim",
+                               callback_data="freebies_menu", force_default=True)
                     try:
                         _btn = _wrap("bc_freebie", _btn)
                     except Exception:
                         pass
+                    # green + premium icon
+                    try:
+                        from button_system import VALID_BUTTON_STYLES
+                        _extras = {}
+                        _c = _g("broadcast_btn_color", "")
+                        if _c in ("primary", "success", "danger"):
+                            _extras["style"] = _c
+                        else:
+                            _extras["style"] = "success"
+                        from telegram import InlineKeyboardButton as _IKB
+                        _btn = _IKB(_btn.text, callback_data=getattr(_btn, "callback_data", None),
+                                    url=getattr(_btn, "url", None), api_kwargs=_extras)
+                    except Exception:
+                        pass
                 except Exception:
-                    _btn = InlineKeyboardButton("🎁 Claim FREE", url=deep_link)
+                    _btn = InlineKeyboardButton("🎁 Free Claim", callback_data="freebies_menu")
                 return fb_msg, InlineKeyboardMarkup([[_btn]])
         except Exception:
             pass

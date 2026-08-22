@@ -169,28 +169,43 @@ async def freebie_open_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def _show_freebie_product(q, uid, pid):
     from database import (get_product, get_freebie_config, freebie_claims_count,
-                          get_referral_count)
+                          get_referral_count, get_freebie_remaining_claims)
     prod = get_product(pid)
     cfg = get_freebie_config(pid)
-    if not prod or not cfg.get("enabled"):
-        await _safe_edit(q, "ℹ️ This product is not available for free claim right now.")
-        return
-    # 🐛 v170.38 FIX: deleted/unsynced/hidden products claim nahi ho sakte
+
+    # 🆕 v170.43: freebie disabled/out-of-stock → "🔔 Notify Me" button
     try:
-        if int((dict(prod) or {}).get("is_active") or 0) == 0:
-            await _safe_edit(q, "ℹ️ This product is not available right now.")
-            return
+        _active = int((dict(prod) or {}).get("is_active") or 1) == 1
         from database import is_product_hidden
-        if is_product_hidden(pid):
-            await _safe_edit(q, "ℹ️ This product is not available right now.")
-            return
+        _hidden = is_product_hidden(pid)
     except Exception:
-        pass
+        _active, _hidden = True, False
+    if not prod or not _active or _hidden or not cfg.get("enabled"):
+        from database import freebie_restock_request
+        _msg = ("ℹ️ *This freebie is not available right now.*\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                "🔔 *Notify Me* tap karo — jab ye freebie wapas aayega, "
+                "bot aapko message bhejega.")
+        try:
+            from keyboards import _rb
+            back = _rb("freebie_back", callback_data="main_menu")
+            menu = _rb("freebie_menu_back", callback_data="freebies_menu")
+        except Exception:
+            back = menu = None
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔔 Notify Me", callback_data=f"freebie_notify_{pid}")],
+            [(menu if menu else InlineKeyboardButton("🎁 Freebies", callback_data="freebies_menu")),
+             (back if back else InlineKeyboardButton("🔙 Back", callback_data="main_menu"))],
+        ])
+        _st, _sm = smart_text_and_mode(_msg, "Markdown")
+        await _safe_edit(q, _st, parse_mode=_sm, reply_markup=kb)
+        return
 
     claims = freebie_claims_count(uid, pid)
     limit = int(cfg.get("claim_limit") or 1)
     reclaim = int(cfg.get("reclaim_refs") or 0)
     refs_have = int(get_referral_count(uid) or 0)
+    remaining = get_freebie_remaining_claims(pid)
 
     # Required refs for THIS claim: pehli claim 0, har agli claim reclaim × claims
     required_refs = 0 if claims == 0 else reclaim * claims
@@ -232,10 +247,22 @@ async def _show_freebie_product(q, uid, pid):
         lines.append("🔢 Claim limit: *Unlimited*")
     if reclaim > 0:
         lines.append(f"🔁 Re-claim rule: *{reclaim} referrals* per extra claim")
+    # 🆕 v170.43: freebie ka apna stock (remaining claims)
+    if remaining is not None:
+        lines.append(f"📦 Remaining: *{remaining}* claims")
     lines.append("")
 
+    # 🆕 v170.43: freebie stock khatam → Notify Me
+    if remaining is not None and remaining <= 0:
+        from database import freebie_restock_request
+        lines.append("😔 Ye freebie abhi khatam ho gaya hai.")
+        lines.append("🔔 *Notify Me* tap karo — wapas aane par bot batayega.")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔔 Notify Me", callback_data=f"freebie_notify_{pid}")],
+            [_menu_btn(), _back_btn()],
+        ])
     # limit check
-    if limit > 0 and claims >= limit and reclaim == 0:
+    elif limit > 0 and claims >= limit and reclaim == 0:
         lines.append("❌ You reached the claim limit for this product.")
         kb = InlineKeyboardMarkup([[
             _menu_btn(),
@@ -272,12 +299,22 @@ async def freebie_do_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception:
         await _safe_edit(q, "❌ Bad id")
         return
+
+    # 🆕 v170.43: FORCE-JOIN zaroori — freebie claim se pehle membership check
+    # (global gate ke sath sath yahan bhi explicit, defense-in-depth).
+    try:
+        from ui_extras import force_join_action_gate
+        if await force_join_action_gate(update, context):
+            return
+    except Exception:
+        pass
+
     uid = q.from_user.id
     user_obj = q.from_user
 
     from database import (get_product, get_freebie_config, freebie_claims_count,
                           get_referral_count, create_order, update_order_status,
-                          get_order)
+                          get_order, get_freebie_remaining_claims)
     prod = get_product(pid)
     cfg = get_freebie_config(pid)
     if not prod or not cfg.get("enabled"):
@@ -294,6 +331,17 @@ async def freebie_do_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
     except Exception:
         pass
+
+    # 🆕 v170.43: freebie ka apna stock (max_claims) — khatam to block
+    remaining = get_freebie_remaining_claims(pid)
+    if remaining is not None and remaining <= 0:
+        await _safe_edit(q, "😔 Ye freebie abhi khatam ho gaya hai. "
+                            "🔔 Notify Me se wapas aane par pata chalega.",
+                         reply_markup=InlineKeyboardMarkup([[
+                             InlineKeyboardButton("🔔 Notify Me",
+                                                  callback_data=f"freebie_notify_{pid}"),
+                             InlineKeyboardButton("🎁 Freebies", callback_data="freebies_menu")]]))
+        return
 
     claims = freebie_claims_count(uid, pid)
     limit = int(cfg.get("claim_limit") or 1)
@@ -494,6 +542,10 @@ async def _render_freebies_admin(q, context):
         InlineKeyboardButton("🔍 Search" + (f": {search[:10]}" if search else ""),
                              callback_data="fb_search"),
         InlineKeyboardButton("📜 Claim Log", callback_data="fb_claimslog"),
+    ])
+    kb.append([
+        InlineKeyboardButton("📊 Analytics", callback_data="fb_analytics"),
+        InlineKeyboardButton("🔔 Restock Requests", callback_data="fb_restock_list"),
     ])
     if search:
         kb.append([InlineKeyboardButton("❌ Clear Search", callback_data="fb_clearsearch")])
@@ -724,22 +776,32 @@ async def fb_remove_callback(update, context):
 
 
 async def fb_claimslog_callback(update, context):
-    """📜 Global freebie claim log (paginated, 15/page)."""
+    """📜 Global freebie claim log (paginated, 15/page + filters: user/date)."""
     q = update.callback_query
     if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
     await q.answer()
     st = _fb_view_state(context)
     page = int(st.get("claims_page", 0))
+    flt_user = st.get("claims_user", 0)
+    flt_days = st.get("claims_days", 0)
     from database import get_all_freebie_claims
-    rows = get_all_freebie_claims(limit=500)
+    rows = get_all_freebie_claims(limit=1000, user_id=flt_user or None,
+                                  days=flt_days or None)
     per = 15
     total_pages = max(1, (len(rows) + per - 1) // per)
     page = max(0, min(page, total_pages - 1))
     st["claims_page"] = page
     context.user_data["fb_view"] = st
     chunk = rows[page * per:(page + 1) * per]
-    lines = [f"📜 *Freebie Claims Log* — page {page+1}/{total_pages}",
-             "━━━━━━━━━━━━━━━━━━━━"]
+    fdesc = []
+    if flt_user:
+        fdesc.append(f"user `{flt_user}`")
+    if flt_days:
+        fdesc.append(f"last {flt_days}d")
+    fdesc_txt = (" · " + ", ".join(fdesc)) if fdesc else ""
+    lines = [f"📜 *Freebie Claims Log*{fdesc_txt}",
+             f"━━━━━━━━━━━━━━━━━━━━",
+             f"Total: *{len(rows)}* · page {page+1}/{total_pages}", ""]
     if not chunk:
         lines.append("_Koi claims nahi._")
     for r in chunk:
@@ -757,7 +819,97 @@ async def fb_claimslog_callback(update, context):
         nav.append(InlineKeyboardButton("▶", callback_data=f"fb_clpage_{page+1}"))
     if nav:
         kb.append(nav)
-    kb.append([InlineKeyboardButton("🔙 Freebies Admin", callback_data="freebies_admin_panel")])
+    kb.append([
+        InlineKeyboardButton("👤 By User" + (" ✅" if flt_user else ""),
+                             callback_data="fb_clfilter_user"),
+        InlineKeyboardButton("🕐 Today" + (" ✅" if flt_days == 1 else ""),
+                             callback_data="fb_clfilter_1d"),
+        InlineKeyboardButton("📅 7d" + (" ✅" if flt_days == 7 else ""),
+                             callback_data="fb_clfilter_7d"),
+    ])
+    kb.append([
+        InlineKeyboardButton("🗓️ All", callback_data="fb_clfilter_all"),
+        InlineKeyboardButton("🔙 Freebies Admin", callback_data="freebies_admin_panel"),
+    ])
+    await _safe_edit(q, "\n".join(lines), parse_mode="Markdown",
+                     reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def fb_clfilter_callback(update, context):
+    """📜 Claim log filter (user id / date range)."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    key = q.data.replace("fb_clfilter_", "")
+    st = _fb_view_state(context)
+    if key == "all":
+        st["claims_user"] = 0; st["claims_days"] = 0
+    elif key == "1d":
+        st["claims_days"] = 1; st["claims_user"] = 0
+    elif key == "7d":
+        st["claims_days"] = 7; st["claims_user"] = 0
+    elif key == "user":
+        context.user_data["freebie_step"] = {"action": "claims_user"}
+        await _safe_edit(q,
+            "👤 *Claims — By User*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+            "User ka Telegram ID bhejo (sirf number):\n\n"
+            "_(/cancel to cancel)_", parse_mode="Markdown")
+        return
+    st["claims_page"] = 0
+    context.user_data["fb_view"] = st
+    await fb_claimslog_callback(update, context)
+
+
+async def fb_restock_list_callback(update, context):
+    """🔔 Pending 'Notify Me' requests (freebies) list."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        from database import get_connection
+        conn = get_connection(); c = conn.cursor()
+        c.execute("""SELECT r.product_id, p.name, COUNT(r.id) n
+                     FROM restock_requests r
+                     JOIN products p ON p.id = r.product_id
+                     GROUP BY r.product_id ORDER BY n DESC LIMIT 20""")
+        rows = [dict(r) for r in c.fetchall()]; conn.close()
+    except Exception as e:
+        await _safe_edit(q, f"❌ {e}"); return
+    lines = ["🔔 *Freebie Restock Requests*",
+             "━━━━━━━━━━━━━━━━━━━━"]
+    if not rows:
+        lines.append("_Koi pending requests nahi._")
+    for r in rows:
+        pname = _clean_name(r.get("name") or f"#{r.get('product_id')}", 30)
+        lines.append(f"• #{r.get('product_id')} {pname}: *{r.get('n')}* users")
+    kb = [[InlineKeyboardButton("🔙 Freebies Admin", callback_data="freebies_admin_panel")]]
+    await _safe_edit(q, "\n".join(lines), parse_mode="Markdown",
+                     reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def fb_analytics_callback(update, context):
+    """📊 Freebies analytics — 7-day trend + top freebies (text bar chart)."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    from database import get_freebies_analytics
+    an = get_freebies_analytics(days=7)
+    daily = an["daily"]
+    top = an["top"]
+    lines = ["📊 *Freebies Analytics (7 days)*",
+             "━━━━━━━━━━━━━━━━━━━━", ""]
+    mx = max([d["count"] for d in daily] + [1])
+    for d in daily:
+        bar = "█" * max(1, round(d["count"] / mx * 14)) if d["count"] > 0 else "·"
+        lines.append(f"`{d['date']}` {bar} {d['count']}")
+    total_week = sum(d["count"] for d in daily)
+    lines += ["", f"📅 Week total: *{total_week}* claims", "", "*🏆 Top Freebies:*"]
+    if not top:
+        lines.append("_(koi claims nahi)_")
+    for t in top:
+        pname = _clean_name(t.get("name") or f"#{t.get('id')}", 26)
+        lines.append(f"• {pname}: *{t.get('n')}* claims")
+    kb = [[InlineKeyboardButton("🔙 Freebies Admin", callback_data="freebies_admin_panel")]]
     await _safe_edit(q, "\n".join(lines), parse_mode="Markdown",
                      reply_markup=InlineKeyboardMarkup(kb))
 
@@ -793,6 +945,8 @@ async def _render_freebie_config(q, pid):
     claims = get_freebie_total_claims(pid)
     dname = get_freebie_display_name(pid)
     on = "🟢 ON" if cfg.get("enabled") else "🔴 OFF"
+    maxc = int(cfg.get("max_claims") or 0)
+    maxc_txt = "∞ (unlimited)" if maxc <= 0 else f"{maxc} (remaining {max(0, maxc-claims)})"
     dname_line = f"\n🏷️ Display name: *{escape_md(dname)}*" if dname else "\n🏷️ Display name: _(product name)_"
     text = (
         f"🎁 *Freebie — #{pid}*\n━━━━━━━━━━━━━━━━━━━━\n"
@@ -800,14 +954,17 @@ async def _render_freebie_config(q, pid):
         f"Status: *{on}* · 🧾 Claims: *{claims}*\n"
         f"🔢 Claim limit: *{cfg.get('claim_limit')}* (0=unlimited)\n"
         f"🔁 Re-claim refs: *{cfg.get('reclaim_refs')}* (0=free forever)\n"
+        f"📦 Freebie stock: *{maxc_txt}*\n"
         f"{dname_line}\n\n"
         f"_Claim rule: pehli claim FREE; har agli claim ke liye "
-        f"reclaim_refs × claims referrals chahiye._"
+        f"reclaim_refs × claims referrals chahiye._\n"
+        f"_Freebie stock khatam hote hi auto-OFF ho jata hai._"
     )
     kb = [
         [InlineKeyboardButton("🔄 Toggle ON/OFF", callback_data=f"freebie_toggle_{pid}")],
         [InlineKeyboardButton("🔢 Set Claim Limit", callback_data=f"freebie_limit_{pid}"),
          InlineKeyboardButton("🔁 Set Re-claim Refs", callback_data=f"freebie_refs_{pid}")],
+        [InlineKeyboardButton("📦 Set Freebie Stock", callback_data=f"freebie_maxclaims_{pid}")],
         [InlineKeyboardButton("🏷️ Display Name", callback_data=f"fb_dname_{pid}"),
          InlineKeyboardButton("📜 Claims", callback_data=f"fb_claims_{pid}")],
         [InlineKeyboardButton("🗑 Remove Freebie", callback_data=f"fb_remove_{pid}")],
@@ -886,18 +1043,103 @@ async def freebie_toggle_callback(update, context):
     cfg = get_freebie_config(pid)
     new_on = not bool(cfg.get("enabled"))
     set_freebie_config(pid, enabled=new_on)
-    # 🐛 v170.16 FIX: pehle koi response nahi aata tha (screen refresh kafi
-    # nahi tha admin ko pata nahi chalta on hua ya off). Ab clear TOAST/ALERT:
+    # 🆕 v170.43: freebie ON hone par "Notify Me" users ko batao + clear
+    if new_on:
+        try:
+            await _notify_freebie_restock_users(context.bot, pid)
+        except Exception:
+            pass
     try:
         await q.answer(
             f"{'🟢 Freebie ON ✅' if new_on else '🔴 Freebie OFF ❌'}",
             show_alert=True)
     except Exception:
         pass
-    # 🐛 v170.14 FIX: pehle freebie_config_callback ko call karta tha jo q.data
-    # se "freebie_cfg_" parse karti thi → "freebie_toggle_101" par int() fail →
-    # silent return → screen kabhi refresh nahi hoti. Ab shared render directly.
     await _render_freebie_config(q, pid)
+
+
+async def _notify_freebie_restock_users(bot, pid):
+    """🆕 v170.43: freebie wapas ON hone par pending 'Notify Me' users ko DM."""
+    from database import freebie_restock_users, get_product, get_freebie_display_name
+    try:
+        users = freebie_restock_users(pid)
+        if not users:
+            return 0
+        prod = get_product(pid)
+        raw = (get_freebie_display_name(pid)
+               or (str((dict(prod) if prod else {}).get("name") or f"#{pid}")))
+        try:
+            from utils import html_strip_tags
+            pname = html_strip_tags(raw) or raw
+        except Exception:
+            pname = raw
+        sent = 0
+        for uid in users:
+            try:
+                await bot.send_message(
+                    uid,
+                    f"🔔 *Freebie Wapas Available!* 🎁\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"📦 {pname[:60]}\n\n"
+                    f"🎁 *FREE* — jaldi claim karo, stock khatam ho sakta hai!",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🎁 Claim FREE",
+                                             callback_data=f"freebie_open_{pid}")]]))
+                sent += 1
+            except Exception:
+                pass
+        return sent
+    except Exception:
+        return 0
+
+
+async def freebie_notify_callback(update, context):
+    """🔔 User taps 'Notify Me' for a disabled/out-of-stock freebie."""
+    q = update.callback_query
+    await q.answer("🔔 Alert Set! Freebie wapas aane par bot batayega.", show_alert=True)
+    try:
+        pid = int(q.data.replace("freebie_notify_", ""))
+    except Exception:
+        return
+    from database import freebie_restock_request
+    freebie_restock_request(pid, q.from_user.id)
+
+
+async def freebie_maxclaims_callback(update, context):
+    """📦 Admin sets freebie ka apna stock (max claims; 0 = unlimited)."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        pid = int(q.data.replace("freebie_maxclaims_", ""))
+    except Exception:
+        return
+    context.user_data["freebie_step"] = {"action": "maxclaims", "pid": pid}
+    await _safe_edit(q,
+        f"📦 *Freebie Stock — #{pid}*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Total kitne claims allow karne hain (poore freebie ke liye, sab users "
+        f"mil kar)?\n"
+        f"`0` = unlimited (kabhi khatam nahi)\n\n"
+        f"⚠️ Stock khatam hote hi freebie *auto-OFF* ho jayega.\n\n"
+        f"_(/cancel to cancel)_", parse_mode="Markdown")
+
+
+async def freebie_limit_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    try:
+        pid = int(q.data.replace("freebie_limit_", ""))
+    except Exception:
+        return
+    context.user_data["freebie_step"] = {"action": "limit", "pid": pid}
+    await _safe_edit(q,
+        f"🔢 *Claim limit for #{pid}*\\n\\n"
+        f"Send number (kitni baar claim kar sake; `0` = unlimited):\\n"
+        f"_(/cancel to cancel)_", parse_mode="Markdown")
 
 
 async def freebie_limit_callback(update, context):
@@ -958,6 +1200,27 @@ async def freebie_step_received(update, context):
                 InlineKeyboardButton("🎁 Freebies Admin", callback_data="freebies_admin_panel")]]))
         return True
 
+    # 🆕 v170.43: claim log user filter
+    if action == "claims_user":
+        context.user_data.pop("freebie_step", None)
+        try:
+            uid = int(txt)
+        except Exception:
+            await update.message.reply_text("❌ Sirf number (Telegram ID) bhejo.")
+            context.user_data["freebie_step"] = {"action": "claims_user"}
+            return True
+        st = _fb_view_state(context)
+        st["claims_user"] = uid
+        st["claims_days"] = 0
+        st["claims_page"] = 0
+        context.user_data["fb_view"] = st
+        await update.message.reply_text(
+            f"👤 Claims filter: user `{uid}` ✅",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("📜 Claim Log", callback_data="fb_claimslog")]]))
+        return True
+
     # 🆕 v170.42: display name (free text, premium emoji supported)
     if action == "dname":
         pid = int(step.get("pid") or 0)
@@ -1013,6 +1276,13 @@ async def freebie_step_received(update, context):
         set_freebie_config(pid, claim_limit=val)
         await update.message.reply_text(
             f"✅ Claim limit for #{pid} → *{val}*" + (" (unlimited)" if val == 0 else ""),
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔙 Back", callback_data=f"freebie_cfg_{pid}")]]))
+    elif action == "maxclaims":
+        set_freebie_config(pid, max_claims=val)
+        await update.message.reply_text(
+            f"✅ Freebie stock for #{pid} → *{val}*" + (" (unlimited)" if val == 0 else ""),
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("🔙 Back", callback_data=f"freebie_cfg_{pid}")]]))

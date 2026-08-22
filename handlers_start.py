@@ -659,13 +659,14 @@ async def _pending_referral_job(context):
 # ════════════════════════════════════════════════════════════════
 
 def _parse_start_arg(arg):
-    """Parse deep-link payload → (referrer_id, open_pid, checkout_pid).
+    """Parse deep-link payload → (referrer_id, open_pid, checkout_pid, open_freebies).
     🐛 v147 FIX (Bug7): `chk_<pid>` deep link opens the product's CHECKOUT
-    (payment-method screen) directly instead of the product detail page."""
-    rid, open_pid, chk_pid = 0, 0, 0
+    (payment-method screen) directly instead of the product detail page.
+    🆕 v170.43: `freebies` → open freebies menu."""
+    rid, open_pid, chk_pid, open_freebies = 0, 0, 0, False
     try:
         if not arg:
-            return 0, 0, 0
+            return 0, 0, 0, False
         if arg.startswith("ref_"):
             rest = arg[4:]
             if "_" in rest:
@@ -677,11 +678,13 @@ def _parse_start_arg(arg):
             chk_pid = int(arg[4:])
         elif arg.startswith("buy_"):
             open_pid = int(arg[4:])
+        elif arg == "freebies":
+            open_freebies = True
         else:
             rid = int(arg)
     except Exception:
-        rid, open_pid, chk_pid = 0, 0, 0
-    return rid, open_pid, chk_pid
+        rid, open_pid, chk_pid, open_freebies = 0, 0, 0, False
+    return rid, open_pid, chk_pid, open_freebies
 
 
 def _referral_math_enabled():
@@ -949,7 +952,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 🆕 v134: parse deep-link EARLY so the force-join continuation knows it
     # came from a referral link (math verification happens after "I Joined").
     arg = context.args[0] if context.args else ""
-    rid, open_pid, chk_pid = _parse_start_arg(arg)
+    rid, open_pid, chk_pid, open_freebies = _parse_start_arg(arg)
     if rid and int(rid) != int(u.id):
         context.user_data['_start_ref'] = int(rid)
         context.user_data['_start_pid'] = int(open_pid or 0)
@@ -958,6 +961,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['_start_checkout_pid'] = int(chk_pid)
     elif open_pid:
         context.user_data['_start_pid'] = int(open_pid)
+    # 🆕 v170.43: freebies deep link → welcome ke baad freebies menu
+    if open_freebies:
+        context.user_data['_start_freebies'] = True
     # 🔗 Force Join check — must be FIRST before any other logic
     try:
         from ui_extras import check_force_join
@@ -1043,6 +1049,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from handlers_shop import show_product_detail_direct
             await show_product_detail_direct(context.bot, u.id, open_pid)
             return  # Stop here, we showed them the product
+        except Exception:
+            pass
+    # 🆕 v170.43: ?start=freebies → freebies menu khole (deep link se)
+    if context.user_data.pop('_start_freebies', False):
+        try:
+            await update.message.reply_text("👋", reply_markup=persistent_menu(u.id))
+            from handlers_freebies import freebies_from_text
+            await freebies_from_text(update, context)
+            return
         except Exception:
             pass
 

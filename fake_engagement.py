@@ -4565,8 +4565,15 @@ async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None
                 # > global broadcast > none.
                 _color = _get_broadcast_global_color(tpl_id)
 
+                # 🛡️ v170.43: FREEBIE broadcasts → "🎁 Free Claim" GREEN button
+                # jo freebies menu khole (checkout NAHI). Free product hai.
+                _is_freebie = (tpl_id == "bc_freebie")
+
                 # 🆕 v94: label now has product name prefix — "{product} - Buy Now"
-                _btn_label = _buy_now_label(pid, "🛒 Buy Now")
+                if _is_freebie:
+                    _btn_label = _buy_now_label(pid, "🎁 Free Claim")
+                else:
+                    _btn_label = _buy_now_label(pid, "🛒 Buy Now")
 
                 # 🆕 v102 / 🐛 v147 FIX (Bug6): pull the product's premium
                 # emoji_id (supplier → fixed ext emoji; own → name emoji) and
@@ -4588,6 +4595,10 @@ async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None
                             _btn_label = _stripped
                 except Exception:
                     pass
+
+                # freebie button hamesha GREEN (success)
+                if _is_freebie and not _color:
+                    _color = "success"
 
                 def _decorate(btn, key):
                     # Apply visual width/align/pad
@@ -4613,15 +4624,17 @@ async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None
                             pass
                     return btn
 
+                _cb = "freebies_menu" if _is_freebie else f"buy_{pid}"
                 private_btn = _decorate(
-                    _bb(tpl_id, _btn_label, callback_data=f"buy_{pid}", force_default=True),
+                    _bb(tpl_id, _btn_label, callback_data=_cb, force_default=True),
                     tpl_id)
                 try:
                     me = await bot.get_me(); _u = me.username
                 except Exception:
                     _u = None
                 if _u:
-                    deep = f"https://t.me/{_u}?start=buy_{pid}"
+                    deep = (f"https://t.me/{_u}?start=freebies" if _is_freebie
+                            else f"https://t.me/{_u}?start=buy_{pid}")
                     group_btn = _decorate(
                         _bb(tpl_id, _btn_label, url=deep, force_default=True),
                         tpl_id)
@@ -5234,8 +5247,15 @@ async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None
                 # > global broadcast > none.
                 _color = _get_broadcast_global_color(tpl_id)
 
+                # 🛡️ v170.43: FREEBIE broadcasts → "🎁 Free Claim" GREEN button
+                # jo freebies menu khole (checkout NAHI). Free product hai.
+                _is_freebie = (tpl_id == "bc_freebie")
+
                 # 🆕 v94: label now has product name prefix — "{product} - Buy Now"
-                _btn_label = _buy_now_label(pid, "🛒 Buy Now")
+                if _is_freebie:
+                    _btn_label = _buy_now_label(pid, "🎁 Free Claim")
+                else:
+                    _btn_label = _buy_now_label(pid, "🛒 Buy Now")
 
                 # 🆕 v102 / 🐛 v147 FIX (Bug6): pull the product's premium
                 # emoji_id (supplier → fixed ext emoji; own → name emoji) and
@@ -5257,6 +5277,10 @@ async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None
                             _btn_label = _stripped
                 except Exception:
                     pass
+
+                # freebie button hamesha GREEN (success)
+                if _is_freebie and not _color:
+                    _color = "success"
 
                 def _decorate(btn, key):
                     # Apply visual width/align/pad
@@ -5282,15 +5306,17 @@ async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None
                             pass
                     return btn
 
+                _cb = "freebies_menu" if _is_freebie else f"buy_{pid}"
                 private_btn = _decorate(
-                    _bb(tpl_id, _btn_label, callback_data=f"buy_{pid}", force_default=True),
+                    _bb(tpl_id, _btn_label, callback_data=_cb, force_default=True),
                     tpl_id)
                 try:
                     me = await bot.get_me(); _u = me.username
                 except Exception:
                     _u = None
                 if _u:
-                    deep = f"https://t.me/{_u}?start=buy_{pid}"
+                    deep = (f"https://t.me/{_u}?start=freebies" if _is_freebie
+                            else f"https://t.me/{_u}?start=buy_{pid}")
                     group_btn = _decorate(
                         _bb(tpl_id, _btn_label, url=deep, force_default=True),
                         tpl_id)

@@ -8,6 +8,37 @@
 
 ---
 
+# 🚀 v170.43 (2026-08-22) — 🎁 FREEBIES: FORCE-JOIN + STOCK + RESTOCK + ANALYTICS + BROADCAST FIX
+
+## 1. 🛡️ Freebie claim par FORCE-JOIN zaroori
+- `freebie_do_callback` ab explicit force-join gate check karta hai (global gate
+  ke sath sath) — join complete kiye bina freebie claim NAHI ho sakta.
+
+## 2. 📦 Freebie apna stock (max_claims) + auto-disable
+- freebies.max_claims column: poore freebie ke liye total claims (0=unlimited).
+- Khatam hote hi freebie AUTO-OFF. Admin: "📦 Set Freebie Stock" per freebie.
+- User ko "Remaining: X claims" dikhta hai; khatam ho to "🔔 Notify Me".
+
+## 3. 🔔 Freebie restock alert
+- Disabled/out-of-stock freebie par "🔔 Notify Me" button → user subscribe.
+- Freebie ON hone par (toggle) pending users ko "Freebie Wapas Available!" DM.
+- Admin me "🔔 Restock Requests" list.
+
+## 4. 🧾 Claim log filter
+- By User (ID) + date range (Today / 7d / All).
+
+## 5. 📊 Freebies analytics (7-day trend)
+- Text bar chart (claims per day) + top freebies + week total.
+
+## 6. 🎁 Freebie broadcast FIX (button)
+- Freebie alerts ka button ab "🎁 Free Claim" GREEN (success) hota hai — aur
+  **freebies menu** khole (checkout NAHI). Deep link `?start=freebies` bhi add.
+- `TEMPLATE_BUTTONS["bc_freebie"]` default "🎁 Free Claim" (Edit Templates me
+  ab bhi editable — tplbtn_bc_freebie).
+- Fake freebie broadcast (destination + per-user) bhi ab Free Claim button.
+
+---
+
 # 🚀 v170.42 (2026-08-22) — 🎁 FREEBIES MANAGEMENT UPGRADE (10 improvements)
 
 ## Admin panel ab pura management dashboard hai:
