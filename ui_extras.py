@@ -2411,13 +2411,9 @@ async def fj_verified_callback(update, context):
         
         chat_id = q.message.chat_id
         
-        # 🆕 v169.1: Use bot.send_message() - works even if original message was deleted
-        await bot.send_message(chat_id, "👋", reply_markup=persistent_menu(user.id))
-        await bot.send_message(
-            chat_id,
-            send_text, 
-            parse_mode=send_mode,
-            reply_markup=main_menu_keyboard(user.id == ADMIN_ID, user_id=user.id))
+        # 🐛 v170.50: "👋" wave placeholder removed — persistent bar welcome par hi.
+        await bot.send_message(chat_id, send_text, parse_mode=send_mode,
+            reply_markup=persistent_menu(user.id))
         
         # Start personal fake activity
         try:

@@ -8,6 +8,22 @@
 
 ---
 
+# 🚀 v170.50 (2026-08-22) — 👋 START WAVE EMOJI REMOVED
+
+## ✨ Fix (user demand)
+- /start par pehle ek alag "👋" message aata tha — wo sirf persistent reply
+  keyboard (🏠 Menu / 🎁 Freebies / Reseller / How to Use) attach karne ke
+  liye placeholder tha. Ab wo wave message **HATA diya**.
+- Persistent quick-bar ab **WELCOME message par hi** attach hota hai — ek hi
+  clean message aata hai (wave nahi). Poori inline menu (Shop/Orders/Points
+  etc.) 🏠 Menu button se khulti hai (pehle jaisi hi).
+- 4 jagah se hatao: `_send_welcome_message`, main `/start` welcome,
+  `?start=freebies` deep-link, aur Force-Join "Verified" flow (ui_extras.py).
+- **Verified (simulation):** single welcome message + ReplyKeyboardMarkup
+  (persistent) attached, koi "👋" nahi. ✅
+
+---
+
 # 🚀 v170.49 (2026-08-22) — 📡 BROADCAST NON-BLOCKING (bot stuck fix)
 
 ## 🔴 ROOT CAUSE
