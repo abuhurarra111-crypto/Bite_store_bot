@@ -807,12 +807,12 @@ async def _send_welcome_message(reply_to, context, u):
     except Exception:
         pass
     send_text, send_mode = smart_text_and_mode(text, "Markdown")
-    # 🐛 v170.50 FIX (user demand): pehle alag "👋" placeholder message aata
-    # tha sirf persistent reply-keyboard attach karne ke liye. Ab wave hata kar
-    # persistent quick-bar (🏠 Menu / 🎁 Freebies etc.) WELCOME message par hi
-    # attach hota hai — single clean message. Poori inline menu 🏠 Menu se khulti hai.
+    # 🐛 v170.50 FIX: wave "👋" hata diya. Ab WELCOME message par inline main
+    # menu (Shop/Orders/Points...) — saare buttons wapas. Persistent quick-bar
+    # alag message ke bina Telegram allow nahi karta, isliye woh hata di —
+    # Freebies ab inline menu me hai (🎁 Freebies button).
     await reply_to.reply_text(send_text, parse_mode=send_mode,
-        reply_markup=persistent_menu(u.id))
+        reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
 
 
 async def _complete_start_after_math(update, context):
@@ -1068,9 +1068,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = _r("welcome").format(shop_name=shop, user_id=u.id)
     # v133: Pinned announcements are real pinned messages only; do not prepend them to welcome.
     send_text, send_mode = smart_text_and_mode(text, "Markdown")
-    # 🐛 v170.50: "👋" wave placeholder removed — persistent bar welcome par hi.
+    # 🐛 v170.50: wave hatao — WELCOME par inline main menu (saare buttons).
     await update.message.reply_text(send_text, parse_mode=send_mode,
-        reply_markup=persistent_menu(u.id))
+        reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
 
 async def handle_how_to_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """🆕 v78: Handler for the 📚 How to Use button on the persistent reply

@@ -2411,9 +2411,9 @@ async def fj_verified_callback(update, context):
         
         chat_id = q.message.chat_id
         
-        # 🐛 v170.50: "👋" wave placeholder removed — persistent bar welcome par hi.
+        # 🐛 v170.50: wave hatao — WELCOME par inline main menu (saare buttons).
         await bot.send_message(chat_id, send_text, parse_mode=send_mode,
-            reply_markup=persistent_menu(user.id))
+            reply_markup=main_menu_keyboard(user.id == ADMIN_ID, user_id=user.id))
         
         # Start personal fake activity
         try:

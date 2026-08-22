@@ -8,6 +8,31 @@
 
 ---
 
+# 🚀 v170.51 (2026-08-22) — 🎛️ WELCOME INLINE MENU RESTORED (buttons wapas)
+
+## 🔴 v170.50 ki ghalti
+- v170.50 me wave "👋" hata kar persistent reply-keyboard welcome par laga
+  diya tha — lekin Telegram ek message me sirf EK keyboard allow karta hai,
+  isliye welcome ke INLINE buttons (🛒 Shop, 💎 Points, 📜 Orders waghera)
+  gayab ho gaye the.
+
+## ✨ Fix
+- WELCOME message ab inline **main menu** ke saath aata hai — saare buttons
+  wapas (Shop, Points, Price List, Account, Freebies, Orders, Txns, Refer,
+  Support, Warranty, Reviews, Loyalty, Language, Admin). Koi wave nahi.
+- **🎁 Freebies inline button** main menu me ADD (pehle sirf persistent reply
+  keyboard par tha) — `main_freebies` registry entry + `_CORE_BASE` me.
+  Sab 50 layouts me auto-render hota hai (v161.5 append logic).
+- Persistent reply quick-bar ab /start par nahi bhejta (Telegram limit) —
+  uske saare kaam inline menu / commands se: 🎁 Freebies (inline button),
+  /freebies, /apikey (Reseller), /help.
+- 3 jagah fix: `_send_welcome_message`, main `/start` welcome, Force-Join
+  verified flow (ui_extras.py).
+- **Verified (simulation):** 1 welcome msg + 14 inline buttons + Freebies
+  present, no wave. ✅
+
+---
+
 # 🚀 v170.50 (2026-08-22) — 👋 START WAVE EMOJI REMOVED
 
 ## ✨ Fix (user demand)
