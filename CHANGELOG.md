@@ -8,6 +8,32 @@
 
 ---
 
+# 🚀 v170.49 (2026-08-22) — 📡 BROADCAST NON-BLOCKING (bot stuck fix)
+
+## 🔴 ROOT CAUSE
+- PTB (python-telegram-bot) updates ko **serial (ek-ek karke)** process karta hai
+  (`concurrent_updates=False` default). Global broadcast aur pinned-announcement
+  broadcast dono ka heavy user-loop **handler ke ANDAR** `await` hota tha →
+  loop khatam hone tak dispatcher baqi SAB updates ko queue me rok leta tha →
+  bot sab users ke liye "stuck" lagta tha jab tak progress complete na ho.
+
+## ✨ FIX — background tasks me offload (polls/stock-alerts jaisa pehle se)
+1. **Global broadcast** (`_send_global_broadcast_now`): ab `context.application
+   .create_task(...)` se background me chalta hai. Admin ko foran
+   "🚀 broadcast background me start" reply milta hai; progress bar + summary
+   (`✅ Broadcast sent: s | f`) task ke end par ADMIN_ID ko jaati hai.
+2. **Pinned announcement add (Real Pin Mode)** (`admin_pin_expiry_callback`):
+   `broadcast_and_pin` ab background task me — pin turant save hota hai,
+   broadcast alag se chalta hai, complete hone par summary aati hai.
+   (Manual "Push" button pehle se hi background tha — v110.)
+3. **Fake custom broadcast** (`handle_fake_custom_broadcast_message`): bhi
+   background me (dest=bot_only/both par users loop karta hai).
+- **Verified (simulation):** 500-user broadcast me handler **0.09s** me return
+  hua (pehle poora loop await hota tha), background task ne saare sends + live
+  progress complete kiye. ✅
+
+---
+
 # 🚀 v170.48 (2026-08-22) — ✨ MESSAGE EFFECTS FIXED (class-level wrapper) + Delivered Event
 
 ## 🔴 ROOT CAUSE (effect "kaam nahi kar raha" ki asli wajah)

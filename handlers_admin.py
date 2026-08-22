@@ -2291,14 +2291,37 @@ async def _send_global_broadcast_now(update, context):
         except Exception:
             markup = _admin_button_from_state(context, '')
     context.user_data.pop('broadcast_button', None)
-    # 🆕 v156: live progress animation on the admin's chat
-    s, f = await _broadcast_payload_to_all_users(context.bot, payload,
-                                                 reply_markup=markup,
-                                                 notify_uid=ADMIN_ID,
-                                                 title="Global Broadcast")
+    # ✨ v170.49 FIX: broadcast BACKGROUND task me chalao. PTB updates ko
+    # serial (ek-ek) process karta hai — agar ye heavy loop handler ke andar
+    # await hota to BAQI sab users ke updates queue me latak jaate the aur
+    # bot "stuck" lagta tha jab tak broadcast khatam na ho. Ab handler turant
+    # return karta hai → bot broadcast ke dauran bhi sab ko respond karta hai.
+    _bot = context.bot
+
+    async def _bg_broadcast():
+        s, f = await _broadcast_payload_to_all_users(
+            _bot, payload, reply_markup=markup,
+            notify_uid=ADMIN_ID, title="Global Broadcast")
+        try:
+            await _bot.send_message(
+                ADMIN_ID,
+                f"✅ Broadcast sent: {s} | ❌ Failed: {f}",
+                reply_markup=admin_menu_keyboard())
+        except Exception:
+            pass
+
     try:
-        await update.effective_message.reply_text(f"✅ Broadcast sent: {s} | ❌ Failed: {f}",
-                                                  reply_markup=admin_menu_keyboard())
+        context.application.create_task(_bg_broadcast())
+    except Exception:
+        import asyncio as _aio
+        _aio.create_task(_bg_broadcast())
+
+    try:
+        await update.effective_message.reply_text(
+            "🚀 *Broadcast background me start ho gaya.*\n"
+            "Bot ab sab users ke liye responsive hai — live progress + summary "
+            "yahan aayegi.",
+            parse_mode="Markdown", reply_markup=admin_menu_keyboard())
     except Exception:
         pass
 
@@ -2538,8 +2561,25 @@ async def handle_fake_custom_broadcast_message(update, context):
         return False
     context.user_data.pop('fake_custom_broadcast', None)
     payload = _admin_extract_media_payload(update.message)
-    s, f = await _broadcast_payload_to_fake_destination(context.bot, payload)
-    await update.message.reply_text(f"✅ Custom broadcast sent: {s} | ❌ Failed: {f}", reply_markup=admin_menu_keyboard())
+    # ✨ v170.49 FIX: background me — jab dest mode bot_only/both ho to ye
+    # saare users ko loop karta hai; agar handler me await hota to bot sab ke
+    # liye stuck ho jata (PTB serial update processing).
+    _bot = context.bot
+
+    async def _bg_custom_broadcast():
+        s, f = await _broadcast_payload_to_fake_destination(_bot, payload)
+        try:
+            await _bot.send_message(
+                ADMIN_ID, f"✅ Custom broadcast sent: {s} | ❌ Failed: {f}",
+                reply_markup=admin_menu_keyboard())
+        except Exception:
+            pass
+
+    import asyncio as _aio
+    _aio.create_task(_bg_custom_broadcast())
+    await update.message.reply_text(
+        "🚀 Custom broadcast background me start ho gaya — summary aayegi.",
+        reply_markup=admin_menu_keyboard())
     return True
 
 

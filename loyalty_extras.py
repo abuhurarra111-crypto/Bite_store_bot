@@ -1123,17 +1123,35 @@ async def admin_pin_expiry_callback(update: Update, context: ContextTypes.DEFAUL
     real_mode = is_real_pin_mode()
     broadcast_note = ""
     if real_mode and new_id:
-        try:
-            sent, pinned, failed = await broadcast_and_pin(context.bot, new_id)
-            broadcast_note = (
-                f"\n\n📢 *Real Pin Mode ACTIVE:*\n"
-                f"  • Delivered: *{sent}* users\n"
-                f"  • Pinned in DM: *{pinned}* users\n"
-                f"  • Failed: *{failed}*\n"
-                f"_Auto-unpin will fire on expiry._"
-            )
-        except Exception as e:
-            broadcast_note = f"\n\n⚠️ Real Pin broadcast partially failed: {e}"
+        # ✨ v170.49 FIX: heavy pin-broadcast BACKGROUND task me — warna PTB
+        # (serial update processing) ke chakkar me bot sab users ke liye stuck
+        # ho jata tha jab tak pin broadcast khatam na ho.
+        _bot = context.bot
+
+        async def _pin_bg():
+            try:
+                sent, pinned, failed = await broadcast_and_pin(_bot, new_id)
+                note = (
+                    f"✅ *Pin #{new_id} — Real Pin broadcast complete!*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"  • Delivered: *{sent}* users\n"
+                    f"  • Pinned in DM: *{pinned}* users\n"
+                    f"  • Failed: *{failed}*\n"
+                    f"_Auto-unpin will fire on expiry._"
+                )
+            except Exception as e:
+                note = f"⚠️ *Pin #{new_id} — Real Pin broadcast partially failed:* {e}"
+            try:
+                await _bot.send_message(ADMIN_ID, note, parse_mode="Markdown")
+            except Exception:
+                pass
+
+        import asyncio as _aio
+        _aio.create_task(_pin_bg())
+        broadcast_note = (
+            "\n\n📢 *Real Pin Mode ACTIVE:* broadcast *background* me start "
+            "ho gaya — bot responsive hai, summary aayegi jab complete ho."
+        )
 
     location_note = ("pinned directly in every user's chat"
                      if real_mode else
