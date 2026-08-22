@@ -8,6 +8,28 @@
 
 ---
 
+# 🚀 v170.44 (2026-08-22) — RESELLER SEARCH + PRODUCT NAME BUTTON + FREEBIES PREMIUM LIST
+
+## 1. 🔍 Reseller panel — Resellers search
+- `reseller_keys_panel` ab search karta hai: API key (poori/prefix), user ID,
+  username, name. "🔍 Search" + "❌ Clear Search" buttons.
+- Search match hone par header me count, no-match par clear message.
+
+## 2. 🗂️ Reseller Products — name on button + search
+- 🐛 FIX: buttons par ab product ka NAAM bhi (pehle sirf premium emoji icon +
+  "✅ ON" tha). Ab "✅ ON — Product Name" + premium icon.
+- 🔍 Search (name/ID) + Clear Search buttons.
+
+## 3. 🎁 Freebies menu — top list me premium emoji
+- 🐛 FIX: user side freebies menu ke TOP list me ab product ke premium emoji
+  ke saath name dikhta hai (pehle sirf neeche buttons me premium tha, top me
+  plain text). `_product_name_with_fixed_emoji` use hota hai.
+
+## 4. 🧪 Tests: keys search (prefix/uid/username/no-match), products name button,
+   products search, freebies premium — sab pass.
+
+---
+
 # 🚀 v170.43 (2026-08-22) — 🎁 FREEBIES: FORCE-JOIN + STOCK + RESTOCK + ANALYTICS + BROADCAST FIX
 
 ## 1. 🛡️ Freebie claim par FORCE-JOIN zaroori

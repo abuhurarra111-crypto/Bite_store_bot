@@ -126,7 +126,19 @@ async def _show_freebies_menu(target, uid, from_text=False):
                     eid = _eid or ""
                 except Exception:
                     pass
-            lines.append(f"🎁 {plain[:30]}")
+            # 🆕 v170.44: TOP list me bhi PREMIUM emoji ke saath name (pehle
+            # sirf plain text tha, premium sirf neeche buttons par tha).
+            import html as _hlib
+            try:
+                from fake_engagement import _product_name_with_fixed_emoji as _pfn
+                _nm = str(_pfn({"id": pid, "name": raw}) or "").replace("[[HTML]]", "").strip()
+            except Exception:
+                _nm = ""
+            if not _nm:
+                _nm = str(plain or f"#{pid}")[:30]
+            if "<" not in _nm:
+                _nm = _hlib.escape(_nm)
+            lines.append(f"• {_nm[:60]}")
             if _have:
                 kb_rows.append([make_premium_button(
                     f"🎁 Claim — {plain[:22]}", emoji_id=eid or None,

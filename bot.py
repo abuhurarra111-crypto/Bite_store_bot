@@ -2721,6 +2721,8 @@ def main():
         ("^reseller_panel$", admin_reseller_callback),
         ("^reseller_gen_panel$", reseller_gen_panel_callback),
         ("^reseller_keys_panel$", reseller_keys_panel_callback),
+        ("^reseller_keys_search$", reseller_keys_search_callback),       # 🆕 v170.44
+        ("^reseller_keys_clearsearch$", reseller_keys_clearsearch_callback),  # 🆕 v170.44
         ("^reseller_keycfg_panel_\\d+$", reseller_keycfg_panel_callback),
         ("^reseller_keyaction_\\d+_[a-z_]+$", reseller_keyaction_callback),
         ("^reseller_pricing_panel$", reseller_pricing_panel_callback),
@@ -2739,6 +2741,8 @@ def main():
         ("^reseller_prod_toggle_\\d+$", reseller_prod_toggle_callback),
         ("^reseller_prod_price_\\d+$", reseller_prod_price_callback),
         ("^reseller_prod_page_\\d+$", reseller_prod_page_callback),
+        ("^reseller_prod_search$", reseller_prod_search_callback),       # 🆕 v170.44
+        ("^reseller_prod_clearsearch$", reseller_prod_clearsearch_callback),  # 🆕 v170.44
         # 🆕 v161.6: reseller tracking (per-key orders, top-up, webhook log, export)
         ("^reseller_orders_key_\\d+$", reseller_orders_key_callback),
         ("^reseller_topup_\\d+$", reseller_topup_callback),

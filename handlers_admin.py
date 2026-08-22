@@ -11807,25 +11807,57 @@ async def reseller_keys_panel_callback(update, context):
         await q.answer("❌", show_alert=True); return
     await q.answer()
     try:
-        from reseller_api import list_reseller_keys
+        from reseller_api import list_reseller_keys, reveal_reseller_key
         from database import reseller_key_stats, get_user
         keys = list_reseller_keys()
     except Exception as e:
         await q.edit_message_text(f"❌ {e}"); return
+    # 🆕 v170.44: search by API key / user id / username / name
+    search = str(context.user_data.get("rs_keys_search") or "").strip().lower()
+    if search:
+        try:
+            _filtered = []
+            for k in keys:
+                kid = int(k.get("id") or 0)
+                full = ""
+                try:
+                    full = str(reveal_reseller_key(kid) or "").lower()
+                except Exception:
+                    full = ""
+                uid_s = str(k.get("owner_id") or "")
+                prefix = str(k.get("key_prefix") or "").lower()
+                u = get_user(int(k.get("owner_id") or 0))
+                uname = str(u.get("username") or "").lower() if u else ""
+                fname = str(u.get("first_name") or "").lower() if u else ""
+                if (search in prefix or (full and search in full) or search in uid_s
+                        or search in uname or search in fname):
+                    _filtered.append(k)
+            keys = _filtered
+        except Exception:
+            pass
     if not keys:
-        await q.edit_message_text("🔑 No reseller keys yet.", reply_markup=InlineKeyboardMarkup(
-            [[InlineKeyboardButton("🔙 Back", callback_data="reseller_panel")]]))
+        txt = ("🔑 *Reseller Keys:*\n\n" +
+               (f"_🔍 '{search}' ke liye koi key nahi mili._" if search else "_No reseller keys yet._"))
+        kb = []
+        if search:
+            kb.append([InlineKeyboardButton("❌ Clear Search", callback_data="reseller_keys_clearsearch")])
+        kb.append([InlineKeyboardButton("🔙 Back", callback_data="reseller_panel")])
+        await q.edit_message_text(txt, parse_mode="Markdown",
+                                  reply_markup=InlineKeyboardMarkup(kb))
         return
-    lines = ["📋 *Reseller Keys:*\n"]
+    head = "📋 *Reseller Keys:*\n"
+    if search:
+        head = f"📋 *Reseller Keys:* 🔍 `{search[:20]}` — {len(keys)} match\n"
+    lines = [head]
     kb = []
     for k in keys[:20]:
         st_ = "🟢" if k.get("is_active") else "🔴"
         try:
             u = get_user(int(k.get("owner_id") or 0))
             uname = (u.get("first_name") if u else None) or str(k.get("owner_id"))
+            username = (u.get("username") if u else None) or ""
         except Exception:
-            uname = str(k.get("owner_id"))
-        # 🆕 v161.6: full record per key — user id, username, created (date/year), balance, profit
+            uname = str(k.get("owner_id")); username = ""
         try:
             ppd = float(get_setting("reseller_points_per_dollar") or 10)
             _bal = float(get_user_points(int(k.get("owner_id") or 0)) or 0) / ppd if ppd else 0
@@ -11833,16 +11865,45 @@ async def reseller_keys_panel_callback(update, context):
             _bal = 0.0
         tr = reseller_key_tracking(int(k.get("id") or 0))
         created = str(k.get("created_at") or "")[:16]
+        uline = f"{uname}" + (f" (@{username})" if username else "") + f" (id {k.get('owner_id')})"
         lines.append(
             f"{st_} `{k.get('key_prefix')}`\n"
-            f"   👤 {uname} (id {k.get('owner_id')})\n"
+            f"   👤 {uline}\n"
             f"   🕐 {created} · 💳 ${_bal:.2f} · 📦 {tr.get('orders',0)} · 📈 ${tr.get('profit_usd',0):,.2f}"
         )
         kb.append([InlineKeyboardButton(f"{st_} {k.get('key_prefix')} (id {k.get('id')})",
                                         callback_data=f"reseller_keycfg_panel_{k.get('id')}")])
+    kb.append([
+        InlineKeyboardButton("🔍 Search", callback_data="reseller_keys_search"),
+    ])
+    if search:
+        kb.append([InlineKeyboardButton("❌ Clear Search", callback_data="reseller_keys_clearsearch")])
     kb.append([InlineKeyboardButton("🔙 Back", callback_data="reseller_panel")])
     await q.edit_message_text("\n".join(lines[:22]), parse_mode="Markdown",
                               reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def reseller_keys_search_callback(update, context):
+    """🔍 Ask admin for search text (key / user id / username)."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    context.user_data["rs_step"] = {"action": "keys_search"}
+    await q.edit_message_text(
+        "🔍 *Search Resellers*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Bhejo: API key (poori ya prefix), user ID, ya username/name:\n\n"
+        "_(/cancel to cancel)_", parse_mode="Markdown")
+
+
+async def reseller_keys_clearsearch_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    context.user_data.pop("rs_keys_search", None)
+    await reseller_keys_panel_callback(update, context)
 
 
 async def reseller_keycfg_panel_callback(update, context):
@@ -12685,6 +12746,20 @@ async def reseller_wizard_text(update, context):
                     await update.message.reply_text(
                         f"✅ Key `{k.get('key_prefix')}` {what} price → *${price:.2f}*",
                         parse_mode="Markdown")
+        elif action == "keys_search":
+            context.user_data["rs_keys_search"] = text.strip()
+            await update.message.reply_text(
+                f"🔍 Reseller search set: *{text[:40]}*",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("📋 Resellers", callback_data="reseller_keys_panel")]]))
+        elif action == "prod_search":
+            context.user_data["rs_prod_search"] = text.strip()
+            await update.message.reply_text(
+                f"🔍 Product search set: *{text[:40]}*",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🗂️ Products", callback_data="reseller_admin_products")]]))
         elif action == "topup":
             kid = int(step.get("key_id") or 0)
             pts = float(text)
@@ -13094,15 +13169,29 @@ async def reseller_admin_products_callback(update, context, page=0):
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
     await q.answer()
+    search = str(context.user_data.get("rs_prod_search") or "").strip()
     try:
         from database import get_connection
         conn = get_connection(); c = conn.cursor()
-        c.execute("SELECT id, name, stock, reseller_enabled, COALESCE(reseller_price,0) AS rp "
-                  "FROM products WHERE is_active=1 ORDER BY id LIMIT 8 OFFSET ?", (page * 8,))
+        if search:
+            like = f"%{search.lower()}%"
+            c.execute("""SELECT id, name, stock, reseller_enabled, COALESCE(reseller_price,0) AS rp
+                         FROM products WHERE is_active=1
+                         AND (LOWER(COALESCE(name,'')) LIKE ? OR CAST(id AS TEXT) LIKE ?)
+                         ORDER BY id LIMIT 8 OFFSET ?""",
+                      (like, f"%{search}%", page * 8))
+            c2 = get_connection(); c3 = c2.cursor()
+            total = c3.execute("""SELECT COUNT(*) FROM products WHERE is_active=1
+                                  AND (LOWER(COALESCE(name,'')) LIKE ? OR CAST(id AS TEXT) LIKE ?)""",
+                               (like, f"%{search}%")).fetchone()[0]
+            c2.close()
+        else:
+            c.execute("SELECT id, name, stock, reseller_enabled, COALESCE(reseller_price,0) AS rp "
+                      "FROM products WHERE is_active=1 ORDER BY id LIMIT 8 OFFSET ?", (page * 8,))
+            c2 = get_connection(); c3 = c2.cursor()
+            total = c3.execute("SELECT COUNT(*) FROM products WHERE is_active=1").fetchone()[0]
+            c2.close()
         rows = [dict(r) for r in c.fetchall()]; conn.close()
-        c2 = get_connection(); c3 = c2.cursor()
-        total = c3.execute("SELECT COUNT(*) FROM products WHERE is_active=1").fetchone()[0]
-        c2.close()
     except Exception as e:
         await q.edit_message_text(f"❌ {e}"); return
     try:
@@ -13110,8 +13199,11 @@ async def reseller_admin_products_callback(update, context, page=0):
         _have = True
     except Exception:
         _have = False
-    lines = ["🗂️ *Reseller Products*\n",
-             "_(✅ = API key par available · ⛔ = API par nahi aayega)_\n"]
+    head = ["🗂️ *Reseller Products*"]
+    if search:
+        head.append(f"_🔍 '{search}' — {total} match_")
+    head.append("_(✅ = API key par available · ⛔ = API par nahi aayega)_")
+    lines = head + [""]
     kb = []
     for r in rows:
         on = int(r.get("reseller_enabled") if r.get("reseller_enabled") is not None else 1) == 1
@@ -13128,19 +13220,30 @@ async def reseller_admin_products_callback(update, context, page=0):
                 pass
         icon = "✅" if on else "⛔"
         lines.append(f"{icon} #{r['id']} · {plain[:30]}")
-        toggle_lbl = "✅ ON" if on else "⛔ OFF"
-        kb.append([
-            make_premium_button(toggle_lbl, emoji_id=eid or None,
-                                style="success" if on else "danger",
-                                callback_data=f"reseller_prod_toggle_{r['id']}")
-            if _have else InlineKeyboardButton(toggle_lbl, callback_data=f"reseller_prod_toggle_{r['id']}"),
-            InlineKeyboardButton(f"💰 {price}", callback_data=f"reseller_prod_price_{r['id']}"),
-        ])
+        # 🐛 v170.44 FIX: button par ab product ka NAAM bhi (pehle sirf emoji)
+        toggle_lbl = f"{'✅ ON' if on else '⛔ OFF'} — {plain[:20]}"
+        if _have:
+            kb.append([
+                make_premium_button(toggle_lbl, emoji_id=eid or None,
+                                    style="success" if on else "danger",
+                                    callback_data=f"reseller_prod_toggle_{r['id']}"),
+                InlineKeyboardButton(f"💰 {price}", callback_data=f"reseller_prod_price_{r['id']}"),
+            ])
+        else:
+            kb.append([
+                InlineKeyboardButton(toggle_lbl, callback_data=f"reseller_prod_toggle_{r['id']}"),
+                InlineKeyboardButton(f"💰 {price}", callback_data=f"reseller_prod_price_{r['id']}"),
+            ])
     # bulk buttons
     kb.append([
         InlineKeyboardButton("🟢 ALL ON", callback_data="reseller_prod_all_on"),
         InlineKeyboardButton("🔴 ALL OFF", callback_data="reseller_prod_all_off"),
     ])
+    kb.append([
+        InlineKeyboardButton("🔍 Search", callback_data="reseller_prod_search"),
+    ])
+    if search:
+        kb.append([InlineKeyboardButton("❌ Clear Search", callback_data="reseller_prod_clearsearch")])
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"reseller_prod_page_{page-1}"))
@@ -13151,6 +13254,29 @@ async def reseller_admin_products_callback(update, context, page=0):
     lines.append(f"\n_page {page+1} of {max(1, (total+7)//8)}_")
     await q.edit_message_text("\n".join(lines), parse_mode="Markdown",
                               reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def reseller_prod_search_callback(update, context):
+    """🔍 Ask admin for product search text."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    context.user_data["rs_step"] = {"action": "prod_search"}
+    await q.edit_message_text(
+        "🔍 *Search Products*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Product ka naam (ya part) ya ID bhejo:\n\n"
+        "_(/cancel to cancel)_", parse_mode="Markdown")
+
+
+async def reseller_prod_clearsearch_callback(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    context.user_data.pop("rs_prod_search", None)
+    await reseller_admin_products_callback(update, context)
 
 
 async def reseller_prod_all_callback(update, context):
