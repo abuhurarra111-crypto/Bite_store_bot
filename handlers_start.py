@@ -807,12 +807,20 @@ async def _send_welcome_message(reply_to, context, u):
     except Exception:
         pass
     send_text, send_mode = smart_text_and_mode(text, "Markdown")
-    # 🐛 v170.50 FIX: wave "👋" hata diya. Ab WELCOME message par inline main
-    # menu (Shop/Orders/Points...) — saare buttons wapas. Persistent quick-bar
-    # alag message ke bina Telegram allow nahi karta, isliye woh hata di —
-    # Freebies ab inline menu me hai (🎁 Freebies button).
-    await reply_to.reply_text(send_text, parse_mode=send_mode,
-        reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
+    # 🐛 v170.52 FIX: wave "👋" NAHI, Freebies inline NAHI.
+    #  • NAYA user → persistent quick-bar (🏠 Menu/🎁 Freebies/...) WELCOME
+    #    message par hi attach (bar isi se set hoti hai — koi extra message nahi).
+    #  • PURANA user (bar pehle se cached) → inline main menu.
+    try:
+        _new_here = bool(context.user_data.pop('_is_new_user', False)) if context is not None else False
+    except Exception:
+        _new_here = False
+    if _new_here:
+        await reply_to.reply_text(send_text, parse_mode=send_mode,
+            reply_markup=persistent_menu(u.id))
+    else:
+        await reply_to.reply_text(send_text, parse_mode=send_mode,
+            reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
 
 
 async def _complete_start_after_math(update, context):
@@ -876,6 +884,11 @@ async def continue_after_force_join_verified(update, context, u):
         save_user(u.id, u.username or "", u.first_name or "")
     except Exception:
         is_new = False
+    # 🐛 v170.52: is_new welcome renderer ke liye stash karo (persistent bar vs inline)
+    try:
+        context.user_data['_is_new_user'] = bool(is_new)
+    except Exception:
+        pass
     if rid and int(rid) != int(u.id):
         # 🆕 v170.9: math verification PEHLE, count BAAD
         _math_on = _referral_math_enabled()
@@ -978,6 +991,11 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 📡 Track: is this a new user?
     is_new = get_user(u.id) is None
     save_user(u.id, u.username or "", u.first_name or "")
+    # 🐛 v170.52: welcome renderer ke liye is_new stash (persistent bar vs inline)
+    try:
+        context.user_data['_is_new_user'] = bool(is_new)
+    except Exception:
+        pass
     if is_new and u.id != ADMIN_ID:
         _nu = (u.username or '').strip()
         await notify_admin(context.bot,
@@ -1068,9 +1086,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = _r("welcome").format(shop_name=shop, user_id=u.id)
     # v133: Pinned announcements are real pinned messages only; do not prepend them to welcome.
     send_text, send_mode = smart_text_and_mode(text, "Markdown")
-    # 🐛 v170.50: wave hatao — WELCOME par inline main menu (saare buttons).
-    await update.message.reply_text(send_text, parse_mode=send_mode,
-        reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
+    # 🐛 v170.52: naya user → persistent bar welcome par hi (no wave);
+    # purana user → inline main menu (bar already cached).
+    if is_new:
+        await update.message.reply_text(send_text, parse_mode=send_mode,
+            reply_markup=persistent_menu(u.id))
+    else:
+        await update.message.reply_text(send_text, parse_mode=send_mode,
+            reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
 
 async def handle_how_to_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """🆕 v78: Handler for the 📚 How to Use button on the persistent reply

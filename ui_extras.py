@@ -2389,6 +2389,7 @@ async def fj_verified_callback(update, context):
     try:
         from database import save_user, get_user, get_response
         from utils import smart_text_and_mode  # 🆕 v169.2: CRITICAL FIX - import missing!
+        _was_new = get_user(user.id) is None
         save_user(user.id, user.username or "", user.first_name or "")
         from keyboards import main_menu_keyboard, persistent_menu
         from config import ADMIN_ID
@@ -2411,9 +2412,13 @@ async def fj_verified_callback(update, context):
         
         chat_id = q.message.chat_id
         
-        # 🐛 v170.50: wave hatao — WELCOME par inline main menu (saare buttons).
-        await bot.send_message(chat_id, send_text, parse_mode=send_mode,
-            reply_markup=main_menu_keyboard(user.id == ADMIN_ID, user_id=user.id))
+        # 🐛 v170.52: naya user → persistent bar (no wave); purana → inline.
+        if _was_new:
+            await bot.send_message(chat_id, send_text, parse_mode=send_mode,
+                reply_markup=persistent_menu(user.id))
+        else:
+            await bot.send_message(chat_id, send_text, parse_mode=send_mode,
+                reply_markup=main_menu_keyboard(user.id == ADMIN_ID, user_id=user.id))
         
         # Start personal fake activity
         try:

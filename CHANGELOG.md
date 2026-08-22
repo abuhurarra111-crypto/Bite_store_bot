@@ -8,6 +8,27 @@
 
 ---
 
+# 🚀 v170.52 (2026-08-22) — 🎁 FREEBIES INLINE REMOVED + PERSISTENT BAR RESTORED
+
+## ✨ Fix (user demand)
+- **🎁 Freebies inline button REMOVE** main menu se (v170.51 me add hua tha —
+  duplicate tha kyunki persistent bar me pehle se hai). Ab Freebies sirf
+  persistent quick-bar + /freebies command se.
+- **Persistent quick-bar RESTORE** /start par — bina kisi "👋" extra message ke:
+  - **Naya user** → WELCOME message par hi persistent bar attach hota hai
+    (bar isi se set ho jaati hai; koi alag message nahi).
+  - **Purana user** (bar already cached) → WELCOME par inline main menu.
+- Resolution: Telegram 1 message = 1 keyboard, isliye naye users ko bar
+  welcome se milti hai, inline menu 🏠 Menu button se; purane users ko inline
+  welcome par + cached bar.
+- 4 jagah: `_send_welcome_message` (is_new flag se), main `/start` welcome,
+  `continue_after_force_join_verified`, ui_extras Force-Join verified fallback.
+- `main_freebies` registry + `_CORE_BASE` entry remove (sab 50 layouts se gai).
+- **Verified (simulation):** existing → 13 inline buttons (NO Freebies), no
+  wave; new → persistent bar on welcome, no wave. ✅
+
+---
+
 # 🚀 v170.51 (2026-08-22) — 🎛️ WELCOME INLINE MENU RESTORED (buttons wapas)
 
 ## 🔴 v170.50 ki ghalti

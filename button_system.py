@@ -63,14 +63,6 @@ BUTTONS = {
         "large": "📊 My Account", "xl": "📊 My Account — Profile & balance",
         "callback": "my_account",
     },
-    # 🆕 v170.50: 🎁 Freebies inline button (pehle sirf persistent reply keyboard
-    # par tha — ab main menu me bhi, taake quick access rahe).
-    "main_freebies": {
-        "group": "main", "essential": False,
-        "short": "🎁", "medium": "🎁 Freebies",
-        "large": "🎁 Freebies", "xl": "🎁 Freebies — Free products, claim yours",
-        "callback": "freebies_menu",
-    },
     "main_reseller_api": {
         "group": "main", "essential": False,
         # 🆕 v170.12: inline main menu se HATA diya (user demand) — ab persistent
