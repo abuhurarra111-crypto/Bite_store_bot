@@ -1153,7 +1153,20 @@ async def _notify_admin_order_delivered(bot, order, qty=1, supplier_name="",
         if extra_note:
             lines.append("")
             lines.append(f"⚠️ {extra_note}")
-        await notify_admin(bot, "\n".join(lines))
+        # ✨ v170.47: delivered event effect (panel → Events → Order Delivered)
+        try:
+            from message_effects import set_event
+            set_event("delivered")
+        except Exception:
+            pass
+        try:
+            await notify_admin(bot, "\n".join(lines))
+        finally:
+            try:
+                from message_effects import set_event as _se
+                _se("")
+            except Exception:
+                pass
     except Exception as e:
         import logging as _l
         _l.getLogger(__name__).debug(f"[admin-delivered-notify] {e}")
@@ -1215,25 +1228,38 @@ async def _send_static_media_delivery(bot, order, product, method, amount, pts_b
         [InlineKeyboardButton("📜 Order History", callback_data="my_orders")],
     ])
     send_text, send_mode = smart_text_and_mode(header, "Markdown")
+    # ✨ v170.47: delivered event effect (panel → Events → Order Delivered)
     try:
-        if file_type == 'photo':
-            await bot.send_photo(order['user_id'], file_id, caption=send_text[:1024], parse_mode=send_mode, reply_markup=kb)
-        elif file_type == 'video':
-            await bot.send_video(order['user_id'], file_id, caption=send_text[:1024], parse_mode=send_mode, reply_markup=kb)
-        else:
-            await bot.send_document(order['user_id'], file_id, caption=send_text[:1024], parse_mode=send_mode, reply_markup=kb)
+        from message_effects import set_event
+        set_event("delivered")
     except Exception:
-        # Fallback: send text first, then raw document if Telegram rejects caption/parse mode.
-        await bot.send_message(order['user_id'], send_text, parse_mode=send_mode, reply_markup=kb)
+        pass
+    try:
         try:
             if file_type == 'photo':
-                await bot.send_photo(order['user_id'], file_id)
+                await bot.send_photo(order['user_id'], file_id, caption=send_text[:1024], parse_mode=send_mode, reply_markup=kb)
             elif file_type == 'video':
-                await bot.send_video(order['user_id'], file_id)
+                await bot.send_video(order['user_id'], file_id, caption=send_text[:1024], parse_mode=send_mode, reply_markup=kb)
             else:
-                await bot.send_document(order['user_id'], file_id)
+                await bot.send_document(order['user_id'], file_id, caption=send_text[:1024], parse_mode=send_mode, reply_markup=kb)
         except Exception:
-            await bot.send_message(order['user_id'], "⚠️ Delivery file could not be sent. Please contact support.")
+            # Fallback: send text first, then raw document if Telegram rejects caption/parse mode.
+            await bot.send_message(order['user_id'], send_text, parse_mode=send_mode, reply_markup=kb)
+            try:
+                if file_type == 'photo':
+                    await bot.send_photo(order['user_id'], file_id)
+                elif file_type == 'video':
+                    await bot.send_video(order['user_id'], file_id)
+                else:
+                    await bot.send_document(order['user_id'], file_id)
+            except Exception:
+                await bot.send_message(order['user_id'], "⚠️ Delivery file could not be sent. Please contact support.")
+    finally:
+        try:
+            from message_effects import set_event as _se
+            _se("")
+        except Exception:
+            pass
     return True
 
 

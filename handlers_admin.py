@@ -1582,7 +1582,8 @@ async def admin_effects_callback(u, c):
     if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
     await q.answer()
     try:
-        from message_effects import MESSAGE_EFFECTS, FX_COMMANDS, global_effect, command_effect, OFF
+        from message_effects import (MESSAGE_EFFECTS, FX_COMMANDS, FX_EVENTS,
+                                     global_effect, command_effect, event_effect, OFF)
     except Exception:
         await q.answer("⚠️ Message Effects module error", show_alert=True); return
     g = global_effect()
@@ -1608,6 +1609,19 @@ async def admin_effects_callback(u, c):
             cur = "🌍 global"
         lines.append(f"{label} → `{cur}`")
         kb.append([InlineKeyboardButton(f"{label} → {cur}", callback_data=f"fxec_{cmd}")])
+    if FX_EVENTS:
+        lines.append("")
+        lines.append("*Events (auto-messages):*")
+        for ev, label in FX_EVENTS:
+            v = event_effect(ev)
+            if v == OFF:
+                cur = "🚫 Off"
+            elif v:
+                cur = MESSAGE_EFFECTS.get(v, v)
+            else:
+                cur = "🌍 global"
+            lines.append(f"{label} → `{cur}`")
+            kb.append([InlineKeyboardButton(f"{label} → {cur}", callback_data=f"fxee_{ev}")])
     kb.append([InlineKeyboardButton("🔙 Back to Settings", callback_data="admin_settings")])
     await _safe_edit(q, "\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -1672,12 +1686,45 @@ async def admin_effects_cmd_callback(u, c):
     await _safe_edit(q, "\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 
+async def admin_effects_event_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
+    await q.answer()
+    from message_effects import MESSAGE_EFFECTS, event_effect, OFF
+    ev = q.data.replace("fxee_", "", 1)
+    cur = event_effect(ev)
+    lines = [
+        f"🎯 *Effect for: {ev}*",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "Is event par bot jo message/file bheje, us par kya effect lage?",
+        "",
+    ]
+    if cur == OFF:
+        lines.append("Current: *🚫 Off (force none)*")
+    elif cur:
+        lines.append(f"Current: *{MESSAGE_EFFECTS.get(cur, cur)}*")
+    else:
+        lines.append("Current: *🌍 Global default*")
+    kb = [[InlineKeyboardButton("🌍 Use Global Default", callback_data=f"fxsete_{ev}_inherit")]]
+    row = []
+    for eid, name in MESSAGE_EFFECTS.items():
+        mark = " ✅" if eid == cur else ""
+        row.append(InlineKeyboardButton(name + mark, callback_data=f"fxsete_{ev}_{eid}"))
+        if len(row) == 2:
+            kb.append(row); row = []
+    if row:
+        kb.append(row)
+    kb.append([InlineKeyboardButton("🚫 Off (force no effect)", callback_data=f"fxsete_{ev}_off")])
+    kb.append([InlineKeyboardButton("🔙 Back to Effects", callback_data="fxpanel")])
+    await _safe_edit(q, "\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
 async def admin_effects_set_callback(u, c):
     q = u.callback_query
     if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
     await q.answer()
     data = q.data or ""
-    from message_effects import set_global_effect, set_command_effect
+    from message_effects import set_global_effect, set_command_effect, set_event_effect
     if data.startswith("fxsetg_"):
         val = data.replace("fxsetg_", "", 1)
         set_global_effect("" if val == "off" else val)
@@ -1693,6 +1740,17 @@ async def admin_effects_set_callback(u, c):
         else:
             set_command_effect(cmd, val)
         await q.answer(f"✅ /{cmd} effect saved", show_alert=True)
+        await admin_effects_callback(u, c)
+    elif data.startswith("fxsete_"):
+        rest = data.replace("fxsete_", "", 1)
+        ev, _, val = rest.rpartition("_")
+        if val == "inherit":
+            set_event_effect(ev, "")
+        elif val == "off":
+            set_event_effect(ev, "off")
+        else:
+            set_event_effect(ev, val)
+        await q.answer(f"✅ {ev} effect saved", show_alert=True)
         await admin_effects_callback(u, c)
 
 async def set_setting_callback(u,c):

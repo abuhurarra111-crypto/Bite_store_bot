@@ -129,7 +129,8 @@ from handlers_support import (support_menu_callback, st_list_callback, st_view_c
 from handlers_admin import admin_deposit_history_callback, admin_deposit_page_callback, admin_deposit_detail_callback, admin_responses_category_callback, bybit_test_callback  # 📊 Deposit + ✏️ Responses
 from handlers_admin import resp_template_apply_callback, resp_custom_callback, resp_reset_callback  # 🆕 v170.22: response templates
 from handlers_admin import (admin_effects_callback, admin_effects_global_callback,
-                            admin_effects_cmd_callback, admin_effects_set_callback)  # ✨ v170.46: message effects panel
+                            admin_effects_cmd_callback, admin_effects_event_callback,
+                            admin_effects_set_callback)  # ✨ v170.46/47: message effects panel
 from handlers_admin import make_freebie_callback  # 🆕 v170.29: Add Product → Make This a Freebie
 from handlers_admin import (ban_panel_callback, ban_input_start, unban_input_start,
                             ban_input_received, unban_input_received)  # 🆕 v170.37 ban panel
@@ -1787,26 +1788,44 @@ def main():
 
     app.add_error_handler(global_error_handler)
 
-    # ✨ v170.46: TELEGRAM MESSAGE EFFECTS — send_message par effect auto-attach
-    # (global default + per-command override). reply_text() bhi bot.send_message
-    # se hi guzarta hai, isliye ye wrapper SAB responses cover karta hai.
-    # NOTE: v170.45 wala bug (message_effect_id=None hone par skip) FIX — ab
-    # truthy check hai. Effects sirf private chats me attach hote hain.
+    # ✨ v170.47: TELEGRAM MESSAGE EFFECTS — send methods par effect attach
+    # (global default + per-command + per-event override).
+    # ⚠️ IMPORTANT: PTB 22.x Bot objects __slots__ use karte hain — isliye
+    # `app.bot.send_message = wrapper` (instance-level) SILENTLY fail ho jata
+    # hai (AttributeError). CLASS-level patch zaroori hai. Isi bug ki wajah se
+    # pehle effect kabhi lagta hi nahi tha.
+    # Effect sirf private chats me attach hota hai (attach_effect guard).
     try:
         from message_effects import attach_effect
-        _orig_send_message = app.bot.send_message
+        from telegram import Bot as _FXBot
 
-        async def _send_fx(chat_id, text, *args, **kwargs):
+        _FX_METHODS = [
+            "send_message", "send_photo", "send_document", "send_video",
+            "send_animation", "send_audio", "send_voice", "send_video_note",
+            "send_sticker", "send_dice", "send_poll", "send_location",
+            "send_venue", "send_contact", "send_media_group",
+        ]
+
+        def _make_fx_wrapper(_orig):
+            async def _fx(self, chat_id, *args, **kwargs):
+                try:
+                    attach_effect(kwargs, chat_id)
+                except Exception:
+                    pass
+                return await _orig(self, chat_id, *args, **kwargs)
+            return _fx
+
+        _wrapped = 0
+        for _m in _FX_METHODS:
             try:
-                attach_effect(kwargs, chat_id)
-            except Exception:
-                pass
-            return await _orig_send_message(chat_id, text, *args, **kwargs)
-
-        app.bot.send_message = _send_fx
-        print("[Effects] ✅ send_message effect wrapper installed (global + per-command)")
+                _orig = getattr(_FXBot, _m)
+                setattr(_FXBot, _m, _make_fx_wrapper(_orig))
+                _wrapped += 1
+            except Exception as _e:
+                print(f"[Effects] ⚠️ wrap {_m} failed: {_e}")
+        print(f"[Effects] ✅ class-level effect wrapper installed on {_wrapped} send methods")
     except Exception as _fx:
-        print(f"[Effects] ⚠️ send_message wrap failed: {_fx}")
+        print(f"[Effects] ⚠️ send wrapper install failed: {_fx}")
 
 
     # ── 🆕 v134: Referral activity observation (runs before all others) ──
@@ -3074,10 +3093,11 @@ def main():
         ("^se_allcolor_",       se_allcolor_callback),
         ("^se_setallcol_",      se_setallcol_callback),
         ("^se_noop$",           se_noop_callback),
-        # ✨ v170.46: Message Effects (global + per-command)
+        # ✨ v170.46/47: Message Effects (global + per-command + per-event)
         ("^fxpanel$",           admin_effects_callback),
         ("^fxeg$",              admin_effects_global_callback),
         ("^fxec_",              admin_effects_cmd_callback),
+        ("^fxee_",              admin_effects_event_callback),
         ("^fxset",              admin_effects_set_callback),
     ] + get_button_styler_handlers():  # 🆕 v40: Inline Button Styler handlers
         app.add_handler(CallbackQueryHandler(fn, pattern=pat))

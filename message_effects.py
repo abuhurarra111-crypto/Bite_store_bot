@@ -47,9 +47,23 @@ FX_COMMANDS = [
 # Abhi kaunsa command chal raha hai (bot.py ka -95 probe set karta hai)
 CURRENT_COMMAND = contextvars.ContextVar("bite_fx_command", default="")
 
+# Abhi kaunsa event chal raha hai (e.g. "delivered" — bot.py/probe ya
+# handlers set karte hain; jis se event-specific effect lagta hai)
+CURRENT_EVENT = contextvars.ContextVar("bite_fx_event", default="")
+
 
 def set_current_command(cmd):
     CURRENT_COMMAND.set(cmd or "")
+
+
+def set_event(ev):
+    CURRENT_EVENT.set(ev or "")
+
+
+# Auto-message events (commands ke ilawa) — panel me dikhte hain
+FX_EVENTS = [
+    ("delivered", "📦 Order Delivered"),
+]
 
 
 # ── Global ──────────────────────────────────
@@ -70,9 +84,25 @@ def set_command_effect(cmd, val):
     set_setting(f"fx_cmd_{cmd}", str(val or ""))
 
 
+# ── Per-event ───────────────────────────────
+def event_effect(ev):
+    return str(get_setting(f"fx_event_{ev}", "") or "").strip()
+
+
+def set_event_effect(ev, val):
+    set_setting(f"fx_event_{ev}", str(val or ""))
+
+
 # ── Resolution ──────────────────────────────
 def resolve_effect():
-    """Effect id (str) ya None. Per-command override > global."""
+    """Effect id (str) ya None. Per-event override > per-command > global."""
+    ev = CURRENT_EVENT.get()
+    if ev:
+        v = event_effect(ev)
+        if v == OFF:
+            return None        # explicit off → global ignore
+        if v:
+            return v
     cmd = CURRENT_COMMAND.get()
     if cmd:
         v = command_effect(cmd)

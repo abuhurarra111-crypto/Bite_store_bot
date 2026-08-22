@@ -8,6 +8,32 @@
 
 ---
 
+# 🚀 v170.48 (2026-08-22) — ✨ MESSAGE EFFECTS FIXED (class-level wrapper) + Delivered Event
+
+## 🔴 ROOT CAUSE (effect "kaam nahi kar raha" ki asli wajah)
+- PTB 22.8 ke `Bot` objects **`__slots__`** use karte hain → `app.bot.send_message = wrapper`
+  (instance-level) **silently fail** hota hai (`AttributeError: Attribute 'send_message'
+  of class 'Bot' can't be set!`), jo try/except me dab jata tha → wrapper kabhi
+  install hi nahi hota tha → effect kabhi attach nahi hota tha.
+- **FIX:** ab **CLASS-level patch** (`Bot.send_message = wrapper`) — verified working.
+
+## ✨ What's fixed / new
+1. **Class-level wrapper** ab 15 send methods cover karta hai:
+   send_message, send_photo, send_document, send_video, send_animation, send_audio,
+   send_voice, send_video_note, send_sticker, send_dice, send_poll, send_location,
+   send_venue, send_contact, send_media_group.
+   → delivered **FILE/photo/video** par bhi effect lagta hai (sirf text nahi).
+2. **Events section** panel me: "📦 Order Delivered" — admin ki Order Delivered
+   notification + customer ki delivered message/file par alag effect set kar sakte ho
+   (`fx_event_delivered`; `set_event("delivered")` handlers_order.py me:
+   `_notify_admin_order_delivered` + `_send_static_media_delivery`).
+3. Resolution order: **event > command > global** (sab "off"/"" inherit rules same).
+4. **Live-verified (real API):** sendMessage (Fire), sendMessage (Heart), aur
+   sendDocument (Fire, delivered file) — teeno `ok: True` + `effect_id` echo,
+   test messages delete kar diye. ✅
+
+---
+
 # 🚀 v170.47 (2026-08-22) — ✨ MESSAGE EFFECTS (Global + Per-Command) SETTINGS PANEL
 
 ## Naya feature (user ki pasand: per-command + automatic global)
