@@ -128,6 +128,7 @@ from handlers_support import (support_menu_callback, st_list_callback, st_view_c
                                adm_deliver_callback, adm_delivery_text_received)
 from handlers_admin import admin_deposit_history_callback, admin_deposit_page_callback, admin_deposit_detail_callback, admin_responses_category_callback, bybit_test_callback  # 📊 Deposit + ✏️ Responses
 from handlers_admin import resp_template_apply_callback, resp_custom_callback, resp_reset_callback  # 🆕 v170.22: response templates
+from handlers_admin import resp_effect_callback, resp_effect_set_callback  # ✨ v170.45: message effects
 from handlers_admin import make_freebie_callback  # 🆕 v170.29: Add Product → Make This a Freebie
 from handlers_admin import (ban_panel_callback, ban_input_start, unban_input_start,
                             ban_input_received, unban_input_received)  # 🆕 v170.37 ban panel
@@ -377,6 +378,7 @@ from customization import (
 # fake_broadcast + fake_reviews panels removed (use Fake Activity instead)
 # broadcast_new_user_join kept for new-user join notification
 from fake_engagement import broadcast_new_user_join, admin_bcast_test_callback
+from fake_engagement import broadcast_overview_callback, broadcast_overview_toggle_callback  # ✨ v170.45
 # 🆕 v24: Removed gmail_checker (replaced by Binance API)
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 
@@ -794,16 +796,22 @@ async def _purchase_broadcast_job(context):
     """🆕 Drain queued REAL purchases → broadcast to fake-activity destination.
 
     🆕 v170.25: real FREEBIE claims bhi yahan drain hote hain (bc_freebie
-    template, gated by fbc_type_freebie toggle) — "new purchase" nahi."""
+    template, gated by fbc_type_freebie toggle) — "new purchase" nahi.
+    ✨ v170.45: real purchase broadcast ab `fbc_type_purchase` toggle se gated
+    hai (OFF = koi real purchase alert nahi)."""
     try:
         from database import pop_pending_purchase_broadcasts
-        from fake_engagement import build_real_purchase_message, broadcast_store_message
-        for item in pop_pending_purchase_broadcasts():
-            try:
-                text = build_real_purchase_message(item["product_name"], item.get("qty", 1), pid=item["product_id"])
-                await broadcast_store_message(context.bot, text, pid=item["product_id"])
-            except Exception as e:
-                print(f"[PurchaseBroadcast] item failed: {e}")
+        from fake_engagement import (build_real_purchase_message,
+                                     broadcast_store_message, is_type_enabled)
+        if is_type_enabled("purchase"):
+            for item in pop_pending_purchase_broadcasts():
+                try:
+                    text = build_real_purchase_message(item["product_name"], item.get("qty", 1), pid=item["product_id"])
+                    await broadcast_store_message(context.bot, text, pid=item["product_id"])
+                except Exception as e:
+                    print(f"[PurchaseBroadcast] item failed: {e}")
+        else:
+            pop_pending_purchase_broadcasts()  # toggle OFF → clear queue
     except Exception:
         pass
     # 🆕 v170.25: FREEBIE broadcasts (toggle-gated)
@@ -1778,6 +1786,31 @@ def main():
 
     app.add_error_handler(global_error_handler)
 
+    # ✨ v170.45: TELEGRAM MESSAGE EFFECTS — send_message par effect auto-attach.
+    # database.get_response_with_auto_register() har `_r(key)` call par CURRENT
+    # RESPONSE_KEY contextvar set karta hai; ye wrapper ise parh kar us response
+    # ka saved message_effect_id attach karta hai (agar admin ne set kiya ho).
+    try:
+        from utils import CURRENT_RESPONSE_KEY, response_effect_id
+        _orig_send_message = app.bot.send_message
+
+        async def _send_message_effect(chat_id, text, *args, **kwargs):
+            if "message_effect_id" not in kwargs:
+                try:
+                    _k = CURRENT_RESPONSE_KEY.get()
+                    if _k:
+                        _eff = response_effect_id(_k)
+                        if _eff:
+                            kwargs["message_effect_id"] = _eff
+                except Exception:
+                    pass
+            return await _orig_send_message(chat_id, text, *args, **kwargs)
+
+        app.bot.send_message = _send_message_effect
+        print("[Effects] ✅ send_message effect wrapper installed")
+    except Exception as _fx:
+        print(f"[Effects] ⚠️ send_message wrap failed: {_fx}")
+
     # ── 🆕 v134: Referral activity observation (runs before all others) ──
     app.add_handler(CallbackQueryHandler(_activity_hook_callback), group=-100)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _activity_hook_text), group=-100)
@@ -1876,6 +1909,8 @@ def main():
             CallbackQueryHandler(resp_template_apply_callback, pattern="^resptpl_"),
             CallbackQueryHandler(resp_custom_callback, pattern="^respcustom_"),
             CallbackQueryHandler(resp_reset_callback, pattern="^respreset_"),
+            CallbackQueryHandler(resp_effect_callback, pattern="^respeff_"),
+            CallbackQueryHandler(resp_effect_set_callback, pattern="^respeffset_"),
         ]},
         fallbacks=[CommandHandler("cancel", cancel_conversation),
                    CallbackQueryHandler(conv_cancel_callback, pattern="^conv_cancel$")],
@@ -2900,6 +2935,9 @@ def main():
         # 🆕 Per-User Activity handlers
         ("^act_panel$",        activity_panel_callback),
         ("^admin_bcast_test$", admin_bcast_test_callback),
+        # ✨ v170.45: broadcast overview (fake + real)
+        ("^broadcast_overview$", broadcast_overview_callback),
+        ("^fbcov_",              broadcast_overview_toggle_callback),
         ("^act_toggle_global$", act_toggle_global_callback),
         ("^act_toggle_unit$",   act_toggle_unit_callback),
         ("^act_offset_random$", act_offset_random_callback),

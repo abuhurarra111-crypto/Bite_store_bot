@@ -1772,12 +1772,21 @@ async def admin_responses_category_callback(u, c):
         await _show_responses_category(u, c, category=data, page=1)
 
 def _resp_editor_buttons(key):
-    """✏️ v170.22: 2 readymade templates + custom + reset + REAL cancel."""
+    """✏️ v170.22: 2 readymade templates + custom + reset + REAL cancel.
+    ✨ v170.45: + Message Effect button."""
+    # current effect (agar set ho)
+    try:
+        from utils import response_effect_id, RESPONSE_EFFECTS
+        eff = response_effect_id(key)
+        eff_lbl = f"✨ Effect: {RESPONSE_EFFECTS.get(eff, '?')}" if eff else "✨ Message Effect"
+    except Exception:
+        eff_lbl = "✨ Message Effect"
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📄 Template 1", callback_data=f"resptpl_1_{key}"),
          InlineKeyboardButton("✨ Template 2", callback_data=f"resptpl_2_{key}")],
         [InlineKeyboardButton("✍️ Custom Text", callback_data=f"respcustom_{key}"),
          InlineKeyboardButton("♻️ Reset to Default", callback_data=f"respreset_{key}")],
+        [InlineKeyboardButton(eff_lbl, callback_data=f"respeff_{key}")],
         [InlineKeyboardButton("❌ Cancel", callback_data="conv_cancel")],
     ])
 
@@ -1898,6 +1907,64 @@ async def resp_reset_callback(u, c):
     log_change("response", key, old, default, f"Response: {key} (reset to default)")
     set_response(key, default)
     await q.answer("♻️ Default restored!", show_alert=True)
+    await _render_response_editor(u, c, key)
+    return EDIT_RESP_VALUE
+
+
+async def resp_effect_callback(u, c):
+    """✨ v170.45: Message Effect picker for a response."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return EDIT_RESP_VALUE
+    await q.answer()
+    key = q.data.replace("respeff_", "", 1)
+    c.user_data['erk'] = key
+    c.user_data['return_to'] = 'admin_responses'
+    try:
+        from utils import RESPONSE_EFFECTS, response_effect_id
+        cur = response_effect_id(key)
+    except Exception:
+        RESPONSE_EFFECTS, cur = {}, None
+    lines = [
+        "✨ *Message Effect*",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"🔑 `{key}`",
+        "",
+        "Jab ye response user ko bheja jayega, selected effect ke sath jayega. "
+        "(Telegram ka naya message-effect feature.)",
+        "",
+    ]
+    if cur:
+        from utils import RESPONSE_EFFECTS as _RE
+        lines.append(f"Current: *{_RE.get(cur, cur)}*")
+    kb = []
+    row = []
+    for eff_id, name in RESPONSE_EFFECTS.items():
+        mark = " ✅" if eff_id == cur else ""
+        row.append(InlineKeyboardButton(name + mark, callback_data=f"respeffset_{key}_{eff_id}"))
+        if len(row) == 2:
+            kb.append(row); row = []
+    if row:
+        kb.append(row)
+    kb.append([InlineKeyboardButton("🚫 No Effect", callback_data=f"respeffset_{key}_none")])
+    kb.append([InlineKeyboardButton("🔙 Back to Response", callback_data=f"editresp_{key}")])
+    await _safe_edit(q, "\n".join(lines), parse_mode="Markdown",
+                     reply_markup=InlineKeyboardMarkup(kb))
+    return EDIT_RESP_VALUE
+
+
+async def resp_effect_set_callback(u, c):
+    """✨ v170.45: Apply/clear message effect for a response."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return EDIT_RESP_VALUE
+    data = q.data.replace("respeffset_", "", 1)
+    key, _, eff = data.rpartition("_")
+    from utils import set_response_effect_id, RESPONSE_EFFECTS
+    if eff == "none":
+        set_response_effect_id(key, "")
+        await q.answer("🚫 Effect removed", show_alert=True)
+    else:
+        set_response_effect_id(key, eff)
+        await q.answer(f"✨ Effect set: {RESPONSE_EFFECTS.get(eff, eff)}", show_alert=True)
     await _render_response_editor(u, c, key)
     return EDIT_RESP_VALUE
 

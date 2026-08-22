@@ -2393,6 +2393,108 @@ _TYPE_LABELS = {
     "milestone": "Referral Milestone",# 🆕 v161.19
 }
 
+# ✨ v170.45: har broadcast type ka template + kind (fake/real/both) — overview ke liye
+_TYPE_TEMPLATE = {
+    "purchase":  "bc_purchase",
+    "deposit":   "bc_deposit",
+    "referral":  "bc_active_referral",
+    "tier":      "bc_tier",
+    "discount":  "bc_discount",
+    "stock":     "bc_stock",
+    "freeclaim": "free_claim (per-product)",
+    "freebie":   "bc_freebie",
+    "bulkdeal":  "bc_bulkdeal",
+    "reseller":  "bc_reseller",
+    "newuser":   "bc_new_user",
+    "newprod":   "bc_newprod",
+    "flash":     "sb_flash",
+    "pricedrop": "bc_pricedrop",
+    "review":    "bc_review",
+    "milestone": "bc_referral",
+}
+
+_TYPE_KIND = {
+    "purchase":  "Fake + Real",
+    "deposit":   "Fake",
+    "referral":  "Fake",
+    "tier":      "Fake",
+    "discount":  "Fake",
+    "stock":     "Real (stock alerts)",
+    "freeclaim": "Fake + Real",
+    "freebie":   "Fake + Real",
+    "bulkdeal":  "Fake",
+    "reseller":  "Fake + Real",
+    "newuser":   "Fake + Real",
+    "newprod":   "Fake + Real",
+    "flash":     "Fake + Real",
+    "pricedrop": "Fake + Real",
+    "review":    "Fake + Real",
+    "milestone": "Fake",
+}
+
+
+async def broadcast_overview_callback(update, context):
+    """📡 v170.45: ALL broadcast alerts ka overview (fake + real) — status,
+    template, kind. Har type ko yahin se toggle kar sakte ho."""
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌ Admin only!", show_alert=True)
+        return
+    await q.answer()
+    try:
+        from database import get_setting
+    except Exception:
+        pass
+    master_on = is_enabled()
+    lines = [
+        "📡 *Broadcast Overview*",
+        "━━━━━━━━━━━━━━━━━━━━",
+        f"Master switch: {'🟢 ON' if master_on else '🔴 OFF'} "
+        "(fake broadcast system)",
+        "",
+        "_Ye SAARE alerts bot bhejta hai (fake random + real event-based)._ "
+        "_Toggle se ON/OFF karo; template Edit Templates me editable hai._",
+        "",
+    ]
+    kb = []
+    for tk in _TYPE_LABELS:
+        on = is_type_enabled(tk)
+        tpl = _TYPE_TEMPLATE.get(tk, "—")
+        kind = _TYPE_KIND.get(tk, "—")
+        lines.append(
+            f"{'🟢' if on else '🔴'} *{_TYPE_LABELS[tk]}* — {kind}\n"
+            f"    📝 `{tpl}`"
+        )
+        kb.append([InlineKeyboardButton(
+            f"{'🟢' if on else '🔴'} {_TYPE_LABELS[tk]}",
+            callback_data=f"fbcov_{tk}")])
+    kb.append([
+        InlineKeyboardButton("✏️ Edit Templates", callback_data="tpl_panel"),
+        InlineKeyboardButton("🔙 Fake Activity", callback_data="act_panel"),
+    ])
+    await q.edit_message_text("\n".join(lines), parse_mode="Markdown",
+                              reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def broadcast_overview_toggle_callback(update, context):
+    """📡 v170.45: overview se kisi bhi broadcast type ko ON/OFF karo."""
+    q = update.callback_query
+    if not _is_admin(q.from_user.id):
+        await q.answer("❌ Admin only!", show_alert=True)
+        return
+    type_key = q.data.replace("fbcov_", "")
+    setting_key = _TYPE_MAP.get(type_key)
+    if not setting_key:
+        await q.answer("❌ Unknown type.", show_alert=True)
+        return
+    current = _get(setting_key, "1")
+    new_val = "0" if current == "1" else "1"
+    _set(setting_key, new_val)
+    label = _TYPE_LABELS.get(type_key, type_key)
+    await q.answer(f"{label}: {'✅ Enabled' if new_val == '1' else '❌ Disabled'}",
+                   show_alert=False)
+    await broadcast_overview_callback(update, context)
+
 
 async def fbc_toggle_type_callback(update, context):
     """
@@ -2838,6 +2940,13 @@ async def broadcast_new_user_join(bot, new_user_name: str):
         # [v77-merge] self-bundle import removed: from fake_broadcast import is_enabled, send_to_all_users
         if not is_enabled():
             return
+        # ✨ v170.45: real "New Member Joined" broadcast ab apne toggle se
+        # gated hai (fbc_type_newuser) — sirf master switch nahi.
+        try:
+            if not is_type_enabled("newuser"):
+                return
+        except Exception:
+            pass
 
         from database import get_displayed_user_count
         shown = get_displayed_user_count()

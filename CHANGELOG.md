@@ -8,6 +8,32 @@
 
 ---
 
+# 🚀 v170.45 (2026-08-22) — ✨ MESSAGE EFFECTS + 📡 BROADCAST OVERVIEW
+
+## 1. ✨ Telegram Message Effects (Edit Responses)
+- Telegram ke naye message-effect feature ka support. Edit Responses me har
+  response ke editor me "✨ Message Effect" button → effect picker (🔥❤️👍👎💩🎉
+  💔🎆⚡) ya "🚫 No Effect".
+- Effect `resp_effect_<key>` setting me save hota hai.
+- Sending: `get_response_with_auto_register()` har `_r(key)` par CURRENT_RESPONSE_KEY
+  contextvar set karta hai; bot.py me `app.bot.send_message` wrapper ise parh kar
+  `message_effect_id` attach karta hai → wo response user ko bhejne par effect ke
+  sath jata hai. (Directly-passed message_effect_id override nahi hota.)
+
+## 2. 📡 Broadcast Overview (fake + real)
+- Fake Activity panel me naya button "📡 Broadcast Overview (fake + real)".
+- Saare 16 broadcast types: label, ON/OFF status, template (bc_*/sb_flash/etc),
+  kind (Fake / Real / Fake+Real). Har type ko wahan se toggle kar sakte ho.
+- **Gaps fix:**
+  - Real purchase broadcast ab `fbc_type_purchase` toggle se gated (pehle always ON).
+  - Real "New Member Joined" broadcast ab `fbc_type_newuser` toggle se gated
+    (pehle sirf master switch).
+- Sab types ke editable templates Edit Templates me hain (overview me dikhte hain).
+
+## 3. 🧪 Tests: effect get/set + contextvar + kwargs + purchase toggle + overview — pass.
+
+---
+
 # 🚀 v170.44 (2026-08-22) — RESELLER SEARCH + PRODUCT NAME BUTTON + FREEBIES PREMIUM LIST
 
 ## 1. 🔍 Reseller panel — Resellers search

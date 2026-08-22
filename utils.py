@@ -8,6 +8,69 @@ from urllib.parse import quote
 import re
 import html as _html
 from decimal import Decimal, InvalidOperation
+import contextvars
+
+# ════════════════════════════════════════════
+# ✨ v170.45: TELEGRAM MESSAGE EFFECTS
+# ════════════════════════════════════════════
+# Telegram ka naya feature — messages par effects (fireworks, hearts, etc.).
+# Bot API 8.0+ `message_effect_id` se bots bhi effects bhej sakte hain.
+# Admin Edit Responses me har response par effect set kar sakta hai; jab wo
+# response user ko bheja jaye to effect automatically attach hota hai.
+
+# ContextVar: database.get_response_with_auto_register() ise set karta hai
+# (har `_r(key)` call) — send wrapper ise parh kar effect attach karta hai.
+CURRENT_RESPONSE_KEY = contextvars.ContextVar('bite_current_response_key', default=None)
+
+
+# 🎇 Telegram ke documented message effects (id → display)
+RESPONSE_EFFECTS = {
+    "5104841245755180586": "🔥 Fire",
+    "5046509860389126442": "❤️ Heart",
+    "5107584321108051014": "👍 Like",
+    "5104858069142078462": "👎 Dislike",
+    "5046589136895476101": "💩 Poop",
+    "5044134455711629702": "🎉 Party",
+    "5107560689860879129": "💔 Heartbreak",
+    "5104841274461108666": "🎆 Fireworks",
+    "5104854360302402946": "⚡ Lightning",
+}
+
+
+def response_effect_id(key):
+    """Response key ka saved message effect (None agar koi nahi)."""
+    if not key:
+        return None
+    try:
+        from database import get_setting
+        v = str(get_setting(f"resp_effect_{key}", "") or "").strip()
+        return v or None
+    except Exception:
+        return None
+
+
+def set_response_effect_id(key, effect_id):
+    """Save/clear ek response ka message effect."""
+    try:
+        from database import set_setting
+        set_setting(f"resp_effect_{key}", str(effect_id or ""))
+        return True
+    except Exception:
+        return False
+
+
+def apply_effect_kwargs(key, kwargs):
+    """Agar response key ka effect set hai to kwargs me message_effect_id
+    inject karo (agar pehle se nahi). Returns kwargs (mutated)."""
+    try:
+        if not key or "message_effect_id" in kwargs:
+            return kwargs
+        eff = response_effect_id(key)
+        if eff:
+            kwargs["message_effect_id"] = eff
+    except Exception:
+        pass
+    return kwargs
 
 
 def _to_decimal(value, default="0"):

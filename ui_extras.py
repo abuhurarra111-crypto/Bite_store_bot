@@ -1279,6 +1279,7 @@ async def _show_panel(q):
             InlineKeyboardButton("🟢 Start ALL Users", callback_data="act_start_all"),
         ],
         [InlineKeyboardButton("📤 Custom One-Time Broadcast", callback_data="fake_custom_broadcast")],
+        [InlineKeyboardButton("📡 Broadcast Overview (fake + real)", callback_data="broadcast_overview")],
         [InlineKeyboardButton("📝 Edit Templates",    callback_data="tpl_panel")],
         [InlineKeyboardButton("📤 Where to Send? (Bot / Group / Both)", callback_data="dest_panel")],
         [InlineKeyboardButton("🛰️ Test Broadcast (check destination)", callback_data="admin_bcast_test")],
