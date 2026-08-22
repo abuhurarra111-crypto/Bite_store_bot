@@ -11,11 +11,14 @@
 # 🚀 v170.53 (2026-08-23) — 🎁 FREEBIES FULL PRODUCT NAMES
 
 ## 🐛 Root cause + fix
-- User-facing Freebies menu ke clickable product buttons product name ko code mein
-  manually 60 characters par kaat kar `…` laga rahe thay.
-- Forced truncation remove kar di. Ab bot header ke neeche text list aur clickable
-  product buttons dono mein complete stored product/display name bhejta hai.
-- Targeted 108-character product-name render test, full compile, aur bot import pass.
+- Pehli report par clickable buttons ki manual 60-character truncation remove ki.
+- Screenshot se asal remaining issue clear hua: header ke neeche premium-emoji bullet
+  list ek alag `_product_name_with_fixed_emoji` rendering path use kar rahi thi;
+  buttons full thay lekin top list us path par sirf pehla word/adhura naam dikha rahi thi.
+- Top bullet list ab button ka wahi exact complete visible-name source reuse karti hai
+  aur original premium emoji ID/fallback preserve karti hai.
+- Realistic six-product premium-name render test, 108-character name test, full
+  compile, aur bot import pass.
 
 ---
 
