@@ -4125,7 +4125,8 @@ async def route_order_to_supplier(bot, order):
         [InlineKeyboardButton("🛒 Buy More", callback_data="shop")],
     ])
     try:
-        sent = await bot.send_message(order['user_id'], send_text,
+        from message_effects import send_event_message
+        sent = await send_event_message(bot, "delivered", order['user_id'], send_text,
                                         parse_mode=send_mode, reply_markup=kb)
         # Save msg_id for future edits (v72 pattern)
         try:

@@ -383,8 +383,10 @@ async def stars_successful_payment(update: Update, context: ContextTypes.DEFAULT
                 msg_text = tpl.format(points=fmt_points(pts), amount=f"{amount:.2f}",
                                       order_id=oid)
                 from utils import smart_text_and_mode
+                from message_effects import event_scope
                 s_txt, s_mode = smart_text_and_mode(msg_text, "Markdown")
-                await msg.reply_text(s_txt, parse_mode=s_mode)
+                with event_scope("points_deposit_confirmed"):
+                    await msg.reply_text(s_txt, parse_mode=s_mode)
             else:
                 from handlers_order import _send_deposit_success
                 await _send_deposit_success(context.bot, o, amount)
@@ -399,8 +401,10 @@ async def stars_successful_payment(update: Update, context: ContextTypes.DEFAULT
                     f"🧾 Order ID: *#{oid}*\n\n"
                     f"_Thank you for your deposit!_"
                 )
+                from message_effects import event_scope
                 s_txt, s_mode = smart_text_and_mode(fb_text, "Markdown")
-                await msg.reply_text(s_txt, parse_mode=s_mode)
+                with event_scope("points_deposit_confirmed"):
+                    await msg.reply_text(s_txt, parse_mode=s_mode)
             except Exception:
                 pass
     except Exception as e:

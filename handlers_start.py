@@ -233,13 +233,21 @@ def _render_referral_template(setting_key, default_template, values):
         return default_template.format(**safe_values)
 
 
-async def _send_referral_message(bot, chat_id, text, **kwargs):
+async def _send_referral_message(bot, chat_id, text, *, effect_event="", **kwargs):
+    """Send a referral notification, optionally with its own event effect."""
     send_text, send_mode = smart_text_and_mode(text, "Markdown")
     try:
+        if effect_event:
+            from message_effects import send_event_message
+            return await send_event_message(
+                bot, effect_event, chat_id, send_text, parse_mode=send_mode, **kwargs)
         return await bot.send_message(chat_id, send_text, parse_mode=send_mode, **kwargs)
     except Exception:
         kwargs.pop('reply_markup', None)
         try:
+            if effect_event:
+                from message_effects import send_event_message
+                return await send_event_message(bot, effect_event, chat_id, send_text, parse_mode=send_mode)
             return await bot.send_message(chat_id, send_text, parse_mode=send_mode)
         except Exception:
             return None
@@ -280,7 +288,8 @@ async def _send_direct_referral_notifications(context, referrer_id, new_user, re
     try:
         await _send_referral_message(
             context.bot, referrer_id,
-            _render_referral_template('ref_tpl_referrer', _DEFAULT_REFERRER_REFERRAL_TEMPLATE, values))
+            _render_referral_template('ref_tpl_referrer', _DEFAULT_REFERRER_REFERRAL_TEMPLATE, values),
+            effect_event="referral_reward")
     except Exception:
         pass
     # 🆕 v134: REFERRED USER also gets points + a notification (both earn the
@@ -288,7 +297,8 @@ async def _send_direct_referral_notifications(context, referrer_id, new_user, re
     try:
         await _send_referral_message(
             context.bot, int(new['id']),
-            _render_referral_template('ref_tpl_referred', _DEFAULT_REFERRED_REWARD_TEMPLATE, values))
+            _render_referral_template('ref_tpl_referred', _DEFAULT_REFERRED_REWARD_TEMPLATE, values),
+            effect_event="referral_reward")
     except Exception:
         pass
     # Admin notification
@@ -320,7 +330,8 @@ async def _send_direct_referral_notifications(context, referrer_id, new_user, re
                 values['next_milestone'] = int(nxt[0]) if nxt else int(highest[0])
                 await _send_referral_message(
                     context.bot, referrer_id,
-                    _render_referral_template('ref_tpl_milestone', _DEFAULT_MILESTONE_TEMPLATE, values))
+                    _render_referral_template('ref_tpl_milestone', _DEFAULT_MILESTONE_TEMPLATE, values),
+                    effect_event="referral_reward")
     except Exception:
         pass
 
@@ -357,11 +368,12 @@ async def _send_product_referral_notifications(context, referrer_id, new_user,
             await _send_referral_message(
                 context.bot, referrer_id,
                 _render_referral_template('ref_tpl_product_unlock', _DEFAULT_PRODUCT_UNLOCK_TEMPLATE, values),
-                reply_markup=kb)
+                effect_event="referral_reward", reply_markup=kb)
         else:
             await _send_referral_message(
                 context.bot, referrer_id,
-                _render_referral_template('ref_tpl_product_referrer', _DEFAULT_PRODUCT_REFERRER_TEMPLATE, values))
+                _render_referral_template('ref_tpl_product_referrer', _DEFAULT_PRODUCT_REFERRER_TEMPLATE, values),
+                effect_event="referral_reward")
     except Exception:
         pass
     try:

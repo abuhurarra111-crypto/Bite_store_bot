@@ -1102,8 +1102,9 @@ async def _notify_freebie_restock_users(bot, pid):
         sent = 0
         for uid in users:
             try:
-                await bot.send_message(
-                    uid,
+                from message_effects import send_event_message
+                await send_event_message(
+                    bot, "restock_alert", uid,
                     f"🔔 *Freebie Wapas Available!* 🎁\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n\n"
                     f"📦 {pname[:60]}\n\n"

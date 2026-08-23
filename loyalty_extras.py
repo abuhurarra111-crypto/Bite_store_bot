@@ -646,7 +646,8 @@ async def notify_tier_upgrade(bot, user_id, new_tier_key):
             )
             if bonus_pts > 0:
                 body += f"\n\n🎁 *New benefit:* +{bonus_pts} bonus points per order"
-            await bot.send_message(user_id, body, parse_mode="Markdown")
+            from message_effects import send_event_message
+            await send_event_message(bot, "tier_upgrade", user_id, body, parse_mode="Markdown")
         else:
             # Legacy fallback
             lang = get_user_lang(user_id)
@@ -654,7 +655,8 @@ async def notify_tier_upgrade(bot, user_id, new_tier_key):
             extra = ""
             if bonus_pts > 0:
                 extra = f"\n\n🎁 New benefit: +{bonus_pts} bonus points per order!"
-            await bot.send_message(user_id, msg + extra, parse_mode="Markdown")
+            from message_effects import send_event_message
+            await send_event_message(bot, "tier_upgrade", user_id, msg + extra, parse_mode="Markdown")
 
         # Broadcast real upgrade to active destinations (group / bot)
         await broadcast_real_tier_upgrade(bot, user_id, new_tier_key)

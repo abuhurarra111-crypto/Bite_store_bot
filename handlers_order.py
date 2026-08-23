@@ -956,7 +956,21 @@ async def _send_deposit_success(bot, order, paid_amount):
         [InlineKeyboardButton("🛒 Buy More", callback_data="shop")],
         [InlineKeyboardButton("📊 My Account", callback_data="my_account")],
     ])
-    await _bot_send_smart(bot, order['user_id'], text, parse_mode="Markdown", reply_markup=kb)
+    # A points deposit is a separate success event from product delivery.
+    _fx_token = None
+    try:
+        from message_effects import push_event
+        _fx_token = push_event("points_deposit_confirmed")
+    except Exception:
+        pass
+    try:
+        await _bot_send_smart(bot, order['user_id'], text, parse_mode="Markdown", reply_markup=kb)
+    finally:
+        try:
+            from message_effects import reset_event
+            reset_event(_fx_token)
+        except Exception:
+            pass
 
 
 async def _notify_admin_deposit(bot, order, paid_amount, balance_before, balance_after):
@@ -1153,18 +1167,20 @@ async def _notify_admin_order_delivered(bot, order, qty=1, supplier_name="",
         if extra_note:
             lines.append("")
             lines.append(f"⚠️ {extra_note}")
-        # ✨ v170.47: delivered event effect (panel → Events → Order Delivered)
+        # ✨ Order-delivered effect can also appear on the owner's private
+        # delivery notification. A token restores any outer event safely.
+        _fx_token = None
         try:
-            from message_effects import set_event
-            set_event("delivered")
+            from message_effects import push_event
+            _fx_token = push_event("delivered")
         except Exception:
             pass
         try:
             await notify_admin(bot, "\n".join(lines))
         finally:
             try:
-                from message_effects import set_event as _se
-                _se("")
+                from message_effects import reset_event
+                reset_event(_fx_token)
             except Exception:
                 pass
     except Exception as e:
@@ -1228,10 +1244,15 @@ async def _send_static_media_delivery(bot, order, product, method, amount, pts_b
         [InlineKeyboardButton("📜 Order History", callback_data="my_orders")],
     ])
     send_text, send_mode = smart_text_and_mode(header, "Markdown")
-    # ✨ v170.47: delivered event effect (panel → Events → Order Delivered)
+    # Freebie delivery gets its own event; paid products use Order Delivered.
+    _fx_event = ("freebie_claimed"
+                 if str(order.get("payment_method") or "").lower() == "freebie"
+                 or str(method or "").startswith("🎁 FREEBIE")
+                 else "delivered")
+    _fx_token = None
     try:
-        from message_effects import set_event
-        set_event("delivered")
+        from message_effects import push_event
+        _fx_token = push_event(_fx_event)
     except Exception:
         pass
     try:
@@ -1256,8 +1277,8 @@ async def _send_static_media_delivery(bot, order, product, method, amount, pts_b
                 await bot.send_message(order['user_id'], "⚠️ Delivery file could not be sent. Please contact support.")
     finally:
         try:
-            from message_effects import set_event as _se
-            _se("")
+            from message_effects import reset_event
+            reset_event(_fx_token)
         except Exception:
             pass
     return True
@@ -1511,8 +1532,23 @@ async def fulfill_paid_product_order(bot, order, paid_amount=None, *, payment_me
             [_ab("buy_more_btn", "🛒 Buy More", "shop")],
             [_ab("order_history_btn", "📜 Order History", "my_orders")],
         ])
-    # First: send the receipt header (Markdown)
-    await _bot_send_smart(bot, order['user_id'], text, parse_mode="Markdown")
+    # First: send the receipt header (Markdown). Text/account-pool delivery
+    # previously skipped the delivered event entirely; scope only this success
+    # receipt so credentials/content in the next message stay calm and readable.
+    _fx_token = None
+    try:
+        from message_effects import push_event
+        _fx_token = push_event("freebie_claimed" if is_freebie else "delivered")
+    except Exception:
+        pass
+    try:
+        await _bot_send_smart(bot, order['user_id'], text, parse_mode="Markdown")
+    finally:
+        try:
+            from message_effects import reset_event
+            reset_event(_fx_token)
+        except Exception:
+            pass
     # 🆕 v72 BUG FIX: Then send the delivery content in its NATIVE format
     # (HTML if our template rendered it with [[HTML]] sentinel, plain text
     # if it's admin's static delivery_text). The premium_emoji_guard auto-

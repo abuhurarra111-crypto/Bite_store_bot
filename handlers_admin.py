@@ -1576,7 +1576,7 @@ Tap to edit:"""
     await _safe_edit(q, text,parse_mode="Markdown",reply_markup=admin_settings_keyboard())
 
 
-# ── ✨ v170.46: Message Effects (global + per-command) ──
+# ── ✨ v170.56: Message Effects (global + per-command + customer events) ──
 async def admin_effects_callback(u, c):
     q = u.callback_query
     if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
@@ -1598,7 +1598,11 @@ async def admin_effects_callback(u, c):
         "",
         "*Per-command override:*",
     ]
-    kb = [[InlineKeyboardButton(f"🌍 Global: {g_lbl}", callback_data="fxeg")]]
+    kb = [
+        [InlineKeyboardButton(f"🌍 Global: {g_lbl}", callback_data="fxeg")],
+        [InlineKeyboardButton("✨ Apply Recommended Event Effects", callback_data="fxpack")],
+    ]
+    lines.append("💡 _Suggested pack sirf event settings set karta hai; Global/commands ko touch nahi karta._")
     for cmd, label in FX_COMMANDS:
         v = command_effect(cmd)
         if v == OFF:
@@ -1624,6 +1628,20 @@ async def admin_effects_callback(u, c):
             kb.append([InlineKeyboardButton(f"{label} → {cur}", callback_data=f"fxee_{ev}")])
     kb.append([InlineKeyboardButton("🔙 Back to Settings", callback_data="admin_settings")])
     await _safe_edit(q, "\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def admin_effects_recommended_callback(u, c):
+    """Apply the owner-requested customer-event effect suggestions in one tap."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        from message_effects import apply_recommended_event_effects
+        applied = apply_recommended_event_effects()
+    except Exception:
+        await q.answer("⚠️ Suggested pack save failed", show_alert=True); return
+    await q.answer(f"✨ {applied} event effects applied", show_alert=True)
+    await admin_effects_callback(u, c)
 
 
 async def admin_effects_global_callback(u, c):
@@ -1690,11 +1708,11 @@ async def admin_effects_event_callback(u, c):
     q = u.callback_query
     if q.from_user.id != ADMIN_ID: await q.answer("❌", show_alert=True); return
     await q.answer()
-    from message_effects import MESSAGE_EFFECTS, event_effect, OFF
+    from message_effects import MESSAGE_EFFECTS, event_effect, event_label, OFF
     ev = q.data.replace("fxee_", "", 1)
     cur = event_effect(ev)
     lines = [
-        f"🎯 *Effect for: {ev}*",
+        f"🎯 *Effect for: {event_label(ev)}*",
         "━━━━━━━━━━━━━━━━━━━━",
         "Is event par bot jo message/file bheje, us par kya effect lage?",
         "",
@@ -11113,7 +11131,8 @@ async def adm_refund_uid_confirm_callback(u, c):
             f"Hamari taraf se inconvenience ke liye maazrat. 🙏"
         )
         send_t, send_m = smart_text_and_mode(msg, "Markdown")
-        await c.bot.send_message(chat_id=uid, text=send_t, parse_mode=send_m,
+        from message_effects import send_event_message
+        await send_event_message(c.bot, "refund_completed", uid, send_t, parse_mode=send_m,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🛒 Shop", callback_data="shop")],
                 [InlineKeyboardButton("📜 My Orders", callback_data="my_orders")],

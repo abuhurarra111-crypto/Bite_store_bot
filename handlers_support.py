@@ -1083,7 +1083,9 @@ async def adm_st_resolve_callback(update, context):
     t = get_ticket(tid)
     if t:
         try:
-            await context.bot.send_message(t['user_id'],
+            from message_effects import send_event_message
+            await send_event_message(
+                context.bot, "support_resolved", t['user_id'],
                 f"✅ *Ticket #{tid} Resolved!*\n\n{escape_md(t['subject'])}\n\n"
                 f"Admin has resolved your ticket. Thank you!",
                 parse_mode="Markdown")
@@ -1276,7 +1278,9 @@ async def adm_wr_approve_callback(update, context):
         user_msg += "Admin will process your warranty claim shortly.\n"
 
     try:
-        await context.bot.send_message(w['user_id'], user_msg, parse_mode="Markdown")
+        from message_effects import send_event_message
+        event_name = "refund_completed" if w['request_type'] == 'refund' else "warranty_approved"
+        await send_event_message(context.bot, event_name, w['user_id'], user_msg, parse_mode="Markdown")
     except:
         pass
 
@@ -1560,8 +1564,9 @@ async def adm_delivery_text_received(update, context):
             # 🆕 v72: Send receipt header first (Markdown), then templated
             # delivery in HTML mode (preserves all bytes via <code> blocks).
             try:
-                await context.bot.send_message(o['user_id'], complete_header,
-                                                parse_mode="Markdown")
+                from message_effects import send_event_message
+                await send_event_message(context.bot, "delivered", o['user_id'], complete_header,
+                                         parse_mode="Markdown")
             except Exception:
                 pass  # header is cosmetic — never block on its failure
             send_text, send_mode = smart_text_and_mode(msg, "Markdown")

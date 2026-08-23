@@ -90,8 +90,9 @@ async def notify_restock_request_users(bot, shop_pid: int, product_name: str):
         sent = 0
         for uid in users:
             try:
-                await bot.send_message(
-                    uid,
+                from message_effects import send_event_message
+                await send_event_message(
+                    bot, "restock_alert", uid,
                     f"🔔 *Back in Stock!*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 {product_name}\n\nTap below to buy before it sells out.",
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛒 View Product", callback_data=f"prod_{shop_pid}")]])

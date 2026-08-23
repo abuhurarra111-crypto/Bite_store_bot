@@ -1749,7 +1749,7 @@ def main():
         _patch_ptb_poll_parsing()
     except Exception as _pe:
         print(f"[PollPatch] error: {_pe}")
-    # 🆕 v170.55: setup applies the fresh-per-deployment reset *before* any
+    # 🆕 v170.56: setup applies the fresh-per-deployment reset *before* any
     # startup helper can read/write the previous deployment's database.
     setup_database()
     # Maintenance state belongs to this newly bootstrapped/restored DB.
@@ -3095,8 +3095,9 @@ def main():
         ("^se_allcolor_",       se_allcolor_callback),
         ("^se_setallcol_",      se_setallcol_callback),
         ("^se_noop$",           se_noop_callback),
-        # ✨ v170.46/47: Message Effects (global + per-command + per-event)
+        # ✨ v170.46/56: Message Effects (global + per-command + event packs)
         ("^fxpanel$",           admin_effects_callback),
+        ("^fxpack$",            admin_effects_recommended_callback),
         ("^fxeg$",              admin_effects_global_callback),
         ("^fxec_",              admin_effects_cmd_callback),
         ("^fxee_",              admin_effects_event_callback),

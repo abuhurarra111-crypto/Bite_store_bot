@@ -8,6 +8,34 @@
 
 ---
 
+# 🚀 v170.56 (2026-08-23) — ✨ CUSTOMER SUCCESS MESSAGE EFFECTS
+
+## Message Effects expansion
+- Added configurable, private-chat-only effects for these customer-success events:
+  **Order Delivered, Points Deposit Confirmed, Freebie Claimed, Referral Reward / Milestone,
+  Loyalty Tier Upgrade, Support Ticket Resolved, Warranty Approved, Replacement Approved,
+  Restock Alert, and Refund Completed.**
+- The admin Effects panel now has every event with a human-readable label plus
+  **✨ Apply Recommended Event Effects**. The optional pack configures event entries
+  only; it deliberately leaves Global and per-command preferences unchanged.
+- Suggested mapping: Party for delivery/freebie/tier; Like for deposit/support/refund;
+  Heart for referral/warranty/replacement; Fire for restocks.
+
+## Delivery safety and precedence
+- Event context is token-restored, so nested sends cannot leak an effect into a later,
+  unrelated message or erase an outer context.
+- Resolution remains **event > command > global**. Explicit caller effects still win,
+  and group/channel sends receive no message effect.
+- Only matching successful customer notifications were instrumented. Failures,
+  rejections, routine UI, group chats, and unrelated admin notices remain effect-free.
+
+## Verification
+- Added offline coverage for all registry entries, recommended-pack persistence,
+  event-over-global resolution, nested cleanup, private/group send behavior, and
+  Effects-panel controls. Existing v170.55 deployment/Ready-DB regressions also pass.
+
+---
+
 # 🚀 v170.55 (2026-08-23) — 🧼 FRESH DEPLOY + PERSISTENT KEYBOARD REFRESH + READY-DB HEALTH
 
 ## Owner deployment policy (supersedes v170.54)

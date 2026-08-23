@@ -567,8 +567,9 @@ async def admin_replace_api_callback(update: Update, context: ContextTypes.DEFAU
                 pass
             user_id = o['user_id']
             try:
-                await context.bot.send_message(
-                    user_id,
+                from message_effects import send_event_message
+                await send_event_message(
+                    context.bot, "replacement_approved", user_id,
                     "[[HTML]]✅ <b>Replacement Approved (new from supplier)!</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n\n🧾 Order #{oid}\n\n"
                     f"📨 Your new account is in the message above/below. "
@@ -665,7 +666,8 @@ async def admin_replace_upload_received(update: Update, context: ContextTypes.DE
     )
     send_text, send_mode = smart_text_and_mode(msg, "Markdown")
     try:
-        await context.bot.send_message(user_id, send_text, parse_mode=send_mode,
+        from message_effects import send_event_message
+        await send_event_message(context.bot, "replacement_approved", user_id, send_text, parse_mode=send_mode,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📜 Order History", callback_data="my_orders")],
                 [InlineKeyboardButton("🛒 Shop More",     callback_data="shop")],
@@ -728,7 +730,8 @@ async def admin_replace_stock_callback(update: Update, context: ContextTypes.DEF
     )
     send_text, send_mode = smart_text_and_mode(customer_msg, "Markdown")
     try:
-        await context.bot.send_message(user_id, send_text, parse_mode=send_mode,
+        from message_effects import send_event_message
+        await send_event_message(context.bot, "replacement_approved", user_id, send_text, parse_mode=send_mode,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📜 Order History", callback_data="my_orders")],
                 [InlineKeyboardButton("🛒 Shop More",     callback_data="shop")],
@@ -1185,7 +1188,12 @@ async def admin_replacement_action_callback(update, context):
                            f"Admin has reviewed and rejected your replacement request. "
                            f"Please contact support for any questions.")
                 try:
-                    await context.bot.send_message(r["user_id"], msg, parse_mode="Markdown")
+                    if action == "approve":
+                        from message_effects import send_event_message
+                        await send_event_message(context.bot, "replacement_approved", r["user_id"], msg,
+                                                 parse_mode="Markdown")
+                    else:
+                        await context.bot.send_message(r["user_id"], msg, parse_mode="Markdown")
                 except Exception as e:
                     logger.debug(f"[ReplacementHistory] notify user failed: {e}")
         except Exception as e:

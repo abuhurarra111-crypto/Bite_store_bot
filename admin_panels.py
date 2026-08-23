@@ -334,8 +334,9 @@ async def adm_refund_confirm_callback(update: Update, context: ContextTypes.DEFA
     ])
     send_text, send_mode = smart_text_and_mode(customer_msg, "Markdown")
     try:
-        await context.bot.send_message(user_id, send_text,
-            parse_mode=send_mode, reply_markup=kb_user)
+        from message_effects import send_event_message
+        await send_event_message(context.bot, "refund_completed", user_id, send_text,
+                                 parse_mode=send_mode, reply_markup=kb_user)
     except Exception as e:
         logger.warning(f"[Refund] failed to message user {user_id}: {e}")
 
