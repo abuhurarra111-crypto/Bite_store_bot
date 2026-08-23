@@ -221,7 +221,7 @@ def ensure_supplier_retry_columns(c):
 
 
 # ── Deployment reset policy ────────────────────────────────────────────────
-# Owner policy (v170.56): every *new hosted deployment* starts with an empty
+# Owner policy (v170.57): every *new hosted deployment* starts with an empty
 # database. A manually restored Ready DB is intentionally kept across restarts
 # of that same deployment, but is discarded at the next deployment.
 #
@@ -230,7 +230,7 @@ def ensure_supplier_retry_columns(c):
 # Railway provides RAILWAY_DEPLOYMENT_ID; Render/Git deploys provide one of the
 # Render/Git identifiers below. The release fallback covers hosts that expose a
 # platform marker but no per-deployment ID. Bump _RELEASE_VERSION each release.
-_RELEASE_VERSION = "v170.56"
+_RELEASE_VERSION = "v170.57"
 _DEPLOYMENT_ID_ENV_KEYS = (
     "RAILWAY_DEPLOYMENT_ID",
     "RAILWAY_GIT_COMMIT_SHA",

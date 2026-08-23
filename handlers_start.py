@@ -1297,8 +1297,24 @@ async def handle_main_menu_button(update: Update, context: ContextTypes.DEFAULT_
     text = _r("welcome").format(shop_name=shop, user_id=u.id)
     # v133: Pinned announcements are real pinned messages only; do not prepend them to welcome.
     send_text, send_mode = smart_text_and_mode(text, "Markdown")
-    await update.message.reply_text(send_text, parse_mode=send_mode,
-        reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
+    # The owner specifically chose an effect for the persistent reply-keyboard
+    # menu/home button. Scope only this fresh bot reply—not the incoming tap or
+    # routine inline ``main_menu`` navigation—and always restore the context.
+    _fx_token = None
+    try:
+        from message_effects import push_event
+        _fx_token = push_event("persistent_menu_opened")
+    except Exception:
+        pass
+    try:
+        await update.message.reply_text(send_text, parse_mode=send_mode,
+            reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
+    finally:
+        try:
+            from message_effects import reset_event
+            reset_event(_fx_token)
+        except Exception:
+            pass
 
 async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query

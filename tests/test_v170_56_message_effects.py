@@ -82,8 +82,8 @@ class MessageEffectEventTests(unittest.TestCase):
 
     def test_all_suggested_events_are_registered_and_recommended_pack_maps_them(self):
         expected = {
-            "delivered", "points_deposit_confirmed", "freebie_claimed",
-            "referral_reward", "tier_upgrade", "support_resolved",
+            "delivered", "persistent_menu_opened", "points_deposit_confirmed",
+            "freebie_claimed", "referral_reward", "tier_upgrade", "support_resolved",
             "warranty_approved", "replacement_approved", "restock_alert",
             "refund_completed",
         }

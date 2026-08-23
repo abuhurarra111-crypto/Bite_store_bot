@@ -40,9 +40,13 @@ FX_COMMANDS = [
 ]
 
 # User-facing auto-message events. Every event below is attached only at the
-# exact success/notification message, never to generic errors or all messages.
+# exact success/notification message (or an explicitly owner-requested menu
+# reply), never to generic errors or all messages.
 FX_EVENTS = [
     ("delivered",                "📦 Order Delivered"),
+    # Only the persistent reply-keyboard home/menu button uses this event.
+    # Inline "main_menu" navigation intentionally stays routine/effect-free.
+    ("persistent_menu_opened",   "🏠 Persistent Menu Opened"),
     ("points_deposit_confirmed", "💎 Points Deposit Confirmed"),
     ("freebie_claimed",          "🎁 Freebie Claimed"),
     ("referral_reward",          "👥 Referral Reward / Milestone"),
@@ -58,6 +62,7 @@ FX_EVENTS = [
 # settings are deliberately untouched; the owner stays in full control.
 RECOMMENDED_EVENT_EFFECTS = {
     "delivered":                "5046509860389126442",  # 🎉 Party
+    "persistent_menu_opened":   "5046509860389126442",  # 🎉 Party
     "points_deposit_confirmed": "5107584321108051014",  # 👍 Like
     "freebie_claimed":          "5046509860389126442",  # 🎉 Party
     "referral_reward":          "5159385139981059251",  # ❤️ Heart

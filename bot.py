@@ -1749,7 +1749,7 @@ def main():
         _patch_ptb_poll_parsing()
     except Exception as _pe:
         print(f"[PollPatch] error: {_pe}")
-    # 🆕 v170.56: setup applies the fresh-per-deployment reset *before* any
+    # 🆕 v170.57: setup applies the fresh-per-deployment reset *before* any
     # startup helper can read/write the previous deployment's database.
     setup_database()
     # Maintenance state belongs to this newly bootstrapped/restored DB.

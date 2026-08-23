@@ -8,6 +8,24 @@
 
 ---
 
+# 🚀 v170.57 (2026-08-23) — 🏠 PERSISTENT MENU EFFECT
+
+## Owner-requested persistent-menu effect
+- Added **🏠 Persistent Menu Opened** to the Message Effects event panel.
+- When a customer taps the configurable persistent reply-keyboard **Menu/Home**
+  button (including a renamed or translated label), the bot's fresh main-menu
+  reply can now receive its own configured effect.
+- The recommended event pack assigns **🎉 Party** to this event. The event can
+  still be changed, inherited from Global, or forced Off in the Effects panel.
+- Inline `main_menu` navigation remains routine/effect-free; the effect applies
+  only to the persistent reply-keyboard path requested by the owner.
+
+## Verification
+- Added a focused handler regression test proving private reply payload effect
+  injection and context cleanup, plus registry/recommended-pack coverage.
+
+---
+
 # 🚀 v170.56 (2026-08-23) — ✨ CUSTOMER SUCCESS MESSAGE EFFECTS
 
 ## Message Effects expansion
