@@ -8,6 +8,18 @@
 
 ---
 
+# 🚀 v170.60 (2026-08-23) — 💎 WALLET BULK-TIER CHECKOUT FIX
+
+## Wallet / Points now honors quantity discount tiers
+- Fixed the **Pay with Points / Wallet** checkout route using a product's base/effective unit price for every quantity instead of its configured bulk tier.
+- A 10-unit order now uses the same tier calculation as every other payment route. For the owner-reported Gemini example, `10 × $0.62` now requires **62 points**, not the incorrect base-price **67 points**.
+- The atomic balance check/debit and saved order amount both use the tiered total, so the insufficient-balance message, successful debit, and order record stay consistent.
+
+## Verification
+- Added focused offline wallet tests for both insufficient and successful 10-unit tier checkout: required points, shortfall, atomic debit, saved USD total, and delivery path.
+
+---
+
 # 🚀 v170.59 (2026-08-23) — 🎁 UNLIMITED STATIC FREEBIES + 📊 ALL-TIER BULK BROADCASTS
 
 ## Static-text Freebies are now genuinely unlimited

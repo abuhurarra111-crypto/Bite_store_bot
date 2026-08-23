@@ -5300,7 +5300,11 @@ async def pay_pts_callback(update, context):
     user = get_user(q.from_user.id)
     balance = get_combined_points(q.from_user.id)  # 🆕 v161.12: wallet + referral points
     
-    cost_usd = _get_eff_price(p) * qty
+    # Keep wallet checkout on the exact same quantity-tier price as every
+    # other payment method. Using _get_eff_price() here ignored 10+/30+ bulk
+    # tiers and charged base price instead (e.g. 10 × $0.67 = 67 points rather
+    # than the configured 10 × $0.62 = 62 points).
+    cost_usd = _get_price_for_qty(p, qty) * qty
     cost_pts = points_from_usd(cost_usd)
 
     # 🆕 v161.12: referral points (ref_points) are NOW spendable in the normal
