@@ -126,27 +126,33 @@ async def _show_freebies_menu(target, uid, from_text=False):
                     eid = _eid or ""
                 except Exception:
                     pass
-            # 🆕 v170.44: TOP list me bhi PREMIUM emoji ke saath name (pehle
-            # sirf plain text tha, premium sirf neeche buttons par tha).
+            # Button aur upar wali bullet list DONO ek hi complete visible
+            # name source use karein. Pehle top list _product_name_with_fixed_emoji
+            # ke alag path se banti thi; Telegram premium-emoji rendering mein
+            # us path ka naam pehle word tak reh jata tha, jabke button full tha.
             import html as _hlib
-            try:
-                from fake_engagement import _product_name_with_fixed_emoji as _pfn
-                _nm = str(_pfn({"id": pid, "name": raw}) or "").replace("[[HTML]]", "").strip()
-            except Exception:
-                _nm = ""
-            if not _nm:
-                _nm = str(plain or f"#{pid}")
-            if "<" not in _nm:
-                _nm = _hlib.escape(_nm)
-            # Product ka POORA naam dikhana hai. Raw HTML ko slice karne se
-            # premium <tg-emoji> tag hi 50–60 chars kha leta tha aur visible
-            # product name aadha/gaib ho jata tha.
-            lines.append(f"• {_nm}")
-            # 🆕 v170.46: button par FULL product name — "Claim" word hatao.
+            import re as _re
             from utils import html_strip_tags
             _btnlbl = str(html_strip_tags(plain or raw or f"#{pid}")).strip() or f"#{pid}"
-            if len(_btnlbl) > 60:
-                _btnlbl = _btnlbl[:59].rstrip() + "…"
+
+            if eid:
+                # Premium icon ko preserve karke uske baad EXACT button wala
+                # complete name lagao. Fallback emoji original <tg-emoji> tag
+                # se lo; na mile to harmless 🎁 fallback use karo.
+                _m = _re.search(
+                    r'<tg-emoji\s+emoji-id=["\'][^"\']+["\']\s*>([^<]*)</tg-emoji>',
+                    str(raw), flags=_re.IGNORECASE)
+                _fallback = html_strip_tags(_m.group(1) if _m else "") or "🎁"
+                _nm = (f'<tg-emoji emoji-id="{_hlib.escape(str(eid), quote=True)}">'
+                       f'{_hlib.escape(_fallback)}</tg-emoji> '
+                       f'{_hlib.escape(_btnlbl)}')
+            else:
+                _nm = _hlib.escape(_btnlbl)
+            lines.append(f"• {_nm}")
+
+            # Button par bhi POORA product name bhejo. Telegram client apni
+            # screen width ke mutabiq visually wrap/clip kar sakta hai, lekin
+            # bot naam ko khud truncate nahi karta.
             if _have:
                 kb_rows.append([make_premium_button(
                     f"🎁 {_btnlbl}", emoji_id=eid or None,
