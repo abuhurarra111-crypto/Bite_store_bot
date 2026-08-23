@@ -220,33 +220,136 @@ def ensure_supplier_retry_columns(c):
     ensure_column(c, "orders", "supplier_retry_count", "INTEGER DEFAULT 0")
 
 
-def setup_database():
-    # ── v170.54: Explicit fresh-reset guard ───────────────────────────────
-    # Railway sets RAILWAY_ENVIRONMENT on every normal deploy. Treating that
-    # alone as a reset instruction can erase the persistent live DB during an
-    # otherwise harmless code deploy. A reset is therefore an explicit, opt-in
-    # maintenance action only: set RESET_DB_FRESH=1 for that one deployment.
-    current_version = "v170.54"
+# ── Deployment reset policy ────────────────────────────────────────────────
+# Owner policy (v170.55): every *new hosted deployment* starts with an empty
+# database. A manually restored Ready DB is intentionally kept across restarts
+# of that same deployment, but is discarded at the next deployment.
+#
+# Local/test imports must never erase a developer's DB. Therefore a destructive
+# reset is armed only when a recognised hosted-deployment identity is present.
+# Railway provides RAILWAY_DEPLOYMENT_ID; Render/Git deploys provide one of the
+# Render/Git identifiers below. The release fallback covers hosts that expose a
+# platform marker but no per-deployment ID. Bump _RELEASE_VERSION each release.
+_RELEASE_VERSION = "v170.55"
+_DEPLOYMENT_ID_ENV_KEYS = (
+    "RAILWAY_DEPLOYMENT_ID",
+    "RAILWAY_GIT_COMMIT_SHA",
+    "RENDER_DEPLOY_ID",
+    "RENDER_GIT_COMMIT",
+    "SOURCE_VERSION",
+)
+_PLATFORM_ENV_KEYS = (
+    "RAILWAY_ENVIRONMENT",
+    "RAILWAY_PROJECT_ID",
+    "RENDER",
+    "RENDER_SERVICE_ID",
+    "RENDER_EXTERNAL_URL",
+)
+
+
+def _hosted_deployment_key():
+    """Return a stable identity for the current hosted deploy, else an empty string.
+
+    Keeping this separate makes the fresh-deploy policy testable and prevents a
+    local `python bot.py` restart from deleting a local/restored database.
+    """
+    for key in _DEPLOYMENT_ID_ENV_KEYS:
+        value = (os.getenv(key) or "").strip()
+        if value:
+            return f"{key}:{value}"
+    if any((os.getenv(key) or "").strip() for key in _PLATFORM_ENV_KEYS):
+        return f"release:{_RELEASE_VERSION}"
+    return ""
+
+
+def _reset_database_for_new_deployment():
+    """Apply the owner's fresh-DB-on-deploy policy once per deploy identity."""
+    deploy_key = _hosted_deployment_key()
+    if not deploy_key:
+        return False
+
+    db_dir = os.path.dirname(os.path.abspath(DB_PATH))
+    marker_path = os.path.join(db_dir, ".bite_store_deployment_marker")
+    previous_key = ""
     try:
-        if os.getenv("RESET_DB_FRESH") == "1":
-            version_marker = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), ".deployed_version")
-            last_version = ""
-            if os.path.exists(version_marker):
-                try:
-                    with open(version_marker, "r") as f:
-                        last_version = f.read().strip()
-                except Exception:
-                    pass
-            if last_version != current_version and os.path.exists(DB_PATH):
-                print(f"🆕 [{current_version}] New release deployed! Performing fresh reset of DB (was {last_version})...")
-                try:
-                    os.remove(DB_PATH)
-                except Exception as e:
-                    print(f"Could not remove old DB for reset: {e}")
-                with open(version_marker, "w") as f:
-                    f.write(current_version)
+        if os.path.exists(marker_path):
+            with open(marker_path, "r", encoding="utf-8") as marker:
+                previous_key = marker.read().strip()
     except Exception as e:
-        print(f"[{current_version}] reset marker check failed: {e}")
+        print(f"⚠️ [{_RELEASE_VERSION}] could not read deployment marker: {e}")
+
+    # Same deploy = restart only. Preserve any DB the owner restored manually.
+    if previous_key == deploy_key:
+        return False
+
+    print(
+        f"🆕 [{_RELEASE_VERSION}] New deployment detected; "
+        f"starting with a fresh database (previous marker: {previous_key or 'none'})."
+    )
+    try:
+        _ensure_db_parent(DB_PATH)
+        # Remove SQLite's sidecars too; an old WAL must never resurrect data.
+        for path in (DB_PATH, f"{DB_PATH}-wal", f"{DB_PATH}-shm"):
+            if os.path.exists(path):
+                os.remove(path)
+        with open(marker_path, "w", encoding="utf-8") as marker:
+            marker.write(deploy_key)
+        return True
+    except Exception as e:
+        # Do not pretend a destructive policy succeeded if disk permissions
+        # prevented it. Startup continues so the operational error is visible.
+        print(f"⚠️ [{_RELEASE_VERSION}] fresh deployment reset failed: {e}")
+        return False
+
+
+def repair_orphan_order_product_references(cursor=None):
+    """Make order history FK-clean without deleting historical order data.
+
+    Point purchases have no product row, so their historical ``product_id=0``
+    is represented as NULL. Product orders whose product was hard-deleted keep
+    their immutable product_name, price, status, delivery data, etc.; only the
+    no-longer-valid relation is set to NULL. Returns the number repaired.
+    """
+    conn = None
+    own_connection = cursor is None
+    try:
+        if own_connection:
+            conn = get_connection()
+            cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE orders
+               SET product_id=NULL
+             WHERE product_id IS NOT NULL
+               AND (
+                    product_id=0
+                    OR NOT EXISTS (
+                        SELECT 1 FROM products
+                         WHERE products.id=orders.product_id
+                    )
+               )
+        """)
+        repaired = max(0, int(cursor.rowcount or 0))
+        if own_connection:
+            conn.commit()
+        return repaired
+    except Exception as e:
+        print(f"⚠️ order/product FK repair failed: {e}")
+        if own_connection and conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return 0
+    finally:
+        if own_connection and conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def setup_database():
+    _reset_database_for_new_deployment()
 
     conn = get_connection(); c = conn.cursor()
 
@@ -377,9 +480,15 @@ def setup_database():
     ensure_product_columns(c)
     # 🔧 SELF-HEAL: ensure product_accounts exists on old databases too
     ensure_product_accounts_table(c)
+    # 🆕 v170.55: historical product deletion / points orders used invalid
+    # product_id values. Preserve each order's snapshot fields while removing
+    # only broken product references, so PRAGMA foreign_key_check stays clean.
+    repaired_order_refs = repair_orphan_order_product_references(c)
 
     conn.commit()
     conn.close()
+    if repaired_order_refs:
+        print(f"✅ Repaired {repaired_order_refs} orphan order/product reference(s)")
 
     # 🔧 Run each migration independently so a failure in one does NOT
     # prevent later migrations (e.g. flash-sale columns) from being applied.
@@ -1373,16 +1482,19 @@ def delete_product(pid):
 
 
 def delete_product_permanently(pid):
-    """Hard-delete product row + related product config, but keep orders/history.
+    """Hard-delete product row + related config while preserving order history.
 
-    Used by admin Delete Product and bulk delete. Orders table is NOT touched;
-    old order history/profit rows keep product_name/price/status.
+    Historical product_name/price/status remain on each order. The now-deleted
+    product relation is set to NULL first, keeping SQLite FK validation clean.
     """
     pid = int(pid)
     conn = get_connection(); c = conn.cursor()
-    stats = {"products": 0, "accounts": 0}
+    stats = {"products": 0, "accounts": 0, "orders_unlinked": 0}
     try:
         c.execute("BEGIN IMMEDIATE")
+        # Preserve immutable order snapshots but remove the FK before deleting.
+        c.execute("UPDATE orders SET product_id=NULL WHERE product_id=?", (pid,))
+        stats["orders_unlinked"] = max(0, int(c.rowcount or 0))
         # Break supplier mirror link if any.
         try:
             c.execute("UPDATE ext_products SET shop_product_id=0, synced_to_shop=0 WHERE shop_product_id=?", (pid,))
@@ -2019,6 +2131,10 @@ def _infer_order_qty_from_name(pname):
 
 
 def create_order(uid, uname, pid, pname, price, method="manual", bname="", bamt=0, bcur="", otype="product", creds="", qty=None):
+    # Point purchases deliberately have no product relation. Older flows passed
+    # product_id=0, which is not a valid products.id and breaks FK checks.
+    if str(otype or "").lower() == "points":
+        pid = None
     conn = get_connection(); c = conn.cursor()
     # Check if we need to add the column if missing
     c.execute("PRAGMA table_info(orders)")

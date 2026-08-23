@@ -9558,7 +9558,10 @@ async def persist_panel_callback(update, context):
             f"🎨 Color: {_persist_color_label(pid)}",
             callback_data=f"persist_color_{pid}")])
     lines.append("")
-    lines.append("🎨 _Color = REAL background (Bot API 9.4: 🟢green/🔵blue/🔴red). Premium emoji icon rename ke saath lg jata hai._")
+    lines.append("🎨 _Color = REAL background (Bot API 9.4: 🟢green/🔵blue/🔴red)._")
+    lines.append("✅ _Save/reorder ke baad aap ka fresh reply keyboard isi chat mein foran bheja jata hai._")
+    lines.append("⭐ _Custom emoji icon ke liye bot owner ko Telegram Premium ya Fragment additional username chahiye._")
+    kb.append([InlineKeyboardButton("🔄 Refresh My Keyboard", callback_data="persist_refresh")])
     kb.append([InlineKeyboardButton("🔙 Back to Customization", callback_data="admin_customization")])
     await _safe_edit(q, "\n".join(lines), parse_mode="Markdown",
                      reply_markup=InlineKeyboardMarkup(kb))
@@ -9572,6 +9575,39 @@ def _persist_color_label(pid):
         return {"green": "🟢 Green", "blue": "🔵 Blue", "red": "🔴 Red"}.get(c, "⚪ None")
     except Exception:
         return "⚪ None"
+
+
+async def _refresh_persistent_keyboard_for_admin(context, user_id):
+    """Send a *new* reply markup so Telegram replaces its cached keyboard.
+
+    Reply keyboards cannot be edited in place like inline keyboards. Settings
+    alone only affect the next markup sent by the bot, so every admin-side
+    persistent setting save calls this helper immediately.
+    """
+    try:
+        from keyboards import persistent_menu
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="⌨️ Persistent buttons updated.",
+            reply_markup=persistent_menu(user_id),
+            disable_notification=True,
+        )
+        return True
+    except Exception as e:
+        # A save still succeeds if Telegram is temporarily unavailable; never
+        # falsely claim that the client keyboard was refreshed in that case.
+        import logging
+        logging.getLogger(__name__).warning("Persistent keyboard refresh failed: %s", e)
+        return False
+
+
+async def persist_refresh_callback(update, context):
+    """Manual retry button for the admin if a client kept an old reply bar."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    refreshed = await _refresh_persistent_keyboard_for_admin(context, q.from_user.id)
+    await q.answer("✅ Keyboard refreshed" if refreshed else "⚠️ Refresh failed — try again", show_alert=not refreshed)
 
 
 async def persist_color_callback(update, context):
@@ -9597,8 +9633,8 @@ async def persist_color_callback(update, context):
     await _safe_edit(q,
         f"🎨 *Background Color for `{pid}`*\n━━━━━━━━━━━━━━━━━━━━\n"
         f"Current: `{_persist_color_label(pid)}`\n\n"
-        f"_(REAL button background — Bot API 9.4 support. Owner ke paas "
-        f"Telegram Premium ho to colors render hote hain.)_",
+        f"_(REAL button background — Telegram app ko current version par rakhein. "
+        f"Premium/Fragment requirement sirf custom emoji icon ke liye hai.)_",
         parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 
@@ -9613,7 +9649,8 @@ async def persist_setcol_callback(update, context):
         set_setting(f"persist_color_{pid}", "" if color == "none" else color)
     except Exception:
         await q.answer("❌ Save failed", show_alert=True); return
-    await q.answer("✅ Color saved")
+    refreshed = await _refresh_persistent_keyboard_for_admin(context, q.from_user.id)
+    await q.answer("✅ Color saved + keyboard refreshed" if refreshed else "✅ Color saved; refresh retry karein")
     await persist_panel_callback(update, context)
 
 
@@ -9654,7 +9691,10 @@ async def persist_rename_received(update, context):
             set_setting(f"persist_label_{pid}", "")
             set_setting(f"persist_emoji_{pid}", "")
             context.user_data.pop("persist_ren_pid", None)
-            await update.message.reply_text("♻️ Reset to default ✅")
+            await update.message.reply_text(
+                "♻️ Reset to default ✅\n⌨️ Keyboard isi message ke saath refresh ho gaya.",
+                reply_markup=persistent_menu(update.effective_user.id),
+            )
             return True
         if len(val) > 40:
             await update.message.reply_text("❌ Too long (max 40 chars). Try again or /cancel")
@@ -9687,8 +9727,9 @@ async def persist_rename_received(update, context):
     note = "\n⭐ Premium emoji icon bhi set ho gaya." if emoji_id else ""
     await update.message.reply_text(
         f"✅ Persistent button `{pid}` → `{label_text}` saved.{note}\n"
-        f"_Agli baar user ka menu open hoga to naya label + color + icon dikhega._",
-        parse_mode="Markdown")
+        f"_Fresh reply keyboard isi message ke saath ab refresh ho gaya._",
+        parse_mode="Markdown",
+        reply_markup=persistent_menu(update.effective_user.id))
     return True
 
 
@@ -9715,6 +9756,9 @@ async def persist_move_callback(update, context):
         set_setting("persist_order", ",".join(order))
     except Exception as e:
         await q.answer(f"❌ {e}", show_alert=True); return
+    refreshed = await _refresh_persistent_keyboard_for_admin(context, q.from_user.id)
+    if not refreshed:
+        await q.answer("⚠️ Order saved; refresh retry karein", show_alert=True)
     await persist_panel_callback(update, context)
 
 

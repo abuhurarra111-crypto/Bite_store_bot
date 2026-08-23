@@ -1749,10 +1749,11 @@ def main():
         _patch_ptb_poll_parsing()
     except Exception as _pe:
         print(f"[PollPatch] error: {_pe}")
-    # 🆕 v151: bot boots FRESH — no bundled DB. The admin restores their own
-    # database via Admin → 💾 Backup & Restore whenever they want.
-    _apply_startup_maintenance()
+    # 🆕 v170.55: setup applies the fresh-per-deployment reset *before* any
+    # startup helper can read/write the previous deployment's database.
     setup_database()
+    # Maintenance state belongs to this newly bootstrapped/restored DB.
+    _apply_startup_maintenance()
     # 🛡️ v51: Install GLOBAL premium-emoji rendering guard BEFORE any Bot
     # instance is created. Patches telegram.Bot / Message / CallbackQuery so
     # EVERY outgoing text auto-applies smart_text_and_mode() — even from
@@ -2624,6 +2625,7 @@ def main():
         # 🆕 Customization handlers
         ("^admin_customization$", admin_customization_callback),
         ("^persist_panel$", persist_panel_callback),                       # 🆕 v170.12
+        ("^persist_refresh$", persist_refresh_callback),                   # 🆕 v170.55
         ("^persist_ren_", persist_rename_callback),                        # 🆕 v170.12
         ("^persist_move_.+_(up|down)$", persist_move_callback),            # 🆕 v170.12
         ("^persist_color_", persist_color_callback),                       # 🆕 v170.14

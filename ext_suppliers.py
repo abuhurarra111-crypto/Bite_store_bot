@@ -293,7 +293,8 @@ def delete_supplier(sid):
     ensure_ext_supplier_tables()
     sid = int(sid)
     conn = get_connection(); c = conn.cursor()
-    stats = {"shop_products": 0, "ext_products": 0, "ext_orders": 0, "accounts": 0}
+    stats = {"shop_products": 0, "ext_products": 0, "ext_orders": 0,
+             "accounts": 0, "orders_unlinked": 0}
     try:
         c.execute("BEGIN IMMEDIATE")
         # Collect linked shop products from both link directions for old DBs.
@@ -309,6 +310,9 @@ def delete_supplier(sid):
         if pids:
             qmarks = ",".join("?" for _ in pids)
             pid_list = list(pids)
+            # Keep the historical order snapshot but unlink its deleted product.
+            c.execute(f"UPDATE orders SET product_id=NULL WHERE product_id IN ({qmarks})", pid_list)
+            stats["orders_unlinked"] = max(0, int(c.rowcount or 0))
             # Remove local/supplier bonus account pool for deleted supplier products.
             try:
                 c.execute(f"DELETE FROM product_accounts WHERE product_id IN ({qmarks})", pid_list)
@@ -5059,7 +5063,12 @@ def wipe_v82_auto_mirrored_products():
         conn.close()
         return 0, "already_wiped"
 
-    # Wipe products that came from suppliers
+    # Wipe products that came from suppliers. Keep their order snapshots, but
+    # unlink the FK first so historical orders remain integrity-clean.
+    c.execute("""UPDATE orders SET product_id=NULL
+                 WHERE product_id IN (
+                     SELECT id FROM products WHERE ext_supplier_id > 0
+                 )""")
     c.execute("DELETE FROM products WHERE ext_supplier_id > 0")
     wiped_products = c.rowcount
     # Reset all ext_products' synced_to_shop flag + clear shop_product_id links

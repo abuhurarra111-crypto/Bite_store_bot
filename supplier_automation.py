@@ -1134,6 +1134,8 @@ def _unsync_supplier_shop_products(sid):
         if pids:
             qmarks = ",".join("?" for _ in pids)
             plist = list(pids)
+            # History fields stay intact; only the deleted product FK is removed.
+            c.execute(f"UPDATE orders SET product_id=NULL WHERE product_id IN ({qmarks})", plist)
             for table in ("product_accounts", "product_free_claim", "product_ref_pool",
                           "stock_alerts", "restock_requests", "product_reviews"):
                 try:

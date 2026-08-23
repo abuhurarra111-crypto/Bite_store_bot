@@ -8,6 +8,37 @@
 
 ---
 
+# 🚀 v170.55 (2026-08-23) — 🧼 FRESH DEPLOY + PERSISTENT KEYBOARD REFRESH + READY-DB HEALTH
+
+## Owner deployment policy (supersedes v170.54)
+- Owner instruction: **each new hosted deployment starts with an empty DB**.
+  No automatic preservation or automatic restore is performed.
+- A deployment fingerprint is saved beside the SQLite file. Same-deployment
+  process restarts preserve a DB that the owner manually restored; a new
+  Railway/Render/Git deployment removes the DB and its WAL/SHM sidecars before
+  schema bootstrap.
+- Local/test runs are deliberately excluded from this destructive policy.
+
+## Persistent reply keyboard fix
+- Root cause: color/custom-emoji values were already saved and serialize to
+  Bot API fields correctly, but Telegram keeps an old reply keyboard until the
+  bot sends a new `ReplyKeyboardMarkup`. The settings callbacks only saved DB
+  values and never sent that new markup.
+- Color, rename/emoji and reorder saves now immediately send a fresh persistent
+  keyboard to the admin chat. A **Refresh My Keyboard** retry control was added.
+- Clarified platform behavior: red/green/blue are `KeyboardButton.style`;
+  Telegram Premium/Fragment eligibility applies to the custom-emoji icon, not
+  to the style field itself.
+
+## Ready DB integrity
+- Historical point orders used `product_id=0`, and hard-deleted products left
+  446 product-order links behind. Point orders now store NULL; deletion paths
+  unlink only the broken relation while preserving the historical order snapshot.
+- Startup repair is idempotent and makes a restored old DB FK-clean without
+  deleting orders, names, prices, statuses, or delivery history.
+
+---
+
 # 🚀 v170.54 (2026-08-23) — 🛡️ SAFE RAILWAY DEPLOY GUARD
 
 ## Root cause + safety fix
