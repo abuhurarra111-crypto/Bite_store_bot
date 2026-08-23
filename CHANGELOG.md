@@ -8,6 +8,25 @@
 
 ---
 
+# 🚀 v170.54 (2026-08-23) — 🛡️ SAFE RAILWAY DEPLOY GUARD
+
+## Root cause + safety fix
+- Railway automatically provides `RAILWAY_ENVIRONMENT` on every deployment.
+  The old reset guard treated that normal environment flag as a command to erase
+  the persistent SQLite DB whenever the release marker changed.
+- A normal code deploy could therefore wipe live users, orders, products and
+  supplier data before the bot was available to restore a backup.
+- Reset is now **explicit opt-in only**: set `RESET_DB_FRESH=1` for a deliberate
+  fresh reset. Normal Railway deploys preserve `/var/data/shop.db`.
+- This safe guard is required before deploying the v170.53 Freebies full-name
+  renderer to production.
+
+## Verification
+- Railway-environment preservation and explicit-reset behavior tested on isolated
+  database copies; Freebies text-list renderer test remains full-name safe.
+
+---
+
 # 🚀 v170.53 (2026-08-23) — 🎁 FREEBIES FULL PRODUCT NAMES
 
 ## 🐛 Root cause + fix

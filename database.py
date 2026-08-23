@@ -221,16 +221,14 @@ def ensure_supplier_retry_columns(c):
 
 
 def setup_database():
-    # ── 🆕 v167: Universal Deployed Version Reset Guard (Zero Data on New Deploy) ──
-    # Whenever a new release version is deployed on Railway/server, this automatically
-    # wipes old data once so the bot boots fresh (0 users, 0 orders, 0 products).
-    # Owner can restore live data anytime via /admin -> Backup & Restore -> Restore from File.
+    # ── v170.54: Explicit fresh-reset guard ───────────────────────────────
+    # Railway sets RAILWAY_ENVIRONMENT on every normal deploy. Treating that
+    # alone as a reset instruction can erase the persistent live DB during an
+    # otherwise harmless code deploy. A reset is therefore an explicit, opt-in
+    # maintenance action only: set RESET_DB_FRESH=1 for that one deployment.
+    current_version = "v170.54"
     try:
-        if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RESET_DB_FRESH") == "1":
-            # 🆕 v170.6: USER RULE — HAR DEPLOY FRESH (0 data). Is version ko
-            # HAR deploy par bump karo taake bot har nayi release par khud reset
-            # ho jaye (0 users/orders/suppliers). Admin manual restore karta hai.
-            current_version = "v170.52"
+        if os.getenv("RESET_DB_FRESH") == "1":
             version_marker = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), ".deployed_version")
             last_version = ""
             if os.path.exists(version_marker):
