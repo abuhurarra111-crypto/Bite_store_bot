@@ -882,6 +882,8 @@ def _notify_admin_key_generated(uid, label=""):
 if _FASTAPI_OK:
     # 🆕 v161.6: custom gradient-themed docs page (red→green→blue) — default
     # FastAPI /docs is disabled; we serve our own styled Swagger UI instead.
+    # 🆕 v170.58: the owner-provided Alex Store logo/favicons are served from
+    # versioned static paths below, avoiding stale browser icon/logo caches.
     app = FastAPI(
         title="Bite Store — Reseller API",
         description=(
@@ -992,7 +994,8 @@ if _FASTAPI_OK:
             raise HTTPException(status_code=404, detail="logo not found")
 
     @app.get("/static/reseller_docs_favicon.png", include_in_schema=False)
-    async def _docs_favicon():
+    async def _docs_favicon_legacy():
+        """Legacy docs favicon path retained for old browser caches/bookmarks."""
         try:
             _p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                               "reseller_docs_favicon.png")
@@ -1001,9 +1004,31 @@ if _FASTAPI_OK:
         except Exception:
             raise HTTPException(status_code=404, detail="favicon not found")
 
+    @app.get("/static/alex_store_docs_logo.png", include_in_schema=False)
+    async def _alex_store_docs_logo():
+        """Owner-provided Alex Store logo for the hosted API documentation."""
+        try:
+            _p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "alex_store_docs_logo.png")
+            with open(_p, "rb") as _f:
+                return Response(content=_f.read(), media_type="image/png")
+        except Exception:
+            raise HTTPException(status_code=404, detail="Alex Store logo not found")
+
+    @app.get("/static/alex_store_docs_favicon.png", include_in_schema=False)
+    async def _alex_store_docs_favicon():
+        """Compact owner-provided Alex Store browser/favicon asset."""
+        try:
+            _p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "alex_store_docs_favicon.png")
+            with open(_p, "rb") as _f:
+                return Response(content=_f.read(), media_type="image/png")
+        except Exception:
+            raise HTTPException(status_code=404, detail="Alex Store favicon not found")
+
     @app.get("/favicon.ico", include_in_schema=False)
     async def _favicon_ico():
-        return await _docs_favicon()
+        return await _alex_store_docs_favicon()
 
     @app.get("/docs", include_in_schema=False)
     async def _docs():
@@ -1015,7 +1040,10 @@ if _FASTAPI_OK:
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Bite Store — Reseller API Docs</title>
-<link rel="icon" type="image/png" href="/static/reseller_docs_favicon.png"/>
+<!-- v170.58 cache-busted owner-provided Alex Store browser branding. -->
+<link rel="icon" type="image/png" sizes="192x192" href="/static/alex_store_docs_favicon.png?v=170.58"/>
+<link rel="apple-touch-icon" sizes="192x192" href="/static/alex_store_docs_favicon.png?v=170.58"/>
+<meta name="theme-color" content="#6d28d9"/>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css"/>
 <style>
   :root { --g1:#e53935; --g2:#fb8c00; --g3:#43a047; --g4:#1e88e5; --ink:#0f172a; }
@@ -1035,7 +1063,7 @@ if _FASTAPI_OK:
     padding: 10px 18px; backdrop-filter: blur(10px);
     background: rgba(255,255,255,.14); border-bottom:1px solid rgba(255,255,255,.25);
   }
-  .topnav img { width: 34px; height:34px; border-radius:50%; box-shadow:0 4px 12px rgba(0,0,0,.3); background:#fff; }
+  .topnav img { width:38px; height:46px; object-fit:contain; border-radius:9px; padding:1px; box-shadow:0 4px 12px rgba(0,0,0,.3); background:#fff; }
   .topnav .brand { color:#fff; font-weight:700; font-size:16px; text-shadow:0 1px 6px rgba(0,0,0,.4); }
   .topnav .spacer { flex:1; }
   .topnav a { color:#fff; text-decoration:none; font-size:13px; padding:6px 12px; border-radius:999px; background:rgba(255,255,255,.18); transition:.2s; }
@@ -1049,7 +1077,7 @@ if _FASTAPI_OK:
     box-shadow: 0 18px 50px rgba(0,0,0,.28);
   }
   .hero-top { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
-  .hero img.logo { width: 84px; height:84px; border-radius:50%; background:#fff; padding:4px; box-shadow:0 10px 30px rgba(0,0,0,.35); }
+  .hero img.logo { width:104px; height:130px; object-fit:contain; border-radius:16px; background:#fff; padding:3px; box-shadow:0 10px 30px rgba(0,0,0,.35); }
   .hero h1 { margin:0 0 4px; font-size:30px; letter-spacing:.3px; text-shadow:0 2px 10px rgba(0,0,0,.4); }
   .hero p { margin:0; font-size:15px; opacity:.97; }
   .badges { margin-top:14px; }
@@ -1104,7 +1132,7 @@ if _FASTAPI_OK:
 </head>
 <body>
   <div class="topnav">
-    <img src="/static/reseller_docs_logo.png" alt="Bite Store"/>
+    <img src="/static/alex_store_docs_logo.png?v=170.58" alt="Alex Store logo"/>
     <span class="brand">Bite Store — Reseller API</span>
     <span class="spacer"></span>
     <a href="#endpoints">Endpoints</a>
@@ -1113,7 +1141,7 @@ if _FASTAPI_OK:
   <div class="page">
     <div class="hero">
       <div class="hero-top">
-        <img class="logo" src="/static/reseller_docs_logo.png" alt="Bite Store"/>
+        <img class="logo" src="/static/alex_store_docs_logo.png?v=170.58" alt="Alex Store logo"/>
         <div>
           <h1>🔗 Reseller API</h1>
           <p>Sell our products in your own bot — everything auto-delivered.</p>

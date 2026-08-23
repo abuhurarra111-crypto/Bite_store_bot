@@ -8,6 +8,25 @@
 
 ---
 
+# 🚀 v170.58 (2026-08-23) — 🖼️ ALEX STORE API DOCS BRANDING
+
+## Owner-provided documentation logo and favicon
+- Added the supplied **Alex Store** artwork to the hosted Reseller/API-key
+  documentation page header and hero area.
+- Added a compact Alex Store favicon plus Apple touch icon. The page references
+  versioned asset URLs so browsers do not keep showing an old cached icon/logo.
+- `/favicon.ico` now returns the new Alex Store favicon; legacy docs favicon
+  paths remain available for old bookmarks/cache entries.
+- API endpoints, authentication, service behaviour, and existing visible API
+  copy were intentionally left unchanged; this release changes documentation
+  branding assets only.
+
+## Verification
+- Offline route tests confirm the docs HTML references the new versioned image
+  URLs and the logo/favicon routes return the exact committed PNG assets.
+
+---
+
 # 🚀 v170.57 (2026-08-23) — 🏠 PERSISTENT MENU EFFECT
 
 ## Owner-requested persistent-menu effect
