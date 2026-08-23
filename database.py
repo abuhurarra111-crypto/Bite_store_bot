@@ -221,7 +221,7 @@ def ensure_supplier_retry_columns(c):
 
 
 # ── Deployment reset policy ────────────────────────────────────────────────
-# Owner policy (v170.58): every *new hosted deployment* starts with an empty
+# Owner policy (v170.59): every *new hosted deployment* starts with an empty
 # database. A manually restored Ready DB is intentionally kept across restarts
 # of that same deployment, but is discarded at the next deployment.
 #
@@ -230,7 +230,7 @@ def ensure_supplier_retry_columns(c):
 # Railway provides RAILWAY_DEPLOYMENT_ID; Render/Git deploys provide one of the
 # Render/Git identifiers below. The release fallback covers hosts that expose a
 # platform marker but no per-deployment ID. Bump _RELEASE_VERSION each release.
-_RELEASE_VERSION = "v170.58"
+_RELEASE_VERSION = "v170.59"
 _DEPLOYMENT_ID_ENV_KEYS = (
     "RAILWAY_DEPLOYMENT_ID",
     "RAILWAY_GIT_COMMIT_SHA",
@@ -1985,6 +1985,30 @@ def purge_expired_sold_accounts(days=60):
 DELIVERY_OOS_TEXT = "⚠️ Out of stock right now. Please contact admin for your order."
 
 
+def has_static_text_delivery(product):
+    """Return True when a product has a reusable non-blank text payload.
+
+    Static text is information/content supplied by the owner, not a consumable
+    account-pool item.  In particular, legacy/imported products may retain
+    ``stock=0`` even though their static text remains valid and unlimited.
+    Keep this predicate small and reusable so claim-time and fulfilment-time
+    checks cannot drift apart.
+    """
+    if not product:
+        return False
+    try:
+        if isinstance(product, dict):
+            text = product.get("delivery_text", "")
+        else:
+            text = product["delivery_text"]
+    except Exception:
+        try:
+            text = dict(product).get("delivery_text", "")
+        except Exception:
+            text = ""
+    return bool(str(text or "").strip())
+
+
 def build_delivery_from_accounts(pid, order_id, qty=1, buyer_uid=None):
     """Back-compat wrapper — returns just the delivery text.
 
@@ -2026,24 +2050,11 @@ def build_delivery_detailed(pid, order_id, qty=1, buyer_uid=None):
             except Exception:
                 template_id = 1
 
-        if p and (dict(p) if p else {}).get('delivery_text'):
-            # Static delivery text mode — atomic stock guard (stock>=qty).
-            conn = get_connection(); c = conn.cursor()
-            try:
-                c.execute("UPDATE products SET stock=stock-? WHERE id=? AND stock>=?", (qty, pid, qty))
-                fulfilled = c.rowcount == 1
-                conn.commit()
-            except Exception:
-                try: conn.rollback()
-                except Exception: pass
-                fulfilled = False
-            finally:
-                try: conn.close()
-                except Exception: pass
-
-            if not fulfilled:
-                return {"ok": False, "text": DELIVERY_OOS_TEXT,
-                        "delivered": 0, "requested": qty, "mode": "static"}
+        if p and has_static_text_delivery(p):
+            # Static delivery text is reusable and therefore unlimited.  Do NOT
+            # require or decrement products.stock here: older/manual imports can
+            # legitimately have stock=0, and consuming a sentinel stock value
+            # would eventually turn an otherwise valid static payload into OOS.
             body = p['delivery_text']
             if qty > 1:
                 body = f"📦 Bulk Order × {qty}\n\n{body}"

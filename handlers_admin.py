@@ -986,8 +986,15 @@ async def make_freebie_callback(u, c):
         f"🔢 Claim limit: *1* per user\n"
         f"🔁 Re-claim refs: *0* (free forever)\n"
     )
-    if stock <= 0:
+    try:
+        from database import has_static_text_delivery
+        _static_unlimited = has_static_text_delivery(prod)
+    except Exception:
+        _static_unlimited = False
+    if stock <= 0 and not _static_unlimited:
         msg += f"\n⚠️ *Stock 0 hai* — pehle accounts/stock add karo warna users claim nahi kar payenge."
+    elif stock <= 0:
+        msg += f"\nℹ️ *Static delivery text* hai — stock 0 ke bawajood unlimited delivery chalegi."
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎁 Freebies Settings", callback_data="freebies_admin_panel")],
         [InlineKeyboardButton("📦 View / Edit Product", callback_data=f"viewprod_{pid}")],
@@ -11356,6 +11363,37 @@ async def bdisc_qty_received(update, context):
     return True
 
 
+def parse_bulk_discount_unit_price(raw_text):
+    """Parse a tier unit price without turning decimal-comma input into $62.
+
+    ``0,62`` is a common mobile/locale input for $0.62. The old blanket comma
+    removal changed it to ``062`` ($62), while regular thousands forms such as
+    ``1,000.50`` and ``1.000,50`` remain supported.
+    """
+    raw = str(raw_text or "").strip().replace("$", "").replace(" ", "")
+    if not raw:
+        raise ValueError("empty price")
+    if "," in raw:
+        if "." in raw:
+            # The rightmost separator is the decimal separator.
+            if raw.rfind(",") > raw.rfind("."):
+                raw = raw.replace(".", "").replace(",", ".")
+            else:
+                raw = raw.replace(",", "")
+        else:
+            left, _comma, right = raw.rpartition(",")
+            # Unambiguous small-price/decimal-comma inputs (0,62 / 1,25),
+            # while 1,000 keeps its conventional thousands meaning.
+            if left.lstrip("+-") in ("", "0") or len(right) <= 2:
+                raw = left.replace(",", "") + "." + right
+            else:
+                raw = raw.replace(",", "")
+    price = float(raw)
+    if price <= 0 or price > 100000:
+        raise ValueError("price out of range")
+    return price
+
+
 async def bdisc_price_received(update, context):
     if update.effective_user.id != ADMIN_ID or context.user_data.get('bdisc_step') != 'price':
         return False
@@ -11364,13 +11402,11 @@ async def bdisc_price_received(update, context):
     if not pid or not qty:
         context.user_data.pop('bdisc_step', None)
         return False
-    txt = (update.message.text or '').strip().replace("$", "").replace(",", "")
+    txt = (update.message.text or '').strip()
     try:
-        price = float(txt)
-        if price <= 0 or price > 100000:
-            raise ValueError
+        price = parse_bulk_discount_unit_price(txt)
     except Exception:
-        await update.message.reply_text("❌ Enter a valid price (USD), e.g. `0.89`:")
+        await update.message.reply_text("❌ Enter a valid price (USD), e.g. `0.89` or `0,89`:")
         return True
     from database import set_product_tier
     set_product_tier(pid, qty, price)
@@ -11402,9 +11438,40 @@ async def bdisc_price_received(update, context):
     return True
 
 
+def build_bulkdeal_broadcast_message(pid, user):
+    """Render one bulk-deal message containing every configured tier.
+
+    This is intentionally shared by the Save & Broadcast callback and tests.
+    The legacy scalar fields remain populated for an owner's older custom
+    template, while ``{tiers}`` is the canonical all-tier block.
+    """
+    p = get_product(pid)
+    try:
+        from database import get_product_tiers
+        tiers = get_product_tiers(pid)
+    except Exception:
+        tiers = []
+    if not p or not tiers:
+        return None
+    try:
+        base = float(dict(p).get("price") or 0)
+    except Exception:
+        base = 0.0
+    try:
+        from utils import html_strip_tags
+        name = html_strip_tags(str(p["name"] or ""))
+    except Exception:
+        name = str(p["name"] or "")
+    try:
+        from customization import render_bulkdeal_message_for_tiers
+        message = render_bulkdeal_message_for_tiers(user, name or f"#{pid}", tiers, base)
+    except Exception:
+        message = ""
+    return str(message or "").strip() or None
+
+
 async def bdisc_broadcast_callback(u, c):
-    """🆕 v170.14: Save & Broadcast — saare tiers set hone ke baad EK baar
-    bulk-deal hype broadcast (selected destination par)."""
+    """Save & Broadcast — one message with every configured bulk tier."""
     q = u.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
@@ -11414,40 +11481,16 @@ async def bdisc_broadcast_callback(u, c):
     except Exception:
         return
     try:
-        from fake_engagement import _get_lowest_tier, broadcast_store_message
-        from fake_engagement import generate_fake_username, get_name_style
-        p = get_product(pid)
-        _t = _get_lowest_tier(pid)
-        if not p or not _t:
-            await q.answer("⚠️ No tiers / product found", show_alert=True)
-            return
-        _tq, _tp = _t
-        _base = float(dict(p).get("price") or _tp)
-        _save = round(max(0.0, _base - _tp), 2)
-        try:
-            from utils import html_strip_tags
-            name = html_strip_tags(str(p['name'] or ''))
-        except Exception:
-            name = str(p['name'] or '')
+        from fake_engagement import broadcast_store_message, generate_fake_username, get_name_style
         _user = generate_fake_username(get_name_style())
-        try:
-            from customization import render_template as _rt
-            _msg = _rt("bc_bulkdeal", {
-                "user": _user, "product": name, "qty": str(_tq),
-                "price": f"{_tp:.2f}", "base_price": f"{_base:.2f}",
-                "saving": f"{_save:.2f}"})
-        except Exception:
-            _msg = None
+        _msg = build_bulkdeal_broadcast_message(pid, _user)
         if not _msg:
-            _msg = (f"📊 *Bulk Deal Alert!* 🎉\n\n"
-                    f"👤 {_user} just grabbed {name} at bulk price!\n"
-                    f"🛒 {_tq}+ qty → 💵 ${_tp:.2f} each\n"
-                    f"❌ Base: ${_base:.2f} | 💸 Save ${_save:.2f} per unit\n\n"
-                    f"🔥 Buy more, save more — tap below!")
+            await q.answer("⚠️ No valid tiers / product found", show_alert=True)
+            return
         import asyncio as _aio
         _aio.create_task(broadcast_store_message(c.bot, _msg, pid=pid,
                                                  tpl_id="bc_bulkdeal"))
-        await q.answer("✅ Bulk-deal broadcast sent to destination!", show_alert=True)
+        await q.answer("✅ All configured bulk tiers broadcast to destination!", show_alert=True)
     except Exception as _e:
         await q.answer(f"❌ {_e}", show_alert=True)
     await bdisc_prod_callback(u, c)

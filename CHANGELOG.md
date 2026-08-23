@@ -8,6 +8,25 @@
 
 ---
 
+# 🚀 v170.59 (2026-08-23) — 🎁 UNLIMITED STATIC FREEBIES + 📊 ALL-TIER BULK BROADCASTS
+
+## Static-text Freebies are now genuinely unlimited
+- A non-empty static delivery-text payload is now recognized as reusable content, not account inventory.
+- Freebie claims with static text now bypass only the product-stock gate; **enabled/hidden/active checks, per-user claim limits, referral requirements, and freebie-level `max_claims` protections remain enforced.**
+- Central fulfillment no longer decrements or requires product stock for a static text payload, so legacy/imported products with `stock=0` cannot turn a valid static delivery into a false out-of-stock response.
+
+## Complete bulk discount broadcasts
+- **✅ Save & Broadcast** now loads every quantity tier in quantity order instead of selecting only the cheapest tier.
+- Periodic and per-user bulk-deal hype messages use the same all-tier renderer, so every bulk broadcast path shows the complete configured price list.
+- The existing **📊 Bulk Deal Broadcast (All Tiers)** template now accepts `{tiers}`; the new **📊 Bulk Deal Tier Line** setting controls every row. Both are editable in the existing **Edit Templates → 📢 Fake Broadcast** UI.
+- Existing custom bulk templates without `{tiers}` safely receive the complete tier block as a compatibility append, so they cannot silently hide configured tiers.
+- Tier-price entry now recognizes decimal-comma input such as `0,62` as `$0.62` rather than stripping the comma and saving `$62`.
+
+## Deployment / data policy
+- Release marker advanced to `v170.59`; the owner-required hosted-deployment policy remains unchanged: each new deployment starts with a fresh DB, while a restart of that same deployment preserves the DB manually restored by the owner.
+
+---
+
 # 🚀 v170.58 (2026-08-23) — 🖼️ ALEX STORE API DOCS BRANDING
 
 ## Owner-provided documentation logo and favicon

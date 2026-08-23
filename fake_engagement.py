@@ -956,22 +956,21 @@ async def run_fake_broadcast(bot, force_type=None):
             logger.exception(f"[FakeBroadcast] freebie failed: {_e}")
             return None, 0, 0
 
-    # 🆕 v161.12: FAKE BULK-DEAL HYPE — "people are bulk-buying this product"
-    # picks a random product that HAS bulk tiers and routes through
-    # broadcast_store_message so the styled Buy Now button is attached.
+    # 🆕 v170.59: FAKE BULK-DEAL HYPE — show the complete configured
+    # quantity-price list, never only the cheapest tier.
     if chosen_type == "bulkdeal":
         try:
-            from database import get_product as _gp
+            from database import get_product as _gp, get_product_tiers
+            from customization import render_bulkdeal_message_for_tiers
             eligible = _get_products_with_tiers()
             if not eligible:
                 logger.info("[FakeBroadcast] bulkdeal: no tiered product — skip")
                 return None, 0, 0
             bd_pid = random.choice(eligible)
-            _tier = _get_lowest_tier(bd_pid)
             p = _gp(bd_pid)
-            if not _tier or not p:
+            tiers = get_product_tiers(bd_pid)
+            if not p or not tiers:
                 return None, 0, 0
-            bd_qty, bd_price = _tier
             bd_name = (dict(p).get("name", "product") if p else "product")
             try:
                 from utils import html_strip_tags as _hst
@@ -979,24 +978,12 @@ async def run_fake_broadcast(bot, force_type=None):
             except Exception:
                 pass
             try:
-                bd_base = float(dict(p).get("price") or bd_price)
+                bd_base = float(dict(p).get("price") or 0)
             except Exception:
-                bd_base = float(bd_price)
-            saving = round(max(0.0, bd_base - bd_price), 2)
-            try:
-                from customization import render_template as _rt
-                bd_msg = _rt("bc_bulkdeal", {
-                    "user": user, "product": bd_name, "qty": str(bd_qty),
-                    "price": f"{bd_price:.2f}", "base_price": f"{bd_base:.2f}",
-                    "saving": f"{saving:.2f}"})
-            except Exception:
-                bd_msg = None
+                bd_base = 0.0
+            bd_msg = render_bulkdeal_message_for_tiers(user, bd_name, tiers, bd_base)
             if not bd_msg:
-                bd_msg = (f"📊 *Bulk Deal Alert!* 🎉\n\n"
-                          f"👤 {user} just grabbed {bd_name} at bulk price!\n"
-                          f"🛒 {bd_qty}+ qty → 💵 ${bd_price:.2f} each\n"
-                          f"❌ Base: ${bd_base:.2f} | 💸 Save ${saving:.2f} per unit\n\n"
-                          f"🔥 Buy more, save more — tap below!")
+                return None, 0, 0
             success = await broadcast_store_message(bot, bd_msg, pid=bd_pid,
                                                     tpl_id="bc_bulkdeal")
             _log_broadcast("bulkdeal", bd_msg, success)
@@ -4218,16 +4205,14 @@ def _product_buy_emoji(pid):
     Priority:
       1. SUPPLIER-LINKED products → the FIXED premium emoji the admin set in
          the supplier emoji library (`ext_products.emoji_id` / `emoji_char`).
-         Supplier raw names carry no emoji; this fixed emoji is the source of
-         truth the owner wants on the button.
-      2. OWN (manual) products → the premium emoji inside the product NAME
-         (the owner types it directly in the name, e.g.
-         `[[HTML]]<tg-emoji ...>🎨</tg-emoji>Canva 500 User Panel`).
+      2. OWN (manual) products → the premium emoji inside the product NAME.
     Returns ("", "") when nothing is found.
     """
+    _conn = None
     try:
         from database import get_connection
-        c = get_connection().cursor()
+        _conn = get_connection()
+        c = _conn.cursor()
         # 1) supplier-linked → fixed emoji from ext_products
         c.execute(
             "SELECT e.emoji_id, e.emoji_char FROM ext_products e "
@@ -4246,11 +4231,8 @@ def _product_buy_emoji(pid):
             try:
                 import re as _re
                 raw = str(row["name"] or "")
-                # 🐛 v161.20 FIX: extract_emoji_from_html() returns (eid,
-                # REST_TEXT_WITHOUT_EMOJI) — the old code used that rest text as
-                # the emoji char → button labels like "Canva 500 User Panel Buy
-                # Now" instead of "🎨 Canva 500 Buy Now". Grab the FALLBACK char
-                # that lives INSIDE the <tg-emoji> tag instead.
+                # extract the visible fallback contained inside <tg-emoji>, not
+                # the whole remaining product name.
                 m = _re.search(
                     r'<tg-emoji\s+emoji-id=["\'](\d+)["\']\s*>\s*([^<]{1,8})\s*</tg-emoji>',
                     raw, flags=_re.I)
@@ -4267,12 +4249,21 @@ def _product_buy_emoji(pid):
                 pass
     except Exception:
         pass
+    finally:
+        try:
+            if _conn:
+                _conn.close()
+        except Exception:
+            pass
+
     # 🆕 v161.20: products with NO emoji anywhere (name or supplier) still get a
     # sensible auto-emoji on their Buy-Now button so EVERY product shows
     # "{emoji} First Two Words Buy Now" consistently (user requirement).
+    _fallback_conn = None
     try:
         from database import get_connection as _gc2
-        _c2 = _gc2().cursor()
+        _fallback_conn = _gc2()
+        _c2 = _fallback_conn.cursor()
         _c2.execute("SELECT name FROM products WHERE id=?", (int(pid),))
         _row2 = _c2.fetchone()
         if _row2:
@@ -4283,6 +4274,12 @@ def _product_buy_emoji(pid):
         return "", _AUTO_FALLBACK_EMOJI
     except Exception:
         return "", _AUTO_FALLBACK_EMOJI
+    finally:
+        try:
+            if _fallback_conn:
+                _fallback_conn.close()
+        except Exception:
+            pass
 
 
 def _buy_now_label(pid, default_suffix="🛒 Buy Now") -> str:
@@ -4900,16 +4897,14 @@ def _product_buy_emoji(pid):
     Priority:
       1. SUPPLIER-LINKED products → the FIXED premium emoji the admin set in
          the supplier emoji library (`ext_products.emoji_id` / `emoji_char`).
-         Supplier raw names carry no emoji; this fixed emoji is the source of
-         truth the owner wants on the button.
-      2. OWN (manual) products → the premium emoji inside the product NAME
-         (the owner types it directly in the name, e.g.
-         `[[HTML]]<tg-emoji ...>🎨</tg-emoji>Canva 500 User Panel`).
+      2. OWN (manual) products → the premium emoji inside the product NAME.
     Returns ("", "") when nothing is found.
     """
+    _conn = None
     try:
         from database import get_connection
-        c = get_connection().cursor()
+        _conn = get_connection()
+        c = _conn.cursor()
         # 1) supplier-linked → fixed emoji from ext_products
         c.execute(
             "SELECT e.emoji_id, e.emoji_char FROM ext_products e "
@@ -4928,11 +4923,8 @@ def _product_buy_emoji(pid):
             try:
                 import re as _re
                 raw = str(row["name"] or "")
-                # 🐛 v161.20 FIX: extract_emoji_from_html() returns (eid,
-                # REST_TEXT_WITHOUT_EMOJI) — the old code used that rest text as
-                # the emoji char → button labels like "Canva 500 User Panel Buy
-                # Now" instead of "🎨 Canva 500 Buy Now". Grab the FALLBACK char
-                # that lives INSIDE the <tg-emoji> tag instead.
+                # extract the visible fallback contained inside <tg-emoji>, not
+                # the whole remaining product name.
                 m = _re.search(
                     r'<tg-emoji\s+emoji-id=["\'](\d+)["\']\s*>\s*([^<]{1,8})\s*</tg-emoji>',
                     raw, flags=_re.I)
@@ -4949,12 +4941,21 @@ def _product_buy_emoji(pid):
                 pass
     except Exception:
         pass
+    finally:
+        try:
+            if _conn:
+                _conn.close()
+        except Exception:
+            pass
+
     # 🆕 v161.20: products with NO emoji anywhere (name or supplier) still get a
     # sensible auto-emoji on their Buy-Now button so EVERY product shows
     # "{emoji} First Two Words Buy Now" consistently (user requirement).
+    _fallback_conn = None
     try:
         from database import get_connection as _gc2
-        _c2 = _gc2().cursor()
+        _fallback_conn = _gc2()
+        _c2 = _fallback_conn.cursor()
         _c2.execute("SELECT name FROM products WHERE id=?", (int(pid),))
         _row2 = _c2.fetchone()
         if _row2:
@@ -4965,6 +4966,12 @@ def _product_buy_emoji(pid):
         return "", _AUTO_FALLBACK_EMOJI
     except Exception:
         return "", _AUTO_FALLBACK_EMOJI
+    finally:
+        try:
+            if _fallback_conn:
+                _fallback_conn.close()
+        except Exception:
+            pass
 
 
 def _buy_now_label(pid, default_suffix="🛒 Buy Now") -> str:

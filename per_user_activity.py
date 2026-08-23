@@ -836,22 +836,21 @@ async def build_fake_message(bot, user_id: int) -> tuple[str, any]:
             ), kb
         chosen = "deposit"
 
-    # ── BULKDEAL (🆕 v161.12) ─────────────────────
-    # Fake "people are bulk-buying X" hype — picks a product that HAS bulk
-    # tiers, shows the real lowest tier price + Buy Now button.
+    # ── BULKDEAL (v170.59) ─────────────────────────
+    # Every fake bulk-deal card now carries the complete quantity-price list.
     if chosen == "bulkdeal":
         try:
-            from fake_engagement import _get_products_with_tiers, _get_lowest_tier
+            from fake_engagement import _get_products_with_tiers
+            from database import get_product as _gp2, get_product_tiers
+            from customization import render_bulkdeal_message_for_tiers
             eligible = _get_products_with_tiers()
             if not eligible:
                 chosen = "discount"
             else:
                 bd_pid = random.choice(eligible)
-                _tier = _get_lowest_tier(bd_pid)
-                from database import get_product as _gp2
                 _p = _gp2(bd_pid)
-                if _tier and _p:
-                    bd_qty, bd_price = _tier
+                tiers = get_product_tiers(bd_pid)
+                if _p and tiers:
                     bd_name = str(dict(_p).get("name", "Product"))
                     try:
                         from utils import html_strip_tags as _hst
@@ -859,14 +858,10 @@ async def build_fake_message(bot, user_id: int) -> tuple[str, any]:
                     except Exception:
                         pass
                     try:
-                        bd_base = float(dict(_p).get("price") or bd_price)
+                        bd_base = float(dict(_p).get("price") or 0)
                     except Exception:
-                        bd_base = float(bd_price)
-                    saving = round(max(0.0, bd_base - bd_price), 2)
-                    msg = _render("bc_bulkdeal", {
-                        "user": masked, "product": bd_name, "qty": str(bd_qty),
-                        "price": f"{bd_price:.2f}", "base_price": f"{bd_base:.2f}",
-                        "saving": f"{saving:.2f}"})
+                        bd_base = 0.0
+                    msg = render_bulkdeal_message_for_tiers(masked, bd_name, tiers, bd_base)
                     try:
                         bot_me = await bot.get_me()
                         bot_username = bot_me.username
@@ -882,13 +877,6 @@ async def build_fake_message(bot, user_id: int) -> tuple[str, any]:
                     kb = InlineKeyboardMarkup([[_btn]])
                     if msg:
                         return msg, kb
-                    return (
-                        f"📊 *Bulk Deal Alert!* 🎉\n\n"
-                        f"👤 {masked} just grabbed {bd_name} at bulk price!\n"
-                        f"🛒 {bd_qty}+ qty → 💵 ${bd_price:.2f} each\n"
-                        f"❌ Base: ${bd_base:.2f} | 💸 Save ${saving:.2f} per unit\n\n"
-                        f"🔥 Buy more, save more — tap below!"
-                    ), kb
         except Exception:
             chosen = "discount"
 

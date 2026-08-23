@@ -340,7 +340,8 @@ async def freebie_do_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     from database import (get_product, get_freebie_config, freebie_claims_count,
                           get_referral_count, create_order, update_order_status,
-                          get_order, get_freebie_remaining_claims)
+                          get_order, get_freebie_remaining_claims,
+                          has_static_text_delivery)
     prod = get_product(pid)
     cfg = get_freebie_config(pid)
     if not prod or not cfg.get("enabled"):
@@ -383,12 +384,15 @@ async def freebie_do_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await _show_freebie_product(q, uid, pid)
         return
 
-    # stock check
+    # Account-pool products still need stock.  A non-blank static text payload
+    # is reusable/unlimited, however, so legacy/imported static freebies with
+    # stored stock=0 must reach the central fulfilment router instead of being
+    # rejected here.  All freebie-specific limits above remain enforced.
     try:
         stock_val = int(prod.get("stock") or 0)
     except Exception:
         stock_val = 0
-    if stock_val <= 0:
+    if stock_val <= 0 and not has_static_text_delivery(prod):
         await _safe_edit(q, "😔 Out of stock right now. Please try later.",
                          reply_markup=InlineKeyboardMarkup([[
                              InlineKeyboardButton("🎁 Freebies", callback_data="freebies_menu")]]))

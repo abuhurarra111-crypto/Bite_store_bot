@@ -711,20 +711,30 @@ TEMPLATES = [
     },
     {
         "id":      "bc_bulkdeal",
-        "name":    "📊 Bulk Deal Hype",
+        "name":    "📊 Bulk Deal Broadcast (All Tiers)",
         "section": "📢 Fake Broadcast",
-        "vars":    "{user}, {product}, {qty}, {price}, {base_price}, {saving}",
+        "vars":    "{user}, {product}, {tiers}, {base_price}, {tier_count}; legacy: {qty}, {price}, {saving}",
         "default": (
             "📊 *Bulk Deal Alert!* 🎉\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "👤 {user} just grabbed *{product}* at bulk price!\n\n"
-            "🛒 {qty}+ qty → 💵 *${price}* each\n"
-            "❌ Base: ~~${base_price}~~\n"
-            "💸 Save *${saving}* per unit\n\n"
+            "👤 {user} just unlocked bulk prices for *{product}*!\n\n"
+            "💵 *Configured bulk tiers:*\n"
+            "{tiers}\n\n"
+            "❌ Base price: ~~${base_price}~~ per unit\n\n"
             "🔥 Buy more, save more — tap below! 🚀"
         ),
-        "sample":  {"user": "b***l", "product": "🤖 Gemini Pro", "qty": "10",
-                    "price": "0.89", "base_price": "1.00", "saving": "0.11"},
+        "sample":  {"user": "b***l", "product": "🤖 Gemini 18 Month Link",
+                    "tiers": "• *10+ qty* → 💵 *$0.62 each* _(save $0.05/unit)_\n• *30+ qty* → 💵 *$0.57 each* _(save $0.10/unit)_",
+                    "base_price": "0.67", "tier_count": "2",
+                    "qty": "30", "price": "0.57", "saving": "0.10"},
+    },
+    {
+        "id":      "bc_bulkdeal_tier_line",
+        "name":    "📊 Bulk Deal Tier Line",
+        "section": "📢 Fake Broadcast",
+        "vars":    "{qty}, {price}, {base_price}, {saving}",
+        "default": "• *{qty}+ qty* → 💵 *${price} each* _(save ${saving}/unit)_",
+        "sample":  {"qty": "10", "price": "0.62", "base_price": "0.67", "saving": "0.05"},
     },
     {
         "id":      "bc_reseller",
@@ -1102,20 +1112,20 @@ TEMPLATE_VARIANTS = {
         "🤯 *INSANE DEAL!* 🤯\n\n📦 {product}\nPrice slashed *{discount_pct}%*!\nNow only *${new_price}* (was ${old_price})\n\n_Treat yourself today!_ 🎁",
         "💎 *PREMIUM PRICE DROP*\n━━━━━━━━━━━━━━━━━━━━\n\n🏷 *{product}*\nNow: *${new_price}*\nOld: ~~${old_price}~~\n🎯 *{discount_pct}% OFF*  •  Save ${savings}\n\nVisit shop to claim!",
     ],
-    # 🆕 v161.12: BULK DISCOUNT HYPE (fake) — fired when admin adds a tier +
-    # periodically for products that have bulk tiers.
-    # Placeholders: {user}, {product}, {qty}, {price}, {base_price}, {saving}
+    # 🆕 v170.59: BULK DISCOUNT HYPE — every selectable variant receives
+    # the complete configured {tiers} block (not just the cheapest tier).
+    # Legacy scalar placeholders are still supplied for existing custom text.
     "bc_bulkdeal": [
-        "📊 *Bulk Deal Alert!* 🎉\n\n👤 {user} just grabbed {product} at bulk price!\n🛒 {qty}+ qty → 💵 ${price} each\n❌ Base: ${base_price} | 💸 Save ${saving} per unit\n\n🔥 Buy more, save more — tap below!",
-        "🚀 *Bulk Buying is LIVE!*\n\n👤 {user} ordered {qty}+ units of {product}\n💰 Unit price: ${price} (was ${base_price})\n💎 You save ${saving} each!\n\n🛍️ Grab your bulk deal now!",
-        "🔥 *Hot Bulk Deal!*\n\n📦 {product}\n🎯 {qty}+ qty → ${price} each\n❌ Normal: ${base_price}\n💸 Save ${saving}/unit\n\n👤 {user} & many more already buying!",
-        "💥 *Quantity Discount!*\n\n{product}\n🛒 Buy {qty}+ → only ${price} each\n❌ Regular price: ${base_price}\n💎 Save ${saving} per item\n\n⚡ Stocks moving fast — order now!",
-        "🎉 *People Are Bulk-Buying!*\n\n📦 {product}\n👤 {user} just bought {qty} units\n💰 Bulk price: ${price} (normal ${base_price})\n\n🛒 Tap Buy Now & save ${saving}/unit!",
-        "📢 *Mega Bulk Offer!*\n\n{product}\n🛒 {qty}+ qty → 💵 ${price} each\n❌ Was ${base_price}\n💸 Save ${saving} per unit\n\n🔥 Join the rush — limited bulk stock!",
-        "⚡ *Bulk Sale Spreading!*\n\n👤 {user} ordered {qty}+ of {product}\n🏷️ Only ${price} each (base ${base_price})\n💎 Save ${saving}/unit\n\n🛍️ Don't miss the bulk price!",
-        "💎 *Smart Buyers Know This Deal!*\n\n📦 {product}\n🎯 {qty}+ qty → ${price} each\n❌ Normal: ${base_price}\n💸 Save ${saving}/unit\n\n👤 {user} just stocked up!",
-        "🛒 *Bulk Discount Running!*\n\n{product}\n📊 {qty}+ qty → 💵 ${price} each\n❌ Regular ${base_price} | 💎 Save ${saving}\n\n🔥 Many orders coming in — grab yours!",
-        "🎊 *Big Buy Alert!*\n\n👤 {user} purchased {qty} units of {product}\n💰 Bulk price: ${price} each\n❌ Base: ${base_price}\n💸 Save ${saving}/unit — Buy Now!",
+        "📊 *Bulk Deal Alert!* 🎉\n\n👤 {user} just unlocked bulk prices for {product}!\n\n💵 *Configured bulk tiers:*\n{tiers}\n\n❌ Base price: ${base_price} per unit\n\n🔥 Buy more, save more — tap below!",
+        "🚀 *Bulk Buying is LIVE!*\n\n👤 {user} found better prices for {product}\n\n📊 *Every active bulk tier:*\n{tiers}\n\n💰 Base price: ${base_price} each\n\n🛍️ Grab your bulk deal now!",
+        "🔥 *Hot Bulk Deal!*\n\n📦 {product}\n\n🎯 *Quantity prices:*\n{tiers}\n\n❌ Normal price: ${base_price} each\n\n👤 {user} & many more already buying!",
+        "💥 *Quantity Discount!*\n\n{product}\n\n🛒 *Buy more, pay less:*\n{tiers}\n\n❌ Regular price: ${base_price} each\n\n⚡ Stocks moving fast — order now!",
+        "🎉 *People Are Bulk-Buying!*\n\n📦 {product}\n👤 {user} just unlocked these prices:\n\n{tiers}\n\n💰 Normal price: ${base_price} each\n\n🛒 Tap Buy Now for your tier!",
+        "📢 *Mega Bulk Offer!*\n\n{product}\n\n📊 *All configured tiers:*\n{tiers}\n\n❌ Base price: ${base_price} each\n\n🔥 Join the rush — save more with quantity!",
+        "⚡ *Bulk Sale Spreading!*\n\n👤 {user} is saving on {product}\n\n🏷️ *Bulk prices:*\n{tiers}\n\n💵 Base price: ${base_price} each\n\n🛍️ Don't miss the bulk prices!",
+        "💎 *Smart Buyers Know This Deal!*\n\n📦 {product}\n\n🎯 *Choose your quantity tier:*\n{tiers}\n\n❌ Normal price: ${base_price} each\n\n👤 {user} just stocked up!",
+        "🛒 *Bulk Discount Running!*\n\n{product}\n\n📊 *Quantity price list:*\n{tiers}\n\n❌ Regular price: ${base_price} each\n\n🔥 Many orders coming in — grab yours!",
+        "🎊 *Big Buy Alert!*\n\n👤 {user} is getting bulk prices on {product}\n\n💰 *Available tiers:*\n{tiers}\n\n❌ Base: ${base_price} each\n\n💸 Buy more and save per unit!",
     ],
     # 🆕 v170.14: FREEBIES (fake + real hype) — jab user free product claim kare
     # ya periodic fake. Placeholders: {user}, {product}
@@ -1229,6 +1239,108 @@ def render_template(tpl_id, data: dict):
         return _re.sub(r"\{([A-Za-z_][A-Za-z0-9_]*)(:[^}]*)?\}", _sub, text)
     except Exception:
         return text  # Return unformatted if variable missing
+
+
+def render_bulkdeal_tier_lines(tiers, base_price):
+    """Render every configured bulk tier through its editable line template.
+
+    ``tiers`` is deliberately a data list rather than a pre-selected "best"
+    tier. This keeps manual Save & Broadcast and fake bulk-deal messages on the
+    same complete, quantity-ordered tier block.
+    """
+    try:
+        from utils import fmt_price_precise
+    except Exception:
+        fmt_price_precise = lambda value: f"{float(value):.2f}"  # noqa: E731
+    try:
+        base = float(base_price or 0)
+    except Exception:
+        base = 0.0
+    out = []
+    for tier in sorted((tiers or []), key=lambda item: int(item.get("min_qty") or 0)):
+        try:
+            qty = int(tier.get("min_qty") or 0)
+            price = float(tier.get("unit_price") or 0)
+        except Exception:
+            continue
+        if qty < 1:
+            continue
+        saving = max(0.0, base - price)
+        data = {
+            "qty": str(qty),
+            "price": fmt_price_precise(price),
+            "base_price": fmt_price_precise(base),
+            "saving": fmt_price_precise(saving),
+        }
+        line = render_template("bc_bulkdeal_tier_line", data)
+        if not str(line or "").strip():
+            line = (f"• *{data['qty']}+ qty* → 💵 *${data['price']} each* "
+                    f"_(save ${data['saving']}/unit)_")
+        out.append(str(line).strip())
+    return "\n".join(out)
+
+
+def render_bulkdeal_broadcast(data):
+    """Render the all-tier bulk broadcast with legacy-custom-template safety.
+
+    Older custom ``bc_bulkdeal`` text may still contain only ``{qty}`` and
+    ``{price}``. Until it is edited to use ``{tiers}``, append the complete
+    tier block rather than silently hiding a configured discount tier.
+    """
+    data = dict(data or {})
+    rendered = render_template("bc_bulkdeal", data)
+    tiers = str(data.get("tiers") or "").strip()
+    if not tiers:
+        return rendered
+    try:
+        import re as _re
+        template_text = get_template("bc_bulkdeal")
+        uses_tiers = bool(_re.search(r"\{\s*tiers(?:\s*:[^}]*)?\s*\}",
+                                      str(template_text or ""), _re.I))
+    except Exception:
+        uses_tiers = "{tiers}" in str(get_template("bc_bulkdeal") or "").lower()
+    if not uses_tiers and tiers not in str(rendered or ""):
+        rendered = (f"{str(rendered or '').rstrip()}\n\n"
+                    f"📊 *Configured bulk tiers:*\n{tiers}")
+    return rendered
+
+
+def render_bulkdeal_message_for_tiers(user, product, tiers, base_price):
+    """Return an all-tier bulk-deal message for any broadcast path.
+
+    The scalar tier fields remain available for older user-customized text;
+    modern templates use the generated ``{tiers}`` block.
+    """
+    try:
+        from utils import fmt_price_precise
+    except Exception:
+        fmt_price_precise = lambda value: f"{float(value):.2f}"  # noqa: E731
+    try:
+        base = float(base_price or 0)
+    except Exception:
+        base = 0.0
+    tier_rows = list(tiers or [])
+    tier_text = render_bulkdeal_tier_lines(tier_rows, base)
+    if not tier_text:
+        return ""
+    try:
+        legacy = min(tier_rows, key=lambda row: float(row.get("unit_price") or 0))
+        legacy_qty = int(legacy.get("min_qty") or 0)
+        legacy_price = float(legacy.get("unit_price") or 0)
+    except Exception:
+        legacy_qty, legacy_price = 0, base
+    data = {
+        "user": str(user or "customer"),
+        "product": str(product or "Product"),
+        "tiers": tier_text,
+        "tier_count": str(len(tier_rows)),
+        "base_price": fmt_price_precise(base),
+        # Compatibility for text saved before {tiers} existed.
+        "qty": str(legacy_qty),
+        "price": fmt_price_precise(legacy_price),
+        "saving": fmt_price_precise(max(0.0, base - legacy_price)),
+    }
+    return render_bulkdeal_broadcast(data)
 
 
 def get_review_sentences(language):
@@ -1768,7 +1880,8 @@ async def tpl_preview_callback(update, context):
             f"_Bot picks 1-2 random sentences from your pool each time_"
         )
     else:
-        rendered = render_template(tpl_id, tpl["sample"])
+        rendered = (render_bulkdeal_broadcast(tpl["sample"])
+                    if tpl_id == "bc_bulkdeal" else render_template(tpl_id, tpl["sample"]))
         # 🆕 If template was saved with custom/premium emojis ([[HTML]] sentinel),
         # send a separate HTML-formatted preview message so emojis render natively.
         if isinstance(rendered, str) and rendered.startswith("[[HTML]]"):
@@ -1850,7 +1963,8 @@ def _render_sample_for_test(tpl_id):
         flag = "🇵🇰" if "urdu" in tpl_id else "🌍"
         return f"🗣 {flag} Ahmed ⭐⭐⭐⭐⭐\n{picked}"
     if tpl:
-        return render_template(tpl_id, tpl.get("sample", {}))
+        data = tpl.get("sample", {})
+        return render_bulkdeal_broadcast(data) if tpl_id == "bc_bulkdeal" else render_template(tpl_id, data)
     return None
 
 
