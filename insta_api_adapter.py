@@ -223,12 +223,30 @@ class InstaAPIAdapter(_StandaloneBase):
             except Exception:
                 stock_val = 0
 
+            # Preserve explicit upstream catalog activity for lifecycle sync.
+            # No flag means active; stock=0 remains a restockable stock state.
+            source_active = True
+            for _state_key in ("is_active", "active", "enabled", "available"):
+                if _state_key not in p or p.get(_state_key) is None:
+                    continue
+                _state_val = p.get(_state_key)
+                if isinstance(_state_val, str):
+                    source_active = _state_val.strip().lower() not in (
+                        "0", "false", "off", "inactive", "disabled", "deleted", "removed", "unavailable")
+                else:
+                    source_active = bool(_state_val)
+                break
+            _status = str(p.get("status") or p.get("state") or "").strip().lower()
+            if _status in ("inactive", "disabled", "deleted", "removed", "unavailable"):
+                source_active = False
+
             out.append({
                 "remote_id": str(p.get("id")),
                 "name": display_name,          # plain "✨ ChatGPT Go 3 months"
                 "description": desc_en,
                 "cost_usd": cost,
                 "stock": stock_val,
+                "source_active": source_active,
                 # 🆕 v90: normalize emoji fields so the sync loop can save
                 # them into ext_products.emoji_char / emoji_id columns —
                 # mirror_ext_to_products() then reconstructs the [[HTML]]

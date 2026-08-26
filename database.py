@@ -4,6 +4,7 @@
 
 import os
 import sqlite3
+import logging
 
 
 def _points_float(value):
@@ -149,6 +150,12 @@ _PRODUCT_COLUMNS = [
     ("is_flash_sale", "INTEGER DEFAULT 0"),
     ("flash_price", "REAL DEFAULT 0.0"),
     ("flash_until", "TEXT DEFAULT ''"),
+    # v170.61: flash price is stored as a ratio to the normal selling price so
+    # supplier/manual base-price changes can keep the same sale percentage.
+    ("flash_price_ratio", "REAL DEFAULT 0"),
+    # v170.61: supplier Unsync is externally delete-like but internally
+    # reversible: archived products keep their IDs/settings for safe re-sync.
+    ("is_archived", "INTEGER DEFAULT 0"),
     ("delivery_mode", "TEXT DEFAULT 'auto'"),
     ("req_account_type", "TEXT DEFAULT 'none'"),
     ("req_password", "INTEGER DEFAULT 0"),
@@ -221,7 +228,7 @@ def ensure_supplier_retry_columns(c):
 
 
 # ── Deployment reset policy ────────────────────────────────────────────────
-# Owner policy (v170.60): every *new hosted deployment* starts with an empty
+# Owner policy (v170.61): every *new hosted deployment* starts with an empty
 # database. A manually restored Ready DB is intentionally kept across restarts
 # of that same deployment, but is discarded at the next deployment.
 #
@@ -230,7 +237,7 @@ def ensure_supplier_retry_columns(c):
 # Railway provides RAILWAY_DEPLOYMENT_ID; Render/Git deploys provide one of the
 # Render/Git identifiers below. The release fallback covers hosts that expose a
 # platform marker but no per-deployment ID. Bump _RELEASE_VERSION each release.
-_RELEASE_VERSION = "v170.60"
+_RELEASE_VERSION = "v170.61"
 _DEPLOYMENT_ID_ENV_KEYS = (
     "RAILWAY_DEPLOYMENT_ID",
     "RAILWAY_GIT_COMMIT_SHA",
@@ -496,6 +503,7 @@ def setup_database():
         ("setup_support_tables", setup_support_tables),
         ("_migrate_v37", _migrate_v37),
         ("_migrate_flash_sales", _migrate_flash_sales),
+        ("ensure_tier_discount_table", ensure_tier_discount_table),
         ("setup_api_tables", setup_api_tables),  # 🔧 BUGFIX v46: api_keys/external_apis tables
     ):
         try:
@@ -1305,9 +1313,27 @@ def get_all_categories():
     return get_categories()
 
 def delete_category(cid):
+    """Deactivate a category and make linked mirror deactivation durable.
+
+    A supplier mirror refresh may otherwise set its local row active again after
+    this category-level owner action.  Route every affected product through the
+    same owner-state helper after the short category transaction, so local,
+    source-backed, and reseller catalogs remain aligned.
+    """
     conn = get_connection(); c = conn.cursor()
-    c.execute("UPDATE categories SET is_active=0 WHERE id=?", (cid,))
-    c.execute("UPDATE products SET is_active=0 WHERE category_id=?", (cid,)); conn.commit(); conn.close()
+    try:
+        c.execute("SELECT id FROM products WHERE category_id=?", (int(cid),))
+        product_ids = [int(r[0]) for r in c.fetchall()]
+        c.execute("UPDATE categories SET is_active=0 WHERE id=?", (cid,))
+        c.execute("UPDATE products SET is_active=0 WHERE category_id=?", (cid,))
+        conn.commit()
+    finally:
+        conn.close()
+    for pid in product_ids:
+        try:
+            set_product_active(pid, False)
+        except Exception:
+            pass
 
 
 # ── Products ──
@@ -1399,8 +1425,10 @@ def get_products_by_category(cid):
     conn = get_connection(); c = conn.cursor()
     ensure_column(c, "products", "fake_sold", "INTEGER DEFAULT 0")
     ensure_column(c, "products", "real_sold", "INTEGER DEFAULT 0")
+    ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
     c.execute("""SELECT * FROM products
                  WHERE category_id=? AND is_active=1 AND COALESCE(is_hidden, 0)=0
+                   AND COALESCE(is_archived, 0)=0
                  ORDER BY CASE WHEN COALESCE(stock,0)>0 THEN 1 ELSE 0 END DESC,
                           COALESCE(real_sold,0) DESC,
                           (COALESCE(price,0)-COALESCE(cost_price,0)) DESC,
@@ -1414,9 +1442,11 @@ def get_all_active_products():
     conn = get_connection(); c = conn.cursor()
     ensure_column(c, "products", "fake_sold", "INTEGER DEFAULT 0")
     ensure_column(c, "products", "real_sold", "INTEGER DEFAULT 0")
+    ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
     c.execute("""SELECT p.*, c.name as category_name, c.emoji as category_emoji
                  FROM products p LEFT JOIN categories c ON p.category_id=c.id
                  WHERE p.is_active=1 AND COALESCE(p.is_hidden, 0)=0
+                   AND COALESCE(p.is_archived, 0)=0
                  ORDER BY CASE WHEN COALESCE(p.stock,0)>0 THEN 1 ELSE 0 END DESC,
                           COALESCE(p.real_sold,0) DESC,
                           (COALESCE(p.price,0)-COALESCE(p.cost_price,0)) DESC,
@@ -1427,6 +1457,71 @@ def get_all_active_products():
 def get_product(pid):
     conn = get_connection(); c = conn.cursor()
     c.execute("SELECT * FROM products WHERE id=?", (pid,)); r = c.fetchone(); conn.close(); return r
+
+
+def product_is_catalog_available(product):
+    """Whether a product may still be presented/purchased right now.
+
+    This is deliberately a live guard rather than relying on an old Telegram
+    callback or an already-rendered catalog card.  Normal local products only
+    need their local state.  Imported catalog items additionally honour the
+    linked catalog row and its provider-enabled state when those tables exist.
+    """
+    try:
+        d = dict(product) if product else {}
+        if not d or not int(d.get("is_active", 1) or 0):
+            return False
+        if int(d.get("is_hidden", 0) or 0) or int(d.get("is_archived", 0) or 0):
+            return False
+        ext_id = int(d.get("ext_product_id", 0) or 0)
+        if not ext_id:
+            return True
+        conn = get_connection(); c = conn.cursor()
+        try:
+            # Existing owner databases can be older than the external-catalog
+            # feature; do not turn a healthy legacy local product into an
+            # error solely because optional link tables have not been migrated.
+            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ext_products'")
+            if not c.fetchone():
+                return True
+            c.execute("PRAGMA table_info(ext_products)")
+            ep_cols = {r[1] for r in c.fetchall()}
+            c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='ext_suppliers'")
+            has_suppliers = bool(c.fetchone())
+            select = ["ep.active"]
+            for col in ("owner_active", "source_active", "synced_to_shop"):
+                if col in ep_cols:
+                    select.append("ep." + col)
+            join = ""
+            if has_suppliers:
+                select.append("COALESCE(es.enabled,1) AS supplier_enabled")
+                join = " LEFT JOIN ext_suppliers es ON es.id=ep.supplier_id"
+            c.execute("SELECT " + ", ".join(select) + " FROM ext_products ep" + join + " WHERE ep.id=?", (ext_id,))
+            row = c.fetchone()
+            if not row:
+                return False
+            linked = dict(row)
+            if not int(linked.get("active", 1) or 0):
+                return False
+            if "owner_active" in linked and not int(linked.get("owner_active", 1) or 0):
+                return False
+            if "source_active" in linked and not int(linked.get("source_active", 1) or 0):
+                return False
+            if "synced_to_shop" in linked and not int(linked.get("synced_to_shop", 0) or 0):
+                return False
+            if "supplier_enabled" in linked and not int(linked.get("supplier_enabled", 1) or 0):
+                return False
+            return True
+        finally:
+            conn.close()
+    except Exception:
+        # Fail closed for a linked imported item.  This prevents a stale
+        # callback from buying something whose availability can no longer be
+        # verified.  Local products remain governed by their local state.
+        try:
+            return not bool(int(dict(product).get("ext_product_id", 0) or 0))
+        except Exception:
+            return False
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1475,31 +1570,144 @@ def decrease_stock(pid):
     c.execute("UPDATE products SET stock=stock-1 WHERE id=? AND stock>0", (pid,)); conn.commit(); conn.close()
 
 def delete_product(pid):
-    conn = get_connection(); c = conn.cursor()
-    c.execute("UPDATE products SET is_active=0 WHERE id=?", (pid,)); conn.commit(); conn.close()
+    """Legacy soft-delete alias, now preserving imported-product owner intent."""
+    return set_product_active(pid, False)
 
 
+
+
+def _refund_unsubmitted_paid_orders_for_deleted_product(c, pid):
+    """Atomically refund paid, not-yet-submitted orders during a hard delete.
+
+    A hard delete can race with the short gap after payment confirmation and
+    before the supplier router claims/submits the order.  Leaving that paid
+    order with a NULL product_id would strand customer funds.  Use the same
+    idempotency event namespace as the supplier router so a concurrent retry
+    can never credit the wallet twice.
+    """
+    try:
+        from utils import points_from_usd
+        ensure_points_ledger_table(c)
+        c.execute("""SELECT id, user_id, price FROM orders
+                     WHERE product_id=? AND status='paid'""", (int(pid),))
+        rows = c.fetchall()
+    except Exception:
+        return 0
+
+    refunded = 0
+    for row in rows:
+        try:
+            oid = int(row['id'])
+            uid = int(row['user_id'])
+            amount = points_from_usd(float(row['price'] or 0))
+            event_id = f"supplier_refund_{oid}"
+            c.execute("SELECT 1 FROM points_ledger WHERE event_id=? LIMIT 1", (event_id,))
+            already_credited = bool(c.fetchone())
+            if not already_credited:
+                c.execute("SELECT COALESCE(points,0) FROM users WHERE user_id=?", (uid,))
+                user = c.fetchone()
+                before = _points_float(user[0]) if user else 0.0
+                after = before + _points_float(amount)
+                if user:
+                    c.execute("UPDATE users SET points=? WHERE user_id=?", (after, uid))
+                else:
+                    c.execute("""INSERT INTO users
+                                 (user_id, username, first_name, wallet_balance, points)
+                                 VALUES (?, '', '', 0.0, ?)""", (uid, after))
+                c.execute("""INSERT INTO points_ledger
+                             (user_id, amount, balance_before, balance_after,
+                              tx_type, description, event_id, order_id)
+                             VALUES (?, ?, ?, ?, 'refund', ?, ?, ?)""",
+                          (uid, _points_float(amount), before, after,
+                           'Product removed before fulfillment', event_id, oid))
+            # The row was paid but was not claimed/submitted. Mark it even if a
+            # prior crash wrote the ledger event first; conditional status keeps
+            # terminal/in-flight rows untouched.
+            c.execute("UPDATE orders SET status='refunded' WHERE id=? AND status='paid'", (oid,))
+            refunded += max(0, int(c.rowcount or 0))
+        except Exception:
+            # One malformed historical row must not block deletion/refunds for
+            # other orders; the surrounding transaction still rolls back on a
+            # genuine SQLite failure.
+            continue
+    return refunded
 
 
 def delete_product_permanently(pid):
-    """Hard-delete product row + related config while preserving order history.
+    """Hard-delete a product while preserving paid-order safety/history.
 
-    Historical product_name/price/status remain on each order. The now-deleted
-    product relation is set to NULL first, keeping SQLite FK validation clean.
+    Normal rows are physically removed and historical order snapshots are
+    unlinked.  A supplier order already in ``supplier_processing`` is different:
+    upstream fulfillment may have begun, so deleting its backing row would make
+    it impossible to finish safely.  That row is instead archived/unsynced
+    immediately (therefore absent from native and reseller catalogs) until the
+    in-flight order reaches a terminal state.
     """
     pid = int(pid)
     conn = get_connection(); c = conn.cursor()
-    stats = {"products": 0, "accounts": 0, "orders_unlinked": 0}
+    stats = {"products": 0, "accounts": 0, "orders_unlinked": 0,
+             "refunded_orders": 0, "deferred_inflight": 0}
     try:
         c.execute("BEGIN IMMEDIATE")
+        ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
+        # Capture whether this is a linked supplier mirror before any links are
+        # changed. A normal own product has no supplier-processing lifecycle.
+        c.execute("SELECT COALESCE(ext_product_id,0) AS ext_product_id FROM products WHERE id=?", (pid,))
+        prod = c.fetchone()
+        if not prod:
+            conn.rollback(); conn.close(); return stats
+        is_supplier_mirror = bool(int(prod['ext_product_id'] or 0))
+
+        # A paid row has not yet crossed the router's supplier_processing claim
+        # boundary, so it is safe and mandatory to refund it now.
+        stats["refunded_orders"] = _refund_unsubmitted_paid_orders_for_deleted_product(c, pid)
+
+        # Existing supplier_processing means another worker may already be in
+        # an upstream API call. Preserve that one row/configuration, but make
+        # the product externally disappear now. Legacy processing rows are
+        # conservatively treated as submitted because their exact old boundary
+        # cannot be reconstructed without risking a duplicate upstream order.
+        in_flight = False
+        if is_supplier_mirror:
+            c.execute("""SELECT 1 FROM orders
+                         WHERE product_id=? AND status='supplier_processing'
+                         LIMIT 1""", (pid,))
+            in_flight = bool(c.fetchone())
+        if in_flight:
+            c.execute("UPDATE products SET is_active=0, is_archived=1 WHERE id=?", (pid,))
+            stats["deferred_inflight"] = max(0, int(c.rowcount or 0))
+            # Prevent future automatic source sync or a later Bulk Sync from
+            # re-publishing this deferred hard-delete tombstone. The live
+            # router already owns its claim and can finish using the retained
+            # row/link; it is not a reversible Bulk Unsync row.
+            try:
+                c.execute("""UPDATE ext_products
+                             SET synced_to_shop=0, bulk_unsynced=0
+                             WHERE shop_product_id=?""", (pid,))
+            except Exception:
+                try:
+                    # Older optional ext_products schemas may not yet have the
+                    # additive marker; the core catalog-safety flag still wins.
+                    c.execute("UPDATE ext_products SET synced_to_shop=0 WHERE shop_product_id=?", (pid,))
+                except Exception:
+                    pass
+            conn.commit(); conn.close(); return stats
+
         # Preserve immutable order snapshots but remove the FK before deleting.
         c.execute("UPDATE orders SET product_id=NULL WHERE product_id=?", (pid,))
         stats["orders_unlinked"] = max(0, int(c.rowcount or 0))
-        # Break supplier mirror link if any.
+        # Break supplier mirror link if any. A future explicit re-sync can
+        # retain/recreate deliberately, but stale automatic sync cannot revive
+        # a hard-deleted catalog item.
         try:
-            c.execute("UPDATE ext_products SET shop_product_id=0, synced_to_shop=0 WHERE shop_product_id=?", (pid,))
+            c.execute("""UPDATE ext_products
+                         SET shop_product_id=0, synced_to_shop=0, bulk_unsynced=0
+                         WHERE shop_product_id=?""", (pid,))
         except Exception:
-            pass
+            try:
+                c.execute("UPDATE ext_products SET shop_product_id=0, synced_to_shop=0 WHERE shop_product_id=?", (pid,))
+            except Exception:
+                pass
         # Product account pool.
         try:
             ensure_product_accounts_table(c)
@@ -1524,11 +1732,79 @@ def delete_product_permanently(pid):
         raise
 
 def set_product_active(pid, active=True):
-    """Activate/deactivate a product without deleting DB data."""
+    """Activate/deactivate a product without deleting DB data.
+
+    For a linked imported catalog item this is an *owner* decision, not a
+    transient local override: update owner_active as well, so the next source
+    refresh cannot silently re-publish an owner-disabled item.  Re-enabling
+    still respects a source/provider that remains unavailable.
+    """
+    pid = int(pid)
+    wanted = 1 if active else 0
+    ext_id = 0
     conn = get_connection(); c = conn.cursor()
-    ensure_column(c, "products", "is_active", "INTEGER DEFAULT 1")
-    c.execute("UPDATE products SET is_active=? WHERE id=?", (1 if active else 0, int(pid)))
-    conn.commit(); conn.close()
+    try:
+        ensure_column(c, "products", "is_active", "INTEGER DEFAULT 1")
+        try:
+            ensure_column(c, "products", "ext_product_id", "INTEGER DEFAULT 0")
+            c.execute("SELECT COALESCE(ext_product_id,0) FROM products WHERE id=?", (pid,))
+            row = c.fetchone()
+            ext_id = int(row[0] or 0) if row else 0
+        except Exception:
+            ext_id = 0
+        c.execute("UPDATE products SET is_active=? WHERE id=?", (wanted, pid))
+        changed = c.rowcount > 0
+        conn.commit()
+    finally:
+        conn.close()
+
+    if ext_id:
+        try:
+            # update_ext_product recomputes effective active and mirrors it,
+            # retaining the same shop row/configuration in both directions.
+            from ext_suppliers import update_ext_product
+            update_ext_product(ext_id, owner_active=wanted)
+        except Exception:
+            # Local state is already safe/hidden; a later sync retries the
+            # durable source-side owner flag instead of exposing the product.
+            pass
+    return changed
+
+
+def archive_supplier_mirror_product(pid):
+    """Make a supplier mirror externally delete-like without deleting its data.
+
+    The row remains only for a later explicit re-sync. Normal customer lists,
+    admin Edit Items and the Reseller API all exclude archived rows, while the
+    product ID, tiers, reseller pricing and related settings stay intact.
+    """
+    try:
+        conn = get_connection(); c = conn.cursor()
+        ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
+        c.execute("UPDATE products SET is_archived=1, is_active=0 WHERE id=?", (int(pid),))
+        changed = c.rowcount > 0
+        conn.commit(); conn.close()
+        return changed
+    except Exception:
+        try: conn.close()
+        except Exception: pass
+        return False
+
+
+def restore_supplier_mirror_product(pid, active=True):
+    """Restore a previously archived supplier mirror using its original ID."""
+    try:
+        conn = get_connection(); c = conn.cursor()
+        ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
+        c.execute("UPDATE products SET is_archived=0, is_active=? WHERE id=?",
+                  (1 if active else 0, int(pid)))
+        changed = c.rowcount > 0
+        conn.commit(); conn.close()
+        return changed
+    except Exception:
+        try: conn.close()
+        except Exception: pass
+        return False
 
 
 # ════════════════════════════════════════════════════════════════
@@ -1613,9 +1889,11 @@ def get_products_filtered(filter_mode="all"):
     """
     _ensure_is_hidden_column()
     conn = get_connection(); c = conn.cursor()
+    ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
     base = ("SELECT p.*, cat.name as category_name, cat.emoji as category_emoji "
             "FROM products p LEFT JOIN categories cat ON p.category_id=cat.id "
-            "WHERE p.is_active=1 AND COALESCE(p.is_hidden, 0)=0")
+            "WHERE p.is_active=1 AND COALESCE(p.is_hidden, 0)=0 "
+            "AND COALESCE(p.is_archived, 0)=0")
     # 🆕 v170.16: freebie products (freebies.enabled=1) shop list me NAHI aate
     # — wo sirf 🎁 Freebies menu se claim hote hain.
     try:
@@ -1640,24 +1918,28 @@ try:
 except Exception as _e:
     print(f"⚠️ v59 is_hidden column migration failed: {_e}")
 
-def get_all_products(include_hidden=False, include_inactive=False):
+def get_all_products(include_hidden=False, include_inactive=False, include_archived=False):
     """Return products for admin/user lists.
 
-    Default stays user-safe: active + not hidden only.
-    Admin product manager can pass include_hidden=True, include_inactive=True so
-    restored DBs show deactivated products too and admin can reactivate them.
+    Default stays user-safe: active + not hidden + not archived. Supplier
+    Unsync uses an internal archive so it disappears exactly like deletion from
+    Shop, Admin Edit Items and the Reseller API while keeping its stable ID and
+    per-product settings for a later re-sync.
     """
     try:
         _ensure_is_hidden_column()
     except Exception:
         pass
     conn = get_connection(); c = conn.cursor()
+    ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
     base = "SELECT p.*, c.name as category_name, c.emoji as category_emoji FROM products p LEFT JOIN categories c ON p.category_id=c.id"
     where = []
     if not include_inactive:
         where.append("p.is_active=1")
     if not include_hidden:
         where.append("COALESCE(p.is_hidden, 0)=0")
+    if not include_archived:
+        where.append("COALESCE(p.is_archived, 0)=0")
     if where:
         base += " WHERE " + " AND ".join(where)
     base += " ORDER BY COALESCE(p.is_active,1) DESC, p.id DESC"
@@ -2026,7 +2308,7 @@ def build_delivery_detailed(pid, order_id, qty=1, buyer_uid=None):
       text:      rendered delivery text (or DELIVERY_OOS_TEXT when nothing)
       delivered: number of accounts actually consumed
       requested: qty requested
-      mode:      'static' (admin delivery_text) | 'accounts' | 'none'
+      mode:      'static' (admin delivery_text) | 'static_file' | 'accounts' | 'none'
 
     🔧 AUDIT-FIX C1/C2: previously callers got only a string and blindly marked
     the order 'delivered' even when it contained the out-of-stock message or a
@@ -2049,6 +2331,20 @@ def build_delivery_detailed(pid, order_id, qty=1, buyer_uid=None):
                 template_id = int(pd.get('delivery_template', 1) or 1)
             except Exception:
                 template_id = 1
+
+        if p and str(pd.get('delivery_file_id') or '').strip():
+            # A stored Telegram file is reusable just like static text. Native
+            # fulfillment sends the actual media through its dedicated path;
+            # this structured result lets other callers distinguish the file
+            # from a zero-stock account pool instead of falsely reporting OOS.
+            body = str(pd.get('delivery_caption') or pd.get('delivery_text') or '').strip()
+            if qty > 1 and body:
+                body = f"📦 Bulk Order × {qty}\n\n{body}"
+            return {"ok": True, "text": body,
+                    "delivered": qty, "requested": qty, "mode": "static_file",
+                    "file_id": str(pd.get('delivery_file_id') or ''),
+                    "file_name": str(pd.get('delivery_file_name') or ''),
+                    "file_type": str(pd.get('delivery_file_type') or '')}
 
         if p and has_static_text_delivery(p):
             # Static delivery text is reusable and therefore unlimited.  Do NOT
@@ -2812,9 +3108,11 @@ def get_products_grouped_by_category():
     except Exception:
         pass
     conn = get_connection(); c = conn.cursor()
+    ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
     c.execute("""SELECT p.*, c.name as cat_name, c.emoji as cat_emoji
                  FROM products p LEFT JOIN categories c ON p.category_id=c.id
                  WHERE p.is_active=1 AND COALESCE(p.is_hidden, 0)=0
+                   AND COALESCE(p.is_archived, 0)=0
                  ORDER BY c.id, p.id DESC""")
     rows = c.fetchall(); conn.close()
     grouped = {}
@@ -5069,8 +5367,14 @@ def get_and_clear_stock_alerts(pid):
 
 def get_flash_sale_products():
     conn = get_connection(); c = conn.cursor()
-    c.execute("SELECT p.*, c.name as category_name, c.emoji as category_emoji FROM products p LEFT JOIN categories c ON p.category_id=c.id WHERE p.is_active=1 AND p.is_flash_sale=1 ORDER BY p.id DESC")
-    r = c.fetchall(); conn.close(); return r
+    ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
+    c.execute("""SELECT p.*, c.name as category_name, c.emoji as category_emoji
+                 FROM products p LEFT JOIN categories c ON p.category_id=c.id
+                 WHERE p.is_active=1 AND p.is_flash_sale=1
+                   AND COALESCE(p.is_archived,0)=0
+                 ORDER BY p.id DESC""")
+    rows = c.fetchall(); conn.close()
+    return [r for r in rows if is_flash_sale_active(r)]
 
 
 def expire_old_flash_sales():
@@ -6768,26 +7072,207 @@ def get_poll_results(poll_id):
 
 
 
+def _price_round(value):
+    """Keep sub-cent supplier prices safe while avoiding floating-point noise."""
+    try:
+        return round(max(0.0, float(value or 0)), 4)
+    except Exception:
+        return 0.0
+
+
+def is_flash_sale_active(product, now=None):
+    """True only while a Flash Sale has a positive price and has not expired.
+
+    This is intentionally checked at read/checkout time too, so a sale cannot
+    continue in the API during the small gap before the scheduled expiry job.
+    """
+    try:
+        d = dict(product or {})
+        if int(d.get("is_flash_sale") or 0) != 1:
+            return False
+        if float(d.get("flash_price") or 0) <= 0:
+            return False
+        until = str(d.get("flash_until") or "").strip()
+        if until:
+            from datetime import datetime
+            now = now or datetime.now()
+            if now >= datetime.strptime(until, "%Y-%m-%d %H:%M:%S"):
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def flash_sale_ratio(product):
+    """Return the saved Flash-to-normal-price ratio, with safe legacy fallback."""
+    try:
+        d = dict(product or {})
+        ratio = float(d.get("flash_price_ratio") or 0)
+        if ratio > 0:
+            return ratio
+        base = float(d.get("price") or 0)
+        sale = float(d.get("flash_price") or 0)
+        return (sale / base) if base > 0 and sale > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
+def bulk_discount_ratio(product):
+    """Current ordinary percentage-campaign ratio (1.0 when inactive/expired)."""
+    try:
+        d = dict(product or {})
+        pct = float(d.get("discount_pct") or 0)
+        if pct <= 0:
+            return 1.0
+        until = str(d.get("discount_until") or "").strip()
+        if until:
+            from datetime import datetime
+            if datetime.utcnow() > datetime.strptime(until, "%Y-%m-%d %H:%M:%S"):
+                return 1.0
+        return max(0.0, 1.0 - pct / 100.0)
+    except Exception:
+        return 1.0
+
+
+def set_product_flash_price(pid, flash_price):
+    """Enable/update Flash Sale and snapshot its relative discount ratio."""
+    try:
+        sale = float(flash_price)
+        if sale <= 0:
+            return False
+        conn = get_connection(); c = conn.cursor()
+        ensure_column(c, "products", "flash_price_ratio", "REAL DEFAULT 0")
+        c.execute("SELECT price FROM products WHERE id=?", (int(pid),))
+        row = c.fetchone()
+        base = float((row["price"] if row else 0) or 0)
+        if base <= 0:
+            conn.close(); return False
+        ratio = sale / base
+        c.execute("""UPDATE products
+                     SET is_flash_sale=1, flash_price=?, flash_price_ratio=?
+                     WHERE id=?""", (_price_round(sale), ratio, int(pid)))
+        ok = c.rowcount > 0
+        conn.commit(); conn.close()
+        return ok
+    except Exception:
+        try: conn.close()
+        except Exception: pass
+        return False
+
+
+def reprice_product_dynamic_rules(product_id, old_base_price=None, new_base_price=None):
+    """Keep saved tier/Flash prices proportional whenever normal price changes.
+
+    Ratios are the source of truth. Existing legacy tiers/Flash sales get a
+    one-time ratio inferred from ``old_base_price`` (or the current base when
+    none is provided), then stored values are refreshed for admin screens,
+    broadcasts and backups. API pricing can also use the ratio per reseller key.
+    """
+    try:
+        pid = int(product_id)
+        ensure_tier_discount_table()
+        conn = get_connection(); c = conn.cursor()
+        ensure_column(c, "products", "flash_price_ratio", "REAL DEFAULT 0")
+        c.execute("SELECT price, flash_price, is_flash_sale FROM products WHERE id=?", (pid,))
+        product = c.fetchone()
+        if not product:
+            conn.close(); return False
+        new_base = float(new_base_price if new_base_price is not None else product["price"] or 0)
+        old_base = float(old_base_price if old_base_price is not None else new_base or 0)
+        if old_base <= 0:
+            old_base = new_base
+
+        # At a genuine base-price move, the old stored dollar values are the
+        # authoritative snapshot: derive every ratio from *old* base before
+        # writing any new dollar values. This also repairs legacy zero ratios.
+        changed_base = abs(new_base - old_base) > 0.0000001
+        tier_where = "product_id=?" if changed_base else "product_id=? AND COALESCE(price_ratio,0)<=0"
+        c.execute(f"""UPDATE product_tier_discounts
+                     SET price_ratio=CASE WHEN ? > 0 THEN unit_price / ? ELSE 0 END
+                     WHERE {tier_where}""", (old_base, old_base, pid))
+        if int(product["is_flash_sale"] or 0) and float(product["flash_price"] or 0) > 0:
+            flash_where = "id=?" if changed_base else "id=? AND COALESCE(flash_price_ratio,0)<=0"
+            c.execute(f"""UPDATE products
+                         SET flash_price_ratio=CASE WHEN ? > 0 THEN flash_price / ? ELSE 0 END
+                         WHERE {flash_where}""", (old_base, old_base, pid))
+
+        if new_base > 0:
+            c.execute("""UPDATE product_tier_discounts
+                         SET unit_price=ROUND(? * price_ratio, 4)
+                         WHERE product_id=? AND COALESCE(price_ratio,0)>0""",
+                      (new_base, pid))
+            c.execute("""UPDATE products
+                         SET flash_price=ROUND(? * flash_price_ratio, 4)
+                         WHERE id=? AND is_flash_sale=1
+                           AND COALESCE(flash_price_ratio,0)>0""",
+                      (new_base, pid))
+        conn.commit(); conn.close()
+        return True
+    except Exception:
+        try: conn.close()
+        except Exception: pass
+        return False
+
+
+def update_product_base_price(product_id, new_price, *, cost_price=None, stock=None,
+                              is_active=None, is_archived=None):
+    """Set a normal price and preserve configured Flash/tier percentages.
+
+    This is the only path supplier refreshes and owner price editors should use
+    for a base-price change. Optional mirror fields keep supplier updates in one
+    short transaction; promotion repricing follows immediately afterwards.
+    """
+    try:
+        pid = int(product_id); price = float(new_price)
+        if price < 0:
+            return False
+        conn = get_connection(); c = conn.cursor()
+        ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
+        c.execute("SELECT price FROM products WHERE id=?", (pid,))
+        row = c.fetchone()
+        if not row:
+            conn.close(); return False
+        old_price = float(row["price"] or 0)
+        fields, values = ["price=?"], [price]
+        if cost_price is not None:
+            fields.append("cost_price=?"); values.append(float(cost_price))
+        if stock is not None:
+            fields.append("stock=?"); values.append(int(stock))
+        if is_active is not None:
+            fields.append("is_active=?"); values.append(1 if is_active else 0)
+        if is_archived is not None:
+            fields.append("is_archived=?"); values.append(1 if is_archived else 0)
+        values.append(pid)
+        c.execute(f"UPDATE products SET {', '.join(fields)} WHERE id=?", values)
+        changed = c.rowcount > 0
+        conn.commit(); conn.close()
+        if changed:
+            reprice_product_dynamic_rules(pid, old_price, price)
+        return changed
+    except Exception:
+        try: conn.close()
+        except Exception: pass
+        return False
+
+
 def get_discounted_price(product):
-    """🐛 v157 (Bulk Discount): returns (price, orig_price, discount_pct).
-    Discount applies when discount_pct > 0 and (no expiry OR expiry in future).
-    Flash-sale price wins over discount (flash is already the best price)."""
+    """Return ``(effective, normal, ordinary_pct)`` for native checkout.
+
+    Flash Sale has owner-confirmed priority over all quantity tiers and normal
+    percentage campaigns. Its ratio keeps the same sale percentage after any
+    normal selling-price update or supplier auto-price update.
+    """
     try:
         d = dict(product)
-        if int(d.get("is_flash_sale") or 0) and float(d.get("flash_price") or 0) > 0:
-            return float(d.get("flash_price") or 0), float(d.get("price") or 0), 0
         orig = float(d.get("price") or 0)
-        pct = float(d.get("discount_pct") or 0)
-        if pct > 0:
-            until = str(d.get("discount_until") or "").strip()
-            if until:
-                try:
-                    from datetime import datetime
-                    if datetime.utcnow() > datetime.strptime(until, "%Y-%m-%d %H:%M:%S"):
-                        return orig, orig, 0  # expired
-                except Exception:
-                    pass
-            return round(orig * (1 - pct / 100.0), 4), orig, pct
+        if is_flash_sale_active(d):
+            ratio = flash_sale_ratio(d)
+            sale = _price_round(orig * ratio) if ratio > 0 else float(d.get("flash_price") or 0)
+            return sale, orig, 0
+        ratio = bulk_discount_ratio(d)
+        if ratio < 1.0:
+            pct = float(d.get("discount_pct") or 0)
+            return _price_round(orig * ratio), orig, pct
         return orig, orig, 0
     except Exception:
         return float((dict(product).get("price") if product else 0) or 0), 0, 0
@@ -6875,42 +7360,120 @@ def ensure_tier_discount_table(c=None):
                 product_id  INTEGER NOT NULL,
                 min_qty     INTEGER NOT NULL,
                 unit_price  REAL NOT NULL,
+                -- v170.61: ratio to normal base price; follows base-price moves.
+                price_ratio REAL DEFAULT 0,
                 created_at  TEXT DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(product_id, min_qty)
             )
         """)
         c.execute("CREATE INDEX IF NOT EXISTS idx_tier_prod ON product_tier_discounts(product_id)")
+        ensure_column(c, "product_tier_discounts", "price_ratio", "REAL DEFAULT 0")
+        # Safe one-time legacy backfill. Rows with a deliberate ratio are never
+        # overwritten, and products with no usable base price simply stay 0.
+        try:
+            c.execute("""UPDATE product_tier_discounts
+                         SET price_ratio=(SELECT CASE WHEN COALESCE(p.price,0)>0
+                                                      THEN product_tier_discounts.unit_price / p.price
+                                                      ELSE 0 END
+                                          FROM products p WHERE p.id=product_tier_discounts.product_id)
+                         WHERE COALESCE(price_ratio,0)<=0""")
+        except Exception:
+            pass
         if own:
             conn.commit(); conn.close()
     except Exception as e:
         logging.getLogger(__name__).debug(f"[TierDiscount] ensure_table: {e}")
 
 
-def get_product_tiers(product_id):
-    """Returns sorted list of {min_qty, unit_price} for a product (asc qty)."""
+def get_product_tiers(product_id, base_price=None):
+    """Return all configured tiers, dynamically proportional to ``base_price``.
+
+    ``base_price`` defaults to the product's normal selling price. Passing a
+    reseller-specific base lets the API expose the same percentage tiers without
+    leaking or depending on the store's retail price.
+    """
     try:
+        pid = int(product_id)
         ensure_tier_discount_table()
         conn = get_connection(); conn.row_factory = DictRow
         c = conn.cursor()
-        c.execute("SELECT min_qty, unit_price FROM product_tier_discounts "
-                  "WHERE product_id=? ORDER BY min_qty ASC", (int(product_id),))
+        c.execute("SELECT min_qty, unit_price, COALESCE(price_ratio,0) AS price_ratio "
+                  "FROM product_tier_discounts WHERE product_id=? ORDER BY min_qty ASC", (pid,))
         rows = [dict(r) for r in c.fetchall()]
+        if base_price is None:
+            c.execute("SELECT price FROM products WHERE id=?", (pid,))
+            p = c.fetchone()
+            base_price = float((p["price"] if p else 0) or 0)
         conn.close()
-        return rows
+        base = float(base_price or 0)
+        out = []
+        for row in rows:
+            ratio = float(row.get("price_ratio") or 0)
+            if ratio <= 0 and base > 0:
+                # Defensive legacy fallback; setup/reprice will persist it.
+                ratio = float(row.get("unit_price") or 0) / base
+            unit = _price_round(base * ratio) if ratio > 0 and base > 0 else float(row.get("unit_price") or 0)
+            out.append({"min_qty": int(row.get("min_qty") or 0),
+                        "unit_price": unit, "price_ratio": ratio})
+        return out
+    except Exception:
+        return []
+
+
+def get_available_product_tiers(product_id, base_price=None, stock=None, flash_active=False):
+    """Configured tiers that can actually be bought with current stock.
+
+    A tier is hidden rather than destroyed when stock drops below its quantity.
+    It automatically reappears after restock. Flash Sale intentionally hides
+    tiers because the owner chose Flash price as the sole active price.
+    """
+    try:
+        if flash_active:
+            return []
+        pid = int(product_id)
+        # Reusable static delivery is semantically unlimited in this bot even
+        # when its legacy stock field is 0 (v170.59 behavior). Finite manual
+        # and mirrored items keep their exact live stock rule.
+        p = get_product(pid) if stock is None or int(stock or 0) <= 0 else None
+        product_d = dict(p) if p else {}
+        if stock is None:
+            stock = int(product_d.get("stock") or 0)
+        available = max(0, int(stock or 0))
+        if available <= 0 and (str(product_d.get("delivery_text") or "").strip()
+                               or str(product_d.get("delivery_file_id") or "").strip()):
+            available = 1000000
+        return [t for t in get_product_tiers(pid, base_price=base_price)
+                if int(t.get("min_qty") or 0) > 1
+                and int(t.get("min_qty") or 0) <= available]
     except Exception:
         return []
 
 
 def set_product_tier(product_id, min_qty, unit_price):
-    """Add/update a tier (qty → unit price)."""
+    """Add/update a tier and persist its ratio to the normal selling price."""
     try:
+        pid = int(product_id); qty = int(min_qty); price = float(unit_price)
+        if qty < 2 or price <= 0:
+            return False
         ensure_tier_discount_table()
         conn = get_connection(); c = conn.cursor()
-        c.execute("INSERT OR REPLACE INTO product_tier_discounts (product_id, min_qty, unit_price) "
-                  "VALUES (?,?,?)", (int(product_id), int(min_qty), float(unit_price)))
+        c.execute("SELECT price FROM products WHERE id=?", (pid,))
+        product = c.fetchone()
+        base = float((product["price"] if product else 0) or 0)
+        if base <= 0:
+            conn.close(); return False
+        ratio = price / base
+        c.execute("""INSERT INTO product_tier_discounts
+                     (product_id, min_qty, unit_price, price_ratio)
+                     VALUES (?,?,?,?)
+                     ON CONFLICT(product_id,min_qty) DO UPDATE SET
+                       unit_price=excluded.unit_price, price_ratio=excluded.price_ratio""",
+                  (pid, qty, _price_round(price), ratio))
         conn.commit(); conn.close()
         return True
     except Exception:
+        try: conn.close()
+        except Exception: pass
         return False
 
 
@@ -6937,14 +7500,21 @@ def clear_product_tiers(product_id):
         return False
 
 
-def tier_price_for_qty(product_id, qty, base_price):
-    """Returns (unit_price, min_qty_applied) for a qty — picks the LARGEST tier
-    whose min_qty <= qty. If none applies, returns (base_price, 1)."""
+def tier_price_for_qty(product_id, qty, base_price, stock=None, flash_active=False):
+    """Return the highest eligible stock-valid tier, else ``base_price``.
+
+    ``base_price`` may be a reseller-specific price. Therefore the stored
+    ratio—not a stale retail dollar value—is used for the final unit price.
+    """
     try:
-        tiers = get_product_tiers(product_id)
+        if flash_active:
+            return float(base_price), 1
+        qty = int(qty or 1)
+        tiers = get_available_product_tiers(product_id, base_price=base_price,
+                                            stock=stock, flash_active=False)
         best = None
         for t in tiers:
-            if int(t["min_qty"]) <= int(qty):
+            if int(t["min_qty"]) <= qty:
                 if best is None or int(t["min_qty"]) > int(best["min_qty"]):
                     best = t
         if best:
@@ -6952,6 +7522,39 @@ def tier_price_for_qty(product_id, qty, base_price):
         return float(base_price), 1
     except Exception:
         return float(base_price), 1
+
+
+def effective_product_unit_price(product, qty=1, normal_base_price=None, stock=None):
+    """Single pricing rule for native and Reseller API checkout/catalogs.
+
+    Priority is deliberately deterministic: valid Flash Sale, then an eligible
+    stock-valid quantity tier, then ordinary percentage campaign, then normal
+    price. ``normal_base_price`` permits a reseller key to apply its own normal
+    price while keeping the store's configured Flash/tier *ratios*.
+    """
+    try:
+        d = dict(product or {})
+        normal = float(normal_base_price if normal_base_price is not None else d.get("price") or 0)
+        pid = int(d.get("id") or 0)
+        available_stock = int(stock if stock is not None else d.get("stock") or 0)
+        if is_flash_sale_active(d):
+            ratio = flash_sale_ratio(d)
+            return (_price_round(normal * ratio) if ratio > 0 else float(d.get("flash_price") or 0),
+                    "flash", 1)
+        tier_price, tier_qty = tier_price_for_qty(pid, qty, normal,
+                                                   stock=available_stock,
+                                                   flash_active=False)
+        if int(tier_qty or 1) > 1:
+            return _price_round(tier_price), "tier", int(tier_qty)
+        discount_ratio = bulk_discount_ratio(d)
+        if discount_ratio < 1.0:
+            return _price_round(normal * discount_ratio), "discount", 1
+        return _price_round(normal), "normal", 1
+    except Exception:
+        try:
+            return float(normal_base_price or 0), "normal", 1
+        except Exception:
+            return 0.0, "normal", 1
 
 
 def product_tiers_text(product, base_price=None, rate=0, mode="md"):
@@ -6972,11 +7575,18 @@ def product_tiers_text(product, base_price=None, rate=0, mode="md"):
         pid = int(d.get("id") or 0)
         if not pid:
             return ""
-        tiers = get_product_tiers(pid)
+        # Flash is the single active offer; never advertise a tier alongside it.
+        if is_flash_sale_active(d):
+            return ""
+        normal_base = float(d.get("price") or 0)
+        tiers = get_available_product_tiers(
+            pid, base_price=normal_base, stock=int(d.get("stock") or 0),
+            flash_active=False,
+        )
         if not tiers:
             return ""
         if base_price is None:
-            base_price = float(d.get("price") or 0)
+            base_price = normal_base
         pname = str(d.get("name") or "Product")
 
         # load editable templates (lazy import to avoid circular deps)

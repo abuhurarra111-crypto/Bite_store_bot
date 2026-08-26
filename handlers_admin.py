@@ -8042,7 +8042,8 @@ async def delete_product_confirm_callback(u, c):
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"Are you sure you want to delete this product from the shop?\n\n"
         f"✅ Old orders, profit history, and customer history will stay safe.\n"
-        f"ℹ️ This is a safe soft-delete: product disappears from users but remains in DB."
+        f"ℹ️ Product is removed from the shop, Admin Edit Items, and reseller catalog.\n"
+        f"⏳ If an already-submitted supplier order is processing, removal is safely deferred until it can finish."
     )
     kb = [
         [InlineKeyboardButton("✅ YES, Delete", callback_data=f"delproddo_{pid}"),
@@ -8145,20 +8146,27 @@ async def _apply_bulk_price(update, context, pct, query=None):
         if query: await _safe_edit(query,msg,reply_markup=admin_products_keyboard(get_all_products(include_hidden=True, include_inactive=True)))
         else: await update.message.reply_text(msg)
         return
-    conn=get_connection(); cur=conn.cursor(); changed=[]
+    changed=[]
     for pid in selected:
         try:
             p=get_product(pid)
             if not p: continue
             old=float(p['price'] or 0); new=max(0.0001, old*(1+pct/100.0))
-            cur.execute('UPDATE products SET price=? WHERE id=?',(new,pid))
+            # v170.61: preserve Flash/tier percentage relationships on owner
+            # bulk base-price edits instead of leaving their old dollar values.
+            if not update_product_base_price(pid, new):
+                continue
             try:
                 if int((dict(p).get('ext_product_id') or 0)):
-                    cur.execute('UPDATE ext_products SET sell_price=? WHERE id=?',(new,int(dict(p).get('ext_product_id'))))
-            except Exception: pass
+                    conn=get_connection(); cur=conn.cursor()
+                    cur.execute('UPDATE ext_products SET sell_price=? WHERE id=?',
+                                (new, int(dict(p).get('ext_product_id'))))
+                    conn.commit(); conn.close()
+            except Exception:
+                try: conn.close()
+                except Exception: pass
             changed.append((pid,p['name'],old,new))
         except Exception: pass
-    conn.commit(); conn.close()
     lines=[f"✅ *Bulk Price Updated*", f"Change: `{pct:+.2f}%`", f"Products: *{len(changed)}*", ""]
     for _pid,name,old,new in changed[:10]: lines.append(f"• {escape_md(str(name)[:45])}: `${old:.4f}` → `${new:.4f}`")
     text='\n'.join(lines)
@@ -8301,6 +8309,7 @@ async def edit_product_field_received(u, c):
     
     conn = get_connection(); cur = conn.cursor()
     error_msg = None
+    price_reprice = None
     
     try:
         if field == 'name':
@@ -8343,6 +8352,9 @@ async def edit_product_field_received(u, c):
             except Exception:
                 _v66_old_price = 0.0
             cur.execute("UPDATE products SET price=? WHERE id=?", (num, pid))
+            # v170.61: refresh saved Flash/tier dollar values from their ratios
+            # immediately after this transaction commits.
+            price_reprice = (_v66_old_price, num)
             # Stash for use AFTER the success message
             if _v66_old_price > 0 and num < _v66_old_price:
                 c.user_data['_v66_pdrop_pid']       = pid
@@ -8429,7 +8441,15 @@ async def edit_product_field_received(u, c):
             from database import ensure_column
             ensure_column(cur, "products", "is_flash_sale", "INTEGER DEFAULT 0")
             ensure_column(cur, "products", "flash_price", "REAL DEFAULT 0.0")
-            cur.execute("UPDATE products SET is_flash_sale=1, flash_price=? WHERE id=?", (num, pid))
+            ensure_column(cur, "products", "flash_price_ratio", "REAL DEFAULT 0")
+            cur.execute("SELECT price FROM products WHERE id=?", (pid,))
+            _flash_base_row = cur.fetchone()
+            _flash_base = float((_flash_base_row['price'] if _flash_base_row else 0) or 0)
+            if _flash_base <= 0:
+                raise ValueError("Normal product price must be greater than 0")
+            cur.execute("""UPDATE products
+                           SET is_flash_sale=1, flash_price=?, flash_price_ratio=?
+                           WHERE id=?""", (num, num / _flash_base, pid))
     except Exception as e:
         error_msg = f"❌ Invalid value! ({str(e)})"
         
@@ -8438,6 +8458,10 @@ async def edit_product_field_received(u, c):
         return False  # Stay in edit mode
         
     conn.commit(); conn.close()
+    if price_reprice:
+        # Do this only after releasing the editor's connection, otherwise
+        # SQLite can lock the tier table during the same callback.
+        reprice_product_dynamic_rules(pid, price_reprice[0], price_reprice[1])
 
     c.user_data.pop('edit_pid', None)
     c.user_data.pop('edit_field', None)
@@ -11447,8 +11471,10 @@ def build_bulkdeal_broadcast_message(pid, user):
     """
     p = get_product(pid)
     try:
-        from database import get_product_tiers
-        tiers = get_product_tiers(pid)
+        from database import get_available_product_tiers, is_flash_sale_active
+        tiers = get_available_product_tiers(
+            pid, stock=int(dict(p).get("stock") or 0) if p else 0,
+            flash_active=is_flash_sale_active(p)) if p else []
     except Exception:
         tiers = []
     if not p or not tiers:

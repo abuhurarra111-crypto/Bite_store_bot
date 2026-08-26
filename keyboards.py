@@ -635,7 +635,11 @@ def product_detail_keyboard(product, user=None):
             rows.append([_make_btn(fav_lbl, callback_data=f"fav_toggle_{pid}", style=fav_style)])
     except Exception:
         pass
-    if stock > 0:
+    # Reusable static text/file delivery is unlimited even on old rows with
+    # stock=0, matching database.build_delivery_detailed().
+    _reusable_delivery = bool(str((product['delivery_text'] if 'delivery_text' in _pkeys else '') or '').strip()
+                              or str((product['delivery_file_id'] if 'delivery_file_id' in _pkeys else '') or '').strip())
+    if stock > 0 or _reusable_delivery:
         buy_lbl = _apply_styler("prod_buy", _translate_btn_label("prod_buy", {"small": "🛒", "medium": "🛒 Buy",
                      "large": "🛒 Buy Now", "xl": "🛒 Buy Now — Order this item"}.get(size, "🛒 Buy"), user_id=user_id))
         buyx_lbl = _apply_styler("prod_buyx", _translate_btn_label("prod_buyx", {"small": "🛒×", "medium": "🛒× Buy Multiple",

@@ -2443,7 +2443,11 @@ def main():
         ("^admin_proxy_reset$",        admin_proxy_reset_callback),
         # 🆕 v67: AI Proxy Scout — Gemini auto-finds new PK proxies
         ("^admin_proxy_ai_scout$",     admin_proxy_ai_scout_callback),
-        # 🆕 v65: Refund + Cancel order flow (specific suffixes first!)
+        # Refund routes are first-match. Keep User-ID-specific callbacks ahead
+        # of the generic ^adm_refund_ order callback or the user-ID panel gets
+        # intercepted and shows its generic error.
+        ("^adm_refund_uid$",           adm_refund_uid_callback),
+        ("^adm_refund_uid_",           adm_refund_uid_callback),
         ("^adm_refund_confirm_",       adm_refund_confirm_callback),
         ("^adm_refund_abort_",         adm_refund_abort_callback),
         ("^adm_refund_",               adm_refund_callback),
@@ -2587,9 +2591,8 @@ def main():
         ("^approve_", approve_order_callback), ("^reject_", reject_order_callback),
         ("^admin_users$", admin_users_callback),
         ("^ban_panel$", ban_panel_callback),          # 🆕 v170.37 banned users panel
-        # 🆕 v149: refund-by-user-ID + per-user full history
-        ("^adm_refund_uid$", adm_refund_uid_callback),
-        ("^adm_refund_uid_", adm_refund_uid_callback),
+        # 🆕 v149: refund-by-user-ID callbacks are registered above generic
+        # ^adm_refund_; keep history routes here.
         ("^adm_uhist_enter$", adm_uhist_enter_callback),
         ("^adm_uhist_", adm_uhist_callback),
         ("^ruid_confirm$", adm_refund_uid_confirm_callback),

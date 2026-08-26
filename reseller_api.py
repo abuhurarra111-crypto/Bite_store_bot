@@ -49,6 +49,8 @@ from database import (
     get_or_create_webhook_secret, enqueue_webhook_event,
     get_due_webhook_events, mark_webhook_event, sign_webhook_payload,
     _hash_api_key, setup_api_tables,
+    effective_product_unit_price, get_available_product_tiers,
+    is_flash_sale_active, flash_sale_ratio, bulk_discount_ratio,
 )
 from config import POINTS_PER_DOLLAR as _CFG_PPD
 
@@ -183,11 +185,13 @@ def _markup_for(key=None) -> float:
     return max(-90.0, min(1000.0, _global_markup()))
 
 
-def reseller_price_for(pd: dict, key=None) -> float:
-    """Reseller price in USD, key-aware.
-    🆕 v170.6 priority: per-key per-product override → per-key ALL override →
-    explicit products.reseller_price → base(cost|price) × (1+markup)."""
-    # 🆕 v170.6: admin-set per-key × per-product price (highest priority)
+def reseller_normal_price_for(pd: dict, key=None) -> float:
+    """Key-aware normal selling price before any current promotion.
+
+    Per-key prices remain the normal price. Flash and quantity tier rules are
+    applied *afterwards as ratios*, so a reseller sees the same configured sale
+    percentage instead of a stale store-dollar promotion value.
+    """
     try:
         kid = int((key or {}).get("id") or 0)
         pid = int(pd.get("id") or 0)
@@ -195,15 +199,15 @@ def reseller_price_for(pd: dict, key=None) -> float:
             from database import get_reseller_key_price
             ov = get_reseller_key_price(kid, pid)
             if ov is None and pid:
-                ov = get_reseller_key_price(kid, 0)  # ALL-products override
+                ov = get_reseller_key_price(kid, 0)
             if ov is not None and float(ov) > 0:
-                return round(float(ov), 2)
+                return round(float(ov), 4)
     except Exception:
         pass
     try:
         explicit = float(pd.get("reseller_price") or 0)
         if explicit > 0:
-            return explicit
+            return round(explicit, 4)
     except Exception:
         pass
     base = 0.0
@@ -219,8 +223,20 @@ def reseller_price_for(pd: dict, key=None) -> float:
             base = float(pd.get("price") or 0)
         except Exception:
             base = 0.0
-    price = base * (1 + _markup_for(key) / 100.0)
-    return round(max(0.01, price), 2)
+    return round(max(0.01, base * (1 + _markup_for(key) / 100.0)), 4)
+
+
+def reseller_price_for(pd: dict, key=None, quantity: int = 1) -> float:
+    """Live unit price using the shared Flash → tier → percent → normal rule."""
+    normal = reseller_normal_price_for(pd, key)
+    try:
+        unit, _kind, _tier = effective_product_unit_price(
+            pd, qty=max(1, int(quantity or 1)), normal_base_price=normal,
+            stock=_live_stock(pd),
+        )
+        return round(max(0.01, float(unit)), 4)
+    except Exception:
+        return round(max(0.01, normal), 4)
 
 
 def _live_stock(pd: dict) -> int:
@@ -239,15 +255,61 @@ def _live_stock(pd: dict) -> int:
             from ext_suppliers import get_ext_product as _gep
             ep = _gep(pd.get("ext_product_id"))
             if ep:
-                s = int(ep.get("stock") or 0)
-                if s > 0:
-                    return s
+                # A live upstream 0 must never fall back to stale local stock.
+                return max(0, int(ep.get("stock") or 0))
         except Exception:
             pass
     try:
-        return max(0, int(pd.get("stock") or 0))
+        stock = max(0, int(pd.get("stock") or 0))
+        # Native build_delivery_detailed() treats reusable owner text as
+        # unlimited even for old rows whose stock was left at zero. Keep the
+        # reseller catalog/checkout on that same stock truth; finite linked
+        # catalogs always return above from their live upstream stock.
+        if stock <= 0 and (str(pd.get("delivery_text") or "").strip()
+                           or str(pd.get("delivery_file_id") or "").strip()):
+            return 1000000
+        return stock
     except Exception:
         return 0
+
+
+def reseller_product_availability(pd: dict, require_stock: bool = True, quantity: int = 1) -> tuple:
+    """Return ``(available, reason)`` from the same live state used by API.
+
+    A linked catalog item is unavailable when it was unsynced, owner-disabled,
+    source-disabled/missing, its catalog owner is disabled, or stock is gone.
+    This closes the stale-catalog gap before points can be deducted.
+    """
+    try:
+        d = dict(pd or {})
+        if not int(d.get("is_active") or 0) or int(d.get("is_hidden") or 0) \
+                or int(d.get("is_archived") or 0) or not int(d.get("reseller_enabled", 1) or 0):
+            return False, "product_unavailable"
+        ext_id = int(d.get("ext_product_id") or 0)
+        if ext_id:
+            try:
+                from ext_suppliers import get_ext_product as _get_ep, get_supplier as _get_sup
+                ep = _get_ep(ext_id)
+                if not ep or not int(ep.get("synced_to_shop") or 0):
+                    return False, "product_unavailable"
+                # Legacy rows use ``active`` until the additive owner/source
+                # columns are migrated; new rows have both states explicitly.
+                owner_active = int(ep.get("owner_active", ep.get("active", 1)) or 0)
+                source_active = int(ep.get("source_active", 1) or 0)
+                if not owner_active or not source_active:
+                    return False, "product_unavailable"
+                sup = _get_sup(int(ep.get("supplier_id") or d.get("ext_supplier_id") or 0))
+                if not sup or not int(sup.get("enabled", 1) or 0):
+                    return False, "product_unavailable"
+            except Exception:
+                # Do not sell a linked product when live availability cannot be
+                # verified; local/manual products are unaffected.
+                return False, "product_unavailable"
+        if require_stock and _live_stock(d) < max(1, int(quantity or 1)):
+            return False, "out_of_stock"
+        return True, ""
+    except Exception:
+        return False, "product_unavailable"
 
 
 def _sold_count(pd: dict) -> int:
@@ -263,75 +325,118 @@ def _first_emoji(text: str) -> str:
     return m.group(0) if m else ""
 
 
+def _strip_simple_emoji(text: str) -> str:
+    """Public API names never add ordinary emoji beside a product.
+
+    Premium Telegram ``tg-emoji`` markup is handled separately and remains the
+    only icon format emitted by the catalog payload.
+    """
+    import re as _re
+    return _re.sub(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F]", "", str(text or ""))
+
+
 def _clean_name(value) -> str:
-    """Plain-text product name: strips [[HTML]] + all tags, keeps the emoji
-    char so a plain-text bot still shows the product's emoji (no raw HTML)."""
+    """Plain catalog name without ordinary/simple emoji."""
     try:
         from utils import html_strip_tags
-        return html_strip_tags(value) or ""
+        clean = html_strip_tags(value) or ""
     except Exception:
-        s = str(value or "").replace("[[HTML]]", "")
         import re as _re
-        s = _re.sub(r"<[^>]+>", "", s)
-        return s.strip()
+        clean = _re.sub(r"<[^>]+>", "", str(value or "").replace("[[HTML]]", ""))
+    return " ".join(_strip_simple_emoji(clean).split())
 
 
 def _name_html(value) -> str:
-    """HTML-mode product name: keeps <tg-emoji emoji-id=...> markup so premium
-    emoji renders properly in bots that send parse_mode=HTML."""
-    try:
-        from utils import name_for_message_html
-        return name_for_message_html(value) or ""
-    except Exception:
-        s = str(value or "").replace("[[HTML]]", "")
-        return s
+    """HTML catalog name with premium markup only; simple emoji is removed."""
+    import re as _re
+    raw = str(value or "").replace("[[HTML]]", "")
+    parts = _re.split(r"(<tg-emoji\s+emoji-id=[\"'][^\"']+[\"']\s*>[^<]*</tg-emoji>)", raw,
+                       flags=_re.I)
+    out = []
+    for part in parts:
+        if _re.match(r"^<tg-emoji\b", part or "", flags=_re.I):
+            out.append(part)  # preserve owner-supplied premium markup exactly
+        else:
+            out.append(_strip_simple_emoji(_re.sub(r"<[^>]+>", "", part or "")))
+    return " ".join("".join(out).split())
 
 
 def _extract_emoji(value) -> tuple:
-    """Return (emoji_char, emoji_id) from a (possibly premium-marked) name."""
+    """Return only premium custom-emoji markup and ID (never simple emoji)."""
     import re as _re
     s = str(value or "")
-    m = _re.search(r'<tg-emoji\s+emoji-id=["\']([^"\']+)["\']\s*>([^<]*)</tg-emoji>', s)
-    if m:
-        return (m.group(2) or "").strip(), m.group(1).strip()
-    return _first_emoji(s), ""
+    m = _re.search(r'(<tg-emoji\s+emoji-id=["\']([^"\']+)["\']\s*>[^<]*</tg-emoji>)', s, flags=_re.I)
+    return (m.group(1), m.group(2).strip()) if m else (None, None)
 
 
 def _delivery_type(pd: dict) -> str:
-    """How the product is delivered: supplier | text | file | accounts | manual."""
+    """Neutral delivery mode; catalog output does not expose implementation source."""
     try:
-        if (pd.get("ext_product_id") or 0) and (pd.get("ext_supplier_id") or 0):
-            return "supplier"
+        if str(pd.get("delivery_mode") or "") == "manual":
+            return "manual"
         if str(pd.get("delivery_file_id") or "").strip():
             return "file"
         if str(pd.get("delivery_text") or "").strip():
             return "text"
-        if str(pd.get("delivery_mode") or "") == "manual":
-            return "manual"
-        return "accounts"
+        return "automatic"
     except Exception:
-        return "text"
+        return "automatic"
 
 
 def _product_payload(pd: dict, key=None) -> dict:
-    """ProdSeller-compatible product object, key-aware price. NO supplier info
-    is ever exposed — only product data."""
+    """Current key-aware product payload with neutral availability/promotion data."""
     raw_name = pd.get("name") or "Product"
-    emoji_char, emoji_id = _extract_emoji(raw_name)
+    premium_markup, emoji_id = _extract_emoji(raw_name)
+    stock = _live_stock(pd)
+    normal = reseller_normal_price_for(pd, key)
+    unit, price_kind, tier_applied = effective_product_unit_price(
+        pd, qty=1, normal_base_price=normal, stock=stock,
+    )
+    flash_active = is_flash_sale_active(pd)
+    tiers = get_available_product_tiers(
+        int(pd.get("id") or 0), base_price=normal, stock=stock,
+        flash_active=flash_active,
+    )
+    pct_ratio = bulk_discount_ratio(pd)
+    promotion = {
+        "flashSale": ({"active": True, "price": round(float(unit), 4),
+                        "ratio": round(float(flash_sale_ratio(pd)), 8)}
+                      if flash_active else {"active": False}),
+        "percentageDiscount": (
+            {"active": True,
+             "percent": round((1.0 - pct_ratio) * 100.0, 4),
+             "price": round(normal * pct_ratio, 4)}
+            if pct_ratio < 1.0 else {"active": False}),
+        # Flash takes precedence and intentionally returns an empty list here.
+        "quantityTiers": [
+            {"minQty": int(t["min_qty"]), "unitPrice": round(float(t["unit_price"]), 4)}
+            for t in tiers
+        ],
+        "priority": "flash_then_quantity_tier_then_percentage_discount",
+    }
     return {
         "id": str(pd.get("id")),
         "name": _clean_name(raw_name),
         "name_html": _name_html(raw_name),
         "description": _clean_name(pd.get("description") or "")[:1500],
-        "price": round(reseller_price_for(pd, key), 2),
-        "stock": _live_stock(pd),
-        "inStock": _live_stock(pd) > 0,
+        # `price` stays compatible as the current one-unit price. New fields
+        # make it unambiguous which normal/conditional rate applies.
+        "price": round(float(unit), 4),
+        "normalPrice": round(float(normal), 4),
+        "priceType": price_kind,
+        "tierAppliedAtQuantity": int(tier_applied or 1),
+        "stock": stock,
+        "inStock": stock > 0,
         "sold": _sold_count(pd),
         "categoryId": pd.get("category_id"),
         "deliveryType": _delivery_type(pd),
-        "emoji": emoji_char,
+        # Never send an ordinary/simple product emoji. `emoji` is retained for
+        # compatibility but is premium markup only (or null).
+        "emoji": premium_markup,
         "emoji_id": emoji_id,
+        "premiumEmoji": premium_markup,
         "currency": "USD",
+        "promotion": promotion,
     }
 
 
@@ -345,14 +450,27 @@ def _resellable_products() -> list:
     except Exception:
         pass
     conn = get_connection(); c = conn.cursor()
+    # Standalone API startup may occur before an admin/shop read self-heals
+    # these additive columns, so ensure its catalog query is restore-safe.
+    from database import ensure_column
+    ensure_column(c, "products", "is_hidden", "INTEGER DEFAULT 0")
+    ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
+    ensure_column(c, "products", "reseller_enabled", "INTEGER DEFAULT 1")
     c.execute("""SELECT * FROM products
                  WHERE is_active=1 AND COALESCE(is_hidden,0)=0
+                   AND COALESCE(is_archived,0)=0
                    AND COALESCE(reseller_enabled,1)=1
                    AND COALESCE(price,0) > 0
                    AND id NOT IN (SELECT product_id FROM freebies WHERE enabled=1)
                  ORDER BY category_id, id""")
     rows = [dict(r) for r in c.fetchall()]; conn.close()
-    return rows
+    # Re-check linked product/source state outside the simple products query.
+    # This makes API catalog state immediately correct even before a periodic
+    # mirror refresh reaches the local products row.
+    # Keep the established catalog contract for ordinary sold-out products:
+    # they remain visible with `inStock: false`, while checkout rejects them.
+    # Lifecycle revocations still disappear immediately.
+    return [p for p in rows if reseller_product_availability(p, require_stock=False)[0]]
 
 
 def _allowed_product_set(key) -> set or None:
@@ -392,11 +510,12 @@ def _refresh_supplier_stocks_async():
     """Kick a background sync of supplier stocks (max once / 45s per supplier)."""
     def _worker():
         try:
-            seen = {}
-            for p in _resellable_products():
-                sid = p.get("ext_supplier_id") or 0
-                if sid:
-                    seen.setdefault(int(sid), 0)
+            # Include temporarily unavailable linked items too: otherwise an
+            # inactive/missing item could never be polled to discover recovery.
+            conn = get_connection(); c = conn.cursor()
+            c.execute("SELECT DISTINCT supplier_id FROM ext_products WHERE COALESCE(synced_to_shop,0)=1")
+            seen = {int(r[0]) for r in c.fetchall() if r[0]}
+            conn.close()
             now = _time.time()
             for sid in seen:
                 with _LIVE_LOCK:
@@ -433,7 +552,17 @@ def _fulfill_reseller_order(pd: dict, qty: int, user_id: int, reseller_oid: int)
     import logging as _lg
     _log = _lg.getLogger("reseller_api")
     try:
+        # Accepted orders can still be queued briefly before this function runs.
+        # Reload current local state before any upstream submission; once
+        # submitted, the normal delivery/pending path is allowed to finish.
         pid = pd.get("id")
+        fresh_pd = get_product(pid) if pid else None
+        if not fresh_pd:
+            return False, [], "failed", "product unavailable", None
+        pd = dict(fresh_pd)
+        available, reason = reseller_product_availability(pd, require_stock=True, quantity=qty)
+        if not available:
+            return False, [], "failed", ("out of stock" if reason == "out_of_stock" else "product unavailable"), None
         ext_pid = pd.get("ext_product_id") or 0
         ext_sid = pd.get("ext_supplier_id") or 0
         delivery_mode = str(pd.get("delivery_mode") or "")
@@ -455,39 +584,40 @@ def _fulfill_reseller_order(pd: dict, qty: int, user_id: int, reseller_oid: int)
                         if items:
                             return True, items, "delivered", None, None
                         _log.error(f"reseller order #{reseller_oid}: supplier returned empty delivery")
-                        return False, [], "failed", "supplier returned empty delivery, retry later", None
+                        return False, [], "failed", "fulfillment unavailable, retry later", None
                     err = str((res or {}).get("error") or "supplier_order_failed")
                     _log.error(f"reseller order #{reseller_oid}: supplier order failed: {err}")
-                    return False, [], "failed", "order failed at source, retry later", None
+                    return False, [], "failed", "fulfillment unavailable, retry later", None
                 _log.error(f"reseller order #{reseller_oid}: supplier link broken ep={ext_pid} sup={ext_sid}")
-                return False, [], "failed", "order failed at source, retry later", None
+                return False, [], "failed", "fulfillment unavailable, retry later", None
             except Exception:
                 _log.exception(f"reseller order #{reseller_oid}: supplier exception")
-                return False, [], "failed", "order failed at source, retry later", None
+                return False, [], "failed", "fulfillment unavailable, retry later", None
 
-        # 2) STATIC TEXT DELIVERY — atomic stock guard
+        # 2) FILE DELIVERY (Telegram file_id) — file fetched by reseller via
+        #    GET /v1/files/{order_id} (file_id is bot-specific, so we serve bytes).
+        #    Keep the same precedence as native fulfillment: if an owner saved
+        #    both a file and explanatory text, the reusable file is the delivery.
+        file_id = (pd.get("delivery_file_id") or "").strip()
+        if file_id:
+            return True, [], "delivered", None, {
+                "file_id": file_id,
+                "file_name": (pd.get("delivery_file_name") or f"delivery_{reseller_oid}").strip(),
+                "file_type": (pd.get("delivery_file_type") or "").strip(),
+            }
+
+        # 3) STATIC TEXT DELIVERY — reusable, exactly like native
+        # build_delivery_detailed(). It is content/instructions rather than a
+        # consumable account-pool item, so legacy zero-stock rows stay valid
+        # and no stock is decremented.
         static_text = (pd.get("delivery_text") or "").strip()
         if static_text:
-            conn = get_connection(); c = conn.cursor()
-            try:
-                c.execute("UPDATE products SET stock=stock-? WHERE id=? AND stock>=?", (qty, pid, qty))
-                fulfilled = c.rowcount == 1
-                conn.commit()
-            except Exception:
-                try: conn.rollback()
-                except Exception: pass
-                fulfilled = False
-            finally:
-                try: conn.close()
-                except Exception: pass
-            if not fulfilled:
-                return False, [], "failed", "out_of_stock", None
             body = static_text
             if qty > 1:
                 body = f"📦 Bulk Order × {qty}\n\n{body}"
             return True, [body], "delivered", None, None
 
-        # 3) ACCOUNT POOL
+        # 4) ACCOUNT POOL
         parts = []
         for _ in range(int(qty)):
             acct = consume_product_account(pid, reseller_oid, user_id)
@@ -505,21 +635,11 @@ def _fulfill_reseller_order(pd: dict, qty: int, user_id: int, reseller_oid: int)
                 text = "\n".join(str(p) for p in parts)
             return len(parts) >= int(qty), [text] if str(text).strip() else parts, "delivered", None, None
 
-        # 4) FILE DELIVERY (Telegram file_id) — file fetched by reseller via
-        #    GET /v1/files/{order_id} (file_id is bot-specific, so we serve bytes)
-        file_id = (pd.get("delivery_file_id") or "").strip()
-        if file_id:
-            return True, [], "delivered", None, {
-                "file_id": file_id,
-                "file_name": (pd.get("delivery_file_name") or f"delivery_{reseller_oid}").strip(),
-                "file_type": (pd.get("delivery_file_type") or "").strip(),
-            }
-
         # 5) TRUE MANUAL (no instant content) — pending; admin completes
         if delivery_mode == "manual":
             return True, [], "pending", None, None
 
-        return False, [], "failed", "no_delivery_source", None
+        return False, [], "failed", "delivery_unavailable", None
     except Exception:
         _log.exception("reseller fulfillment internal error")
         return False, [], "failed", "internal_error", None
@@ -888,52 +1008,48 @@ if _FASTAPI_OK:
         title="Bite Store — Reseller API",
         description=(
             "# Bite Store Reseller API\n\n"
-            "Sell our products in **your own bot** — everything is auto-delivered.\n\n"
-            "## 🔑 Authentication\n"
-            "Send your key in every request header:\n\n"
+            "Use the current Bite Store catalog in your own bot or website.\n\n"
+            "## Authentication\n"
+            "Send your reseller key in every request header:\n\n"
             "```\nX-API-Key: bsk_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\n```\n"
             "Without a valid key you get `401`.\n\n"
-            "## 📦 How it works\n"
-            "1. **Top up** your wallet (deposit points with the store owner).\n"
-            "2. `GET /v1/products` — browse products (price + REAL live stock).\n"
-            "3. `POST /v1/orders` — buy → your wallet is debited → the product is\n"
-            "   **auto-delivered instantly** as `deliveredKeys`.\n"
-            "4. Send those keys to your customer.\n\n"
-            "## ✅ Auto-delivery — ALL product types\n"
-            "- **Our own stock** (auto/static/accounts) → instant delivery keys.\n"
-            "- **Products synced from our suppliers** → bought & delivered automatically.\n"
-            "- **File products** → `deliveredFileRef` returned; fetch bytes via\n"
-            "  `GET /v1/files/{orderId}` and re-upload to your own bot.\n"
-            "- **Manual products** (no instant content) → `status: \"pending\"`; delivery\n"
-            "  arrives when the store completes it — poll `GET /v1/orders/{id}`.\n\n"
-            "## 🔒 Privacy (important)\n"
-            "- The API **never exposes our suppliers** — no supplier names, URLs or keys.\n"
-            "- Every order is charged from **your wallet balance**.\n"
-            "- Your key may have a **spend limit**, **allowed products** list and\n"
-            "  **IP whitelist** configured by the store owner.\n\n"
-            "## 🪙 Emoji rendering (no raw HTML)\n"
-            "Each product returns THREE name fields so any bot can render the emoji:\n"
-            "- `name` — plain text (emoji char included, no markup).\n"
-            "- `name_html` — send this with `parse_mode=HTML` to render **premium emoji**.\n"
-            "- `emoji` + `emoji_id` — the emoji char and its premium id.\n\n"
-            "## 🔔 Webhooks\n"
-            "If the store owner set a webhook URL on your key, your server gets\n"
-            "`POST` notifications: `order.delivered`, `order.pending`,\n"
-            "`order.failed`, `order.pending_completed`.\n\n"
-            "## ⚠️ Error codes\n"
-            "| Code | Meaning |\n"
-            "|---|---|\n"
-            "| 401 | Missing / invalid API key |\n"
+            "## How it works\n"
+            "1. Top up your wallet.\n"
+            "2. `GET /v1/products` — read the current available catalog.\n"
+            "3. `POST /v1/orders` — place an order; your wallet is debited only for a live checkout quote.\n"
+            "4. Read the response or poll `GET /v1/orders/{id}` for delivery status.\n\n"
+            "## Live catalog and pricing\n"
+            "- Archived, disabled, or unavailable products are omitted. Sold-out items remain visible with `inStock: false`.\n"
+            "- `price` is the live one-unit price. `normalPrice` is the key-aware normal rate.\n"
+            "- `promotion` includes current Flash Sale, percentage discount, and stock-valid quantity tiers.\n"
+            "- Priority is **Flash Sale → eligible quantity tier → percentage discount → normal price**.\n"
+            "- A Flash Sale hides quantity tiers while it is valid. Expired or removed promotions disappear automatically.\n"
+            "- Checkout rechecks catalog availability, stock, and the exact quantity price before charging.\n\n"
+            "## Fulfillment\n"
+            "- Automatically fulfilled catalog items return delivery data immediately or move through `processing`.\n"
+            "- File items return `deliveredFileRef`; fetch bytes with `GET /v1/files/{orderId}`.\n"
+            "- Manual items return `status: \"pending\"`; poll the order endpoint for completion.\n"
+            "- If fulfillment cannot start after a debit, the order is failed and points are refunded.\n\n"
+            "## Product presentation\n"
+            "- `name` contains no ordinary/simple product emoji.\n"
+            "- `name_html`, `emoji`, and `premiumEmoji` contain premium Telegram custom-emoji markup only when configured.\n"
+            "- Descriptions are clean plain text; no raw HTML or `[[HTML]]` sentinels are sent.\n\n"
+            "## Webhooks\n"
+            "If a webhook URL is configured on your key, your server receives `order.delivered`, "
+            "`order.pending`, `order.failed`, and `order.pending_completed` events.\n\n"
+            "## Error codes\n"
+            "| Code | Meaning |\n|---|---|\n"
+            "| 401 | Missing / invalid reseller key |\n"
             "| 402 | Insufficient wallet balance |\n"
-            "| 403 | Not allowed (product / IP / spend limit) |\n"
-            "| 404 | Product or order not found |\n"
-            "| 429 | Rate limit (60 req/min) |\n"
-            "| 502 | Fulfillment failed — points auto-refunded |\n\n"
-            "## 🧾 Idempotency\n"
-            "Send header `Idempotency-Key: <unique>` with orders — if the same order is\n"
-            "re-sent, you get the same result back instead of a duplicate delivery."
+            "| 403 | Not allowed by key policy |\n"
+            "| 404 | Product or order unavailable/not found |\n"
+            "| 409 | Requested quantity is out of stock |\n"
+            "| 429 | Rate limit |\n"
+            "| 502 | Fulfillment failed; points were refunded |\n\n"
+            "## Idempotency\n"
+            "Send header `Idempotency-Key: <unique>` with orders. Repeating the same key returns the existing order instead of duplicating delivery."
         ),
-        version="1.6.0",
+        version="1.7.0",
         docs_url=None,
         redoc_url=None,
     )
@@ -1149,7 +1265,7 @@ if _FASTAPI_OK:
             <span class="badge">🔑 X-API-Key auth</span>
             <span class="badge">📦 Auto-delivery</span>
             <span class="badge">🪙 Points wallet</span>
-            <span class="badge">🔒 No supplier info exposed</span>
+            <span class="badge">🔄 Live catalog state</span>
           </div>
         </div>
       </div>
@@ -1200,14 +1316,13 @@ if _FASTAPI_OK:
           <tr><td>📝 Raw Text (any format)</td><td>Content</td><td><code>any-delivery-text</code></td></tr>
         </table>
         <div class="prod-note">
-          <strong>🪙 Emoji rendering:</strong> each product returns <code>name</code> (plain text with the emoji char),
-          <code>name_html</code> (premium emoji markup — send with <code>parse_mode=HTML</code>),
-          and <code>emoji</code> / <code>emoji_id</code> for custom emoji. Descriptions are clean plain text —
-          no HTML tags, no <code>[[HTML]]</code> sentinels.
+          <strong>🪙 Product presentation:</strong> <code>name</code> contains no ordinary/simple product emoji.
+          <code>name_html</code>, <code>emoji</code>, and <code>premiumEmoji</code> carry premium custom-emoji markup only when configured.
+          Check <code>normalPrice</code> and <code>promotion</code> for the current Flash, percentage, and stock-valid tier pricing.
         </div>
       </div>
     </div>
-    <footer>Bite Store Reseller API · Auto-delivery · Live stock · v1.6</footer>
+    <footer>Bite Store Reseller API · Current catalog · Live pricing · v1.7</footer>
   </div>
   <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
   <script>
@@ -1224,10 +1339,9 @@ if _FASTAPI_OK:
                  "Returns products enabled for resellers with REAL live stock.\n\n"
                  "Query params: `category` (category id), `search` (name text),\n"
                  "`page` (default 1), `per_page` (default 100, max 500),\n"
-                 "`live=1` (background-refresh supplier stock from the source).\n\n"
-                 "Each product: `id`, `name` (plain), `name_html` (premium emoji),\n"
-                 "`description`, `price`, `stock`, `inStock`, `sold`, `emoji`,\n"
-                 "`emoji_id`, `currency`. NO supplier information is exposed."
+                 "`live=1` (request a background catalog refresh).\n\n"
+                 "Each product includes current `price`, `normalPrice`, stock, and a `promotion` object with active Flash, percentage, and stock-valid tier state.\n"
+                 "Ordinary/simple product emoji is never emitted; premium custom-emoji markup is provided only when configured."
              ))
     async def _products(key=Depends(_require_key),
                         category: int = Query(None),
@@ -1313,24 +1427,30 @@ if _FASTAPI_OK:
         if not pd:
             raise HTTPException(status_code=404, detail="product not found")
         pd = dict(pd)
-        if not pd.get("is_active") or int(pd.get("is_hidden") or 0):
-            raise HTTPException(status_code=404, detail="product not available")
-        if int(pd.get("reseller_enabled") if pd.get("reseller_enabled") is not None else 1) != 1:
-            raise HTTPException(status_code=403, detail="product not enabled for resellers")
+        available, availability_reason = reseller_product_availability(pd, require_stock=True, quantity=qty)
+        if not available:
+            # No wallet debit occurs for a catalog item that was revoked,
+            # archived, disabled, missing, or out of stock before checkout.
+            status = 409 if availability_reason == "out_of_stock" else 404
+            detail = "out of stock" if availability_reason == "out_of_stock" else "product not available"
+            raise HTTPException(status_code=status, detail=detail)
         allowed = _allowed_product_set(key)
         if allowed is not None and pid not in allowed:
             raise HTTPException(status_code=403, detail="product not in your allowed list")
 
-        price_usd = reseller_price_for(pd, key)
+        # Quote using exactly the same live stock/tier/Flash rule advertised in
+        # the catalog. A tier above current stock can never enter this amount.
+        price_usd = reseller_price_for(pd, key, quantity=qty)
+        amount_usd = round(price_usd * qty, 4)
         ppd = _points_per_dollar()
-        points = round(price_usd * qty * ppd, 2)
+        points = round(amount_usd * ppd, 2)
 
         # Spend limit (per key, USD)
         try:
             limit = float(key.get("spend_limit_usd") or 0)
             if limit > 0:
                 spent = reseller_key_total_spent(kid)
-                if spent + round(price_usd * qty, 2) > limit:
+                if spent + amount_usd > limit:
                     raise HTTPException(status_code=403, detail="spend limit reached for this key")
         except HTTPException:
             raise
@@ -1377,7 +1497,7 @@ if _FASTAPI_OK:
         oid = create_reseller_order(
             key_id=kid, user_id=uid, product_id=pid,
             product_name=(pd.get("name") or "Product")[:200],
-            qty=qty, usd_amount=round(price_usd * qty, 2), points_amount=points,
+            qty=qty, usd_amount=amount_usd, points_amount=points,
             status="pending",
             idem_key=str(idempotency_key).strip()[:64] if idempotency_key else "")
 
@@ -1390,7 +1510,7 @@ if _FASTAPI_OK:
             update_reseller_order(oid, status="processing")
             _ctx = {"pd": pd, "qty": qty, "uid": uid, "oid": oid,
                     "points": points, "event_id": event_id,
-                    "amount": round(price_usd * qty, 2), "key": dict(key)}
+                    "amount": amount_usd, "key": dict(key)}
             try:
                 threading.Thread(target=_fulfill_async, kwargs=_ctx,
                                  daemon=True, name=f"rs-order-{oid}").start()
@@ -1398,7 +1518,7 @@ if _FASTAPI_OK:
                 _fulfill_async(**_ctx)
             return {"ok": True, "orderId": str(oid), "deliveredKeys": [],
                     "deliveredKey": "", "deliveredFileRef": "",
-                    "amount": round(price_usd * qty, 2), "status": "processing"}
+                    "amount": amount_usd, "status": "processing"}
 
         # ── SYNC PATH: instant products (text / accounts / file / manual)
         ok, items, status, err, file_ref = _fulfill_reseller_order(pd, qty, uid, oid)
@@ -1407,11 +1527,11 @@ if _FASTAPI_OK:
             return {"ok": True, "orderId": str(oid), "deliveredKeys": result["items"],
                     "deliveredKey": result["items"][0] if result["items"] else "",
                     "deliveredFileRef": str(oid) if result["file_ref"] else "",
-                    "amount": round(price_usd * qty, 2), "status": "delivered"}
+                    "amount": amount_usd, "status": "delivered"}
         if result["status"] == "pending":
             return {"ok": True, "orderId": str(oid), "deliveredKeys": [],
                     "deliveredKey": "", "deliveredFileRef": "",
-                    "amount": round(price_usd * qty, 2), "status": "pending"}
+                    "amount": amount_usd, "status": "pending"}
         # failed → refund already applied in _apply_fulfill_result
         return JSONResponse(status_code=502, content={
             "ok": False, "orderId": str(oid), "error": result["error"],
@@ -1457,16 +1577,16 @@ if _FASTAPI_OK:
             j = _rq.post(f"https://api.telegram.org/bot{token}/getFile",
                          json={"file_id": fid}, timeout=20).json()
             if not j.get("ok"):
-                raise HTTPException(status_code=502, detail="file source unavailable")
+                raise HTTPException(status_code=502, detail="file unavailable")
             path = j["result"]["file_path"]
             data = _rq.get(f"https://api.telegram.org/file/bot{token}/{path}",
                            timeout=40)
             if data.status_code != 200:
-                raise HTTPException(status_code=502, detail="file source unavailable")
+                raise HTTPException(status_code=502, detail="file unavailable")
         except HTTPException:
             raise
         except Exception:
-            raise HTTPException(status_code=502, detail="file source unavailable")
+            raise HTTPException(status_code=502, detail="file unavailable")
         fname = (r.get("delivery_file_name") or f"delivery_{order_id}").strip()
         ftype = (r.get("delivery_file_type") or _guess_mime(fname))
         from urllib.parse import quote
@@ -1493,16 +1613,16 @@ if _FASTAPI_OK:
             j = _rq.post(f"https://api.telegram.org/bot{token}/getFile",
                          json={"file_id": photo}, timeout=20).json()
             if not j.get("ok"):
-                raise HTTPException(status_code=502, detail="image source unavailable")
+                raise HTTPException(status_code=502, detail="image unavailable")
             path = j["result"]["file_path"]
             data = _rq.get(f"https://api.telegram.org/file/bot{token}/{path}",
                            timeout=40)
             if data.status_code != 200:
-                raise HTTPException(status_code=502, detail="image source unavailable")
+                raise HTTPException(status_code=502, detail="image unavailable")
         except HTTPException:
             raise
         except Exception:
-            raise HTTPException(status_code=502, detail="image source unavailable")
+            raise HTTPException(status_code=502, detail="image unavailable")
         return Response(content=data.content,
                         media_type=_guess_mime(path) or "image/jpeg")
 

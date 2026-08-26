@@ -422,11 +422,11 @@ _GUIDES = {
         "  • Base URL: Your store's URL\n"
         "  • Header: `X-API-Key: <your_api_key>`\n\n"
         "*Endpoints available:*\n"
-        "  • `GET /v1/products` — Get live stock and prices\n"
+        "  • `GET /v1/products` — Get the current available catalog, live stock, and promotion state\n"
         "  • `GET /v1/balance` — Check your reseller wallet balance\n"
-        "  • `POST /v1/orders` — Place an automated order (returns delivered keys instantly)\n"
-        "  • `GET /v1/orders/{id}` — Check order status\n\n"
-        "✨ Real live stock is checked on every request — no fake stock numbers!"
+        "  • `POST /v1/orders` — Place an order at the current live checkout price\n"
+        "  • `GET /v1/orders/{id}` — Check delivery or processing status\n\n"
+        "✨ Flash Sale, percentage discounts, and stock-valid quantity tiers update automatically. Checkout rechecks availability and stock before charging."
     ),
     "pay_binance": (
         "🪙 *Binance USDT — Step-by-Step*\n"

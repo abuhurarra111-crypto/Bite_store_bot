@@ -90,8 +90,8 @@ async def autosync_price_stock_job(context):
         try:
             from ext_suppliers import (
                 list_suppliers, get_adapter_for_supplier, get_ext_products,
-                _compute_sell_price, update_ext_product, delete_ext_product_completely,
-                get_connection as _gc,
+                _compute_sell_price, update_ext_product, set_ext_product_source_active,
+                source_product_is_active, get_connection as _gc,
             )
             from async_adapter_helpers import async_fetch_products
         except Exception as e:
@@ -104,7 +104,7 @@ async def autosync_price_stock_job(context):
         c.execute("""SELECT DISTINCT ep.supplier_id
                       FROM ext_products ep
                       JOIN ext_suppliers s ON s.id = ep.supplier_id
-                      WHERE ep.synced_to_shop=1 AND ep.active=1
+                      WHERE ep.synced_to_shop=1
                         AND s.enabled=1""")
         live_sup_ids = [int(r["supplier_id"]) for r in c.fetchall()]
         conn.close()
@@ -147,41 +147,26 @@ async def autosync_price_stock_job(context):
                         continue
                     remote_id = str(ep.get("remote_id"))
                     if remote_id not in fresh_by_remote:
-                        # Supplier API no longer returns this product => supplier
-                        # deleted/removed it. Delete it from bot immediately so it
-                        # disappears from shop and admin Edit Items. Orders stay safe.
+                        # Missing upstream catalog item: remove it from every
+                        # customer/API catalog immediately, but retain stable
+                        # local product/configuration for automatic reappearance.
                         try:
-                            old_stock_missing = int(ep.get("stock") or 0)
-                        except Exception:
-                            old_stock_missing = 0
-                        try:
-                            stats = delete_ext_product_completely(int(ep["id"]))
+                            set_ext_product_source_active(int(ep["id"]), False, missing=True)
                             total_updated += 1
                             total_stock_changes += 1
                             change_details.append({
                                 "supplier": sup.get("name", f"Supplier #{sid}"),
                                 "product": ep.get("name") or f"Remote {remote_id}",
-                                "type": "missing_deleted",
-                                "old_stock": old_stock_missing,
+                                "type": "missing_unavailable",
+                                "old_stock": int(ep.get("stock") or 0),
                                 "new_stock": 0,
                                 "old_cost": float(ep.get("cost_usd") or 0),
                                 "new_cost": float(ep.get("cost_usd") or 0),
                                 "old_sell": float(ep.get("sell_price") or 0),
-                                "new_sell": 0,
+                                "new_sell": float(ep.get("sell_price") or 0),
                             })
-                            await context.bot.send_message(
-                                ADMIN_ID,
-                                f"🗑 *Supplier Product Deleted from API*\n"
-                                f"━━━━━━━━━━━━━━━━━━━━\n"
-                                f"🏬 Supplier: {escape_md(sup.get('name','?'))}\n"
-                                f"📦 Product: {escape_md(str(ep.get('name') or '?')[:80])}\n"
-                                f"🔢 Remote ID: `{escape_md(remote_id)}`\n"
-                                f"🛍 Shop/Edit Items product removed: `{stats.get('shop_product_id',0)}`\n\n"
-                                f"Old order history remains safe.",
-                                parse_mode="Markdown"
-                            )
                         except Exception as _al:
-                            logger.debug(f"[AutoSync] missing-product delete failed ext#{ep.get('id')}: {_al}")
+                            logger.debug(f"[AutoSync] missing-state update failed ext#{ep.get('id')}: {_al}")
                         continue
 
                     # Product is present again; clear one-shot missing alert.
@@ -200,62 +185,51 @@ async def autosync_price_stock_job(context):
                     old_oos_since = float(ep.get("out_of_stock_since") or 0)
                     now_ts = time.time()
 
-                    # v141: supplier still has product but stock is 0 => track
-                    # continuous OOS. Delete only after 5 full days.
-                    if new_stock <= 0:
-                        if old_oos_since <= 0:
-                            update_ext_product(int(ep["id"]), out_of_stock_since=now_ts, missing_since=0)
-                            old_oos_since = now_ts
-                        elif (now_ts - old_oos_since) >= OOS_DELETE_AFTER_SECONDS:
-                            try:
-                                stats = delete_ext_product_completely(int(ep["id"]))
-                                total_updated += 1
-                                total_stock_changes += 1
-                                await context.bot.send_message(
-                                    ADMIN_ID,
-                                    f"🗑 *Supplier Product Auto-Deleted*\n"
-                                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                                    f"🏬 Supplier: {escape_md(sup.get('name','?'))}\n"
-                                    f"📦 Product: {escape_md(str(ep.get('name') or '?')[:80])}\n"
-                                    f"📊 Reason: Out of stock for 5 days continuously\n"
-                                    f"🛍 Shop/Edit Items product removed: `{stats.get('shop_product_id',0)}`\n\n"
-                                    f"Old order history remains safe.",
-                                    parse_mode="Markdown"
-                                )
-                            except Exception as _del_oos:
-                                logger.debug(f"[AutoSync] 5-day OOS delete failed ext#{ep.get('id')}: {_del_oos}")
-                            continue
-                    elif old_oos_since > 0:
-                        update_ext_product(int(ep["id"]), out_of_stock_since=0, missing_since=0)
+                    # Zero stock is a temporary availability state, never a
+                    # destructive lifecycle event. Keep the row/settings so its
+                    # stock tiers and reseller config automatically return on restock.
+                    oos_since = old_oos_since
+                    if new_stock <= 0 and old_oos_since <= 0:
+                        oos_since = now_ts
+                    elif new_stock > 0:
+                        oos_since = 0
 
-                    # Recompute sell using SMART LOCK
+                    # Recompute sell using SMART LOCK. The actual mirror call
+                    # below uses the central promotion-ratio repricing path.
                     new_sell = _compute_sell_price(
                         cost_usd=new_cost,
                         markup_pct=float(ep.get("markup_pct") or 0),
                         fixed_price=float(ep.get("fixed_price") or 0),
                         fixed_price_base=float(ep.get("fixed_price_base") or 0),
                     )
-
+                    new_source_active = 1 if source_product_is_active(fresh_p) else 0
+                    old_source_active = int(ep.get("source_active", 1) or 0)
                     cost_changed = abs(new_cost - old_cost) > 0.001
                     stock_changed = new_stock != old_stock
-                    stock_increased = new_stock > old_stock  # 🆕 v94 for restock alert
+                    source_changed = new_source_active != old_source_active
+                    oos_changed = float(oos_since or 0) != float(old_oos_since or 0)
+                    stock_increased = new_stock > old_stock
 
-                    if not cost_changed and not stock_changed:
+                    if not cost_changed and not stock_changed and not source_changed and not oos_changed:
                         continue
 
-                    # Update ext_product
                     update_ext_product(
-                        int(ep["id"]),
-                        cost_usd=new_cost,
-                        stock=new_stock,
-                        sell_price=new_sell,
+                        int(ep["id"]), cost_usd=new_cost, stock=new_stock,
+                        source_active=new_source_active,
+                        out_of_stock_since=oos_since,
+                        missing_since=0 if new_source_active else ep.get("missing_since") or 0,
                     )
-                    if cost_changed: total_price_changes += 1
-                    if stock_changed: total_stock_changes += 1
+                    total_updated += 1
+                    if cost_changed:
+                        total_price_changes += 1
+                    if stock_changed:
+                        total_stock_changes += 1
                     change_details.append({
                         "supplier": sup.get("name", f"Supplier #{sid}"),
                         "product": ep.get("name") or fresh_p.get("name") or f"Remote {remote_id}",
-                        "type": "price_stock" if cost_changed and stock_changed else ("price" if cost_changed else "stock"),
+                        "type": ("price_stock" if cost_changed and stock_changed
+                                 else ("price" if cost_changed else
+                                       ("stock" if stock_changed else "availability"))),
                         "old_stock": old_stock,
                         "new_stock": new_stock,
                         "old_cost": old_cost,
@@ -264,32 +238,16 @@ async def autosync_price_stock_job(context):
                         "new_sell": new_sell,
                     })
 
-                    # Mirror to shop products table (in-place UPDATE)
+                    # update_ext_product() re-mirrors in place and preserves
+                    # Flash/tier ratios. Only the broadcast stays here.
                     shop_pid = int(ep.get("shop_product_id") or 0)
-                    if shop_pid > 0:
+                    if shop_pid > 0 and stock_increased:
                         try:
-                            conn2 = _gc(); c2 = conn2.cursor()
-                            c2.execute("""UPDATE products
-                                           SET price=?, cost_price=?, stock=?
-                                           WHERE id=?""",
-                                        (new_sell, new_cost, new_stock, shop_pid))
-                            conn2.commit(); conn2.close()
-                            total_updated += 1
-
-                            # 🆕 v94: fire restock broadcast if stock went UP
-                            # on a synced-to-shop product. Uses fake activity
-                            # destination + bc_stock template + Buy Now button.
-                            if stock_increased:
-                                try:
-                                    from restock_alerts import fire_restock_alert
-                                    added = new_stock - old_stock
-                                    await fire_restock_alert(
-                                        context.bot, shop_pid, added, new_stock
-                                    )
-                                except Exception as _rea:
-                                    logger.debug(f"[AutoSync] restock alert fail pid={shop_pid}: {_rea}")
-                        except Exception as e:
-                            logger.debug(f"[AutoSync] mirror fail #{shop_pid}: {e}")
+                            from restock_alerts import fire_restock_alert
+                            added = new_stock - old_stock
+                            await fire_restock_alert(context.bot, shop_pid, added, new_stock)
+                        except Exception as _rea:
+                            logger.debug(f"[AutoSync] restock alert fail pid={shop_pid}: {_rea}")
             except Exception as e:
                 logger.warning(f"[AutoSync] supplier#{sid} error: {e}")
 
@@ -526,8 +484,8 @@ async def ext_sup_bulk_sync_callback(update, context):
     try:
         from ext_suppliers import (
             get_ext_products,
-            mirror_ext_to_products, get_supplier, _safe_edit, _set_q_data,
-            ext_sup_view_callback,
+            mirror_ext_to_products, get_supplier, restore_bulk_unsynced_supplier_products,
+            _safe_edit, _set_q_data, ext_sup_view_callback,
         )
         # 🆕 v89: async wrapper (does the fetch on a thread, DB work stays inline)
         from async_adapter_helpers import async_sync_supplier_products
@@ -555,7 +513,17 @@ async def ext_sup_bulk_sync_callback(update, context):
                                         text=f"❌ Bulk sync failed: {err}")
         return
 
-    # Refresh shop rows for all synced_to_shop products
+    # Restore only mirrors that this supplier's Bulk Unsync archived.  Do not
+    # revive individually-unsynced/permanently-deleted rows: their marker stays
+    # clear, while the original local IDs/configuration of bulk-hidden rows are
+    # retained and restored in place.
+    try:
+        restored_ext_ids = restore_bulk_unsynced_supplier_products(sid)
+    except Exception as _restore_err:
+        logger.debug(f"[BulkSync] retained-mirror restore failed: {_restore_err}")
+        restored_ext_ids = []
+
+    # Refresh all current shop rows, including any just restored above.
     prods = get_ext_products(supplier_id=sid)
     live_count = 0
     restock_alerts_fired = 0
@@ -597,6 +565,7 @@ async def ext_sup_bulk_sync_callback(update, context):
             f"✅ *Bulk Sync Complete — {name}*\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             f"📥 Products fetched: *{imported}*\n"
+            f"🔁 Retained rows restored: *{len(restored_ext_ids)}*\n"
             f"🔄 Live shop rows refreshed: *{live_count}*"
         ),
         parse_mode="Markdown",
@@ -1113,41 +1082,36 @@ async def autosync_toggle_callback(update, context):
 
 
 def _unsync_supplier_shop_products(sid):
-    """🆕 v136: remove a supplier's mirrored shop products (shop + Edit Items)
-    while keeping order history + ext_orders intact. Returns (n_shop, n_ext)."""
-    from database import get_connection
+    """Reversibly archive every synced mirror of one catalog owner.
+
+    The former implementation deleted products/configuration and broke stable
+    IDs on re-sync. Archived rows are invisible to Shop, Admin Edit Items and
+    Reseller API, but retain tiers/Flash/reseller settings and the linked ID.
+    """
+    from database import get_connection, ensure_column
     conn = get_connection(); c = conn.cursor()
     try:
         c.execute("BEGIN IMMEDIATE")
-        pids = set()
-        try:
-            c.execute("SELECT id FROM products WHERE COALESCE(ext_supplier_id,0)=?", (int(sid),))
-            pids.update(int(r[0]) for r in c.fetchall() if r[0])
-        except Exception:
-            pass
-        try:
-            c.execute("SELECT DISTINCT shop_product_id FROM ext_products WHERE supplier_id=? AND COALESCE(shop_product_id,0)>0", (int(sid),))
-            pids.update(int(r[0]) for r in c.fetchall() if r[0])
-        except Exception:
-            pass
-        n_shop = 0
+        ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
+        ensure_column(c, "ext_products", "bulk_unsynced", "INTEGER DEFAULT 0")
+        c.execute("""SELECT DISTINCT shop_product_id FROM ext_products
+                     WHERE supplier_id=? AND COALESCE(shop_product_id,0)>0""", (int(sid),))
+        pids = [int(r[0]) for r in c.fetchall() if r[0]]
+        archived = 0
         if pids:
             qmarks = ",".join("?" for _ in pids)
-            plist = list(pids)
-            # History fields stay intact; only the deleted product FK is removed.
-            c.execute(f"UPDATE orders SET product_id=NULL WHERE product_id IN ({qmarks})", plist)
-            for table in ("product_accounts", "product_free_claim", "product_ref_pool",
-                          "stock_alerts", "restock_requests", "product_reviews"):
-                try:
-                    c.execute(f"DELETE FROM {table} WHERE product_id IN ({qmarks})", plist)
-                except Exception:
-                    pass
-            c.execute(f"DELETE FROM products WHERE id IN ({qmarks})", plist)
-            n_shop = c.rowcount if c.rowcount is not None else len(plist)
-        c.execute("UPDATE ext_products SET synced_to_shop=0, shop_product_id=0, active=1 WHERE supplier_id=?", (int(sid),))
-        n_ext = c.rowcount if c.rowcount is not None else 0
+            c.execute(f"""UPDATE products SET is_archived=1, is_active=0
+                          WHERE id IN ({qmarks})""", pids)
+            archived = int(c.rowcount or 0)
+        # Do NOT clear shop_product_id or owner/source states.  The distinct
+        # marker lets a later Bulk Sync restore exactly these local rows without
+        # reviving individually-unsynced or permanently-deleted records.
+        c.execute("""UPDATE ext_products
+                     SET synced_to_shop=0, bulk_unsynced=1
+                     WHERE supplier_id=? AND COALESCE(shop_product_id,0)>0""", (int(sid),))
+        n_ext = int(c.rowcount or 0)
         conn.commit(); conn.close()
-        return n_shop, n_ext
+        return archived, n_ext
     except Exception:
         try: conn.rollback()
         except Exception: pass
@@ -1157,17 +1121,10 @@ def _unsync_supplier_shop_products(sid):
 
 
 async def ext_sup_bulk_unsync_callback(update, context):
-    """🆕 v136: BULK UNSYNC — removes ALL products of a supplier from the
-    shop (user shop + Edit Items) while KEEPING order history intact.
+    """Bulk unsync: hide all linked items while preserving safe re-sync state.
 
-    Callback: ext_sup_bulk_unsync_<sid>
-    What it does:
-      - Deletes the mirrored shop `products` rows (so they vanish from the
-        user shop AND from admin Edit Items).
-      - Deletes their local bonus/account pools (product_accounts etc.).
-      - Unlinks ext_products (synced_to_shop=0, shop_product_id=0) so a
-        later Bulk Sync can re-mirror everything cleanly.
-      - NEVER touches `orders` / `ext_orders` → old records stay.
+    Customer/shop/Edit Items/Reseller API visibility is removed immediately;
+    orders and local per-product configuration remain intact for re-sync.
     """
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
@@ -1198,10 +1155,10 @@ async def ext_sup_bulk_unsync_callback(update, context):
         await q.answer()
         await _safe_edit(q,
             "🗑️ *Bulk Unsync — Confirm*\\n━━━━━━━━━━━━━━━━━━━━\\n\\n"
-            "This removes *ALL products* of this supplier from the shop and "
-            "from Edit Items.\\n\\n"
-            "✅ Order history (old records) is **kept**.\\n"
-            "🔁 A later *Bulk Sync* can re-add them anytime.\\n\\n"
+            "This hides *ALL products* of this catalog from the shop, Edit Items, "
+            "and reseller catalogs.\\n\\n"
+            "✅ Order history and product settings are **kept**.\\n"
+            "🔁 A later *Bulk Sync* restores the same products automatically.\\n\\n"
             "Tap again to confirm:",
             parse_mode="Markdown", reply_markup=kb)
         return
@@ -1221,8 +1178,8 @@ async def ext_sup_bulk_unsync_callback(update, context):
     ])
     await _safe_edit(q,
         f"🗑️ *Bulk Unsync complete*\\n━━━━━━━━━━━━━━━━━━━━\\n\\n"
-        f"• Removed from shop/Edit Items: *{n_shop}* product(s)\\n"
-        f"• Unlinked catalog rows: *{n_ext}*\\n"
-        f"• Order history: ✅ kept\\n\\n"
-        f"_Run Bulk Sync anytime to re-add them._",
+        f"• Hidden from shop/Edit Items/API: *{n_shop}* product(s)\\n"
+        f"• Catalog rows marked unsynced: *{n_ext}*\\n"
+        f"• Orders + product settings: ✅ kept\\n\\n"
+        f"_Run Bulk Sync anytime to restore the same rows._",
         parse_mode="Markdown", reply_markup=kb)

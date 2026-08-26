@@ -6,3 +6,9 @@ __pycache__/
 
 # v151: no bundled DB — bot boots fresh, admin restores manually
 latest_shop.db
+
+# Owner-ready database artifacts are downloadable from the release workspace,
+# never source-controlled (they may contain restored owner data).
+release/*.db
+release/*.db-wal
+release/*.db-shm

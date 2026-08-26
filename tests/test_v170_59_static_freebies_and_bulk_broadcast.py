@@ -171,7 +171,7 @@ class StaticFreebieAndBulkBroadcastTests(unittest.TestCase):
         self.assertEqual(database.freebie_claims_count(CUSTOMER_ID + 1, pid), 0)
 
     def test_all_tiers_render_in_order_and_legacy_custom_template_gets_safe_append(self):
-        pid = self._add_product(price=0.67, stock=25)
+        pid = self._add_product(price=0.67, stock=50)
         self.assertTrue(database.set_product_tier(pid, 30, 0.57))
         self.assertTrue(database.set_product_tier(pid, 10, 0.62))
 
@@ -193,7 +193,7 @@ class StaticFreebieAndBulkBroadcastTests(unittest.TestCase):
         database.set_setting("tpl_bc_bulkdeal", "")
 
     def test_save_and_broadcast_callback_sends_all_configured_tiers(self):
-        pid = self._add_product(price=0.67, stock=25)
+        pid = self._add_product(price=0.67, stock=50)
         database.set_product_tier(pid, 10, 0.62)
         database.set_product_tier(pid, 30, 0.57)
         sent = []

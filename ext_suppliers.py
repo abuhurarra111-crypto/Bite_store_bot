@@ -91,7 +91,13 @@ def ensure_ext_supplier_tables():
         emoji_id      TEXT DEFAULT '',          -- premium emoji custom_emoji_id
         emoji_char    TEXT DEFAULT '',          -- the visible emoji char (fallback)
         emoji_status  TEXT DEFAULT 'pending',   -- pending / ok / manual
+        -- v170.61: owner/source state is independent; active is effective.
         active        INTEGER DEFAULT 1,
+        owner_active  INTEGER DEFAULT 1,
+        source_active INTEGER DEFAULT 1,
+        -- Set only by Bulk Unsync.  Bulk Sync restores these retained mirrors
+        -- without reviving manually-unsynced or hard-deleted product rows.
+        bulk_unsynced INTEGER DEFAULT 0,
         imported_at   TEXT DEFAULT CURRENT_TIMESTAMP,
         last_synced_at TEXT DEFAULT '',
         raw_json      TEXT DEFAULT '',          -- last raw supplier JSON (for debugging)
@@ -99,6 +105,9 @@ def ensure_ext_supplier_tables():
     )""")
     c.execute("CREATE INDEX IF NOT EXISTS idx_ext_prod_sup ON ext_products(supplier_id)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_ext_prod_active ON ext_products(active)")
+    # A partially restored pre-v81 supplier table may exist without the state
+    # flag even though the current catalog guard joins on it.
+    ensure_column(c, "ext_suppliers", "enabled", "INTEGER DEFAULT 1")
     # 🆕 v81.1: Fixed selling price mode (Smart Lock)
     #   fixed_price = 0     → auto-markup mode (sell = cost × (1 + markup))
     #   fixed_price > 0     → SMART LOCK: sell adjusts UP only if cost rises
@@ -116,8 +125,26 @@ def ensure_ext_supplier_tables():
     ensure_column(c, "ext_products", "delivery_format",   "TEXT DEFAULT ''")
     ensure_column(c, "ext_products", "format_detected",   "INTEGER DEFAULT 0")  # 0=admin_override, 1=auto
     ensure_column(c, "ext_products", "synced_to_shop",    "INTEGER DEFAULT 0")  # v83: manual sync flag
+    # A separate marker lets the Bulk Sync button restore only rows hidden by
+    # Bulk Unsync, while permanent deletes and per-product unsync stay hidden.
+    ensure_column(c, "ext_products", "bulk_unsynced",      "INTEGER DEFAULT 0")
     ensure_column(c, "ext_products", "out_of_stock_since", "REAL DEFAULT 0")  # v141: auto-delete after 5 days OOS
     ensure_column(c, "ext_products", "missing_since",      "REAL DEFAULT 0")  # v141: supplier deleted/missing tracker
+    # v170.61 lifecycle split. Existing active=0 rows are conservatively kept
+    # owner-disabled rather than accidentally made live on the one-time upgrade.
+    ensure_column(c, "ext_products", "owner_active",  "INTEGER DEFAULT 1")
+    ensure_column(c, "ext_products", "source_active", "INTEGER DEFAULT 1")
+    try:
+        c.execute("""CREATE TABLE IF NOT EXISTS bot_settings
+                     (key TEXT PRIMARY KEY, value TEXT DEFAULT '')""")
+        c.execute("SELECT value FROM bot_settings WHERE key='v17061_ext_lifecycle_backfill'")
+        migrated = c.fetchone()
+        if not migrated:
+            c.execute("UPDATE ext_products SET owner_active=COALESCE(active,1), source_active=1")
+            c.execute("""INSERT OR REPLACE INTO bot_settings(key,value)
+                         VALUES('v17061_ext_lifecycle_backfill','1')""")
+    except Exception:
+        pass
 
     c.execute("""CREATE TABLE IF NOT EXISTS ext_orders (
         id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -206,7 +233,16 @@ def update_supplier(sid, **fields):
     vals = list(fields.values()) + [int(sid)]
     conn = get_connection(); c = conn.cursor()
     c.execute(f"UPDATE ext_suppliers SET {sets} WHERE id=?", vals)
+    changed = c.rowcount > 0
     conn.commit(); conn.close()
+    # Keep every consumer in sync even when this helper is called outside the
+    # Telegram panel (automation, migrations, or an admin script).
+    if changed and "enabled" in fields:
+        try:
+            refresh_supplier_mirrors(int(sid))
+        except Exception:
+            pass
+    return changed
 
 
 def ensure_env_supplier_presets():
@@ -371,14 +407,43 @@ def _compute_sell_price(cost_usd, markup_pct, fixed_price, fixed_price_base):
     return cost * (1 + mkp / 100.0)
 
 
+def source_product_is_active(payload) -> bool:
+    """Normalize an upstream catalog item's explicit availability state.
+
+    Absence of an activity flag means available (many adapters only send stock).
+    Zero stock is *not* deactivation: it stays tracked for automatic restock.
+    """
+    try:
+        d = dict(payload or {})
+        # Adapters may preserve the provider fields under normalized `raw`.
+        raw = d.get("raw")
+        if isinstance(raw, dict):
+            for _k, _v in raw.items():
+                d.setdefault(_k, _v)
+        for key in ("source_active", "is_active", "active", "enabled", "available"):
+            if key not in d or d.get(key) is None:
+                continue
+            value = d.get(key)
+            if isinstance(value, str):
+                return value.strip().lower() not in ("0", "false", "off", "inactive", "disabled", "deleted", "removed", "unavailable")
+            return bool(value)
+        status = str(d.get("status") or d.get("state") or "").strip().lower()
+        if status in ("inactive", "disabled", "deleted", "removed", "unavailable"):
+            return False
+    except Exception:
+        pass
+    return True
+
+
 def upsert_ext_product(supplier_id, remote_id, name, description, cost_usd,
-                      stock, category_id=0, raw_json=""):
+                      stock, category_id=0, raw_json="", source_active=True):
     """Insert or update a supplier product. Preserves markup + emoji + active
     state if row already exists (only overwrites cost/stock/name/desc).
     🆕 v81.1: honors fixed_price (Smart Lock) when computing sell_price."""
     ensure_ext_supplier_tables()
     conn = get_connection(); c = conn.cursor()
-    c.execute("""SELECT id, markup_pct, fixed_price, fixed_price_base
+    c.execute("""SELECT id, markup_pct, fixed_price, fixed_price_base,
+                        owner_active, source_active
                  FROM ext_products
                  WHERE supplier_id=? AND remote_id=?""",
               (int(supplier_id), str(remote_id)))
@@ -388,36 +453,34 @@ def upsert_ext_product(supplier_id, remote_id, name, description, cost_usd,
         fp = existing["fixed_price"] or 0
         fpb = existing["fixed_price_base"] or 0
         sell = _compute_sell_price(cost_usd, markup, fp, fpb)
-        clear_oos = 0 if int(stock or 0) > 0 else None
-        if clear_oos == 0:
-            c.execute("""UPDATE ext_products
-                         SET name=?, description=?, cost_usd=?, stock=?,
-                             sell_price=?, last_synced_at=CURRENT_TIMESTAMP,
-                             raw_json=?, missing_since=0, out_of_stock_since=0
-                         WHERE id=?""",
-                      (name[:250], description[:3000], float(cost_usd),
-                       int(stock), sell, raw_json[:8000], existing["id"]))
-        else:
-            c.execute("""UPDATE ext_products
-                         SET name=?, description=?, cost_usd=?, stock=?,
-                             sell_price=?, last_synced_at=CURRENT_TIMESTAMP,
-                             raw_json=?, missing_since=0
-                         WHERE id=?""",
-                      (name[:250], description[:3000], float(cost_usd),
-                       int(stock), sell, raw_json[:8000], existing["id"]))
+        owner_active = int(existing["owner_active"] if existing["owner_active"] is not None else 1)
+        source_flag = 1 if source_active else 0
+        effective_active = 1 if owner_active and source_flag else 0
+        # A returned row (including explicit upstream-inactive) clears the
+        # missing marker. Stock=0 is retained safely for later restock.
+        c.execute("""UPDATE ext_products
+                     SET name=?, description=?, cost_usd=?, stock=?, sell_price=?,
+                         source_active=?, active=?, last_synced_at=CURRENT_TIMESTAMP,
+                         raw_json=?, missing_since=?,
+                         out_of_stock_since=CASE WHEN ? > 0 THEN 0 ELSE out_of_stock_since END
+                     WHERE id=?""",
+                  (name[:250], description[:3000], float(cost_usd), int(stock), sell,
+                   source_flag, effective_active, raw_json[:8000],
+                   0 if source_flag else time.time(), int(stock or 0), existing["id"]))
         pid = existing["id"]
     else:
         markup = 40.0
         sell = _compute_sell_price(cost_usd, markup, 0, 0)
+        source_flag = 1 if source_active else 0
         c.execute("""INSERT INTO ext_products
                      (supplier_id, remote_id, name, description, cost_usd,
                       stock, markup_pct, sell_price, category_id, raw_json,
-                      out_of_stock_since, missing_since)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+                      active, owner_active, source_active, out_of_stock_since, missing_since)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, ?)""",
                   (int(supplier_id), str(remote_id), name[:250],
                    description[:3000], float(cost_usd), int(stock),
                    markup, sell, int(category_id), raw_json[:8000],
-                   0 if int(stock or 0) > 0 else 0))
+                   source_flag, source_flag, 0 if source_flag else time.time()))
         pid = c.lastrowid
     conn.commit(); conn.close()
     return pid
@@ -453,62 +516,89 @@ def get_ext_product(eid):
 
 
 def update_ext_product(eid, **fields):
+    """Update external catalog data and mirror only durable synced rows.
+
+    ``owner_active`` is the owner switch; ``source_active`` is refreshed from
+    the catalog. The legacy ``active`` field remains their effective AND value
+    for old screens/queries, but callers must not conflate the two states.
+    """
     ensure_ext_supplier_tables()
     allowed = {"name", "description", "cost_usd", "stock", "markup_pct",
                "sell_price", "category_id", "emoji_id", "emoji_char",
-               "emoji_status", "active",
-               # 🆕 v81.1: fixed price fields
-               "fixed_price", "fixed_price_base",
-               # 🆕 v82: link column
-               "shop_product_id",
-               # 🆕 v83/v141: format + sync + stale tracking
-               "delivery_format", "format_detected", "synced_to_shop",
+               "emoji_status", "active", "owner_active", "source_active",
+               "fixed_price", "fixed_price_base", "shop_product_id",
+               "delivery_format", "format_detected", "synced_to_shop", "bulk_unsynced",
                "out_of_stock_since", "missing_since"}
     fields = {k: v for k, v in fields.items() if k in allowed}
-    if not fields: return
-    # 🆕 v81.1: Recompute sell_price using SMART LOCK logic
+    if not fields:
+        return False
+    cur = get_ext_product(eid)
+    if not cur:
+        return False
+
+    # Compatibility: old callers setting `active` are owner intent changes.
+    if "active" in fields and "owner_active" not in fields and "source_active" not in fields:
+        fields["owner_active"] = fields.pop("active")
+    # Normal per-product Sync/Unsync is intentionally distinct from Bulk
+    # Unsync.  A fresh explicit sync clears any old bulk marker; a normal
+    # per-product unsync must not be picked up by a later Bulk Sync.
+    if "synced_to_shop" in fields:
+        fields["synced_to_shop"] = 1 if int(fields.get("synced_to_shop") or 0) else 0
+        fields.setdefault("bulk_unsynced", 0)
+    if "owner_active" in fields or "source_active" in fields:
+        owner = int(fields.get("owner_active", cur.get("owner_active", cur.get("active", 1))) or 0)
+        source = int(fields.get("source_active", cur.get("source_active", 1)) or 0)
+        fields["owner_active"] = 1 if owner else 0
+        fields["source_active"] = 1 if source else 0
+        fields["active"] = 1 if owner and source else 0
+
+    # Smart-lock selling price still applies to every cost/markup update.
     if any(k in fields for k in ("markup_pct", "cost_usd", "fixed_price", "fixed_price_base")):
-        cur = get_ext_product(eid) or {}
         cost = _safe_float(fields.get("cost_usd", cur.get("cost_usd")))
-        mkp  = _safe_float(fields.get("markup_pct", cur.get("markup_pct")), 40)
-        fp   = _safe_float(fields.get("fixed_price", cur.get("fixed_price")))
-        fpb  = _safe_float(fields.get("fixed_price_base", cur.get("fixed_price_base")))
+        mkp = _safe_float(fields.get("markup_pct", cur.get("markup_pct")), 40)
+        fp = _safe_float(fields.get("fixed_price", cur.get("fixed_price")))
+        fpb = _safe_float(fields.get("fixed_price_base", cur.get("fixed_price_base")))
         fields["sell_price"] = _compute_sell_price(cost, mkp, fp, fpb)
+
     sets = ", ".join(f"{k}=?" for k in fields)
     vals = list(fields.values()) + [int(eid)]
     conn = get_connection(); c = conn.cursor()
     c.execute(f"UPDATE ext_products SET {sets} WHERE id=?", vals)
     conn.commit(); conn.close()
-    # 🆕 v83: only mirror if product has been manually synced to shop.
-    # (In v82 we auto-mirrored on every change; user requested manual-only.)
+
     if any(k in fields for k in ("name", "description", "cost_usd", "stock",
-                                   "markup_pct", "sell_price", "category_id",
-                                   "emoji_id", "emoji_char", "active",
-                                   "fixed_price", "fixed_price_base",
-                                   "delivery_format")):
+                                  "markup_pct", "sell_price", "category_id",
+                                  "emoji_id", "emoji_char", "active", "owner_active",
+                                  "source_active", "fixed_price", "fixed_price_base",
+                                  "delivery_format", "synced_to_shop")):
         try:
             ep_check = get_ext_product(eid)
             if ep_check and ep_check.get("synced_to_shop"):
                 mirror_ext_to_products(eid)
         except Exception as e:
             logger.debug(f"[mirror] update failed: {e}")
+    return True
+
+
+def set_ext_product_source_active(eid, active, missing=False):
+    """Update catalog-source availability without overwriting owner intent."""
+    fields = {"source_active": 1 if active else 0}
+    if active:
+        fields["missing_since"] = 0
+    elif missing:
+        fields["missing_since"] = time.time()
+    return update_ext_product(int(eid), **fields)
 
 
 def toggle_ext_product_active(eid):
-    ensure_ext_supplier_tables()
-    conn = get_connection(); c = conn.cursor()
-    c.execute("SELECT active FROM ext_products WHERE id=?", (int(eid),))
-    r = c.fetchone()
-    if not r: conn.close(); return
-    new_val = 0 if r["active"] else 1
-    c.execute("UPDATE ext_products SET active=? WHERE id=?", (new_val, int(eid)))
-    conn.commit(); conn.close()
-    # 🆕 v82: mirror the active state to shop's products table
-    try:
-        mirror_ext_to_products(eid)
-    except Exception:
-        pass
-    return new_val
+    """Toggle the owner's state only; source state remains independently live."""
+    ep = get_ext_product(eid)
+    if not ep:
+        return None
+    new_owner = 0 if int(ep.get("owner_active", ep.get("active", 1)) or 0) else 1
+    update_ext_product(eid, owner_active=new_owner)
+    refreshed = get_ext_product(eid) or {}
+    return int(refreshed.get("active") or 0)
 
 
 # ────────────────────────────────────────────────────────────
@@ -531,6 +621,17 @@ def mirror_ext_to_products(ext_product_id):
     ep = get_ext_product(ext_product_id)
     if not ep:
         return 0, False
+    # Never recreate an owner-unsynced row. Its retained linked shop row is
+    # archived by unmirror_ext_product and may only be restored by re-sync.
+    if not int(ep.get("synced_to_shop") or 0):
+        shop_pid = int(ep.get("shop_product_id") or 0)
+        if shop_pid:
+            try:
+                from database import archive_supplier_mirror_product
+                archive_supplier_mirror_product(shop_pid)
+            except Exception:
+                pass
+        return shop_pid, False
 
     # Build the display name: if we have premium emoji_id, wrap in [[HTML]]
     # sentinel so premium_emoji_guard renders the animated emoji properly.
@@ -554,12 +655,13 @@ def mirror_ext_to_products(ext_product_id):
     # Ensure link columns exist (defensive)
     _ec(c, "products", "ext_supplier_id", "INTEGER DEFAULT 0")
     _ec(c, "products", "ext_product_id",  "INTEGER DEFAULT 0")
+    _ec(c, "products", "is_archived",     "INTEGER DEFAULT 0")
 
     # Check if shop_product already exists for this ext_product
     shop_pid = int(ep.get("shop_product_id") or 0)
     row = None
     if shop_pid > 0:
-        c.execute("SELECT id FROM products WHERE id=?", (shop_pid,))
+        c.execute("SELECT id, price FROM products WHERE id=?", (shop_pid,))
         row = c.fetchone()
 
     sell = float(ep.get("sell_price") or 0)
@@ -595,7 +697,15 @@ def mirror_ext_to_products(ext_product_id):
             desc = raw_desc
     else:
         desc = raw_desc
-    is_active = 1 if ep.get("active") else 0
+    try:
+        sup = get_supplier(int(ep.get("supplier_id") or 0))
+        supplier_enabled = bool(sup and int(sup.get("enabled", 1) or 0))
+    except Exception:
+        supplier_enabled = False
+    owner_active = bool(int(ep.get("owner_active", ep.get("active", 1)) or 0))
+    source_active = bool(int(ep.get("source_active", 1) or 0))
+    # Native shop/API availability requires all three independent states.
+    is_active = 1 if owner_active and source_active and supplier_enabled else 0
     # 🐛 v106 FIX: sync the delivery_format the auto-detector set on the
     # ext_products row (from v87 detector — email_pass / email_pass_2fa /
     # redeem_link / coupon_code / etc.). OLD code hardcoded 'email_pass'
@@ -603,11 +713,13 @@ def mirror_ext_to_products(ext_product_id):
     # / coupon products from supplier.
     prod_fmt = str(ep.get("delivery_format") or "email_pass").strip() or "email_pass"
 
+    old_shop_price = float(row["price"] or 0) if row else 0.0
     if row:
         # Update existing mirror row
         c.execute("""UPDATE products
                      SET name=?, description=?, price=?, cost_price=?,
-                         stock=?, category_id=?, is_active=?, product_format=?
+                         stock=?, category_id=?, is_active=?, is_archived=0,
+                         product_format=?
                      WHERE id=?""",
                   (display_name, desc, sell, cost, stock,
                    cat_id or 1, is_active, prod_fmt, shop_pid))
@@ -632,6 +744,14 @@ def mirror_ext_to_products(ext_product_id):
                   (pid, int(ep.get("id"))))
 
     conn.commit(); conn.close()
+    # v170.61: supplier cost/markup-driven normal-price changes keep all
+    # configured Flash/tier percentage relationships rather than stale dollars.
+    if not was_new and abs(float(sell) - old_shop_price) > 0.0000001:
+        try:
+            from database import reprice_product_dynamic_rules
+            reprice_product_dynamic_rules(pid, old_shop_price, sell)
+        except Exception as _price_rule_err:
+            logger.debug(f"[mirror] promotion reprice failed pid={pid}: {_price_rule_err}")
     # v127: Every NEW supplier-mirrored product gets Free-via-Referrals
     # defaults automatically. Existing product rows keep their admin settings.
     if was_new:
@@ -657,57 +777,112 @@ def mirror_all_supplier_products(supplier_id):
     return len(prods), new_count
 
 
-def unmirror_ext_product(ext_product_id):
-    """Unsync supplier product by deleting its shop mirror completely.
+def refresh_supplier_mirrors(supplier_id):
+    """Apply supplier enabled/disabled state to retained synced mirror rows."""
+    refreshed = 0
+    for ep in get_ext_products(supplier_id=int(supplier_id), active_only=False):
+        if int(ep.get("synced_to_shop") or 0):
+            try:
+                mirror_ext_to_products(int(ep["id"]))
+                refreshed += 1
+            except Exception as e:
+                logger.debug(f"[supplier-state] mirror refresh failed ext#{ep.get('id')}: {e}")
+    return refreshed
 
-    Requirement: unsynced supplier products must disappear from BOTH user shop
-    and admin Edit Items. Old orders remain safe because orders store product
-    name/price/status independently.
+
+def restore_bulk_unsynced_supplier_products(supplier_id):
+    """Mark only Bulk-Unsynced retained mirrors ready for a Bulk Sync restore.
+
+    The caller re-mirrors the returned external IDs after its fresh catalog
+    fetch.  Keeping this marker separate prevents Bulk Sync from accidentally
+    resurrecting rows that an owner individually unsynced or permanently
+    deleted, while preserving stable IDs/settings for the documented bulk
+    unsync → bulk sync round-trip.
+    """
+    ensure_ext_supplier_tables()
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("BEGIN IMMEDIATE")
+        c.execute("""SELECT id FROM ext_products
+                     WHERE supplier_id=? AND COALESCE(bulk_unsynced,0)=1
+                       AND COALESCE(shop_product_id,0)>0
+                     ORDER BY id""", (int(supplier_id),))
+        ids = [int(r[0]) for r in c.fetchall()]
+        if ids:
+            marks = ",".join("?" for _ in ids)
+            c.execute(f"""UPDATE ext_products
+                         SET synced_to_shop=1, bulk_unsynced=0
+                         WHERE id IN ({marks})""", ids)
+        conn.commit(); conn.close()
+        return ids
+    except Exception:
+        try: conn.rollback()
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
+        raise
+
+
+def unmirror_ext_product(ext_product_id):
+    """Reversibly remove a supplier mirror from every customer/admin catalog.
+
+    Unlike the old destructive implementation, the linked shop row and its
+    local configuration (ID, categories, tiers, Flash rules, reseller settings)
+    remain archived. A later Sync restores that *same* row in place.
     """
     ep = get_ext_product(ext_product_id)
     if not ep:
-        return {"deleted": 0, "shop_product_id": 0}
+        return {"deleted": 0, "archived": 0, "shop_product_id": 0}
     shop_pid = int(ep.get("shop_product_id") or 0)
-    deleted = 0
+    archived = 0
     try:
         from database import archive_supplier_product
-        archive_supplier_product(ep, reason="supplier_deleted_or_auto_removed")
+        archive_supplier_product(ep, reason="owner_unsynced")
     except Exception:
         pass
     if shop_pid > 0:
         try:
-            from database import delete_product_permanently
-            stats = delete_product_permanently(shop_pid)
-            deleted = int((stats or {}).get("products") or 0)
+            from database import archive_supplier_mirror_product
+            archived = 1 if archive_supplier_mirror_product(shop_pid) else 0
         except Exception as e:
-            logger.warning(f"[unmirror] hard delete failed ext#{ext_product_id} shop#{shop_pid}: {e}")
-            # Fallback: at least hide if hard-delete fails.
-            try:
-                conn = get_connection(); c = conn.cursor()
-                c.execute("UPDATE products SET is_active=0, stock=0 WHERE id=?", (shop_pid,))
-                conn.commit(); conn.close()
-            except Exception:
-                pass
-    try:
-        update_ext_product(int(ext_product_id), synced_to_shop=0, shop_product_id=0)
-    except Exception:
-        pass
-    return {"deleted": deleted, "shop_product_id": shop_pid}
+            logger.warning(f"[unmirror] archive failed ext#{ext_product_id} shop#{shop_pid}: {e}")
+    # Keep `shop_product_id` linked: re-sync can update this exact safe row.
+    update_ext_product(int(ext_product_id), synced_to_shop=0)
+    return {"deleted": archived, "archived": archived, "shop_product_id": shop_pid}
 
 
 def delete_ext_product_completely(ext_product_id):
-    """Delete supplier product from bot after supplier removed it or 5-day OOS.
+    """True owner hard-delete for an imported product (not used for outages).
 
-    Deletes shop mirror via unmirror_ext_product first. Orders are untouched.
+    Supplier disappearance/OOS now uses reversible source state. This function
+    remains destructive only when an owner explicitly chooses permanent delete.
     """
     eid = int(ext_product_id)
-    stats = unmirror_ext_product(eid)
+    ep = get_ext_product(eid)
+    stats = {"deleted": 0, "shop_product_id": int((ep or {}).get("shop_product_id") or 0),
+             "ext_deleted": 0, "deferred_inflight": 0}
+    if not ep:
+        return stats
+    try:
+        from database import archive_supplier_product, delete_product_permanently
+        archive_supplier_product(ep, reason="owner_hard_deleted")
+        if stats["shop_product_id"]:
+            result = delete_product_permanently(stats["shop_product_id"])
+            stats["deleted"] = int((result or {}).get("products") or 0)
+            stats["deferred_inflight"] = int((result or {}).get("deferred_inflight") or 0)
+            if stats["deferred_inflight"]:
+                # A previously claimed supplier order can still be inside an
+                # upstream API call. Keep the retained ext row/link until it
+                # completes; it is already unsynced/archived so no catalog can
+                # expose it or submit a second order.
+                return stats
+    except Exception as e:
+        logger.warning(f"[ext hard delete] local product cleanup failed ext#{eid}: {e}")
     conn = get_connection(); c = conn.cursor()
     try:
         c.execute("DELETE FROM ext_products WHERE id=?", (eid,))
-        deleted = c.rowcount if c.rowcount is not None else 0
+        stats["ext_deleted"] = int(c.rowcount or 0)
         conn.commit(); conn.close()
-        stats["ext_deleted"] = int(deleted or 0)
         return stats
     except Exception:
         try: conn.rollback()
@@ -1892,6 +2067,7 @@ def sync_supplier_products(supplier_id):
     except Exception as e:
         return 0, str(e)
     n = 0
+    seen_remote_ids = set()
     # 🆕 v87: auto-translate hook — silently translates description
     # only if translator is ON and description is in the FROM language.
     # Never fails: falls back to original text on any exception.
@@ -1901,6 +2077,7 @@ def sync_supplier_products(supplier_id):
         _mtx = None
     for p in products:
         try:
+            seen_remote_ids.add(str(p.get("remote_id")))
             desc = p.get("description", "")
             if _mtx is not None:
                 try:
@@ -1915,6 +2092,7 @@ def sync_supplier_products(supplier_id):
                 cost_usd=p["cost_usd"],
                 stock=p["stock"],
                 raw_json=json.dumps(p.get("raw", {}), ensure_ascii=False),
+                source_active=source_product_is_active(p),
             )
             # 🆕 v90: if adapter provided normalized emoji_char + emoji_id
             # (e.g. InstaAPI which pre-parses them from custom_emoji_id),
@@ -1941,6 +2119,16 @@ def sync_supplier_products(supplier_id):
             n += 1
         except Exception as e:
             logger.warning(f"[sync_supplier_products] upsert failed for {p.get('remote_id')}: {e}")
+    # A successful full catalog fetch also tells us which retained mirrors have
+    # disappeared upstream. Keep their row/link/settings, but take them out of
+    # every customer/API catalog until the same remote ID appears again.
+    try:
+        for existing_ep in get_ext_products(supplier_id=supplier_id, active_only=False):
+            if str(existing_ep.get("remote_id")) not in seen_remote_ids:
+                set_ext_product_source_active(int(existing_ep["id"]), False, missing=True)
+    except Exception as _missing_mark_err:
+        logger.debug(f"[sync] missing-state mark failed supplier#{supplier_id}: {_missing_mark_err}")
+
     # v117 policy: product import/sync must NOT refresh supplier balance.
     # Balance is updated only on manual Test & Refresh or after a successful
     # customer order for that supplier. Still record product-sync time.
@@ -2588,6 +2776,8 @@ async def ext_sup_toggle_callback(update, context):
     s = get_supplier(sid)
     if not s: return
     new_val = 0 if s["enabled"] else 1
+    # update_supplier centrally refreshes retained synced mirrors, including
+    # calls made from scripts/automation rather than only this callback.
     update_supplier(sid, enabled=new_val)
     await q.answer("🟢 Enabled" if new_val else "🔴 Disabled")
     _set_q_data(q, f"ext_sup_view_{sid}")
@@ -3934,9 +4124,32 @@ async def route_order_to_supplier(bot, order):
     qty = _supplier_order_qty_from_name(order)
 
     # Idempotency/concurrency guard: claim before calling the paid supplier API.
+    # A worker that is already `supplier_processing` is treated as submitted:
+    # do not revoke/refund it merely because its catalog item was disabled after
+    # the upstream submission began. That order may still complete normally.
     claimed, claim_reason = _claim_supplier_order_for_processing(order['id'])
     if not claimed:
         logger.info(f"[router] order #{order['id']} already handled/locked: {claim_reason}")
+        return True
+
+    # We own the claim but have not made any upstream call yet. Re-read every
+    # live catalog switch here: source disappearance, owner disable/unsync,
+    # local deactivation, supplier disable, or hard deletion must refund this
+    # accepted-but-not-submitted order instead of touching the upstream API.
+    try:
+        from database import product_is_catalog_available
+        fresh_p = get_product(order['product_id'])
+        if not fresh_p or not product_is_catalog_available(fresh_p):
+            await _refund_and_notify(
+                bot, order, sup, ep, qty,
+                "Product availability was revoked before fulfillment started.")
+            return True
+    except Exception:
+        # Availability verification failure is also fail-closed before a paid
+        # upstream purchase; _refund_and_notify records the user-safe outcome.
+        await _refund_and_notify(
+            bot, order, sup, ep, qty,
+            "Product availability could not be verified before fulfillment.")
         return True
 
     # v114: use previously saved supplier bonus accounts first, but only when
@@ -4281,7 +4494,9 @@ async def _refund_and_notify(bot, order, sup, ep, qty, reason):
                 cur.execute("UPDATE products SET is_active=0, stock=0 WHERE id=?", (pid,))
                 try:
                     if ep and ep.get('id'):
-                        cur.execute("UPDATE ext_products SET active=0 WHERE id=?", (int(ep.get('id')),))
+                        cur.execute("""UPDATE ext_products
+                                       SET owner_active=0, active=0
+                                       WHERE id=?""", (int(ep.get('id')),))
                 except Exception:
                     pass
                 conn.commit(); conn.close()
@@ -4898,9 +5113,14 @@ async def ext_prod_refresh_callback(update, context):
         if str(rp.get("remote_id")) == str(p["remote_id"]):
             fresh = rp; break
     if not fresh:
+        # Preserve the mirror identity/config but make it unavailable now.
+        set_ext_product_source_active(eid, False, missing=True)
         await q.answer(
-            "❌ Supplier no longer has this product (removed?)",
-            show_alert=True); return
+            "⚠️ Product is currently unavailable and was hidden safely.",
+            show_alert=True)
+        _set_q_data(q, f"ext_prod_view_{eid}")
+        await ext_prod_view_callback(update, context)
+        return
 
     # Optional auto-translate on fresh description
     _desc = fresh.get("description") or ""
@@ -4919,6 +5139,7 @@ async def ext_prod_refresh_callback(update, context):
         cost_usd=fresh.get("cost_usd", 0),
         stock=fresh.get("stock", 0),
         raw_json=json.dumps(fresh.get("raw", {}), ensure_ascii=False),
+        source_active=source_product_is_active(fresh),
     )
 
     # Re-run format auto-detect on the NEW data
@@ -4967,17 +5188,16 @@ async def ext_prod_sync_callback(update, context):
     if not p: return
 
     if p.get("synced_to_shop"):
-        # Currently synced → UNSYNC: delete shop mirror so it disappears from
-        # both user shop and admin Edit Items.
+        # Currently synced → reversible UNSYNC: archive from every catalog.
         stats = unmirror_ext_product(eid)
         await q.answer(
-            f"🗑 Unsynced + deleted from shop/admin (product #{stats.get('shop_product_id',0)})",
+            f"🗑 Unsynced and hidden safely (product #{stats.get('shop_product_id',0)})",
             show_alert=True)
     else:
-        # Not synced → SYNC (create/update shop mirror + activate)
+        # Not synced → SYNC restores the retained shop row/configuration in place.
         update_ext_product(eid, synced_to_shop=1)
         mirror_ext_to_products(eid)
-        await q.answer("✅ Synced to Shop! Now live for customers.", show_alert=True)
+        await q.answer("✅ Synced to Shop safely.", show_alert=True)
 
     # Refresh view
     _set_q_data(q, f"ext_prod_view_{eid}")

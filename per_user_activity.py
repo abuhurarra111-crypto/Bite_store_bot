@@ -841,7 +841,7 @@ async def build_fake_message(bot, user_id: int) -> tuple[str, any]:
     if chosen == "bulkdeal":
         try:
             from fake_engagement import _get_products_with_tiers
-            from database import get_product as _gp2, get_product_tiers
+            from database import get_product as _gp2, get_available_product_tiers, is_flash_sale_active
             from customization import render_bulkdeal_message_for_tiers
             eligible = _get_products_with_tiers()
             if not eligible:
@@ -849,7 +849,9 @@ async def build_fake_message(bot, user_id: int) -> tuple[str, any]:
             else:
                 bd_pid = random.choice(eligible)
                 _p = _gp2(bd_pid)
-                tiers = get_product_tiers(bd_pid)
+                tiers = get_available_product_tiers(
+                    bd_pid, stock=int(dict(_p).get("stock") or 0) if _p else 0,
+                    flash_active=is_flash_sale_active(_p)) if _p else []
                 if _p and tiers:
                     bd_name = str(dict(_p).get("name", "Product"))
                     try:

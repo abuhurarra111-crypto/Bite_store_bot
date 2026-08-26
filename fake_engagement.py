@@ -434,7 +434,7 @@ def _get_products_with_tiers():
     out = []
     try:
         from database import (get_connection, is_product_hidden, get_product,
-                              get_product_tiers)
+                              get_available_product_tiers, is_flash_sale_active)
         conn = get_connection(); c = conn.cursor()
         c.execute("SELECT DISTINCT product_id FROM product_tier_discounts")
         raw = [int(r["product_id"]) for r in (c.fetchall() or [])]
@@ -451,7 +451,9 @@ def _get_products_with_tiers():
                         continue
                 except Exception:
                     pass
-                if get_product_tiers(pid):
+                if get_available_product_tiers(
+                        pid, stock=int(dict(p).get("stock") or 0),
+                        flash_active=is_flash_sale_active(p)):
                     out.append(pid)
             except Exception:
                 pass
@@ -463,8 +465,11 @@ def _get_products_with_tiers():
 def _get_lowest_tier(pid):
     """🆕 v161.12: return (qty, unit_price) of the cheapest tier for a product."""
     try:
-        from database import get_product_tiers
-        tiers = get_product_tiers(pid) or []
+        from database import get_product, get_available_product_tiers, is_flash_sale_active
+        p = get_product(pid)
+        tiers = get_available_product_tiers(
+            pid, stock=int(dict(p).get("stock") or 0) if p else 0,
+            flash_active=is_flash_sale_active(p)) if p else []
         if not tiers:
             return None
         best = None
@@ -960,7 +965,7 @@ async def run_fake_broadcast(bot, force_type=None):
     # quantity-price list, never only the cheapest tier.
     if chosen_type == "bulkdeal":
         try:
-            from database import get_product as _gp, get_product_tiers
+            from database import get_product as _gp, get_available_product_tiers, is_flash_sale_active
             from customization import render_bulkdeal_message_for_tiers
             eligible = _get_products_with_tiers()
             if not eligible:
@@ -968,7 +973,9 @@ async def run_fake_broadcast(bot, force_type=None):
                 return None, 0, 0
             bd_pid = random.choice(eligible)
             p = _gp(bd_pid)
-            tiers = get_product_tiers(bd_pid)
+            tiers = get_available_product_tiers(
+                bd_pid, stock=int(dict(p).get("stock") or 0) if p else 0,
+                flash_active=is_flash_sale_active(p)) if p else []
             if not p or not tiers:
                 return None, 0, 0
             bd_name = (dict(p).get("name", "product") if p else "product")

@@ -5,7 +5,8 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import ContextTypes
 from database import (get_all_active_products, get_product,
-                      get_setting, get_toggle, get_products_grouped_by_category)
+                      get_setting, get_toggle, get_products_grouped_by_category,
+                      product_is_catalog_available)
 from keyboards import (all_products_keyboard, product_detail_keyboard, back_btn,
                        shop_categories_keyboard,
                        shop_category_products_keyboard)
@@ -321,15 +322,16 @@ def _build_detail_text(p, user_id=None):
     name_html_aware = is_html_value(p['name'])
     rate = float(get_setting("usd_pkr_rate", USD_TO_PKR_RATE))
     pkr = format_pkr(p['price'], rate)
-    is_flash = dict(p).get('is_flash_sale', 0)
-    f_price = dict(p).get('flash_price', 0) if is_flash else 0
-    pkr_f = format_pkr(f_price, rate) if is_flash else ""
-    # 🐛 v157 (Bulk Discount): discounted price + original
+    # Effective Flash state is checked synchronously, not only by the periodic
+    # expiry job, so an already-expired sale cannot render or charge here.
     try:
-        from database import get_discounted_price
+        from database import get_discounted_price, is_flash_sale_active
         _eff, _orig, _d_pct = get_discounted_price(p)
+        is_flash = is_flash_sale_active(p)
     except Exception:
-        _eff, _orig, _d_pct = float(p['price']), float(p['price']), 0
+        _eff, _orig, _d_pct, is_flash = float(p['price']), float(p['price']), 0, False
+    f_price = float(_eff) if is_flash else 0
+    pkr_f = format_pkr(f_price, rate) if is_flash else ""
     _has_discount = (_d_pct and _d_pct > 0 and abs(_eff - float(p['price'])) > 0.0005)
     _pkr_eff = format_pkr(_eff, rate) if not is_flash else ""
 
@@ -404,7 +406,7 @@ def _build_detail_text(p, user_id=None):
         # 🆕 v158/v160: tiered bulk discounts shown on the product page (HTML mode)
         try:
             from database import product_tiers_text
-            _tiers_txt = product_tiers_text(p, base_price=(_eff if _has_discount else float(p['price'])), mode="html")
+            _tiers_txt = product_tiers_text(p, base_price=float(p['price']), mode="html")
             if _tiers_txt:
                 text += _tiers_txt + "\n\n"
         except Exception:
@@ -458,7 +460,7 @@ def _build_detail_text(p, user_id=None):
     # 🆕 v158/v160: tiered bulk discounts on the product page (Markdown branch)
     try:
         from database import product_tiers_text
-        _tiers_txt = product_tiers_text(p, base_price=(_eff if _has_discount else float(p['price'])), mode="md")
+        _tiers_txt = product_tiers_text(p, base_price=float(p['price']), mode="md")
         if _tiers_txt:
             text += _tiers_txt + "\n\n"
     except Exception:
@@ -765,7 +767,9 @@ def _carousel_keyboard(idx, total, product, user=None):
         else:
             nav.append(InlineKeyboardButton(_sl("cnav_prev", "⬅️ Prev"),
                                              callback_data="cnav_prev"))
-    if product['stock'] > 0:
+    _reusable = bool(str(dict(product).get("delivery_text") or "").strip()
+                     or str(dict(product).get("delivery_file_id") or "").strip())
+    if product['stock'] > 0 or _reusable:
         nav.append(InlineKeyboardButton(_sl("cnav_buy", "🛒 Buy Now"),
                                          callback_data=f"buy_{pid}"))
     else:
@@ -932,8 +936,8 @@ async def product_detail_callback(update: Update, context: ContextTypes.DEFAULT_
         except Exception:
             await q.edit_message_text("❌ Not found!", reply_markup=back_btn()); return
     p = get_product(int(pid))
-    if not p:
-        await q.edit_message_text("❌ Not found!", reply_markup=back_btn()); return
+    if not p or not product_is_catalog_available(p):
+        await q.edit_message_text("❌ This product is no longer available.", reply_markup=back_btn()); return
 
     show_photo = get_toggle("show_photo") == "1"
     try: photo_id = p['photo_id']
@@ -965,10 +969,12 @@ async def product_detail_callback(update: Update, context: ContextTypes.DEFAULT_
 async def show_product_detail_direct(bot, user_id, product_id):
     """Directly send product details & purchase buttons to a user (used by deep linking)."""
     p = get_product(product_id)
-    if not p:
-        await bot.send_message(chat_id=user_id, text="❌ Product not found!")
+    if not p or not product_is_catalog_available(p):
+        await bot.send_message(chat_id=user_id, text="❌ This product is no longer available!")
         return
-    if p['stock'] <= 0:
+    _reusable = bool(str(dict(p).get("delivery_text") or "").strip()
+                     or str(dict(p).get("delivery_file_id") or "").strip())
+    if p['stock'] <= 0 and not _reusable:
         await bot.send_message(chat_id=user_id, text=_get_resp("out_of_stock", user_id=user_id if user_id else 0))
         return
 

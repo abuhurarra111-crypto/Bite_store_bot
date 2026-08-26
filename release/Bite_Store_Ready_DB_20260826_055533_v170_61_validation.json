@@ -1,0 +1,36 @@
+{
+  "app_catalog_read_smoke_count": 107,
+  "artifact": "Bite_Store_Ready_DB_20260826_055533_v170_61.db",
+  "artifact_bytes": 7647232,
+  "artifact_foreign_key_violations": 0,
+  "artifact_integrity_check": [
+    "ok"
+  ],
+  "artifact_mode_octal": "0o600",
+  "artifact_sha256": "f15cc66637fc1015f26e538a8a7787b398a92183169976ffde7ffae07d5aeaac",
+  "artifact_table_count": 69,
+  "built_at_pkt": "2026-08-26 12:09:03 PKT",
+  "core_row_counts_preserved": {
+    "api_keys": 72,
+    "categories": 4,
+    "ext_products": 335,
+    "ext_suppliers": 7,
+    "orders": 1764,
+    "product_tier_discounts": 11,
+    "products": 116,
+    "reseller_orders": 26,
+    "users": 2199
+  },
+  "migration_idempotency_passed": true,
+  "public_docs_neutral_language_smoke": true,
+  "release": "v170.61",
+  "required_schema_columns_present": true,
+  "restore_note": "Deployments boot fresh by policy. After the new deployment has started once, the owner manually restores this file to the configured persistent DB_PATH and restarts; do not delete the same-deployment marker.",
+  "source": "bite_store_backup_20260826_055533_source.db",
+  "source_foreign_key_violations": 0,
+  "source_integrity_check": [
+    "ok"
+  ],
+  "source_sha256": "6e10edd05e236d0ed0575a756249d68323bfac7d274312e38b3fbe85f1bb9ec8",
+  "source_sha256_before_after_match": true
+}

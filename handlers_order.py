@@ -1,21 +1,21 @@
 def _get_eff_price(p):
-    """🐛 v157 (Bulk Discount): returns the EFFECTIVE price — flash price if
-    flash-sale is on, else the discounted price when discount_pct is active."""
+    """Effective unit price for one item under the shared live rule."""
     try:
-        from database import get_discounted_price
-        price, _orig, pct = get_discounted_price(p)
-        return float(price)
+        from database import effective_product_unit_price
+        unit, _kind, _tier = effective_product_unit_price(p, qty=1)
+        return float(unit)
     except Exception:
         d = dict(p)
-        return float(d.get('flash_price', 0)) if d.get('is_flash_sale') else float(d.get('price', 0))
+        return float(d.get('price', 0) or 0)
+
 
 def _get_price_for_qty(p, qty=1):
-    """🐛 v158 (Tiered Discount): unit price for a given quantity — picks the
-    largest tier whose min_qty <= qty (Gemini: 1→$1, 10→$0.89, 30→$0.52…)."""
+    """Use the same Flash → stock-valid tier → percent → normal order rule
+    used by the Reseller API. No stale or stock-ineligible tier may reach a
+    native payment screen."""
     try:
-        base = _get_eff_price(p)
-        from database import tier_price_for_qty
-        unit, _min = tier_price_for_qty(int(p['id']), int(qty or 1), base)
+        from database import effective_product_unit_price
+        unit, _kind, _tier = effective_product_unit_price(p, qty=int(qty or 1))
         return float(unit)
     except Exception:
         return _get_eff_price(p)
@@ -33,6 +33,41 @@ def _get_min_qty(p):
         return n if n >= 1 else 1
     except Exception:
         return 1
+
+
+def _checkout_product_state(product, qty=1):
+    """Live native checkout guard used at every stale-callback boundary.
+
+    The static text/file delivery modes are reusable by design, so legacy rows
+    with stock=0 remain purchasable just like ``build_delivery_detailed``. All
+    finite products must satisfy current stock and all products must satisfy
+    the archive/local/source lifecycle guard.
+    """
+    try:
+        if not product or not product_is_catalog_available(product):
+            return False, "unavailable"
+        d = dict(product)
+        if str(d.get("delivery_mode") or "") == "manual":
+            return True, ""
+        if str(d.get("delivery_text") or "").strip() or str(d.get("delivery_file_id") or "").strip():
+            return True, ""
+        if int(d.get("stock") or 0) < max(1, int(qty or 1)):
+            return False, "out_of_stock"
+        return True, ""
+    except Exception:
+        return False, "unavailable"
+
+
+def _checkout_problem_text(product, qty=1):
+    ok, reason = _checkout_product_state(product, qty)
+    if ok:
+        return ""
+    if reason == "out_of_stock":
+        try:
+            return f"❌ Only {product['stock']} in stock!"
+        except Exception:
+            return "❌ This product is out of stock."
+    return "❌ This product is no longer available."
 # ============================================
 # 🛒 ORDERS (v25 — Auto-Verify for Binance + EasyPaisa)
 # ============================================
@@ -259,12 +294,13 @@ async def buy_callback(update, context):
     q = update.callback_query; await q.answer()
     nav_push(context, 'shop')
     p = get_product(int(q.data.split("_")[1]))
-    if not p:
-        await _safe_send(q, context, "❌ Product not found!", reply_markup=back_btn()); return
+    _ok, _why = _checkout_product_state(p, 1)
+    if not _ok:
+        msg = _r("out_of_stock", user_id=q.from_user.id) if _why == "out_of_stock" else _checkout_problem_text(p, 1)
+        await _safe_send(q, context, msg, reply_markup=back_btn()); return
         
     is_manual = (dict(p) if p else {}).get('delivery_mode') == 'manual'
-    if not is_manual and p['stock'] <= 0:
-        await _safe_send(q, context, _r("out_of_stock", user_id=q.from_user.id), reply_markup=back_btn()); return
+    is_reusable = bool(str(dict(p).get('delivery_text') or '').strip() or str(dict(p).get('delivery_file_id') or '').strip())
 
     # 🆕 Minimum order quantity: if admin set a minimum > 1, the customer must
     # order at least that many → send them into the quantity flow instead of
@@ -274,7 +310,7 @@ async def buy_callback(update, context):
         context.user_data['bulk_product_id'] = p['id']
         context.user_data['bulk_step'] = 'waiting_qty'
         cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel Payment", callback_data="cancel_order")]])
-        if is_manual:
+        if is_manual or is_reusable:
             stock_text = "🟢 On-Demand"; max_qty = 9999
         else:
             stock_text = f"{p['stock']}"; max_qty = p['stock']
@@ -301,7 +337,18 @@ async def order_creds_received(update, context):
     pid = context.user_data.get('order_req_pid')
     qty = context.user_data.get('order_req_qty', 1)
     p = get_product(pid)
-    if not p: return True
+    if not p:
+        return True
+    # The customer may spend time entering credentials after the initial Buy
+    # callback. Re-check lifecycle and exact quantity before showing payment
+    # methods, otherwise a revoked mirror/stale stock callback can still reach
+    # a chargeable payment screen.
+    _ok, _why = _checkout_product_state(p, qty)
+    if not _ok:
+        await update.message.reply_text(_checkout_problem_text(p, qty), reply_markup=back_btn())
+        for _k in ('order_req_step', 'order_req_pid', 'order_req_qty', 'order_creds'):
+            context.user_data.pop(_k, None)
+        return True
     
     req_type = (dict(p) if p else {}).get('req_account_type', 'none')
     req_pwd = (dict(p) if p else {}).get('req_password', 0)
@@ -347,12 +394,13 @@ async def buy_multiple_callback(update, context):
     q = update.callback_query; await q.answer()
     nav_push(context, 'shop')
     p = get_product(int(q.data.split("_")[1]))
-    if not p:
-        await _safe_send(q, context, "❌ Product not found!", reply_markup=back_btn()); return
+    _ok, _why = _checkout_product_state(p, 1)
+    if not _ok:
+        msg = _r("out_of_stock", user_id=q.from_user.id) if _why == "out_of_stock" else _checkout_problem_text(p, 1)
+        await _safe_send(q, context, msg, reply_markup=back_btn()); return
         
     is_manual = (dict(p) if p else {}).get('delivery_mode') == 'manual'
-    if not is_manual and p['stock'] <= 0:
-        await _safe_send(q, context, _r("out_of_stock", user_id=q.from_user.id), reply_markup=back_btn()); return
+    is_reusable = bool(str(dict(p).get('delivery_text') or '').strip() or str(dict(p).get('delivery_file_id') or '').strip())
         
     context.user_data['bulk_product_id'] = p['id']
     context.user_data['bulk_step'] = 'waiting_qty'
@@ -361,7 +409,7 @@ async def buy_multiple_callback(update, context):
     ])
     pkr = format_pkr(_get_eff_price(p), _pkr_rate())
     
-    if is_manual:
+    if is_manual or is_reusable:
         stock_text = "🟢 On-Demand (Unlimited)"
         max_qty = 9999
     else:
@@ -392,8 +440,8 @@ async def bulk_qty_received(update, context):
         return True
     qty = int(m.group(1))
     p = get_product(pid)
-    if not p:
-        await update.message.reply_text("❌ Product not found.", reply_markup=back_btn())
+    if not p or not product_is_catalog_available(p):
+        await update.message.reply_text("❌ This product is no longer available.", reply_markup=back_btn())
         context.user_data.pop('bulk_step', None)
         context.user_data.pop('bulk_product_id', None)
         return True
@@ -408,10 +456,11 @@ async def bulk_qty_received(update, context):
     if qty < 1:
         await update.message.reply_text("❌ Quantity must be at least 1.")
         return True
-    if not is_manual and qty > p['stock']:
-        await update.message.reply_text(
-            f"❌ Only *{p['stock']}* in stock. Type a smaller number.",
-            parse_mode="Markdown")
+    _ok, _why = _checkout_product_state(p, qty)
+    if not _ok:
+        msg = (f"❌ Only *{p['stock']}* in stock. Type a smaller number."
+               if _why == "out_of_stock" else "❌ This product is no longer available.")
+        await update.message.reply_text(msg, parse_mode="Markdown")
         return True
     context.user_data.pop('bulk_step', None)
     context.user_data.pop('bulk_product_id', None)
@@ -519,8 +568,8 @@ async def _start_binance_note_order(update, context, *, is_points=False, product
         if not p:
             await _safe_send(q, context, "❌ Product not found.", reply_markup=back_btn())
             return
-        if int(p['stock'] or 0) < int(qty):
-            await _safe_send(q, context, f"❌ Only {p['stock']} in stock!", reply_markup=back_btn())
+        if not _checkout_product_state(p, qty)[0]:
+            await _safe_send(q, context, _checkout_problem_text(p, qty), reply_markup=back_btn())
             return
         pname = p['name'] if int(qty) == 1 else f"{p['name']} × {int(qty)}"
         creds = context.user_data.pop('order_creds', '')
@@ -577,8 +626,8 @@ async def _start_binance_order_id_flow(update, context, *, is_points, product, q
         if not p:
             await _safe_send(q, context, "❌ Product not found.", reply_markup=back_btn())
             return
-        if int(p["stock"] or 0) < int(qty):
-            await _safe_send(q, context, f"❌ Only {p['stock']} in stock!", reply_markup=back_btn())
+        if not _checkout_product_state(p, qty)[0]:
+            await _safe_send(q, context, _checkout_problem_text(p, qty), reply_markup=back_btn())
             return
         pname = p["name"] if int(qty) == 1 else f"{p['name']} × {int(qty)}"
         creds = context.user_data.pop("order_creds", "")
@@ -1188,10 +1237,14 @@ async def _notify_admin_order_delivered(bot, order, qty=1, supplier_name="",
         _l.getLogger(__name__).debug(f"[admin-delivered-notify] {e}")
 
 
-async def _send_static_media_delivery(bot, order, product, method, amount, pts_bonus=0):
-    """Send static media/file delivery to customer instantly.
+async def _send_static_media_delivery(bot, order, product, method, amount, pts_bonus=0, qty=None):
+    """Send reusable static media/file delivery to customer instantly.
        🆕 v66: 10pts bonus REMOVED. Tier progress hint appended instead."""
     pd = dict(product) if product else {}
+    try:
+        qty = max(1, int(qty if qty is not None else _order_qty_from_name(order.get('product_name') or '')))
+    except Exception:
+        qty = 1
     file_id = pd.get('delivery_file_id', '') or ''
     file_type = pd.get('delivery_file_type', '') or 'document'
     file_name = pd.get('delivery_file_name', '') or file_type
@@ -1199,6 +1252,8 @@ async def _send_static_media_delivery(bot, order, product, method, amount, pts_b
 
     from database import save_order_delivery_content, add_order_delivery, set_order_delivery_file
     history_note = f"[Static {file_type}: {file_name}]"
+    if qty > 1:
+        history_note += f" × {qty}"
     if caption_text:
         history_note += f"\n{caption_text}"
     save_order_delivery_content(order['id'], history_note)
@@ -1215,7 +1270,7 @@ async def _send_static_media_delivery(bot, order, product, method, amount, pts_b
     # username + premium emoji + payment + wallet + profit).
     try:
         await _notify_admin_order_delivered(
-            bot, order, qty=1,
+            bot, order, qty=qty,
             payment_method=str(order.get('payment_method') or ''))
     except Exception:
         pass
@@ -1284,6 +1339,51 @@ async def _send_static_media_delivery(bot, order, product, method, amount, pts_b
     return True
 
 
+async def _refund_revoked_paid_product_order(bot, order, reason="Product is no longer available."):
+    """Refund a paid local order that becomes unavailable before delivery.
+
+    Supplier-linked products normally take the dedicated router path, which has
+    its own pre-submit idempotency/refund guard. This fallback covers local
+    products and a router failure without ever leaving a paid order deliverable
+    after its catalog state was revoked.
+    """
+    if not order:
+        return False
+    try:
+        oid = int(order.get('id') or 0)
+        uid = int(order.get('user_id') or 0)
+        amount = points_from_usd(float(order.get('price') or 0))
+    except Exception:
+        return False
+    try:
+        from database import add_points, update_order_status
+        add_points(uid, amount, tx_type='refund',
+                   description='Product unavailable before fulfillment',
+                   event_id=f'product_unavailable_refund_{oid}', order_id=oid)
+        update_order_status(oid, 'refunded')
+    except Exception:
+        return False
+    try:
+        await _bot_send_smart(
+            bot, uid,
+            "💎 *Refund Processed*\n\n"
+            "This product became unavailable before fulfillment, so its full value "
+            "has been returned to your wallet.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛒 Buy More", callback_data="shop")]])
+        )
+    except Exception:
+        pass
+    try:
+        from utils import notify_admin
+        await notify_admin(bot,
+            f"💎 *Auto-refund — product unavailable*\n"
+            f"Order: `#{oid}`\nCustomer: `{uid}`\nReason: {escape_md(str(reason)[:180])}")
+    except Exception:
+        pass
+    return True
+
+
 async def fulfill_paid_product_order(bot, order, paid_amount=None, *, payment_method_label=None, award_bonus=True):
     """Central fulfillment router for any paid PRODUCT order.
 
@@ -1342,6 +1442,14 @@ async def fulfill_paid_product_order(bot, order, paid_amount=None, *, payment_me
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📜 Order History", callback_data="my_orders")]])
         )
+        return True
+
+    # A payment may be confirmed while an owner/source revokes the catalog
+    # item. Do not fall through to static/manual delivery in that stale state.
+    # The supplier router above handles its linked path first; this covers local
+    # products and a conservative router-failure fallback.
+    if not product_is_catalog_available(p):
+        await _refund_revoked_paid_product_order(bot, order, "Live catalog availability was revoked before delivery.")
         return True
 
     pd = dict(p)
@@ -1715,8 +1823,8 @@ async def payment_binance_callback(update, context):
     p = get_product(pid)
     if not p:
         await _safe_send(q, context, "❌ Product not found!", reply_markup=back_btn()); return
-    if p['stock'] < qty:
-        await _safe_send(q, context, f"❌ Only {p['stock']} in stock!", reply_markup=back_btn()); return
+    if not _checkout_product_state(p, qty)[0]:
+        await _safe_send(q, context, _checkout_problem_text(p, qty), reply_markup=back_btn()); return
 
     # Clear old state
     for k in ['binance_step','binance_amount','binance_txid','binance_name','binance_order_id',
@@ -1849,8 +1957,8 @@ async def binance_amount_received(update, context):
                 context.user_data.pop(k, None)
             return True
         qty = int(context.user_data.get('binance_qty', 1) or 1)
-        if p['stock'] < qty:
-            await update.message.reply_text(f"❌ Only {p['stock']} in stock!", reply_markup=back_btn())
+        if not _checkout_product_state(p, qty)[0]:
+            await update.message.reply_text(_checkout_problem_text(p, qty), reply_markup=back_btn())
             for k in ['binance_step','binance_amount','binance_product_id','binance_qty','points_mode','binance_name']:
                 context.user_data.pop(k, None)
             return True
@@ -2156,8 +2264,8 @@ async def _start_ep_flow(update, context, is_points=False):
     qty = int(parts[3]) if len(parts) > 3 else 1
     p = get_product(pid)
     if not p: await q.edit_message_text("❌!"); return
-    if p['stock'] < qty:
-        await q.edit_message_text(f"❌ Only {p['stock']} in stock!", reply_markup=back_btn()); return
+    if not _checkout_product_state(p, qty)[0]:
+        await q.edit_message_text(_checkout_problem_text(p, qty), reply_markup=back_btn()); return
 
     # Clear old state
     for k in ['ep_step','ep_amount','ep_tid','binance_step','binance_amount']:
@@ -2215,8 +2323,8 @@ async def _start_jc_manual(update, context):
     qty = int(parts[3]) if len(parts) > 3 else 1
     p = get_product(pid)
     if not p: await q.edit_message_text("❌!"); return
-    if p['stock'] < qty:
-        await q.edit_message_text(f"❌ Only {p['stock']} in stock!", reply_markup=back_btn()); return
+    if not _checkout_product_state(p, qty)[0]:
+        await q.edit_message_text(_checkout_problem_text(p, qty), reply_markup=back_btn()); return
 
     # Clear old state
     for k in ['ep_step','ep_amount','ep_tid','binance_step','binance_amount','jc_step','jc_amount','jc_tid']:
@@ -3106,8 +3214,8 @@ async def payment_usdt_callback(update, context):
     p = get_product(pid)
     if not p:
         await _safe_send(q, context, '❌ Product not found.', reply_markup=back_btn()); return
-    if p['stock'] < qty:
-        await _safe_send(q, context, f"❌ Only {p['stock']} in stock!", reply_markup=back_btn()); return
+    if not _checkout_product_state(p, qty)[0]:
+        await _safe_send(q, context, _checkout_problem_text(p, qty), reply_markup=back_btn()); return
     await _start_usdt_payment(update, context, method, is_points=False, product=p, qty=qty)
 
 
@@ -3826,7 +3934,7 @@ async def payment_bybit_callback(update, context):
         pass
     p=get_product(pid)
     if not p: await _safe_send(q, context, '❌ Product not found.', reply_markup=back_btn()); return
-    if p['stock'] < qty: await _safe_send(q, context, f"❌ Only {p['stock']} in stock!", reply_markup=back_btn()); return
+    if not _checkout_product_state(p, qty)[0]: await _safe_send(q, context, _checkout_problem_text(p, qty), reply_markup=back_btn()); return
     # 🔧 v125: all Bybit methods use the unified flow.
     if method in ('bybit_pay', 'bybit_usdt_trc20', 'bybit_usdt_bep20'):
         await bybit_start_flow(q, context, method, mode='product', product=p, qty=qty)
@@ -4904,19 +5012,9 @@ async def open_checkout_direct(bot, user_id, product_id):
         if not p:
             return False
         d = dict(p)
-        if int(d.get('is_active', 1) or 1) != 1:
-            return False
-        try:
-            from database import is_product_hidden
-            if is_product_hidden(int(product_id)):
-                return False
-        except Exception:
-            pass
-        stock = int(d.get('stock') or 0)
-        manual = d.get('delivery_mode') == 'manual'
-        if not manual and stock <= 0:
-            return False
         qty = 1
+        if not _checkout_product_state(p, qty)[0]:
+            return False
         total = _get_price_for_qty(p, qty) * qty
         pkr = format_pkr(total, _pkr_rate())
         msg = (
@@ -4936,6 +5034,15 @@ async def open_checkout_direct(bot, user_id, product_id):
 
 
 async def _show_payment_screen(q, context, p, qty, update=None):
+    # A product can be disabled/unsynced after a user saw a Buy button.
+    # Revalidate at the final screen so no stale native callback enters payment.
+    if not _checkout_product_state(p, qty)[0]:
+        problem = _checkout_problem_text(p, qty)
+        if update:
+            await update.message.reply_text(problem, reply_markup=back_btn())
+        else:
+            await _safe_send(q, context, problem, reply_markup=back_btn())
+        return False
     total_price = _get_price_for_qty(p, qty) * qty
     pkr = format_pkr(total_price, _pkr_rate())
     
@@ -5287,6 +5394,9 @@ async def pay_pts_callback(update, context):
     if not p:
         await _safe_send(q, context, "❌ Product not found!", reply_markup=back_btn())
         return
+    if not _checkout_product_state(p, qty)[0]:
+        await _safe_send(q, context, _checkout_problem_text(p, qty), reply_markup=back_btn())
+        return
         
     # 🔧 AUDIT-FIX C3 (2026-07-31): the debit and the balance check must be a
     # single atomic operation. Reading the balance first, then deducting in a
@@ -5334,13 +5444,32 @@ async def pay_pts_callback(update, context):
         await _safe_send(q, context, txt, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         return
 
+    # The first guard protects old callbacks. Re-read after the atomic wallet
+    # debit as well: if an owner/source revokes the item during that tiny gap,
+    # refund immediately and never create a stranded paid order.
+    fresh_p = get_product(pid)
+    if not _checkout_product_state(fresh_p, qty)[0]:
+        try:
+            from database import add_points
+            add_points(q.from_user.id, cost_pts, tx_type='refund',
+                       description='Wallet checkout cancelled: product unavailable')
+        except Exception:
+            pass
+        await _safe_send(q, context,
+                         "💎 Payment was reversed because this product is no longer available. "
+                         "Your wallet has been refunded.", reply_markup=back_btn())
+        return
+
     # --- 🟢 SUFFICIENT POINTS: Process Instant Checkout ---
     new_balance = balance - cost_pts
     
     un = q.from_user.username or q.from_user.first_name
     creds = context.user_data.pop('order_creds', '')
-    pname = p['name'] if qty == 1 else f"{p['name']} × {qty}"
+    pname = fresh_p['name'] if qty == 1 else f"{fresh_p['name']} × {qty}"
     oid = create_order(q.from_user.id, un, pid, pname, cost_usd, 'wallet', '', cost_pts, 'PTS', 'product', creds, qty=qty)
+    # A paid status lets lifecycle hard-delete handling refund safely if it
+    # races before the fulfillment router obtains its supplier claim.
+    update_order_status(oid, 'paid')
     
     await _safe_send(q, context,
         f"✅ *Wallet Payment Successful!*\n"
