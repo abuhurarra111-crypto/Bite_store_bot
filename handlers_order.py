@@ -1408,7 +1408,9 @@ async def fulfill_paid_product_order(bot, order, paid_amount=None, *, payment_me
     # buy supplier stock a second time.
     try:
         _st = str(order.get('status') or '')
-        if _st in ('delivered', 'supplier_processing', 'supplier_retry_pending', 'refunded', 'cancelled', 'rejected'):
+        if _st in ('delivered', 'supplier_processing', 'supplier_retry_pending',
+                   'supplier_manual_delivery_pending', 'supplier_manual_sending',
+                   'refunded', 'cancelled', 'rejected'):
             return True
     except Exception:
         pass
@@ -4262,6 +4264,7 @@ async def my_orders_callback(update, context):
                 'usdt_waiting': '🪙', 'bybit_waiting': '🟡',
                 'paid_pending_delivery': '🕒', 'waiting_for_details': '📨',
                 'supplier_processing': '🔄', 'supplier_retry_pending': '🔁',
+                'supplier_manual_delivery_pending': '📤', 'supplier_manual_sending': '📤',
                 'delivered': '✅', 'cancelled': '❌', 'rejected': '❌', 'refunded': '💎'
             }.get(status, '❓')
             
@@ -4344,7 +4347,10 @@ async def my_order_detail_callback(update, context):
         content = heal_escaped_delivery_content(content)
     except Exception:
         pass
-    has_file = bool(pd.get('delivery_file_id'))
+    # Per-order files (for example, a manually forwarded supplier document)
+    # must be available only to the buyer of that order. Never rely solely on
+    # a product-level static file, which could expose one buyer's delivery to all.
+    has_file = bool(dict(o).get('delivery_file_id') or pd.get('delivery_file_id'))
     text = (
         f"📦 *Order #{oid}*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -4362,6 +4368,8 @@ async def my_order_detail_callback(update, context):
         'screenshot_sent': [('Order created','✅'), ('Screenshot received','📸'), ('Delivery','▫️')],
         'supplier_processing': [('Payment verified','✅'), ('Supplier processing','🔄'), ('Delivery','⏳')],
         'supplier_retry_pending': [('Payment verified','✅'), ('Retrying delivery','🔁'), ('Auto-refund safety','⏳')],
+        'supplier_manual_delivery_pending': [('Payment verified','✅'), ('Owner preparing delivery','📤'), ('Auto-refund safety','⏳')],
+        'supplier_manual_sending': [('Payment verified','✅'), ('Sending delivery','📤'), ('Completed','⏳')],
         'paid_pending_delivery': [('Payment verified','✅'), ('Manual delivery','⏳'), ('Completed','▫️')],
         'delivered': [('Payment verified','✅'), ('Delivery','✅'), ('Completed','✅')],
         'refunded': [('Payment verified','✅'), ('Delivery unavailable','⚠️'), ('Refunded','💎')],
@@ -4371,9 +4379,9 @@ async def my_order_detail_callback(update, context):
     steps = tracking_map.get(status, [('Order status', 'ℹ️')])
     text += "🧭 *Tracking:*\n" + "\n".join(f"{icon} {escape_md(label)}" for label, icon in steps) + "\n\n"
     rows = []
-    if status == 'supplier_retry_pending':
+    if status in ('supplier_retry_pending', 'supplier_manual_delivery_pending', 'supplier_manual_sending'):
         text += (
-            "🔁 Supplier retry window is active. If delivery is not completed soon, "
+            "🔁 Delivery recovery is active. If delivery is not completed soon, "
             "your wallet will be automatically refunded.\n\n"
         )
     if status == 'delivered':
@@ -4432,10 +4440,26 @@ async def my_order_resend_callback(update, context):
         await q.answer("Order is not delivered yet", show_alert=True); return
     p = get_product(o['product_id']) if o['product_id'] else None
     pd = dict(p) if p else {}
-    file_id = pd.get('delivery_file_id', '') or ''
+    # Prefer a file recorded on this exact order. This is essential for manual
+    # supplier file/caption recovery: it must never fall back to another buyer's
+    # supplier content or save it as a product-wide static delivery.
+    file_id = dict(o).get('delivery_file_id', '') or ''
+    file_type = ''
+    if file_id:
+        try:
+            from database import get_order_deliveries
+            for delivery in reversed(get_order_deliveries(oid)):
+                if str(delivery.get('file_id') or '') == str(file_id):
+                    file_type = str(delivery.get('kind') or '')
+                    break
+        except Exception:
+            pass
+    if not file_id:
+        file_id = pd.get('delivery_file_id', '') or ''
+        file_type = pd.get('delivery_file_type', '') or ''
     if not file_id:
         await q.answer("No delivery file saved for this order", show_alert=True); return
-    file_type = pd.get('delivery_file_type', '') or 'document'
+    file_type = file_type or 'document'
     caption = (
         f"📎 *Delivery File Resent*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
@@ -4449,6 +4473,10 @@ async def my_order_resend_callback(update, context):
             await context.bot.send_photo(q.from_user.id, file_id, caption=send_text[:1024], parse_mode=send_mode, reply_markup=kb)
         elif file_type == 'video':
             await context.bot.send_video(q.from_user.id, file_id, caption=send_text[:1024], parse_mode=send_mode, reply_markup=kb)
+        elif file_type == 'voice':
+            await context.bot.send_voice(q.from_user.id, file_id, caption=send_text[:1024], parse_mode=send_mode, reply_markup=kb)
+        elif file_type == 'audio':
+            await context.bot.send_audio(q.from_user.id, file_id, caption=send_text[:1024], parse_mode=send_mode, reply_markup=kb)
         else:
             await context.bot.send_document(q.from_user.id, file_id, caption=send_text[:1024], parse_mode=send_mode, reply_markup=kb)
     except Exception as e:

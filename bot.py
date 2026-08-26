@@ -188,8 +188,10 @@ from ext_suppliers import (
     ext_prod_fixprice_received, ext_prod_fixprice_clear_callback,
     # 🆕 v83: Manual sync + format picker
     ext_prod_sync_callback, ext_prod_refresh_callback, ext_prod_fmt_callback, ext_prod_setfmt_callback,
-    # 🆕 v136: supplier failure retry window + delayed refund
-    supplier_retry_delivery_callback, supplier_retry_refund_job,
+    # 🆕 v136/v170.62: supplier retry + safe file/caption recovery
+    supplier_retry_delivery_callback, supplier_force_retry_delivery_callback,
+    supplier_manual_delivery_callback, supplier_manual_delivery_cancel_callback,
+    supplier_manual_delivery_received, supplier_retry_refund_job,
 )
 from support_replacement import (
     admin_replacement_history_callback, admin_replacement_filter_callback,
@@ -542,6 +544,10 @@ async def handle_text(update, context):
     if context.user_data.get('bs_ren_key'):
         from handlers_buttons import bs_rename_received
         if await bs_rename_received(update, context): return
+    # 🆕 v170.62: supplier API failure can be resolved safely by forwarding
+    # the source file and caption; route this before generic admin text flows.
+    if context.user_data.get('supplier_manual_delivery_oid'):
+        if await supplier_manual_delivery_received(update, context): return
     # 🆕 v144.3: replacement upload text
     if context.user_data.get('rep_upload_oid'):
         if await admin_replace_upload_received(update, context): return
@@ -1465,6 +1471,8 @@ async def handle_media_router(update, context):
         return
     try:
         if update.effective_user and update.effective_user.id == ADMIN_ID:
+            if context.user_data.get('supplier_manual_delivery_oid'):
+                if await supplier_manual_delivery_received(update, context): return
             if context.user_data.get('broadcasting'):
                 await handle_broadcast_message(update, context); return
             if context.user_data.get('fake_custom_broadcast'):
@@ -2905,8 +2913,13 @@ def main():
         ("^ext_prod_sync_",              ext_prod_sync_callback),
         # 🆕 v107: force-refresh a single product from supplier (pro Shopify overwrite pattern)
         ("^ext_prod_refresh_",           ext_prod_refresh_callback),
-        ("^ext_prod_fmt_",               ext_prod_fmt_callback),
-        ("^supplier_retry_",             supplier_retry_delivery_callback),
+        ("^ext_prod_fmt_",                ext_prod_fmt_callback),
+        # 🆕 v170.62: supplier API error → safe owner file/caption recovery.
+        # Specific callbacks must be registered before the generic retry route.
+        ("^supplier_manual_cancel_",     supplier_manual_delivery_cancel_callback),
+        ("^supplier_manual_delivery_",   supplier_manual_delivery_callback),
+        ("^supplier_force_retry_",        supplier_force_retry_delivery_callback),
+        ("^supplier_retry_",              supplier_retry_delivery_callback),
         # 🆕 v85: Bulk sync + low-bal threshold editor + finance + autosync toggle
         ("^ext_sup_bulk_sync_",          ext_sup_bulk_sync_callback),
         ("^ext_sup_bulk_unsync_",        ext_sup_bulk_unsync_callback),
@@ -3370,7 +3383,7 @@ def main():
     # conversation states can never swallow amounts/TXIDs/TIDs.
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, payment_flow_text_handler), group=-80)
 
-    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.VOICE | filters.Document.ALL, handle_media_router))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.VOICE | filters.AUDIO | filters.Document.ALL, handle_media_router))
     # 🆕 v152: admin sends/forwards a POLL to the bot → rebroadcast to all users
     try:
         from telegram.ext import MessageHandler as _MH

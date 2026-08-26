@@ -8,6 +8,25 @@
 
 ---
 
+# 🚀 v170.62 (2026-08-26) — 📎 SAFE SUPPLIER FILE + CAPTION RECOVERY
+
+## Root cause and safe recovery
+- A provider-side database error can fail a REST delivery even when that provider’s Telegram storefront can send a document with a caption. The provider REST response does not expose that Telegram file, so the bot cannot silently fetch another bot’s private message.
+- The affected retry alert now detects the confirmed server-error signature and opens a **safe choice screen** instead of blindly placing another supplier purchase.
+- Fixed the ProdSeller stock fail-open: an explicit detail `stock: 0`, missing detail, or unreachable detail endpoint now remains sold out. Only an explicit documented `stock: null` custom-delivery item may use virtual availability. This prevents zero-stock products from entering the supplier order/refund loop.
+- The owner can choose **Deliver File + Caption**, forward/upload the exact supplier document/media (or text), and Bite Store sends the source file with its original caption in **one customer-facing Telegram message**.
+- The recovery supports document, photo, video, voice, audio, and text. Delivery details are logged against that individual order; no customer file is ever saved as a reusable product-level file.
+- Customer Order History can resend the exact order-specific delivered file. Manual recovery remains inside the delayed-refund safety window, and manual-pending orders cannot be re-submitted to a supplier concurrently.
+
+## Provider error visibility
+- ProdSeller-style order failures now preserve the source HTTP status and `error`/`message` body for safe routing and owner diagnostics instead of collapsing a server-side failure into an ambiguous empty delivery.
+
+## Verification
+- Added 8 offline regressions for: no blind retry on the server-error signature, single-message forwarded document + caption delivery, per-order file resend, manual-state purchase lock, expiry/refund safety, HTTP-500 propagation, explicit zero-stock fail-closed behavior, explicit custom-null delivery, and unavailable detail fail-closed behavior.
+- Full suite: **53 tests passed**.
+
+---
+
 # 🚀 v170.60 (2026-08-23) — 💎 WALLET BULK-TIER CHECKOUT FIX
 
 ## Wallet / Points now honors quantity discount tiers

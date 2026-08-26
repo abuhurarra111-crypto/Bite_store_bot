@@ -1788,7 +1788,7 @@ class ProdSellerAdapter(SupplierAdapterBase):
     # stock field nahi) → ~17 calls/tick → 500+/15min → 429 "Trop de requêtes
     # API" → real customer order refund ho jata tha. Fix: per-product detail
     # cache (10 min) + request throttle + 429 retry with backoff.
-    _DETAIL_CACHE = {}            # remote_id -> (ts, stock_or_None)
+    _DETAIL_CACHE = {}            # remote_id -> (ts, (known|custom|unknown, stock))
     _DETAIL_CACHE_TTL = 600       # 10 min
     _last_request_ts = 0.0
     _MIN_GAP = 0.35               # seconds between requests
@@ -1806,30 +1806,43 @@ class ProdSellerAdapter(SupplierAdapterBase):
         return super()._get(path, timeout=timeout, extra_params=extra_params)
 
     def _cached_detail_stock(self, rid):
-        """Per-product detail stock with 10-min cache (kills N+1 hammering)."""
+        """Return ``(state, stock)`` from the detail endpoint with a 10-min cache.
+
+        ``known`` means an explicit numeric stock (including **0**), ``custom``
+        means the supplier explicitly returned ``stock: null`` for a
+        custom-delivery product, and ``unknown`` means the detail request could
+        not be trusted.  Keeping these three cases distinct is critical: a
+        numeric zero must never be converted into virtual sale stock.
+        """
         import time as _t
         now = _t.time()
         hit = ProdSellerAdapter._DETAIL_CACHE.get(rid)
         if hit and (now - hit[0]) < ProdSellerAdapter._DETAIL_CACHE_TTL:
             return hit[1]
-        val = None
+        result = ("unknown", None)
         try:
             rd = self._get(f"{self.PRODUCTS_PATH}/{rid}")
             if rd is not None and rd.status_code == 200:
                 dj = rd.json()
-                s2 = dj.get("stock")
-                if s2 is not None:
-                    try:
-                        val = int(s2)
-                    except Exception:
-                        val = None
+                # The documented detail schema uses null only for an explicit
+                # custom-delivery product. Missing/invalid values fail closed.
+                if isinstance(dj, dict) and "stock" in dj:
+                    s2 = dj.get("stock")
+                    if s2 is None:
+                        result = ("custom", None)
+                    else:
+                        try:
+                            result = ("known", max(0, int(s2)))
+                        except (TypeError, ValueError):
+                            result = ("unknown", None)
         except Exception:
-            val = None
-        ProdSellerAdapter._DETAIL_CACHE[rid] = (now, val)
+            result = ("unknown", None)
+        ProdSellerAdapter._DETAIL_CACHE[rid] = (now, result)
         if len(ProdSellerAdapter._DETAIL_CACHE) > 2000:
             for k in list(ProdSellerAdapter._DETAIL_CACHE.keys())[:500]:
                 ProdSellerAdapter._DETAIL_CACHE.pop(k, None)
-        return val
+        return result
+
 
     def test_connection(self):
         r = self._get(self.PRODUCTS_PATH)
@@ -1885,22 +1898,36 @@ class ProdSellerAdapter(SupplierAdapterBase):
             # charged hai; safety ke liye finalPrice fallback.
             price = _safe_float(p.get("price") if p.get("price") is not None
                                 else p.get("finalPrice"))
-            in_stock = bool(p.get("inStock", True))
-            # 🆕 v161.18: REAL stock — ProdSeller's NEW API (/v1/products/:id)
-            # returns a numeric `stock` field (null for custom-delivery items).
-            # The pseudo-stock hack is REMOVED. List may carry stock directly;
-            # if not, one detail call per product fills it — 🐛 v170.5: cached
-            # 10 min so the 30s autosync no longer hammers the API (429).
+            raw_in_stock = p.get("inStock", True)
+            if isinstance(raw_in_stock, str):
+                in_stock = raw_in_stock.strip().lower() not in ("0", "false", "no", "off", "unavailable", "out_of_stock")
+            else:
+                in_stock = bool(raw_in_stock)
+            # The list endpoint normally has only `inStock`; the detail endpoint
+            # is authoritative for numeric stock.  Crucially, explicit numeric
+            # zero is a real sold-out result, not a custom-delivery placeholder.
+            raw_list_stock = p.get("stock")
+            list_stock_known = raw_list_stock is not None and str(raw_list_stock).strip() != ""
             try:
-                stock = int(p.get("stock") or 0)
-            except Exception:
+                stock = max(0, int(raw_list_stock)) if list_stock_known else 0
+            except (TypeError, ValueError):
                 stock = 0
-            if stock <= 0 and in_stock:
-                stock = self._cached_detail_stock(rid) or 0
-            # if detail API still says null → custom-delivery item: show a
-            # healthy default only when explicitly inStock (no fake numbers).
-            if stock <= 0 and in_stock:
-                stock = 100  # custom-delivery products have no numeric stock
+                list_stock_known = False
+            if not in_stock:
+                stock = 0
+            elif not list_stock_known or stock <= 0:
+                detail_state, detail_stock = self._cached_detail_stock(rid)
+                if detail_state == "known":
+                    stock = int(detail_stock or 0)  # preserves an explicit 0
+                elif detail_state == "custom":
+                    # Documented `stock: null` custom-delivery item. It has no
+                    # numeric inventory, but is explicitly marked available.
+                    stock = 100
+                else:
+                    # Network/parse/missing-detail failure must fail closed;
+                    # publishing virtual stock here caused the Notion $slice:0
+                    # supplier errors and customer refund loop.
+                    stock = 0
             out.append({
                 "remote_id": rid,
                 "name": (p.get("name") or "Product")[:200],
@@ -1949,9 +1976,14 @@ class ProdSellerAdapter(SupplierAdapterBase):
             return {"ok": False, "error": f"bad_response_{r.status_code}",
                     "items": [], "raw": r.text[:500]}
         if r.status_code >= 400:
-            return {"ok": False,
-                    "error": j.get("error") if isinstance(j, dict) else f"HTTP {r.status_code}",
-                    "items": [], "raw": j}
+            # Preserve the HTTP status for the router.  In particular, a
+            # supplier-side 5xx must never be mistaken for missing stock or a
+            # harmless empty delivery response.
+            err = f"HTTP {r.status_code}"
+            if isinstance(j, dict):
+                err = j.get("error") or j.get("message") or err
+            return {"ok": False, "error": str(err), "items": [], "raw": j,
+                    "status_code": int(r.status_code)}
         # 🐛 v144.2 FIX: ProdSeller responses often have ONLY `deliveredKey`
         # (single) and NO `deliveredKeys`. Old code did `j.get("deliveredKeys") or []`
         # → empty list is still a list → `if isinstance(keys, list)` was True →
@@ -1967,7 +1999,8 @@ class ProdSellerAdapter(SupplierAdapterBase):
         if not items:
             items = _extract_delivery_items(j)
         return {"ok": True, "items": items, "order_id": j.get("orderId") or "",
-                "total_usd": j.get("amount"), "raw": j}
+                "total_usd": j.get("amount"), "raw": j,
+                "status_code": int(r.status_code)}
 
 
 # 🆕 v136: Known-supplier one-tap presets for the "Add Supplier" screen.
@@ -3648,6 +3681,334 @@ def _supplier_retry_due_text(epoch_ts):
         return "in 5 minutes"
 
 
+
+# ────────────────────────────────────────────────────────────
+# v170.62: safe manual recovery for supplier media deliveries
+# ────────────────────────────────────────────────────────────
+# Some upstream Telegram storefronts can send a document plus caption, while
+# their REST order API only returns text (or, in a provider outage, a 5xx).
+# A bot cannot read a message sent by another bot directly.  The owner can,
+# however, forward/upload that document to this bot; Telegram then supplies a
+# usable file_id and we can deliver the file and its caption together safely.
+_SUPPLIER_MANUAL_PENDING = "supplier_manual_delivery_pending"
+_SUPPLIER_MANUAL_SENDING = "supplier_manual_sending"
+
+
+def _is_supplier_slice_server_error(reason):
+    """True for the confirmed provider MongoDB $slice/findAndModify outage.
+
+    This is deliberately narrow.  Ordinary transient failures retain the normal
+    one-tap Retry Delivery flow; this ambiguous server error first offers a
+    manual file/caption recovery so the owner never blindly re-purchases.
+    """
+    text = str(reason or "").lower()
+    return ("findandmodify" in text and "$slice" in text
+            and ("third argument" in text or "must be positive" in text))
+
+
+def _enter_supplier_manual_delivery(order_id):
+    """Reserve a retry-pending order for owner media/text delivery.
+
+    The order remains covered by the same auto-refund deadline.  A stale admin
+    session cannot revive a refunded/delivered order.
+    """
+    conn = get_connection(); c = conn.cursor()
+    try:
+        _ensure_supplier_retry_order_columns(c)
+        c.execute("BEGIN IMMEDIATE")
+        c.execute("SELECT status, supplier_refund_due_at FROM orders WHERE id=?", (int(order_id),))
+        row = c.fetchone()
+        if not row:
+            conn.rollback(); conn.close(); return False, "missing", 0.0
+        status = str(row["status"] or "")
+        due = float(row["supplier_refund_due_at"] or 0)
+        if status not in ("supplier_retry_pending", _SUPPLIER_MANUAL_PENDING):
+            conn.rollback(); conn.close(); return False, status or "not_pending", due
+        if due and due <= time.time():
+            conn.rollback(); conn.close(); return False, "refund_due", due
+        c.execute("UPDATE orders SET status=? WHERE id=?", (_SUPPLIER_MANUAL_PENDING, int(order_id)))
+        conn.commit(); conn.close(); return True, "ready", due
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
+        logger.warning(f"[supplier-manual] could not reserve order #{order_id}: {e}")
+        return False, "database_error", 0.0
+
+
+def _claim_supplier_manual_delivery_send(order_id):
+    """Atomically claim manual delivery just before sending to Telegram.
+
+    A short extension protects the send from racing the 30-second refund job;
+    if delivery crashes, the refund job still sees this state and resolves it.
+    """
+    conn = get_connection(); c = conn.cursor()
+    try:
+        _ensure_supplier_retry_order_columns(c)
+        c.execute("BEGIN IMMEDIATE")
+        c.execute("SELECT status, supplier_refund_due_at FROM orders WHERE id=?", (int(order_id),))
+        row = c.fetchone()
+        if not row:
+            conn.rollback(); conn.close(); return False, "missing", 0.0
+        status = str(row["status"] or "")
+        due = float(row["supplier_refund_due_at"] or 0)
+        now = time.time()
+        if status != _SUPPLIER_MANUAL_PENDING:
+            conn.rollback(); conn.close(); return False, status or "not_pending", due
+        if due and due <= now:
+            conn.rollback(); conn.close(); return False, "refund_due", due
+        # The regular refund worker will retry/refund a stranded sending state
+        # after this small grace period.  It is not an indefinite hold.
+        protected_due = max(due, now + 90.0)
+        c.execute("""UPDATE orders
+                     SET status=?, supplier_refund_due_at=?
+                     WHERE id=? AND status=?""",
+                  (_SUPPLIER_MANUAL_SENDING, float(protected_due), int(order_id),
+                   _SUPPLIER_MANUAL_PENDING))
+        if c.rowcount != 1:
+            conn.rollback(); conn.close(); return False, "claim_lost", due
+        conn.commit(); conn.close(); return True, "claimed", protected_due
+    except Exception as e:
+        try: conn.rollback()
+        except Exception: pass
+        try: conn.close()
+        except Exception: pass
+        logger.warning(f"[supplier-manual] could not claim send for #{order_id}: {e}")
+        return False, "database_error", 0.0
+
+
+def _restore_supplier_manual_delivery(order_id):
+    """Put an unsent manual delivery back under the normal refund guard."""
+    try:
+        conn = get_connection(); c = conn.cursor()
+        c.execute("""UPDATE orders SET status=?
+                     WHERE id=? AND status=?""",
+                  (_SUPPLIER_MANUAL_PENDING, int(order_id), _SUPPLIER_MANUAL_SENDING))
+        conn.commit(); conn.close()
+    except Exception as e:
+        logger.warning(f"[supplier-manual] could not restore #{order_id}: {e}")
+
+
+def _cancel_supplier_manual_delivery(order_id):
+    """Release an unused owner-upload session back to normal retry pending."""
+    try:
+        conn = get_connection(); c = conn.cursor()
+        c.execute("""UPDATE orders SET status=?
+                     WHERE id=? AND status=?""",
+                  ("supplier_retry_pending", int(order_id), _SUPPLIER_MANUAL_PENDING))
+        conn.commit(); conn.close()
+        return True
+    except Exception as e:
+        logger.warning(f"[supplier-manual] cancel failed for #{order_id}: {e}")
+        return False
+
+
+def _supplier_manual_payload(message):
+    """Extract owner-forwarded media and its original text/caption.
+
+    No parse mode is used when forwarding delivery details, so passwords,
+    underscores, brackets, and links remain byte-for-byte readable rather than
+    being interpreted as Markdown/HTML.
+    """
+    message = message or object()
+    # Keep source delivery text intact; credentials can legitimately contain
+    # punctuation or leading/trailing whitespace.  Emptiness is checked later
+    # without rewriting the payload.
+    caption = str(getattr(message, "caption", "") or "")
+    text = str(getattr(message, "text", "") or "")
+    payload = {
+        "media_type": "", "file_id": "", "file_name": "",
+        "caption": caption, "text": text,
+    }
+    try:
+        photos = getattr(message, "photo", None) or []
+        if photos:
+            payload.update(media_type="photo", file_id=str(photos[-1].file_id or ""))
+            return payload
+    except Exception:
+        pass
+    for attr, kind in (("video", "video"), ("document", "document"),
+                       ("voice", "voice"), ("audio", "audio")):
+        obj = getattr(message, attr, None)
+        fid = str(getattr(obj, "file_id", "") or "") if obj else ""
+        if fid:
+            payload.update(media_type=kind, file_id=fid,
+                           file_name=str(getattr(obj, "file_name", "") or ""))
+            return payload
+    return payload
+
+
+async def _send_supplier_manual_payload(bot, order, payload):
+    """Send forwarded source media + its caption as one buyer-facing message.
+
+    Returns (sent_message, delivery_text).  Telegram captions are limited to
+    1024 characters; only unusually long captions need a second full-text note.
+    """
+    oid = int(order["id"])
+    user_id = int(order["user_id"])
+    media_type = str(payload.get("media_type") or "")
+    file_id = str(payload.get("file_id") or "")
+    raw_text = str(payload.get("caption") if media_type else payload.get("text") or "")
+    if not raw_text.strip():
+        raw_text = f"✅ Order #{oid} delivered."
+    caption = raw_text
+    overflow = ""
+    if media_type and len(caption) > 1024:
+        overflow = caption
+        caption = caption[:975].rstrip() + "\n\nFull delivery text is sent below."
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📜 Order History", callback_data="my_orders")],
+        [InlineKeyboardButton("🛒 Buy More", callback_data="shop")],
+    ])
+    if not media_type:
+        sent = await bot.send_message(user_id, raw_text, reply_markup=kb)
+        return sent, raw_text
+
+    common = {"caption": caption, "reply_markup": kb}
+    if media_type == "photo":
+        sent = await bot.send_photo(user_id, photo=file_id, **common)
+    elif media_type == "video":
+        sent = await bot.send_video(user_id, video=file_id, **common)
+    elif media_type == "voice":
+        sent = await bot.send_voice(user_id, voice=file_id, **common)
+    elif media_type == "audio":
+        sent = await bot.send_audio(user_id, audio=file_id, **common)
+    else:
+        sent = await bot.send_document(user_id, document=file_id, **common)
+    if overflow:
+        await bot.send_message(user_id, overflow, reply_markup=kb)
+    return sent, raw_text
+
+
+async def supplier_manual_delivery_callback(update, context):
+    """Admin chooses safe file/caption delivery for a retry-pending order."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        oid = int(q.data.replace("supplier_manual_delivery_", ""))
+    except Exception:
+        await q.answer("Invalid order", show_alert=True); return
+    from database import get_order
+    order = get_order(oid)
+    if not order:
+        await q.answer("Order not found", show_alert=True); return
+    ok, reason, due = _enter_supplier_manual_delivery(oid)
+    if not ok:
+        msg = "This order is no longer awaiting safe manual delivery."
+        if reason == "refund_due":
+            msg = "Refund deadline has passed; do not manually deliver this order."
+        await q.answer(msg, show_alert=True)
+        return
+    context.user_data["supplier_manual_delivery_oid"] = oid
+    due_txt = _supplier_retry_due_text(due)
+    await q.answer("Send or forward the delivery file now.", show_alert=False)
+    await q.edit_message_text(
+        f"📤 *Manual Supplier Delivery — Order #{oid}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Forward/send the exact supplier document, photo, video, voice, audio, or text now.\n"
+        f"Its original caption/text will be sent with the file in the *same customer message*.\n\n"
+        f"⏳ Auto-refund safety remains active until `{escape_md(due_txt)}`.\n"
+        f"Do not send a new supplier purchase for this order.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Cancel Manual Delivery", callback_data=f"supplier_manual_cancel_{oid}")],
+        ]),
+    )
+
+
+async def supplier_manual_delivery_cancel_callback(update, context):
+    """Cancel an unused manual supplier delivery input session."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        oid = int(q.data.replace("supplier_manual_cancel_", ""))
+    except Exception:
+        await q.answer("Invalid order", show_alert=True); return
+    if int(context.user_data.get("supplier_manual_delivery_oid") or 0) == oid:
+        context.user_data.pop("supplier_manual_delivery_oid", None)
+    _cancel_supplier_manual_delivery(oid)
+    await q.answer("Manual delivery cancelled", show_alert=False)
+    await q.edit_message_text(
+        f"⏳ Order `#{oid}` remains in the supplier retry/refund safety window.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Retry Delivery", callback_data=f"supplier_retry_{oid}")],
+            [InlineKeyboardButton("📤 Deliver File + Caption", callback_data=f"supplier_manual_delivery_{oid}")],
+        ]),
+    )
+
+
+async def supplier_manual_delivery_received(update, context):
+    """Receive owner-forwarded source media/text and complete the original order."""
+    if not update.effective_user or update.effective_user.id != ADMIN_ID:
+        return False
+    oid = int(context.user_data.get("supplier_manual_delivery_oid") or 0)
+    if not oid:
+        return False
+    message = update.message
+    payload = _supplier_manual_payload(message)
+    if not payload["media_type"] and not payload["text"]:
+        await message.reply_text("⚠️ Send/forward a file, media item, or delivery text. The order is still reserved.")
+        return True
+
+    from database import (get_order, save_order_delivery_content, add_order_delivery,
+                          set_order_delivery_file, update_order_status)
+    order = get_order(oid)
+    if not order:
+        context.user_data.pop("supplier_manual_delivery_oid", None)
+        await message.reply_text("❌ Order no longer exists.")
+        return True
+    claimed, reason, _due = _claim_supplier_manual_delivery_send(oid)
+    if not claimed:
+        context.user_data.pop("supplier_manual_delivery_oid", None)
+        text = "❌ This order can no longer be delivered manually."
+        if reason == "refund_due":
+            text = "⏳ The refund deadline has passed; delivery was not sent."
+        await message.reply_text(text)
+        return True
+
+    delivery_text = str(payload.get("caption") if payload.get("media_type") else payload.get("text") or "")
+    if not delivery_text.strip():
+        delivery_text = f"✅ Order #{oid} delivered."
+    try:
+        sent, delivery_text = await _send_supplier_manual_payload(context.bot, order, payload)
+        try:
+            save_order_delivery_content(oid, f"[Manual supplier delivery]\n{delivery_text}")
+        except Exception:
+            pass
+        media_type = str(payload.get("media_type") or "")
+        file_id = str(payload.get("file_id") or "")
+        if media_type and file_id:
+            add_order_delivery(oid, kind=media_type, content=delivery_text,
+                               file_id=file_id, file_name=str(payload.get("file_name") or ""))
+            set_order_delivery_file(oid, file_id)
+        else:
+            add_order_delivery(oid, kind="text", content=delivery_text)
+        update_order_status(oid, "delivered")
+        try:
+            if sent is not None and getattr(sent, "message_id", None):
+                conn = get_connection(); c = conn.cursor()
+                c.execute("UPDATE orders SET delivery_msg_id=? WHERE id=?", (int(sent.message_id), oid))
+                conn.commit(); conn.close()
+        except Exception:
+            pass
+        context.user_data.pop("supplier_manual_delivery_oid", None)
+        await message.reply_text(
+            f"✅ *Manual delivery complete*\nOrder `#{oid}` delivered with its original file/text.",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        _restore_supplier_manual_delivery(oid)
+        context.user_data["supplier_manual_delivery_oid"] = oid
+        logger.warning(f"[supplier-manual] delivery failed for #{oid}: {e}")
+        await message.reply_text("❌ File/text could not be sent. Please try again; the order was not marked delivered.")
+    return True
+
+
 def _supplier_error_is_not_found(result=None, reason=""):
     """Detect stale/removed supplier products so shop stock can be zeroed."""
     result = result or {}
@@ -3750,6 +4111,7 @@ async def _schedule_supplier_retry_or_refund(bot, order, sup, ep, qty, reason, r
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("🔄 Retry Delivery", callback_data=f"supplier_retry_{order['id']}")],
+                [InlineKeyboardButton("📤 Deliver File + Caption", callback_data=f"supplier_manual_delivery_{order['id']}")],
                 [InlineKeyboardButton("📦 View Product", callback_data=f"viewprod_{order.get('product_id') or 0}")],
             ])
         )
@@ -3759,13 +4121,15 @@ async def _schedule_supplier_retry_or_refund(bot, order, sup, ep, qty, reason, r
 
 
 async def supplier_retry_refund_job(context):
-    """Background job: auto-refund supplier_retry_pending orders after 5 min."""
+    """Auto-refund expired retry/manual-recovery supplier orders safely."""
     try:
         conn = get_connection(); c = conn.cursor()
         _ensure_supplier_retry_order_columns(c)
         now = time.time()
         c.execute("""SELECT * FROM orders
-                     WHERE status='supplier_retry_pending'
+                     WHERE status IN ('supplier_retry_pending',
+                                      'supplier_manual_delivery_pending',
+                                      'supplier_manual_sending')
                        AND COALESCE(supplier_refund_due_at,0) > 0
                        AND supplier_refund_due_at <= ?
                      ORDER BY supplier_refund_due_at ASC
@@ -3780,7 +4144,9 @@ async def supplier_retry_refund_job(context):
         try:
             from database import get_order, get_product
             fresh = get_order(order['id'])
-            if not fresh or str(fresh.get('status') or '') != 'supplier_retry_pending':
+            if not fresh or str(fresh.get('status') or '') not in (
+                    'supplier_retry_pending', _SUPPLIER_MANUAL_PENDING,
+                    _SUPPLIER_MANUAL_SENDING):
                 continue
             p = get_product(fresh['product_id']) if fresh.get('product_id') else None
             ep = get_ext_product((dict(p).get('ext_product_id') if p else 0) or 0) if p else None
@@ -3793,20 +4159,9 @@ async def supplier_retry_refund_job(context):
             logger.warning(f"[supplier-retry-job] refund failed order#{order.get('id')}: {e}")
 
 
-async def supplier_retry_delivery_callback(update, context):
-    """Admin button: retry supplier delivery while order is still pending."""
-    q = update.callback_query
-    if q.from_user.id != ADMIN_ID:
-        await q.answer("❌", show_alert=True); return
-    try:
-        oid = int(q.data.replace("supplier_retry_", ""))
-    except Exception:
-        await q.answer("Invalid order", show_alert=True); return
-
+async def _run_supplier_retry_delivery(q, context, oid, order):
+    """Run an explicitly confirmed supplier retry and refresh the admin alert."""
     from database import get_order
-    order = get_order(oid)
-    if not order:
-        await q.answer("Order not found", show_alert=True); return
     st = str(order.get('status') or '')
     if st == 'delivered':
         await q.answer("Already delivered ✅", show_alert=True); return
@@ -3836,7 +4191,8 @@ async def supplier_retry_delivery_callback(update, context):
                 f"Auto-refund at `{escape_md(due_txt)}`.",
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔄 Retry Again", callback_data=f"supplier_retry_{oid}")]
+                    [InlineKeyboardButton("🔄 Retry Again", callback_data=f"supplier_retry_{oid}")],
+                    [InlineKeyboardButton("📤 Deliver File + Caption", callback_data=f"supplier_manual_delivery_{oid}")],
                 ])
             )
         elif final_st == 'refunded':
@@ -3845,6 +4201,61 @@ async def supplier_retry_delivery_callback(update, context):
             await q.edit_message_text(f"ℹ️ Retry finished. Current status: `{escape_md(final_st)}`", parse_mode="Markdown")
     except Exception:
         pass
+
+
+async def supplier_retry_delivery_callback(update, context):
+    """Admin Retry button, with a safe chooser for ambiguous provider 5xxs."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        oid = int(q.data.replace("supplier_retry_", ""))
+    except Exception:
+        await q.answer("Invalid order", show_alert=True); return
+
+    from database import get_order
+    order = get_order(oid)
+    if not order:
+        await q.answer("Order not found", show_alert=True); return
+    st = str(order.get('status') or '')
+    if st in (_SUPPLIER_MANUAL_PENDING, _SUPPLIER_MANUAL_SENDING):
+        await q.answer("Manual delivery is already awaiting the owner file/text.", show_alert=True)
+        return
+    if _is_supplier_slice_server_error(order.get("supplier_failure_reason")) and st == "supplier_retry_pending":
+        due_txt = _supplier_retry_due_text(order.get("supplier_refund_due_at") or 0)
+        await q.answer("Provider server error: choose a safe recovery path.", show_alert=False)
+        await q.edit_message_text(
+            f"⚠️ *Supplier API Server Error — Order #{oid}*\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"The supplier returned an internal `findAndModify / $slice` error. "
+            f"No automatic re-purchase was started.\n\n"
+            f"If you received the file + caption from the supplier bot, choose *Deliver File + Caption* and forward it here.\n"
+            f"Only choose *Retry Supplier API* if you deliberately want another API attempt.\n\n"
+            f"⏳ Auto-refund safety: `{escape_md(due_txt)}`.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📤 Deliver File + Caption", callback_data=f"supplier_manual_delivery_{oid}")],
+                [InlineKeyboardButton("🔄 Retry Supplier API", callback_data=f"supplier_force_retry_{oid}")],
+            ]),
+        )
+        return
+    await _run_supplier_retry_delivery(q, context, oid, order)
+
+
+async def supplier_force_retry_delivery_callback(update, context):
+    """Second, explicit confirmation before retrying a known provider server bug."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        oid = int(q.data.replace("supplier_force_retry_", ""))
+    except Exception:
+        await q.answer("Invalid order", show_alert=True); return
+    from database import get_order
+    order = get_order(oid)
+    if not order:
+        await q.answer("Order not found", show_alert=True); return
+    await _run_supplier_retry_delivery(q, context, oid, order)
 
 
 def _claim_supplier_order_for_processing(order_id):
@@ -3864,7 +4275,8 @@ def _claim_supplier_order_for_processing(order_id):
         if not row:
             conn.rollback(); conn.close(); return False, "missing"
         status = str(row['status'] or '')
-        if status in ("delivered", "supplier_processing", "refunded", "cancelled", "rejected"):
+        if status in ("delivered", "supplier_processing", "refunded", "cancelled", "rejected",
+                      _SUPPLIER_MANUAL_PENDING, _SUPPLIER_MANUAL_SENDING):
             conn.rollback(); conn.close(); return False, status
         c.execute("UPDATE orders SET status='supplier_processing' WHERE id=?", (int(order_id),))
         conn.commit(); conn.close(); return True, "claimed"

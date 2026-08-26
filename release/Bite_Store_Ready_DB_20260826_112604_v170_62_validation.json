@@ -1,0 +1,58 @@
+{
+  "artifact": "Bite_Store_Ready_DB_20260826_112604_v170_62.db",
+  "version": "v170.62",
+  "source_backup": "bite_store_backup_20260826_112604_source.db",
+  "source_sha256": "943b2b3557c1555646237e833e99dfd15b3981d460214fb2f64fb322e532553f",
+  "artifact_sha256": "7c1ef2d838851cb07720f442a1791b6f9dc8496a12f2fe25e98819ca72496a7e",
+  "artifact_bytes": 7917568,
+  "artifact_mode": "0o600",
+  "migrations": {
+    "first_errors": [],
+    "second_errors": [],
+    "idempotent": true
+  },
+  "integrity_check": [
+    "ok"
+  ],
+  "foreign_key_violations": 0,
+  "required_ext_product_columns": [
+    "bulk_unsynced",
+    "missing_since",
+    "out_of_stock_since",
+    "owner_active",
+    "source_active"
+  ],
+  "core_row_counts": {
+    "users": 2209,
+    "categories": 4,
+    "products": 116,
+    "orders": 1784,
+    "ext_suppliers": 7,
+    "ext_products": 341,
+    "product_tier_discounts": 11,
+    "api_keys": 74,
+    "reseller_orders": 26,
+    "order_deliveries": 837,
+    "ext_orders": 427
+  },
+  "current_notion_incident_state": {
+    "order_1791_status": "refunded",
+    "order_1791_has_failure_reason": true,
+    "order_1791_has_delivery_file": false,
+    "notion_local_stock": 0,
+    "notion_local_active": 0,
+    "notion_ext_stock": 0,
+    "notion_ext_active": 0,
+    "notion_owner_active": 0,
+    "notion_source_active": 1
+  },
+  "reseller_catalog_smoke": {
+    "row_count": 93,
+    "notion_incident_visible": false
+  },
+  "notes": [
+    "Owner data remains in this downloadable artifact; it is intentionally Git-ignored.",
+    "Hosted deployments start fresh/empty by owner policy; restore this artifact manually after deployment.",
+    "Order 1791 remains refunded and the source-disabled zero-stock Notion item remains unavailable; no financial/order history was rewritten."
+  ]
+}
