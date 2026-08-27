@@ -34,7 +34,9 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from config import ADMIN_ID
-from database import get_connection, ensure_column, get_setting, set_setting, ensure_product_accounts_table, ensure_default_free_claim_for_product
+from database import (get_connection, ensure_column, get_setting, set_setting,
+                      ensure_product_accounts_table, ensure_default_free_claim_for_product,
+                      get_categories)
 from utils import escape_md, html_code_block, html_escape_plain, smart_text_and_mode, fmt_price, points_from_usd, fmt_points, notify_admin
 
 logger = logging.getLogger(__name__)
@@ -3337,10 +3339,10 @@ async def ext_prod_cat_callback(update, context):
         eid = int(q.data.replace("ext_prod_cat_", "", 1))
     except Exception:
         return
-    conn = get_connection(); c = conn.cursor()
-    c.execute("SELECT id, name FROM categories ORDER BY id")
-    cats = [dict(r) for r in c.fetchall()]
-    conn.close()
+    # Hidden categories stay assignable to the owner, but disabled/deleted
+    # ones cannot receive a supplier product accidentally.  Order matches the
+    # live category picker.
+    cats = [dict(r) for r in get_categories(include_inactive=False, include_hidden=True)]
     if not cats:
         await q.answer("⚠️ No categories exist yet.", show_alert=True); return
     text = (

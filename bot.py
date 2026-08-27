@@ -75,7 +75,8 @@ from admin_panels import (
 from handlers_shop import (shop_flash_callback, req_restock_callback, shop_callback, page_callback, product_detail_callback,
                             carousel_nav_callback, shop_all_callback,
                             shop_category_callback, shop_category_page_callback,
-                            shop_filter_callback, favorite_toggle_callback, favorites_callback)  # 🆕 v59/v142
+                            shop_filter_callback, shop_mode_callback,
+                            favorite_toggle_callback, favorites_callback)  # 🆕 v59/v142/v170.63
 from handlers_order import *
 from handlers_order import pay_pts_callback, binance_note_background_job, orders_layout_picker_callback, set_orders_layout_callback
 # 🆕 v65: Refund + Cancel handlers
@@ -2529,6 +2530,14 @@ def main():
         ("^pay_pts_", pay_pts_callback),
         ("^admin_panel$", admin_panel_callback),
         ("^admin_categories$", admin_categories_callback), ("^delcat_", delete_category_callback),
+        # v170.63 category presentation: enabled/hidden/empty/style/order.
+        ("^catpresent$", category_presentation_callback),
+        ("^catpresent_", category_presentation_set_callback),
+        ("^catactive_", category_active_callback),
+        ("^cathide_", category_hidden_callback),
+        ("^catempty_", category_empty_callback),
+        ("^catorder_", category_order_callback),
+        ("^catstyle_", category_style_callback),
         ("^admin_products$", admin_products_callback), ("^delprod_", delete_product_callback),
         ("^viewcat_", view_category_callback),
                 ("^manhist_", manual_hist_callback),
@@ -2710,7 +2719,8 @@ def main():
         ("^cpnew$", cp_new_callback),
         ("^cppreview_", cp_preview_callback),
         ("^cppick_", cppick_callback),
-        # 🆕 Phase D: Categorized shop
+        # 🆕 Phase D / v170.63: Categorized + user-persisted Classic Shop
+        ("^shopmode_", shop_mode_callback),
         ("^shopall$", shop_all_callback),
         ("^flashtoggle_", flash_toggle_callback),
         ("^flashdur_", flash_duration_callback),

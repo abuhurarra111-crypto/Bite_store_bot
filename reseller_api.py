@@ -51,6 +51,7 @@ from database import (
     _hash_api_key, setup_api_tables,
     effective_product_unit_price, get_available_product_tiers,
     is_flash_sale_active, flash_sale_ratio, bulk_discount_ratio,
+    product_is_catalog_available, ensure_shop_category_schema,
 )
 from config import POINTS_PER_DOLLAR as _CFG_PPD
 
@@ -285,6 +286,11 @@ def reseller_product_availability(pd: dict, require_stock: bool = True, quantity
         if not int(d.get("is_active") or 0) or int(d.get("is_hidden") or 0) \
                 or int(d.get("is_archived") or 0) or not int(d.get("reseller_enabled", 1) or 0):
             return False, "product_unavailable"
+        # Category owner controls are lifecycle controls too.  Re-check here,
+        # not only in GET /v1/products, so an old reseller product ID cannot be
+        # purchased after its category is hidden/disabled.
+        if not product_is_catalog_available(d):
+            return False, "product_unavailable"
         ext_id = int(d.get("ext_product_id") or 0)
         if ext_id:
             try:
@@ -456,13 +462,18 @@ def _resellable_products() -> list:
     ensure_column(c, "products", "is_hidden", "INTEGER DEFAULT 0")
     ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
     ensure_column(c, "products", "reseller_enabled", "INTEGER DEFAULT 1")
-    c.execute("""SELECT * FROM products
-                 WHERE is_active=1 AND COALESCE(is_hidden,0)=0
-                   AND COALESCE(is_archived,0)=0
-                   AND COALESCE(reseller_enabled,1)=1
-                   AND COALESCE(price,0) > 0
-                   AND id NOT IN (SELECT product_id FROM freebies WHERE enabled=1)
-                 ORDER BY category_id, id""")
+    ensure_shop_category_schema(c)
+    c.execute("""SELECT p.* FROM products p
+                 LEFT JOIN categories cat ON p.category_id=cat.id
+                 WHERE p.is_active=1 AND COALESCE(p.is_hidden,0)=0
+                   AND COALESCE(p.is_archived,0)=0
+                   AND COALESCE(p.reseller_enabled,1)=1
+                   AND COALESCE(p.price,0) > 0
+                   AND p.id NOT IN (SELECT product_id FROM freebies WHERE enabled=1)
+                   AND (COALESCE(p.category_id,0)=0
+                        OR (cat.id IS NOT NULL AND cat.is_active=1
+                            AND COALESCE(cat.is_hidden,0)=0))
+                 ORDER BY p.category_id, p.id""")
     rows = [dict(r) for r in c.fetchall()]; conn.close()
     # Re-check linked product/source state outside the simple products query.
     # This makes API catalog state immediately correct even before a periodic

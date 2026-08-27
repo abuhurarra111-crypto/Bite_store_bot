@@ -1142,16 +1142,33 @@ async def handle_freebies_button(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def handle_shop_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """🆕 v170.19: 🛍️ Shop persistent button — shop product list reply_text se."""
+    """Open the same persisted Shop mode from the persistent reply keyboard."""
     u = update.effective_user
     if not u:
         return
     save_user(u.id, u.username or "", u.first_name or "")
     await _panic_reset_user_session(update, context)
     try:
-        from database import get_products_filtered
-        from keyboards import all_products_keyboard
-        from utils import sort_products_by_first_word
+        from database import (get_products_filtered, get_products_grouped_by_category,
+                              get_user_shop_mode, SHOP_MODE_CATEGORIZED,
+                              SHOP_MODE_CLASSIC, get_response_with_auto_register)
+        from keyboards import all_products_keyboard, shop_categories_keyboard
+        from utils import sort_products_by_first_word, smart_text_and_mode
+        user_mode = get_user_shop_mode(u.id)
+        if user_mode == SHOP_MODE_CATEGORIZED:
+            grouped = get_products_grouped_by_category()
+            title = get_response_with_auto_register(
+                "shop_categories_title", DEFAULT_RESPONSES.get("shop_categories_title", "🛍️ Shop Categories"))
+            if not grouped:
+                title = DEFAULT_RESPONSES.get("no_products", "No products available yet.")
+            title, parse_mode = smart_text_and_mode(title, "Markdown")
+            await update.message.reply_text(
+                title, parse_mode=parse_mode,
+                reply_markup=shop_categories_keyboard(
+                    grouped, user_mode=SHOP_MODE_CATEGORIZED))
+            return
+
+        # Classic remains the existing flat/filter-compatible Shop list.
         products = get_products_filtered("all")
         try:
             products = sort_products_by_first_word(products)
@@ -1161,16 +1178,17 @@ async def handle_shop_button(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text(
                 "🛍️ *Shop*\n━━━━━━━━━━━━━━━━━━━━\n\n_No products yet._",
                 parse_mode="Markdown",
-                reply_markup=main_menu_keyboard(u.id == ADMIN_ID, user_id=u.id))
+                reply_markup=shop_categories_keyboard(
+                    {}, user_mode=SHOP_MODE_CLASSIC))
             return
-        kb, pg, tp = all_products_keyboard(products, 1, user=u, filter_mode="all")
+        kb, pg, tp = all_products_keyboard(
+            products, 1, user=u, filter_mode="all", shop_mode=SHOP_MODE_CLASSIC)
         await update.message.reply_text(
             f"🛍️ *Shop* — page {pg}/{tp}",
             parse_mode="Markdown", reply_markup=kb)
     except Exception as e:
         import logging
         logging.getLogger(__name__).debug(f"[persist-shop] {e}")
-
 
 async def handle_balance_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """🆕 v170.19: 💰 Balance persistent button — compact account summary."""

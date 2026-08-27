@@ -237,7 +237,7 @@ def ensure_supplier_retry_columns(c):
 # Railway provides RAILWAY_DEPLOYMENT_ID; Render/Git deploys provide one of the
 # Render/Git identifiers below. The release fallback covers hosts that expose a
 # platform marker but no per-deployment ID. Bump _RELEASE_VERSION each release.
-_RELEASE_VERSION = "v170.61"
+_RELEASE_VERSION = "v170.63"
 _DEPLOYMENT_ID_ENV_KEYS = (
     "RAILWAY_DEPLOYMENT_ID",
     "RAILWAY_GIT_COMMIT_SHA",
@@ -361,8 +361,15 @@ def setup_database():
     conn = get_connection(); c = conn.cursor()
 
     c.execute("""CREATE TABLE IF NOT EXISTS categories (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL,
-        emoji TEXT DEFAULT '📦', is_active INTEGER DEFAULT 1)""")
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        emoji TEXT DEFAULT '📦',
+        description TEXT DEFAULT '',
+        is_active INTEGER DEFAULT 1,
+        is_hidden INTEGER DEFAULT 0,
+        show_when_empty INTEGER DEFAULT 0,
+        display_order INTEGER DEFAULT 0,
+        button_style TEXT DEFAULT 'primary')""")
 
     c.execute("""CREATE TABLE IF NOT EXISTS products (
         id INTEGER PRIMARY KEY AUTOINCREMENT, category_id INTEGER,
@@ -430,6 +437,9 @@ def setup_database():
 
     c.execute("""CREATE TABLE IF NOT EXISTS bot_settings (key TEXT PRIMARY KEY, value TEXT DEFAULT '')""")
     c.execute("""CREATE TABLE IF NOT EXISTS bot_responses (key TEXT PRIMARY KEY, value TEXT DEFAULT '')""")
+    # v170.63: per-user Shop mode + ordered/presentable category self-heal.
+    # This is additive and safe for a freshly restored owner database.
+    ensure_shop_category_schema(c)
 
     # 🆕 Phase B: Custom buttons
     # type: 'url' / 'text' / 'submenu' / 'page'
@@ -1296,21 +1306,426 @@ def get_direct_referral_count(uid):
     conn.close(); return n
 
 
-# ── Categories ──
-def add_category(name, emoji="📦"):
+# ── Categories ─────────────────────────────────────────────────────────────
+# v170.63: The existing category system is the single source of truth for both
+# the Telegram Shop picker and the reseller catalog.  These fields are additive
+# so old owner backups migrate in-place without losing category/product IDs.
+SHOP_MODE_CATEGORIZED = "categorized"
+SHOP_MODE_CLASSIC = "classic"
+_VALID_SHOP_MODES = {SHOP_MODE_CATEGORIZED, SHOP_MODE_CLASSIC}
+_VALID_CATEGORY_BUTTON_STYLES = {"primary", "success", "danger"}
+_CATEGORY_ORDER_MIGRATION_KEY = "v17063_category_display_order_backfilled"
+
+
+def _normalise_category_button_style(value):
+    style = str(value or "").strip().lower()
+    return style if style in _VALID_CATEGORY_BUTTON_STYLES else "primary"
+
+
+def _normalise_shop_mode(value):
+    mode = str(value or "").strip().lower()
+    return mode if mode in _VALID_SHOP_MODES else SHOP_MODE_CATEGORIZED
+
+
+def ensure_shop_category_schema(cursor=None):
+    """Ensure v170.63 Shop/category presentation schema, idempotently.
+
+    The preference table deliberately uses Telegram's ``user_id`` as its
+    primary key instead of adding a nullable column to ``users``.  A mode can
+    therefore be remembered even when an old backup has not seen that user in
+    the ``users`` table yet.  Missing preference rows intentionally mean the
+    owner-required default: ``categorized``.
+    """
+    conn = None
+    own_connection = cursor is None
+    try:
+        if own_connection:
+            conn = get_connection()
+            cursor = conn.cursor()
+        cursor.execute("""CREATE TABLE IF NOT EXISTS categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            emoji TEXT DEFAULT '📦',
+            description TEXT DEFAULT '',
+            is_active INTEGER DEFAULT 1,
+            is_hidden INTEGER DEFAULT 0,
+            show_when_empty INTEGER DEFAULT 0,
+            display_order INTEGER DEFAULT 0,
+            button_style TEXT DEFAULT 'primary')""")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS bot_settings
+                          (key TEXT PRIMARY KEY, value TEXT DEFAULT '')""")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS user_shop_preferences (
+            user_id INTEGER PRIMARY KEY,
+            shop_mode TEXT NOT NULL DEFAULT 'categorized',
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
+        ensure_column(cursor, "categories", "description", "TEXT DEFAULT ''")
+        ensure_column(cursor, "categories", "is_hidden", "INTEGER DEFAULT 0")
+        ensure_column(cursor, "categories", "show_when_empty", "INTEGER DEFAULT 0")
+        ensure_column(cursor, "categories", "display_order", "INTEGER DEFAULT 0")
+        ensure_column(cursor, "categories", "button_style", "TEXT DEFAULT 'primary'")
+        # New/unset owners see the requested compact two-column picker and do
+        # not see empty categories unless they explicitly opt in per-category
+        # or globally through the presentation panel.
+        cursor.execute("INSERT OR IGNORE INTO bot_settings(key,value) VALUES (?,?)",
+                       ("shop_show_empty_categories", "0"))
+        cursor.execute("INSERT OR IGNORE INTO bot_settings(key,value) VALUES (?,?)",
+                       ("shop_category_columns", "2"))
+        # Existing categories once had no ordering column.  Give them their old
+        # ID order only once; later manual reorders (including a valid order 0)
+        # must never be silently overwritten.
+        cursor.execute("SELECT 1 FROM bot_settings WHERE key=?", (_CATEGORY_ORDER_MIGRATION_KEY,))
+        if not cursor.fetchone():
+            cursor.execute("UPDATE categories SET display_order=id "
+                           "WHERE COALESCE(display_order,0)=0")
+            cursor.execute("INSERT OR REPLACE INTO bot_settings(key,value) VALUES (?,?)",
+                           (_CATEGORY_ORDER_MIGRATION_KEY, "1"))
+        cursor.execute("UPDATE categories SET button_style='primary' "
+                       "WHERE button_style IS NULL OR lower(trim(button_style)) "
+                       "NOT IN ('primary','success','danger')")
+        if own_connection:
+            conn.commit()
+        return True
+    except Exception as e:
+        print(f"⚠️ category/shop schema migration failed: {e}")
+        if own_connection and conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return False
+    finally:
+        if own_connection and conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def get_user_shop_mode(user_id):
+    """Return this user's persisted Shop mode; unset users default to categories."""
+    try:
+        uid = int(user_id)
+    except (TypeError, ValueError):
+        return SHOP_MODE_CATEGORIZED
+    if uid <= 0:
+        return SHOP_MODE_CATEGORIZED
+    try:
+        ensure_shop_category_schema()
+        conn = get_connection(); c = conn.cursor()
+        c.execute("SELECT shop_mode FROM user_shop_preferences WHERE user_id=?", (uid,))
+        row = c.fetchone(); conn.close()
+        return _normalise_shop_mode(row["shop_mode"] if row else SHOP_MODE_CATEGORIZED)
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return SHOP_MODE_CATEGORIZED
+
+
+def set_user_shop_mode(user_id, mode):
+    """Persist an explicit Categorized/Classic choice and return the saved mode."""
+    try:
+        uid = int(user_id)
+    except (TypeError, ValueError):
+        return SHOP_MODE_CATEGORIZED
+    mode = _normalise_shop_mode(mode)
+    if uid <= 0:
+        return SHOP_MODE_CATEGORIZED
+    conn = None
+    try:
+        ensure_shop_category_schema()
+        conn = get_connection(); c = conn.cursor()
+        c.execute("""INSERT INTO user_shop_preferences(user_id,shop_mode,updated_at)
+                     VALUES (?,?,CURRENT_TIMESTAMP)
+                     ON CONFLICT(user_id) DO UPDATE SET
+                       shop_mode=excluded.shop_mode,
+                       updated_at=CURRENT_TIMESTAMP""", (uid, mode))
+        conn.commit()
+        return mode
+    except Exception as e:
+        print(f"⚠️ could not save Shop mode: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return SHOP_MODE_CATEGORIZED
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def get_category(cid, include_inactive=True):
+    """Fetch one category, including hidden categories for safe admin editing."""
+    try:
+        cid = int(cid)
+    except (TypeError, ValueError):
+        return None
+    ensure_shop_category_schema()
     conn = get_connection(); c = conn.cursor()
-    c.execute("INSERT INTO categories (name,emoji) VALUES (?,?)", (name,emoji))
+    sql = "SELECT * FROM categories WHERE id=?"
+    if not include_inactive:
+        sql += " AND is_active=1"
+    c.execute(sql, (cid,))
+    row = c.fetchone(); conn.close()
+    return row
+
+
+def add_category(name, emoji="📦", description="", button_style="primary",
+                 show_when_empty=False):
+    """Create an ordered, blue-by-default category without replacing old CRUD."""
+    ensure_shop_category_schema()
+    clean_name = str(name or "").strip() or "Category"
+    clean_emoji = str(emoji or "📦").strip() or "📦"
+    conn = get_connection(); c = conn.cursor()
+    c.execute("SELECT COALESCE(MAX(display_order),0)+1 FROM categories")
+    next_order = int(c.fetchone()[0] or 1)
+    c.execute("""INSERT INTO categories
+                 (name,emoji,description,is_active,is_hidden,show_when_empty,
+                  display_order,button_style)
+                 VALUES (?,?,?,?,?,?,?,?)""",
+              (clean_name, clean_emoji, str(description or "").strip(), 1, 0,
+               1 if show_when_empty else 0, next_order,
+               _normalise_category_button_style(button_style)))
     i = c.lastrowid; conn.commit(); conn.close(); return i
 
-def get_categories():
-    conn = get_connection(); c = conn.cursor()
-    c.execute("SELECT * FROM categories WHERE is_active=1"); r = c.fetchall(); conn.close(); return r
 
-# 🔧 BUG FIX: button_styler.py imported `get_all_categories`, which did not
-# exist (raised ImportError, swallowed by try/except → per-category button
-# styling silently broke). Provide it as an alias of get_categories().
-def get_all_categories():
-    return get_categories()
+def get_categories(include_inactive=False, include_hidden=True):
+    """Return categories in admin/product-picker order.
+
+    ``include_hidden`` defaults to True because hiding a category should not
+    make it impossible for its owner to assign new products or unhide it.
+    """
+    ensure_shop_category_schema()
+    conn = get_connection(); c = conn.cursor()
+    clauses = []
+    if not include_inactive:
+        clauses.append("is_active=1")
+    if not include_hidden:
+        clauses.append("COALESCE(is_hidden,0)=0")
+    sql = "SELECT * FROM categories"
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    sql += " ORDER BY COALESCE(display_order,0) ASC, id ASC"
+    c.execute(sql); rows = c.fetchall(); conn.close(); return rows
+
+
+# Kept for callers that historically imported this name.
+def get_all_categories(include_inactive=False, include_hidden=True):
+    return get_categories(include_inactive=include_inactive, include_hidden=include_hidden)
+
+
+def update_category(cid, **kwargs):
+    """Update only safe category presentation fields."""
+    allowed = {"name", "emoji", "description", "is_active", "is_hidden",
+               "show_when_empty", "display_order", "button_style"}
+    fields = {k: v for k, v in kwargs.items() if k in allowed}
+    if not fields:
+        return False
+    try:
+        cid = int(cid)
+    except (TypeError, ValueError):
+        return False
+    if "button_style" in fields:
+        fields["button_style"] = _normalise_category_button_style(fields["button_style"])
+    for flag in ("is_active", "is_hidden", "show_when_empty"):
+        if flag in fields:
+            value = fields[flag]
+            if isinstance(value, str):
+                value = value.strip().lower() not in ("", "0", "false", "off", "no")
+            fields[flag] = 1 if bool(value) else 0
+    ensure_shop_category_schema()
+    conn = get_connection(); c = conn.cursor()
+    sets = ", ".join(f"{key}=?" for key in fields)
+    c.execute(f"UPDATE categories SET {sets} WHERE id=?", list(fields.values()) + [cid])
+    changed = c.rowcount > 0
+    conn.commit(); conn.close(); return changed
+
+
+def set_category_active(cid, active=True):
+    return update_category(cid, is_active=active)
+
+
+def set_category_hidden(cid, hidden=True):
+    return update_category(cid, is_hidden=hidden)
+
+
+def set_category_show_when_empty(cid, show=True):
+    return update_category(cid, show_when_empty=show)
+
+
+def set_category_button_style(cid, style="primary"):
+    return update_category(cid, button_style=style)
+
+
+def move_category(cid, direction):
+    """Swap a category with its adjacent sibling in visible admin order."""
+    direction = str(direction or "").lower()
+    if direction not in ("up", "down"):
+        return False
+    try:
+        cid = int(cid)
+    except (TypeError, ValueError):
+        return False
+    ensure_shop_category_schema()
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("SELECT id, display_order FROM categories WHERE id=?", (cid,))
+        current = c.fetchone()
+        if not current:
+            return False
+        op = "<" if direction == "up" else ">"
+        order = "DESC" if direction == "up" else "ASC"
+        c.execute(f"""SELECT id, display_order FROM categories
+                     WHERE (COALESCE(display_order,0) {op} ?)
+                        OR (COALESCE(display_order,0)=? AND id {'<' if direction == 'up' else '>'} ?)
+                     ORDER BY COALESCE(display_order,0) {order}, id {order} LIMIT 1""",
+                  (int(current["display_order"] or 0), int(current["display_order"] or 0), cid))
+        other = c.fetchone()
+        if not other:
+            return False
+        current_order = int(current["display_order"] or 0)
+        other_order = int(other["display_order"] or 0)
+        # A swap of two legacy/tied zeros needs stable distinct values first.
+        if current_order == other_order:
+            current_order, other_order = cid, int(other["id"])
+        c.execute("UPDATE categories SET display_order=? WHERE id=?", (other_order, cid))
+        c.execute("UPDATE categories SET display_order=? WHERE id=?", (current_order, int(other["id"])))
+        conn.commit()
+        return True
+    except Exception as e:
+        print(f"⚠️ category reorder failed: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+
+def _category_is_catalog_visible(category_id):
+    """True for unassigned products or categories currently visible to buyers."""
+    try:
+        cid = int(category_id or 0)
+    except (TypeError, ValueError):
+        return False
+    if cid == 0:
+        return True
+    if cid < 0:
+        return False
+    try:
+        ensure_shop_category_schema()
+        conn = get_connection(); c = conn.cursor()
+        c.execute("""SELECT is_active, COALESCE(is_hidden,0) AS is_hidden
+                     FROM categories WHERE id=?""", (cid,))
+        row = c.fetchone(); conn.close()
+        return bool(row and int(row["is_active"] or 0) and not int(row["is_hidden"] or 0))
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        # A non-empty category ID that cannot be verified must not remain
+        # purchasable through a stale button/API request.
+        return False
+
+
+def get_products_grouped_by_category(filter_mode="all", include_empty=None):
+    """Return the current buyer-visible category picker data.
+
+    This replaces the old products-only grouping so enabled/hidden/order/style
+    changes are reflected on the *next click* with no bot restart or cache.
+    Empty categories are hidden by default, but an admin can show one category
+    explicitly or enable the global presentation setting.
+    """
+    try:
+        _ensure_is_hidden_column()
+    except Exception:
+        pass
+    ensure_shop_category_schema()
+    mode = str(filter_mode or "all").strip().lower()
+    if mode not in ("all", "available", "unavailable"):
+        mode = "all"
+    conn = get_connection(); c = conn.cursor()
+    ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
+    c.execute("SELECT value FROM bot_settings WHERE key='shop_show_empty_categories'")
+    row = c.fetchone()
+    global_empty = str(row[0] if row else "0") == "1"
+    if include_empty is not None:
+        global_empty = bool(include_empty)
+    c.execute("""SELECT * FROM categories
+                 WHERE is_active=1 AND COALESCE(is_hidden,0)=0
+                 ORDER BY COALESCE(display_order,0) ASC, id ASC""")
+    category_rows = [dict(r) for r in c.fetchall()]
+    category_map = {int(cat["id"]): cat for cat in category_rows}
+
+    # Freebie products remain exclusive to their existing Freebies route,
+    # matching classic Shop behavior.  Do not assume an old DB has that table.
+    c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='freebies'")
+    has_freebies = bool(c.fetchone())
+    freebie_clause = " AND p.id NOT IN (SELECT product_id FROM freebies WHERE enabled=1)" if has_freebies else ""
+    stock_clause = ""
+    if mode == "available":
+        stock_clause = " AND COALESCE(p.stock,0)>0"
+    elif mode == "unavailable":
+        stock_clause = " AND COALESCE(p.stock,0)<=0"
+    c.execute("""SELECT p.*, c.name AS cat_name, c.emoji AS cat_emoji,
+                        c.description AS cat_description,
+                        c.button_style AS cat_button_style,
+                        c.display_order AS cat_display_order
+                 FROM products p
+                 LEFT JOIN categories c ON p.category_id=c.id
+                 WHERE p.is_active=1 AND COALESCE(p.is_hidden,0)=0
+                   AND COALESCE(p.is_archived,0)=0
+                   AND (COALESCE(p.category_id,0)=0
+                        OR (c.id IS NOT NULL AND c.is_active=1
+                            AND COALESCE(c.is_hidden,0)=0))""" + freebie_clause + stock_clause +
+              " ORDER BY CASE WHEN COALESCE(p.category_id,0)=0 THEN 1 ELSE 0 END, "
+              "COALESCE(c.display_order,0) ASC, "
+              "CASE WHEN COALESCE(p.stock,0)>0 THEN 1 ELSE 0 END DESC, p.id DESC")
+    products = c.fetchall()
+    conn.close()
+
+    grouped = {}
+    for cat in category_rows:
+        cid = int(cat["id"])
+        cat["products"] = []
+        cat["product_count"] = 0
+        cat["in_stock_count"] = 0
+        cat["button_style"] = _normalise_category_button_style(cat.get("button_style"))
+    uncategorized = None
+    for product in products:
+        cid = int(product["category_id"] or 0)
+        if cid <= 0:
+            if uncategorized is None:
+                uncategorized = {
+                    "id": 0, "name": "Uncategorized", "emoji": "📦",
+                    "description": "", "button_style": "primary",
+                    "display_order": 10**9, "show_when_empty": 0,
+                    "products": [], "product_count": 0, "in_stock_count": 0,
+                }
+            target = uncategorized
+        else:
+            target = category_map.get(cid)
+            if target is None:
+                # Invalid/inactive/hidden category relationship — never expose
+                # it as accidental "Uncategorized" inventory.
+                continue
+        target["products"].append(product)
+        target["product_count"] += 1
+        if int(product["stock"] or 0) > 0:
+            target["in_stock_count"] += 1
+    for cat in category_rows:
+        if cat["products"] or global_empty or int(cat.get("show_when_empty") or 0):
+            grouped[int(cat["id"])] = cat
+    if uncategorized and uncategorized["products"]:
+        grouped[0] = uncategorized
+    return grouped
+
 
 def delete_category(cid):
     """Deactivate a category and make linked mirror deactivation durable.
@@ -1320,6 +1735,7 @@ def delete_category(cid):
     same owner-state helper after the short category transaction, so local,
     source-backed, and reseller catalogs remain aligned.
     """
+    ensure_shop_category_schema()
     conn = get_connection(); c = conn.cursor()
     try:
         c.execute("SELECT id FROM products WHERE category_id=?", (int(cid),))
@@ -1417,36 +1833,49 @@ def clear_product_static_delivery(pid):
     set_product_static_delivery(pid, '', '', '', '', '')
 
 def get_products_by_category(cid):
-    """🆕 v59: Also excludes admin-hidden products."""
+    """Buyer-visible products in one visible category only.
+
+    A hidden/disabled category must behave as empty even if a user taps an old
+    category button after the owner changes its visibility.
+    """
     try:
         _ensure_is_hidden_column()
     except Exception:
         pass
+    ensure_shop_category_schema()
     conn = get_connection(); c = conn.cursor()
     ensure_column(c, "products", "fake_sold", "INTEGER DEFAULT 0")
     ensure_column(c, "products", "real_sold", "INTEGER DEFAULT 0")
     ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
-    c.execute("""SELECT * FROM products
-                 WHERE category_id=? AND is_active=1 AND COALESCE(is_hidden, 0)=0
-                   AND COALESCE(is_archived, 0)=0
-                 ORDER BY CASE WHEN COALESCE(stock,0)>0 THEN 1 ELSE 0 END DESC,
-                          COALESCE(real_sold,0) DESC,
-                          (COALESCE(price,0)-COALESCE(cost_price,0)) DESC,
-                          COALESCE(fake_sold,0) DESC,
-                          id DESC""", (cid,))
+    c.execute("""SELECT p.* FROM products p
+                 JOIN categories c ON p.category_id=c.id
+                 WHERE p.category_id=? AND p.is_active=1
+                   AND COALESCE(p.is_hidden,0)=0
+                   AND COALESCE(p.is_archived,0)=0
+                   AND c.is_active=1 AND COALESCE(c.is_hidden,0)=0
+                 ORDER BY CASE WHEN COALESCE(p.stock,0)>0 THEN 1 ELSE 0 END DESC,
+                          COALESCE(p.real_sold,0) DESC,
+                          (COALESCE(p.price,0)-COALESCE(p.cost_price,0)) DESC,
+                          COALESCE(p.fake_sold,0) DESC,
+                          p.id DESC""", (cid,))
     r = c.fetchall(); conn.close(); return r
 
+
 def get_all_active_products():
-    """🆕 v59: Now also excludes admin-hidden products (is_hidden=1)."""
+    """Buyer-visible flat/classic catalog, respecting category visibility."""
     _ensure_is_hidden_column()
+    ensure_shop_category_schema()
     conn = get_connection(); c = conn.cursor()
     ensure_column(c, "products", "fake_sold", "INTEGER DEFAULT 0")
     ensure_column(c, "products", "real_sold", "INTEGER DEFAULT 0")
     ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
-    c.execute("""SELECT p.*, c.name as category_name, c.emoji as category_emoji
+    c.execute("""SELECT p.*, c.name AS category_name, c.emoji AS category_emoji
                  FROM products p LEFT JOIN categories c ON p.category_id=c.id
-                 WHERE p.is_active=1 AND COALESCE(p.is_hidden, 0)=0
-                   AND COALESCE(p.is_archived, 0)=0
+                 WHERE p.is_active=1 AND COALESCE(p.is_hidden,0)=0
+                   AND COALESCE(p.is_archived,0)=0
+                   AND (COALESCE(p.category_id,0)=0
+                        OR (c.id IS NOT NULL AND c.is_active=1
+                            AND COALESCE(c.is_hidden,0)=0))
                  ORDER BY CASE WHEN COALESCE(p.stock,0)>0 THEN 1 ELSE 0 END DESC,
                           COALESCE(p.real_sold,0) DESC,
                           (COALESCE(p.price,0)-COALESCE(p.cost_price,0)) DESC,
@@ -1472,6 +1901,11 @@ def product_is_catalog_available(product):
         if not d or not int(d.get("is_active", 1) or 0):
             return False
         if int(d.get("is_hidden", 0) or 0) or int(d.get("is_archived", 0) or 0):
+            return False
+        # Category visibility is also a live purchase guard.  It closes stale
+        # native buttons and reseller checkout requests immediately after an
+        # owner hides or disables a category.
+        if not _category_is_catalog_visible(d.get("category_id", 0)):
             return False
         ext_id = int(d.get("ext_product_id", 0) or 0)
         if not ext_id:
@@ -1877,23 +2311,26 @@ def set_product_hidden(pid, hidden=True):
 
 
 def get_products_filtered(filter_mode="all"):
-    """🆕 v59: Get user-visible products with stock-based filtering.
+    """Buyer-visible classic products with the existing stock filters.
 
     Filter modes:
       'all'         → all visible (not hidden, active)         — DEFAULT
       'available'   → in stock only (stock > 0)
       'unavailable' → out of stock only (stock <= 0)
 
-    `is_active=0` (deleted) and `is_hidden=1` (admin-hidden) are ALWAYS
-    excluded from every filter.
+    Product and category hidden/disabled state are both excluded from every
+    filter so Classic mode cannot bypass category presentation controls.
     """
     _ensure_is_hidden_column()
+    ensure_shop_category_schema()
     conn = get_connection(); c = conn.cursor()
     ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
     base = ("SELECT p.*, cat.name as category_name, cat.emoji as category_emoji "
             "FROM products p LEFT JOIN categories cat ON p.category_id=cat.id "
             "WHERE p.is_active=1 AND COALESCE(p.is_hidden, 0)=0 "
-            "AND COALESCE(p.is_archived, 0)=0")
+            "AND COALESCE(p.is_archived, 0)=0 "
+            "AND (COALESCE(p.category_id,0)=0 OR "
+            "(cat.id IS NOT NULL AND cat.is_active=1 AND COALESCE(cat.is_hidden,0)=0))")
     # 🆕 v170.16: freebie products (freebies.enabled=1) shop list me NAHI aate
     # — wo sirf 🎁 Freebies menu se claim hote hain.
     try:
@@ -3096,37 +3533,6 @@ def delete_custom_page(pid):
     # Deactivate page-type buttons pointing to this page
     c.execute("UPDATE custom_buttons SET is_active=0 WHERE btype='page' AND action=?", (str(pid),))
     conn.commit(); conn.close()
-
-
-# ── 🆕 Get products grouped (Phase D - shop categories) ──
-def get_products_grouped_by_category():
-    """Returns dict: {cat_id: {'name', 'emoji', 'products': [...]}}.
-    Includes 'Uncategorized' for products with no category.
-    🆕 v59: Excludes admin-hidden products."""
-    try:
-        _ensure_is_hidden_column()
-    except Exception:
-        pass
-    conn = get_connection(); c = conn.cursor()
-    ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
-    c.execute("""SELECT p.*, c.name as cat_name, c.emoji as cat_emoji
-                 FROM products p LEFT JOIN categories c ON p.category_id=c.id
-                 WHERE p.is_active=1 AND COALESCE(p.is_hidden, 0)=0
-                   AND COALESCE(p.is_archived, 0)=0
-                 ORDER BY c.id, p.id DESC""")
-    rows = c.fetchall(); conn.close()
-    grouped = {}
-    for p in rows:
-        cid = p['category_id'] or 0
-        if cid not in grouped:
-            grouped[cid] = {
-                'id': cid,
-                'name': p['cat_name'] or 'Uncategorized',
-                'emoji': p['cat_emoji'] or '📦',
-                'products': [],
-            }
-        grouped[cid]['products'].append(p)
-    return grouped
 
 
 
@@ -5366,12 +5772,18 @@ def get_and_clear_stock_alerts(pid):
     return users
 
 def get_flash_sale_products():
+    ensure_shop_category_schema()
     conn = get_connection(); c = conn.cursor()
+    ensure_column(c, "products", "is_hidden", "INTEGER DEFAULT 0")
     ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
     c.execute("""SELECT p.*, c.name as category_name, c.emoji as category_emoji
                  FROM products p LEFT JOIN categories c ON p.category_id=c.id
                  WHERE p.is_active=1 AND p.is_flash_sale=1
+                   AND COALESCE(p.is_hidden,0)=0
                    AND COALESCE(p.is_archived,0)=0
+                   AND (COALESCE(p.category_id,0)=0
+                        OR (c.id IS NOT NULL AND c.is_active=1
+                            AND COALESCE(c.is_hidden,0)=0))
                  ORDER BY p.id DESC""")
     rows = c.fetchall(); conn.close()
     return [r for r in rows if is_flash_sale_active(r)]

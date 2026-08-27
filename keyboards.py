@@ -446,13 +446,19 @@ def main_menu_keyboard(is_admin=False, user_id=None):
 # ════════════════════════════════════════════
 # 🛒 SHOP — PRODUCTS LIST
 # ════════════════════════════════════════════
-def all_products_keyboard(products, page=1, per_page=10, user=None, filter_mode="all"):
+def all_products_keyboard(products, page=1, per_page=10, user=None, filter_mode="all", shop_mode=None):
     """🆕 v59: Added `filter_mode` param — renders Filter buttons (All/Available/
     Unavailable) on bottom row so user can switch between in-stock and out-of-stock
     views. `filter_mode` is one of 'all'/'available'/'unavailable'.
     """
     total = len(products)
     total_pages = max(1, (total + per_page - 1) // per_page)
+    # Product/category changes can shrink a live catalog while a user is on a
+    # later page. Clamp stale callback pages instead of rendering an empty row.
+    try:
+        page = max(1, min(int(page), total_pages))
+    except (TypeError, ValueError):
+        page = 1
     start = (page - 1) * per_page
     page_prods = products[start:start + per_page]
     size = _get_size()
@@ -597,6 +603,17 @@ def all_products_keyboard(products, page=1, per_page=10, user=None, filter_mode=
     fr.append(InlineKeyboardButton(_f_label("unavailable", "❌ Out of Stock"),
                                     callback_data="shopfilter_unavailable"))
     kb.append(fr)
+
+    # v170.63: Classic Shop keeps its existing product/filter rows and adds a
+    # visible route back to the persisted Categorized picker.  Other screens
+    # that reuse this keyboard leave ``shop_mode`` unset and remain unchanged.
+    if shop_mode in ("categorized", "classic"):
+        cat_label = "🗂️ Categorized ✓" if shop_mode == "categorized" else "🗂️ Categorized"
+        classic_label = "📋 Classic ✓" if shop_mode == "classic" else "📋 Classic"
+        kb.append([
+            InlineKeyboardButton(cat_label, callback_data="shopmode_categorized"),
+            InlineKeyboardButton(classic_label, callback_data="shopmode_classic"),
+        ])
 
     # 🆕 v52: Home + Buy Points now editable via Navigation group too
     bottom_row = []
@@ -934,20 +951,51 @@ def admin_menu_keyboard():
 
 
 def admin_categories_keyboard(cats):
-    """🆕 v40.1: Per-category styler applies here too (admin sees same custom labels)."""
-    from button_system import is_styled
+    """Editable category manager with visibility/order presentation controls."""
+    try:
+        from button_system import make_premium_button, extract_emoji_from_html, is_styled
+        from utils import html_strip_tags
+    except Exception:
+        make_premium_button = None
+        extract_emoji_from_html = None
+        is_styled = lambda _key: False
+        html_strip_tags = lambda x: str(x or "")
     kb = []
-    for c in cats:
-        lbl = f"🏷️ {c['emoji']} {c['name']}"
-        if is_styled(f"cat_{c['id']}"):
-            lbl = _apply_styler(f"cat_{c['id']}", lbl)
+    for cat in cats:
+        c = dict(cat)
+        cid = int(c.get("id") or 0)
+        raw_name = str(c.get("name") or "Category")
+        raw_emoji = str(c.get("emoji") or "🏷️")
+        if extract_emoji_from_html:
+            name_id, name = extract_emoji_from_html(raw_name)
+            icon_id, icon = extract_emoji_from_html(raw_emoji)
         else:
-            lbl = _apply_styler("shop_category", lbl)
-        kb.append([InlineKeyboardButton(lbl, callback_data=f"viewcat_{c['id']}")])
+            name_id = icon_id = ""
+            name, icon = html_strip_tags(raw_name), html_strip_tags(raw_emoji)
+        custom_id = name_id or icon_id
+        label = (name or "Category") if custom_id else f"🏷️ {icon} {name or 'Category'}"
+        if not int(c.get("is_active", 1) or 0):
+            label += "  ·  🚫 Disabled"
+        elif int(c.get("is_hidden", 0) or 0):
+            label += "  ·  🙈 Hidden"
+        if is_styled(f"cat_{cid}"):
+            label = _apply_styler(f"cat_{cid}", label)
+        else:
+            label = _apply_styler("shop_category", label)
+        style = str(c.get("button_style") or "primary").strip().lower()
+        if style not in ("primary", "success", "danger"):
+            style = "primary"
+        if custom_id and make_premium_button:
+            label = (f'[[HTML]]<tg-emoji emoji-id="{custom_id}">◼️</tg-emoji> '
+                     f"{label}")
+            kb.append([make_premium_button(label, style=style,
+                                           callback_data=f"viewcat_{cid}")])
+        else:
+            kb.append([_make_btn(label, style=style, callback_data=f"viewcat_{cid}")])
+    kb.append([InlineKeyboardButton("⚙️ Category Picker Settings", callback_data="catpresent")])
     kb.append([_btn("➕", "➕ Add", "➕ Add Category", "➕ Add New Category", callback_data="add_category")])
     kb.append([_btn("🔙", "🔙 Return", "🔙 Return", "🔙 Back to Admin Panel", callback_data="admin_panel")])
     return InlineKeyboardMarkup(kb)
-
 
 def admin_products_keyboard(prods):
     """🆕 v40.1: Per-product styler applies here too.
@@ -1026,7 +1074,34 @@ def admin_pending_orders_keyboard(orders):
 
 
 def select_category_keyboard(cats):
-    kb = [[InlineKeyboardButton(f"{c['emoji']} {c['name']}", callback_data=f"selcat_{c['id']}")] for c in cats]
+    """Owner product-category picker, including safe premium category icons."""
+    try:
+        from button_system import make_premium_button, extract_emoji_from_html
+        from utils import html_strip_tags
+    except Exception:
+        make_premium_button = None
+        extract_emoji_from_html = None
+        html_strip_tags = lambda value: str(value or "")
+    kb = []
+    for category in cats:
+        cat = dict(category)
+        cid = int(cat.get("id") or 0)
+        raw_name = str(cat.get("name") or "Category")
+        raw_icon = str(cat.get("emoji") or "📦")
+        if extract_emoji_from_html:
+            name_id, name = extract_emoji_from_html(raw_name)
+            icon_id, icon = extract_emoji_from_html(raw_icon)
+        else:
+            name_id = icon_id = ""
+            name, icon = html_strip_tags(raw_name), html_strip_tags(raw_icon)
+        premium_id = name_id or icon_id
+        label = (name or "Category") if premium_id else f"{icon} {name or 'Category'}"
+        label = label[:60].rstrip() or "Category"
+        if premium_id and make_premium_button:
+            kb.append([make_premium_button(label, emoji_id=premium_id,
+                                           callback_data=f"selcat_{cid}")])
+        else:
+            kb.append([InlineKeyboardButton(label, callback_data=f"selcat_{cid}")])
     kb.append([_btn("❌", "❌ Cancel", "❌ Cancel", "❌ Cancel", callback_data="admin_products")])
     return InlineKeyboardMarkup(kb)
 
@@ -1711,39 +1786,123 @@ def cpage_user_view_keyboard(pid, parent="main_menu"):
 # 🛒 CATEGORIZED SHOP (Phase D)
 # ════════════════════════════════════════════
 
-def shop_categories_keyboard(grouped):
-    """Main shop view — list of categories (each with count).
-    🆕 v40.1: Per-category styling (cat_<id>) + fallback to shop_category default."""
-    from button_system import is_styled
+def _category_picker_columns():
+    """Configured picker width; default remains the screenshot-style 2 columns."""
+    try:
+        from database import get_setting
+        value = int(get_setting("shop_category_columns", "2") or 2)
+        return value if value in (1, 2) else 2
+    except Exception:
+        return 2
+
+
+def _category_picker_button(info):
+    """Build one category button with a real Telegram custom-emoji icon.
+
+    Category names and icons are stored in the same ``[[HTML]]<tg-emoji>``
+    form as existing product labels.  Inline buttons do not parse HTML, so the
+    custom emoji must become ``icon_custom_emoji_id`` through ``_make_btn``.
+    Telegram allows one custom icon per button; a premium emoji in the name is
+    deliberately preferred over the optional icon field because it is what the
+    owner sees and edits as the category display name.
+    """
+    try:
+        from button_system import extract_emoji_from_html, is_styled
+        from utils import html_strip_tags
+    except Exception:
+        extract_emoji_from_html = None
+        is_styled = lambda _key: False
+        html_strip_tags = lambda x: str(x or "")
+
+    cid = int(info.get("id") or 0)
+    raw_name = str(info.get("name") or "Category")
+    raw_emoji = str(info.get("emoji") or "📦")
+    if extract_emoji_from_html:
+        name_emoji_id, name_text = extract_emoji_from_html(raw_name)
+        icon_emoji_id, icon_text = extract_emoji_from_html(raw_emoji)
+    else:
+        name_emoji_id = icon_emoji_id = ""
+        name_text, icon_text = html_strip_tags(raw_name), html_strip_tags(raw_emoji)
+    name_text = (name_text or html_strip_tags(raw_name) or "Category").strip()
+    icon_text = (icon_text or html_strip_tags(raw_emoji) or "").strip()
+
+    # A premium emoji serves as the button's icon, replacing the ordinary
+    # category icon to keep the requested compact grid clean rather than show
+    # two icons.  Normal names retain their existing emoji + name behavior.
+    custom_emoji_id = name_emoji_id or icon_emoji_id
+    label = name_text if custom_emoji_id else f"{icon_text} {name_text}".strip()
+    label = label[:48].rstrip() or "Category"
+    if is_styled(f"cat_{cid}"):
+        label = _apply_styler(f"cat_{cid}", label)
+    else:
+        label = _apply_styler("shop_category", label)
+
+    # ``_make_btn`` delegates to make_premium_button and therefore maps this
+    # sentinel to icon_custom_emoji_id rather than leaking markup to users.
+    if custom_emoji_id:
+        label = (f'[[HTML]]<tg-emoji emoji-id="{custom_emoji_id}">◼️</tg-emoji> '
+                 f"{label}")
+    style = str(info.get("button_style") or "primary").strip().lower()
+    if style not in ("primary", "success", "danger"):
+        style = "primary"
+    return _make_btn(label, callback_data=f"shopcat_{cid}", style=style)
+
+
+def shop_categories_keyboard(grouped, user_mode="categorized"):
+    """Compact user-facing category picker.
+
+    Categories are provided by the database in persisted display order.  The
+    default grid is two per row and each category defaults to Telegram's blue
+    ``primary`` style.  Unlike the old picker, counts are intentionally omitted
+    for the clean screenshot-style visual; empty categories are decided by the
+    database presentation controls before they reach this function.
+    """
     kb = []
-    for cid, info in grouped.items():
-        count = len(info['products'])
-        in_stock = sum(1 for p in info['products'] if p['stock'] > 0)
-        label = f"{info['emoji']} {info['name']} ({in_stock}/{count})"
-        # Per-category override OR default category style
-        if is_styled(f"cat_{cid}"):
-            label = _apply_styler(f"cat_{cid}", label)
-        else:
-            label = _apply_styler("shop_category", label)
-        kb.append([InlineKeyboardButton(label, callback_data=f"shopcat_{cid}")])
-    if not grouped:
-        kb.append([InlineKeyboardButton("📭 No products yet", callback_data="main_menu")])
-    # View all products (flat list) as alternative
-    view_all_lbl = _apply_styler("shop_view_all", "📋 View All Products")
-    kb.append([InlineKeyboardButton(view_all_lbl, callback_data="shopall")])
+    buttons = []
+    for _cid, info in (grouped or {}).items():
+        try:
+            buttons.append(_category_picker_button(dict(info)))
+        except Exception:
+            # A malformed legacy label must not prevent every other category
+            # from appearing.  The safe plain fallback remains blue.
+            try:
+                name = str(info.get("name") or "Category")[:48]
+                buttons.append(_make_btn(name, callback_data=f"shopcat_{int(_cid)}",
+                                         style="primary"))
+            except Exception:
+                pass
+    columns = _category_picker_columns()
+    for pos in range(0, len(buttons), columns):
+        kb.append(buttons[pos:pos + columns])
+    if not buttons:
+        kb.append([InlineKeyboardButton("📭 No visible categories yet", callback_data="shop")])
+
+    # A visible, one-tap and persisted mode selector.  The selected option is
+    # still clickable (a harmless refresh) so Telegram has no disabled-button
+    # ambiguity and users can always see both supported modes.
+    categorized_label = "🗂️ Categorized ✓" if user_mode == "categorized" else "🗂️ Categorized"
+    classic_label = "📋 Classic ✓" if user_mode == "classic" else "📋 Classic"
+    kb.append([
+        InlineKeyboardButton(categorized_label, callback_data="shopmode_categorized"),
+        InlineKeyboardButton(classic_label, callback_data="shopmode_classic"),
+    ])
     home_lbl = _apply_styler("shop_home", "🏠 Home")
-    pts_lbl  = _apply_styler("shop_buy_points", "💎 Buy Points")
+    pts_lbl = _apply_styler("shop_buy_points", "💎 Buy Points")
     kb.append([
         InlineKeyboardButton(home_lbl, callback_data="main_menu"),
         InlineKeyboardButton(pts_lbl, callback_data="buy_points"),
     ])
     return InlineKeyboardMarkup(kb)
 
-
 def shop_category_products_keyboard(products, cat_id, page=1, per_page=10, user=None):
     """Products inside a specific category — paginated"""
     total = len(products)
     total_pages = max(1, (total + per_page - 1) // per_page)
+    # Clamp an old category-page callback after products were hidden/deleted.
+    try:
+        page = max(1, min(int(page), total_pages))
+    except (TypeError, ValueError):
+        page = 1
     start = (page - 1) * per_page
     page_prods = products[start:start + per_page]
     from database import get_product_color
@@ -1819,7 +1978,12 @@ def shop_category_products_keyboard(products, cat_id, page=1, per_page=10, user=
         kb.append(nav)
     back_lbl = _apply_styler("shop_back_cats", "🔙 Categories")
     home_lbl = _apply_styler("shop_home", "🏠 Home")
-    kb.append([InlineKeyboardButton(back_lbl, callback_data="shop")])
+    # ``shop`` reopens the persisted Categorized picker; Classic is an
+    # explicit user choice and is remembered by the callback handler.
+    kb.append([
+        InlineKeyboardButton(back_lbl, callback_data="shop"),
+        InlineKeyboardButton("📋 Classic", callback_data="shopmode_classic"),
+    ])
     kb.append([InlineKeyboardButton(home_lbl, callback_data="main_menu")])
     return InlineKeyboardMarkup(kb), page, total_pages
 

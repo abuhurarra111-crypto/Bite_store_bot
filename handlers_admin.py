@@ -219,27 +219,76 @@ async def _safe_edit(q, text, **kwargs):
             pass
 
 async def admin_categories_callback(u,c):
-    q=u.callback_query
-    if q.from_user.id!=ADMIN_ID: await q.answer("❌",show_alert=True); return
-    await q.answer(); await _safe_edit(q, "🏷️ *Categories:*",parse_mode="Markdown",reply_markup=admin_categories_keyboard(get_categories()))
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    # Include disabled/hidden rows so an owner can always re-enable or unhide
+    # an existing category without creating a duplicate.
+    cats = get_categories(include_inactive=True, include_hidden=True)
+    await _safe_edit(q,
+        "🏷️ *Categories*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Manage name, premium icon, description, visibility, empty-state, "
+        "blue/green/red button style and order.\n"
+        "_New categories default to blue (primary)._",
+        parse_mode="Markdown", reply_markup=admin_categories_keyboard(cats))
+
 
 async def add_category_callback(u,c):
-    q=u.callback_query
-    if q.from_user.id!=ADMIN_ID: await q.answer("❌",show_alert=True); return ConversationHandler.END
-    await q.answer(); await _safe_edit(q, "🏷️ *Category name?*\n\n_Type a name or tap Cancel_", parse_mode="Markdown", reply_markup=inline_cancel_btn()); return CAT_NAME
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return ConversationHandler.END
+    await q.answer()
+    await _safe_edit(q,
+        "🏷️ *Category name?*\n\n"
+        "Premium custom emoji is supported in the name.\n"
+        "_Type a name or tap Cancel_",
+        parse_mode="Markdown", reply_markup=inline_cancel_btn())
+    return CAT_NAME
+
 
 async def cat_name_received(u,c):
-    if u.effective_user.id!=ADMIN_ID: return ConversationHandler.END
-    c.user_data['cat_n']=u.message.text; await u.message.reply_text("Emoji? (/skip for 📦)", reply_markup=inline_cancel_btn()); return CAT_EMOJI
+    if u.effective_user.id != ADMIN_ID:
+        return ConversationHandler.END
+    from utils import capture_user_text, html_strip_tags
+    name = (capture_user_text(u.message) or u.message.text or "").strip()
+    if len(html_strip_tags(name).strip()) < 2:
+        await u.message.reply_text("❌ Category name must be at least 2 characters.",
+                                   reply_markup=inline_cancel_btn())
+        return CAT_NAME
+    c.user_data['cat_n'] = name
+    await u.message.reply_text(
+        "Emoji/icon? Send a normal or Premium custom emoji.\n"
+        "Use /skip for 📦.", reply_markup=inline_cancel_btn())
+    return CAT_EMOJI
+
 
 async def cat_emoji_received(u,c):
-    if u.effective_user.id!=ADMIN_ID: return ConversationHandler.END
-    add_category(c.user_data.get('cat_n','?'),u.message.text.strip()); await u.message.reply_text("✅ Category added!",reply_markup=back_btn()); return ConversationHandler.END
+    if u.effective_user.id != ADMIN_ID:
+        return ConversationHandler.END
+    from utils import capture_user_text, html_strip_tags
+    emoji = (capture_user_text(u.message) or u.message.text or "").strip()
+    if not html_strip_tags(emoji).strip():
+        await u.message.reply_text("❌ Send an emoji/icon, or use /skip.",
+                                   reply_markup=inline_cancel_btn())
+        return CAT_EMOJI
+    cid = add_category(c.user_data.get('cat_n', 'Category'), emoji)
+    c.user_data.pop('cat_n', None)
+    await u.message.reply_text(
+        f"✅ Category added (#{cid}). Its Shop button is blue by default.",
+        reply_markup=back_btn())
+    return ConversationHandler.END
+
 
 async def cat_emoji_skip(u,c):
-    if u.effective_user.id!=ADMIN_ID: return ConversationHandler.END
-    add_category(c.user_data.get('cat_n','?'),"📦"); await u.message.reply_text("✅ Category added!",reply_markup=back_btn()); return ConversationHandler.END
-
+    if u.effective_user.id != ADMIN_ID:
+        return ConversationHandler.END
+    cid = add_category(c.user_data.get('cat_n', 'Category'), "📦")
+    c.user_data.pop('cat_n', None)
+    await u.message.reply_text(
+        f"✅ Category added (#{cid}). Its Shop button is blue by default.",
+        reply_markup=back_btn())
+    return ConversationHandler.END
 async def delete_category_callback(u,c):
     await delete_category_confirm_callback(u, c)
 
@@ -2704,7 +2753,8 @@ async def admin_toggles_callback(u, c):
     t_autocol = get_toggle("auto_product_colors", "0")  # 🎨 v46
     t_autogrp = get_toggle("auto_group_by_name", "1")  # 🆕 v98 default ON
     emoji_char = get_setting("product_emoji", "🛍️") or "🛍️"  # 🆕 v42
-    cat_mode = get_setting("shop_categorized", "0")
+    # v170.63: Shop mode is now a persisted choice per customer.  The legacy
+    # global `shop_categorized` setting is intentionally not used.
     text = f"""👁️ *Product Toggles & Shop Mode*
 ━━━━━━━━━━━━━━━━━━━━
 
@@ -2720,7 +2770,8 @@ async def admin_toggles_callback(u, c):
 ✏️ Current emoji: {emoji_char}  (tap "Change Product Emoji" below to change)
 
 *Shop Display Mode:*
-🗂️ Categorized: {'✅ ON' if cat_mode=='1' else '❌ OFF (flat list)'}
+🗂️ Per-user selector: ✅ Enabled
+🆕 New/unset users: *Categorized* by default
 
 *🎨 Auto Button Colors:* {'✅ ON' if t_autocol=='1' else '❌ OFF'}
   🔴 Out of stock  ·  🔵 Manual delivery  ·  🟢 Auto delivery
@@ -2732,11 +2783,13 @@ async def admin_toggles_callback(u, c):
 
 Tap a button below to toggle:"""
     kb_inline = toggles_keyboard(t_w, t_q, t_s, t_p, t_sold, t_pemoji, emoji_char)
-    # Inject the shop categorized button before the Return row
+    # v170.63: Keep a non-destructive legacy/info route for owners who still
+    # see the old toggle in a cached panel; it no longer changes other users.
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     rows = list(kb_inline.inline_keyboard)
-    cat_lbl = f"{'🟢' if cat_mode=='1' else '🔴'} 🗂️ Shop Categorized: {'ON' if cat_mode=='1' else 'OFF'}"
-    rows.insert(-1, [InlineKeyboardButton(cat_lbl, callback_data="toggle_shop_cat")])
+    rows.insert(-1, [InlineKeyboardButton(
+        "🗂️ Shop Mode: Per User · Categorized Default",
+        callback_data="toggle_shop_cat")])
     # 🎨 v46: Auto product-color toggle
     col_lbl = f"{'🟢' if t_autocol=='1' else '🔴'} 🎨 Auto Product Colors: {'ON' if t_autocol=='1' else 'OFF'}"
     rows.insert(-1, [InlineKeyboardButton(col_lbl, callback_data="toggle_auto_product_colors")])
@@ -4711,15 +4764,11 @@ async def cppick_callback(u, c):
 # ════════════════════════════════════════════
 
 async def toggle_shop_categorized_callback(u, c):
-    """Toggle shop_categorized setting"""
+    """Legacy callback retained safely after the global Shop toggle was retired."""
     q = u.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
-    current = get_setting("shop_categorized", "0")
-    new = "0" if current == "1" else "1"
-    set_setting("shop_categorized", new)
-    await q.answer(f"{'Enabled' if new=='1' else 'Disabled'} ✅")
-    # Refresh by re-calling toggles screen
+    await q.answer("Per-user mode is active; new users start Categorized.", show_alert=True)
     set_cb_data(u, "admin_toggles")
     await admin_toggles_callback(u, c)
 
@@ -7259,120 +7308,331 @@ EDIT_CATEGORY_VALUE = 951
 EDIT_ACCOUNT_VALUE = 952
 
 
+async def _render_category_detail(q, cid):
+    """Render one existing category's live presentation controls."""
+    cat = get_category(cid, include_inactive=True)
+    if not cat:
+        await _safe_edit(q, "❌ Category not found.", reply_markup=admin_categories_keyboard(
+            get_categories(include_inactive=True, include_hidden=True)))
+        return False
+    cat = dict(cat)
+    conn = get_connection(); cur = conn.cursor()
+    try:
+        cur.execute("SELECT COUNT(*) FROM products WHERE category_id=? AND is_active=1", (int(cid),))
+        prod_count = int(cur.fetchone()[0] or 0)
+    finally:
+        conn.close()
+    from utils import name_for_message_html
+    name_html = name_for_message_html(cat.get("name") or "Category")
+    emoji_html = name_for_message_html(cat.get("emoji") or "📦")
+    desc_html = name_for_message_html(cat.get("description") or "").strip()
+    active = bool(int(cat.get("is_active", 1) or 0))
+    hidden = bool(int(cat.get("is_hidden", 0) or 0))
+    show_empty = bool(int(cat.get("show_when_empty", 0) or 0))
+    style = str(cat.get("button_style") or "primary").strip().lower()
+    style_label = {"primary": "🔵 Blue", "success": "🟢 Green", "danger": "🔴 Red"}.get(style, "🔵 Blue")
+    status = "✅ Enabled" if active else "🚫 Disabled"
+    visible = "🙈 Hidden from Shop/API" if hidden else "👁️ Visible in Shop/API"
+    empty_state = "👁️ Shown when empty" if show_empty else "🫥 Hidden when empty"
+    description_line = (f"\n📝 <b>Header:</b> {desc_html}" if desc_html
+                        else "\n📝 <b>Header:</b> <i>Not set</i>")
+    text = (
+        f"[[HTML]]🏷️ <b>Category Details</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"<b>Display:</b> {emoji_html} {name_html}\n"
+        f"📊 <b>Contains:</b> {prod_count} active product(s)\n"
+        f"⚙️ <b>Status:</b> {status}\n"
+        f"👁️ <b>Visibility:</b> {visible}\n"
+        f"🗂️ <b>Empty state:</b> {empty_state}\n"
+        f"🎨 <b>Button:</b> {style_label}\n"
+        f"↕️ <b>Order:</b> {int(cat.get('display_order') or 0)}"
+        f"{description_line}\n\n"
+        f"<i>Changes take effect on the next Shop/API request.</i>"
+    )
+    kb = [
+        [InlineKeyboardButton("✏️ Rename Category", callback_data=f"editcat_name_{cid}"),
+         InlineKeyboardButton("🎨 Change Icon", callback_data=f"editcat_emoji_{cid}")],
+        [InlineKeyboardButton("📝 Edit Category Header", callback_data=f"editcat_description_{cid}")],
+        [InlineKeyboardButton(
+            "🚫 Disable Category" if active else "✅ Enable Category",
+            callback_data=f"catactive_{cid}")],
+        [InlineKeyboardButton(
+            "🙈 Hide from Shop/API" if not hidden else "👁️ Show in Shop/API",
+            callback_data=f"cathide_{cid}")],
+        [InlineKeyboardButton(
+            "🗂️ Hide when empty" if show_empty else "🗂️ Show even when empty",
+            callback_data=f"catempty_{cid}")],
+        [InlineKeyboardButton(f"🎨 Category Button: {style_label}",
+                              callback_data=f"catstyle_{cid}")],
+        [InlineKeyboardButton("⬆️ Move Up", callback_data=f"catorder_up_{cid}"),
+         InlineKeyboardButton("⬇️ Move Down", callback_data=f"catorder_down_{cid}")],
+        [InlineKeyboardButton("🗑️ Delete Category", callback_data=f"delcat_{cid}")],
+        [InlineKeyboardButton("🔙 Back to Categories", callback_data="admin_categories")],
+    ]
+    await _safe_edit(q, text, reply_markup=InlineKeyboardMarkup(kb))
+    return True
+
+
 async def view_category_callback(u, c):
-    """View a single category's details & options."""
+    """View a single category's details and presentation controls."""
     q = u.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
     await q.answer()
-    cid = int(q.data.replace("viewcat_", ""))
-    
-    conn = get_connection(); cur = conn.cursor()
-    cur.execute("SELECT * FROM categories WHERE id=?", (cid,))
-    cat = cur.fetchone()
-    if not cat:
-        await q.answer("Category not found", show_alert=True); return
-        
-    cur.execute("SELECT COUNT(*) FROM products WHERE category_id=? AND is_active=1", (cid,))
-    prod_count = cur.fetchone()[0]
-    conn.close()
-
-    text = (
-        f"🏷️ *Category Details*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🏷️ *Name:* {escape_md(cat['name'])}\n"
-        f"🎨 *Emoji:* {cat['emoji']}\n"
-        f"📊 *Contains:* {prod_count} active product(s)\n\n"
-        f"_Select an action to modify this category:_"
-    )
-    
-    kb = [
-        [InlineKeyboardButton("✏️ Rename Category", callback_data=f"editcat_name_{cid}")],
-        [InlineKeyboardButton("🎨 Change Emoji", callback_data=f"editcat_emoji_{cid}")],
-        [InlineKeyboardButton("🗑️ Delete Category", callback_data=f"delcat_{cid}")],
-        [InlineKeyboardButton("🔙 Back to Categories", callback_data="admin_categories")]
-    ]
-    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    try:
+        cid = int((q.data or "").replace("viewcat_", ""))
+    except (TypeError, ValueError):
+        await q.answer("❌ Invalid category", show_alert=True); return
+    await _render_category_detail(q, cid)
 
 
 async def edit_category_field_callback(u, c):
-    """Start editing a category field."""
+    """Start editing an existing category display field."""
     q = u.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return ConversationHandler.END
     await q.answer()
-    
-    parts = q.data.replace("editcat_", "").split("_")
-    field = parts[0]
-    cid = int(parts[1])
-    
+    try:
+        parts = (q.data or "").replace("editcat_", "", 1).split("_", 1)
+        field, cid = parts[0], int(parts[1])
+    except (IndexError, TypeError, ValueError):
+        await q.answer("❌ Invalid edit request", show_alert=True); return ConversationHandler.END
+    if field not in ("name", "emoji", "description") or not get_category(cid, include_inactive=True):
+        await q.answer("❌ Category not found", show_alert=True); return ConversationHandler.END
     c.user_data['edit_cat_id'] = cid
     c.user_data['edit_cat_field'] = field
-    
-    prompt = "Type new Category Name:" if field == "name" else "Type/Send new Emoji:"
+    prompts = {
+        "name": "Type the new category name. Premium custom emoji is supported.",
+        "emoji": "Send the new icon. A Premium custom emoji is supported.",
+        "description": "Type the optional header shown above this category's products. Premium emoji is supported.",
+    }
     await _safe_edit(q,
         f"✏️ *Edit Category {field.title()}*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"{prompt}",
+        f"━━━━━━━━━━━━━━━━━━━━\n\n{prompts[field]}",
         parse_mode="Markdown", reply_markup=inline_cancel_btn())
     return EDIT_CATEGORY_VALUE
 
 
 async def edit_category_field_received(u, c):
-    """Save the edited category field value."""
+    """Save category name/icon/header while preserving Telegram premium entities."""
     if u.effective_user.id != ADMIN_ID:
         return True
     cid = c.user_data.get('edit_cat_id')
     field = c.user_data.get('edit_cat_field')
-    if not cid or not field:
+    if not cid or field not in ("name", "emoji", "description"):
         await u.message.reply_text("❌ Session lost.", reply_markup=back_btn())
         c.user_data.pop('edit_cat_id', None)
         c.user_data.pop('edit_cat_field', None)
         return True
-        
-    val = u.message.text.strip()
-    
-    conn = get_connection(); cur = conn.cursor()
-    if field == 'name':
-        if len(val) < 2:
-            await u.message.reply_text("❌ Name too short.", reply_markup=inline_cancel_btn())
-            return False
-        cur.execute("UPDATE categories SET name=? WHERE id=?", (val, cid))
-    elif field == 'emoji':
-        cur.execute("UPDATE categories SET emoji=? WHERE id=?", (val[:5], cid))
-        
-    conn.commit(); conn.close()
-    
-    # 🆕 v53: capture FULL value with premium emoji entities for SAVE + ECHO.
-    # Re-save with HTML form when admin typed premium emojis so DB has correct
-    # value; also use it for the confirmation echo.
-    from utils import safe_display, capture_user_text
-    val_with_premium = capture_user_text(u.message) or val
-    if val_with_premium != val and val_with_premium.startswith("[[HTML]]"):
-        # Re-save with premium emoji preserved
-        try:
-            conn = get_connection(); cur = conn.cursor()
-            if field == 'name':
-                cur.execute("UPDATE categories SET name=? WHERE id=?", (val_with_premium, cid))
-            conn.commit(); conn.close()
-        except Exception:
-            pass
-    disp, disp_mode = safe_display(val_with_premium, preferred_mode="Markdown", message=u.message)
-    if disp_mode == "HTML":
-        await u.message.reply_text(
-            f"✅ <b>Category Updated!</b>\n\n{field.title()} is now set to: {disp}",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"viewcat_{cid}")]]))
+    from utils import capture_user_text, html_strip_tags, safe_display
+    value = (capture_user_text(u.message) or u.message.text or "").strip()
+    plain = html_strip_tags(value).strip()
+    if field == "name" and len(plain) < 2:
+        await u.message.reply_text("❌ Name too short.", reply_markup=inline_cancel_btn())
+        return False
+    if field == "emoji" and not plain:
+        await u.message.reply_text("❌ Send an emoji/icon.", reply_markup=inline_cancel_btn())
+        return False
+    if field == "description" and len(plain) > 1000:
+        await u.message.reply_text("❌ Header is too long (max 1000 characters).",
+                                   reply_markup=inline_cancel_btn())
+        return False
+    if not update_category(cid, **{field: value}):
+        await u.message.reply_text("❌ Category was not found.", reply_markup=back_btn())
+        return True
+    display, display_mode = safe_display(value, preferred_mode="Markdown", message=u.message)
+    field_label = {"name": "Name", "emoji": "Icon", "description": "Header"}[field]
+    if display_mode == "HTML":
+        text = f"✅ <b>Category Updated!</b>\n\n{field_label}: {display}"
     else:
-        await u.message.reply_text(
-            f"✅ *Category Updated!*\n\n{field.title()} is now set to: `{disp}`",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data=f"viewcat_{cid}")]]))
-        
+        text = f"✅ *Category Updated!*\n\n{field_label}: `{display}`"
+    await u.message.reply_text(
+        text, parse_mode=display_mode,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("🔙 Back", callback_data=f"viewcat_{cid}")
+        ]]))
     c.user_data.pop('edit_cat_id', None)
     c.user_data.pop('edit_cat_field', None)
     return True
 
+
+async def category_active_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        cid = int((q.data or "").replace("catactive_", ""))
+        cat = get_category(cid, include_inactive=True)
+    except (TypeError, ValueError):
+        cat = None
+    if not cat:
+        await q.answer("❌ Category not found", show_alert=True); return
+    new_active = not bool(int(cat["is_active"] or 0))
+    set_category_active(cid, new_active)
+    await q.answer("✅ Category enabled" if new_active else "🚫 Category disabled")
+    await _render_category_detail(q, cid)
+
+
+async def category_hidden_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        cid = int((q.data or "").replace("cathide_", ""))
+        cat = get_category(cid, include_inactive=True)
+    except (TypeError, ValueError):
+        cat = None
+    if not cat:
+        await q.answer("❌ Category not found", show_alert=True); return
+    hidden = not bool(int(cat["is_hidden"] or 0))
+    set_category_hidden(cid, hidden)
+    await q.answer("🙈 Hidden from Shop/API" if hidden else "👁️ Visible in Shop/API")
+    await _render_category_detail(q, cid)
+
+
+async def category_empty_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        cid = int((q.data or "").replace("catempty_", ""))
+        cat = get_category(cid, include_inactive=True)
+    except (TypeError, ValueError):
+        cat = None
+    if not cat:
+        await q.answer("❌ Category not found", show_alert=True); return
+    show = not bool(int(cat["show_when_empty"] or 0))
+    set_category_show_when_empty(cid, show)
+    await q.answer("🗂️ Empty category will show" if show else "🫥 Empty category will hide")
+    await _render_category_detail(q, cid)
+
+
+async def category_order_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    try:
+        _prefix, direction, cid_s = (q.data or "").split("_", 2)
+        cid = int(cid_s)
+    except (TypeError, ValueError):
+        await q.answer("❌ Invalid reorder", show_alert=True); return
+    moved = move_category(cid, direction)
+    await q.answer("✅ Category order updated" if moved else "Already at the edge")
+    await _render_category_detail(q, cid)
+
+
+async def category_style_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    raw = q.data or ""
+    if raw.startswith("catstyle_set_"):
+        try:
+            _prefix, _set, cid_s, style = raw.split("_", 3)
+            cid = int(cid_s)
+        except (TypeError, ValueError):
+            await q.answer("❌ Invalid style", show_alert=True); return
+        if style not in ("primary", "success", "danger") or not get_category(cid, include_inactive=True):
+            await q.answer("❌ Invalid style", show_alert=True); return
+        set_category_button_style(cid, style)
+        await q.answer("✅ Button style saved")
+        await _render_category_detail(q, cid)
+        return
+    try:
+        cid = int(raw.replace("catstyle_", ""))
+        cat = get_category(cid, include_inactive=True)
+    except (TypeError, ValueError):
+        cat = None
+    if not cat:
+        await q.answer("❌ Category not found", show_alert=True); return
+    await q.answer()
+    current = str(cat["button_style"] or "primary").strip().lower()
+    def pick(label, style):
+        mark = " ✅" if style == current else ""
+        return InlineKeyboardButton(label + mark, callback_data=f"catstyle_set_{cid}_{style}")
+    await _safe_edit(q,
+        "🎨 *Category Button Style*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        "New categories use 🔵 Blue by default. Pick another style if needed:",
+        parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([
+            [pick("🔵 Blue", "primary")],
+            [pick("🟢 Green", "success")],
+            [pick("🔴 Red", "danger")],
+            [InlineKeyboardButton("🔙 Back", callback_data=f"viewcat_{cid}")],
+        ]))
+
+
+async def category_presentation_callback(u, c):
+    """Global picker settings: two-column default and empty-category policy."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    show_empty = get_setting("shop_show_empty_categories", "0") == "1"
+    try:
+        columns = int(get_setting("shop_category_columns", "2") or 2)
+    except Exception:
+        columns = 2
+    columns = columns if columns in (1, 2) else 2
+    text = (
+        "⚙️ *Category Picker Settings*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Grid: *{columns} per row*\n"
+        f"Empty categories: *{'Shown globally' if show_empty else 'Hidden by default'}*\n\n"
+        "A category's own ‘Show even when empty’ option overrides the global hidden default."
+    )
+    kb = [
+        [InlineKeyboardButton(
+            "🫥 Hide Empty Categories Globally" if show_empty else "👁️ Show Empty Categories Globally",
+            callback_data="catpresent_empty")],
+        [InlineKeyboardButton("1️⃣ One per row" + (" ✓" if columns == 1 else ""),
+                              callback_data="catpresent_cols_1"),
+         InlineKeyboardButton("2️⃣ Two per row" + (" ✓" if columns == 2 else ""),
+                              callback_data="catpresent_cols_2")],
+        [InlineKeyboardButton("🔙 Back to Categories", callback_data="admin_categories")],
+    ]
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def category_presentation_set_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    raw = q.data or ""
+    if raw == "catpresent_empty":
+        new = "0" if get_setting("shop_show_empty_categories", "0") == "1" else "1"
+        set_setting("shop_show_empty_categories", new)
+        await q.answer("✅ Empty-category policy saved")
+    elif raw.startswith("catpresent_cols_"):
+        value = raw.rsplit("_", 1)[-1]
+        if value not in ("1", "2"):
+            await q.answer("❌ Invalid grid size", show_alert=True); return
+        set_setting("shop_category_columns", value)
+        await q.answer("✅ Grid size saved")
+    else:
+        await q.answer("❌ Invalid setting", show_alert=True); return
+    # Render directly to avoid a duplicate callback answer.
+    show_empty = get_setting("shop_show_empty_categories", "0") == "1"
+    try:
+        columns = int(get_setting("shop_category_columns", "2") or 2)
+    except Exception:
+        columns = 2
+    columns = columns if columns in (1, 2) else 2
+    text = (
+        "⚙️ *Category Picker Settings*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Grid: *{columns} per row*\n"
+        f"Empty categories: *{'Shown globally' if show_empty else 'Hidden by default'}*\n\n"
+        "A category's own ‘Show even when empty’ option overrides the global hidden default."
+    )
+    kb = [
+        [InlineKeyboardButton(
+            "🫥 Hide Empty Categories Globally" if show_empty else "👁️ Show Empty Categories Globally",
+            callback_data="catpresent_empty")],
+        [InlineKeyboardButton("1️⃣ One per row" + (" ✓" if columns == 1 else ""),
+                              callback_data="catpresent_cols_1"),
+         InlineKeyboardButton("2️⃣ Two per row" + (" ✓" if columns == 2 else ""),
+                              callback_data="catpresent_cols_2")],
+        [InlineKeyboardButton("🔙 Back to Categories", callback_data="admin_categories")],
+    ]
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 async def delete_category_confirm_callback(u, c):
     """Show confirmation screen before deleting category."""
@@ -9519,7 +9779,7 @@ def _cz_summary_lines():
     toggles_on = 0
     for t in ("show_warranty", "show_quantity", "show_stock", "show_photo",
               "show_sold", "show_product_emoji", "auto_product_colors",
-              "auto_group_by_name", "shop_categorized"):
+              "auto_group_by_name"):
         try:
             from database import get_toggle
             if get_toggle(t, "1") == "1":
@@ -9529,7 +9789,8 @@ def _cz_summary_lines():
     return [
         f"📏 Size: *{size}*  ·  🎨 Style: *{style}*",
         f"🎠 Shop: *{fmt}*  ·  📐 Menu: *{layout}*",
-        f"👁️ Toggles ON: *{toggles_on}/9*",
+        "🗂️ Shop default: *Categorized* (per-user switch)",
+        f"👁️ Toggles ON: *{toggles_on}/8*",
     ]
 
 
@@ -9956,7 +10217,8 @@ _BACKUP_KEYS_PREFIXES = ("btn_label_", "btn_style_", "grpstyle_", "btn_hidden_",
                          "btn_order_", "scrpad_", "bstyle_", "main_menu_layout",
                          "menu_style", "button_size", "display_format",
                          "pd_", "react_", "tplbtn", "tplbtnemoji", "fj_verify",
-                         "shop_categorized", "auto_", "show_", "product_emoji")
+                         "shop_categorized", "shop_show_empty_categories",
+                         "shop_category_columns", "auto_", "show_", "product_emoji")
 
 def _collect_backup():
     import json as _json
@@ -9966,7 +10228,8 @@ def _collect_backup():
     for (key, value) in c.execute("SELECT key, value FROM bot_settings").fetchall():
         if key.startswith(_BACKUP_KEYS_PREFIXES) or key in (
                 "button_size", "menu_style", "display_format",
-                "main_menu_layout", "shop_categorized", "product_emoji"):
+                "main_menu_layout", "shop_categorized", "shop_show_empty_categories",
+                "shop_category_columns", "product_emoji"):
             out[key] = value
     conn.close()
     return _json.dumps(out, ensure_ascii=False, indent=1)

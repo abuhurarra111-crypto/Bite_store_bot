@@ -6,7 +6,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMe
 from telegram.ext import ContextTypes
 from database import (get_all_active_products, get_product,
                       get_setting, get_toggle, get_products_grouped_by_category,
-                      product_is_catalog_available)
+                      product_is_catalog_available, get_user_shop_mode,
+                      set_user_shop_mode, SHOP_MODE_CATEGORIZED, SHOP_MODE_CLASSIC)
 from keyboards import (all_products_keyboard, product_detail_keyboard, back_btn,
                        shop_categories_keyboard,
                        shop_category_products_keyboard)
@@ -501,9 +502,15 @@ def _sold_line_html(p):
 # ════════════════════════════════════════════
 # 🛒 SHOP ENTRY
 # ════════════════════════════════════════════
-def _use_categorized_shop():
-    """Check toggle: shop should show categories first?"""
-    return get_setting("shop_categorized", "0") == "1"
+def _use_categorized_shop(user_id=None):
+    """Return the persisted Shop choice; unset users always start Categorized.
+
+    ``shop_categorized`` was a global legacy toggle.  It is deliberately no
+    longer read here: one customer's Classic preference must not change another
+    customer's Shop, and the requested default is Categorized for every new
+    preference row.
+    """
+    return get_user_shop_mode(user_id) == SHOP_MODE_CATEGORIZED
 
 
 # 🆕 v59: Shop stock-based filter (all / available / unavailable)
@@ -511,16 +518,13 @@ DEFAULT_SHOP_FILTER_VALID = ("all", "available", "unavailable")
 
 
 def _get_default_shop_filter():
-    """Admin-configurable default filter for new users entering shop.
-    Stored in bot_settings as `shop_default_filter`. Valid: all/available/unavailable.
-    """
+    """Admin-configurable default filter for Classic Shop users."""
     val = (get_setting("shop_default_filter", "all") or "all").strip().lower()
     return val if val in DEFAULT_SHOP_FILTER_VALID else "all"
 
 
 def _get_user_shop_filter(context):
-    """Per-user (session-level) override of the shop filter. Falls back to admin's
-    default if the user hasn't picked one yet."""
+    """Session-level stock filter, retained for the unchanged Classic view."""
     f = context.user_data.get("shop_filter")
     if f in DEFAULT_SHOP_FILTER_VALID:
         return f
@@ -528,67 +532,97 @@ def _get_user_shop_filter(context):
 
 
 def _set_user_shop_filter(context, mode):
-    """Persist user's filter choice for this chat session."""
     if mode in DEFAULT_SHOP_FILTER_VALID:
         context.user_data["shop_filter"] = mode
-        # Also reset to page 1 when filter changes (else page count can overflow)
         context.user_data["shop_page"] = 1
 
 
-async def shop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def _category_picker_text(user_id):
+    """Use the existing editable/localized Shop category title."""
+    return _get_resp("shop_categories_title", user_id=user_id)
+
+
+def _category_page_title(info, page, total_pages):
+    """Premium-emoji-safe category product header with optional description."""
+    try:
+        cat_name = name_for_message_html(info.get("name") or "Category")
+        cat_emoji = name_for_message_html(info.get("emoji") or "📦")
+        description = name_for_message_html(info.get("description") or "").strip()
+    except Exception:
+        cat_name = html_strip_tags(str(info.get("name") or "Category"))
+        cat_emoji = html_strip_tags(str(info.get("emoji") or "📦"))
+        description = html_strip_tags(str(info.get("description") or ""))
+    description_line = f"\n\n{description}" if description else ""
+    return (f"[[HTML]]📂 <b>{cat_emoji} {cat_name}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━{description_line}\n\n"
+            f"<i>Page {page}/{total_pages}</i>")
+
+
+def _classic_empty_keyboard(filter_mode):
+    rows = []
+    if filter_mode != "all":
+        rows.append([InlineKeyboardButton("📋 Show All Products", callback_data="shopfilter_all")])
+    rows.append([
+        InlineKeyboardButton("🗂️ Categorized", callback_data="shopmode_categorized"),
+        InlineKeyboardButton("📋 Classic ✓", callback_data="shopmode_classic"),
+    ])
+    rows.append([InlineKeyboardButton("🏠 Home", callback_data="main_menu")])
+    return InlineKeyboardMarkup(rows)
+
+
+async def shop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                        _already_answered=False):
+    """Open the current user's persisted Shop view.
+
+    The picker/query is rebuilt on every open, so category/product changes are
+    visible immediately without a cache or bot restart.
+    """
     q = update.callback_query
-    await q.answer()
+    if not _already_answered:
+        await q.answer()
     # v128: opening Shop verifies pending referrals immediately.
     try:
         from handlers_start import approve_pending_referral_for_user
         await approve_pending_referral_for_user(context, q.from_user.id, reason='shop_open')
     except Exception:
         pass
-    nav_push(context, 'shop')  # 🔙 Track navigation
-    # 🆕 v59: Apply stock-based filter (all/available/unavailable)
+    nav_push(context, 'shop')
+    user_mode = get_user_shop_mode(q.from_user.id)
+
+    # Categorized is the hard default.  It intentionally opens the picker even
+    # for one populated category, matching the requested category-first Shop.
+    if user_mode == SHOP_MODE_CATEGORIZED:
+        grouped = get_products_grouped_by_category()
+        if grouped:
+            await _safe_edit(q, _category_picker_text(q.from_user.id), parse_mode="Markdown",
+                             reply_markup=shop_categories_keyboard(
+                                 grouped, user_mode=SHOP_MODE_CATEGORIZED))
+            return
+        await _safe_edit(q, _get_resp("no_products", user_id=q.from_user.id),
+                         parse_mode="Markdown",
+                         reply_markup=shop_categories_keyboard(
+                             {}, user_mode=SHOP_MODE_CATEGORIZED))
+        return
+
+    # ── Classic mode: preserve the previous flat catalog, filters, pagination,
+    # product formatting and optional carousel behavior.
     from database import get_products_filtered
     filter_mode = _get_user_shop_filter(context)
     products = get_products_filtered(filter_mode)
-    # 🆕 v98: auto-group by first word (default ON, admin toggle in Customization)
     try:
         from utils import sort_products_by_first_word
         products = sort_products_by_first_word(products)
     except Exception:
         pass
     if not products:
-        # 🆕 v59: friendly mode-aware message + button to switch filter back to All
         empty_text = _get_resp("no_products", user_id=q.from_user.id)
         if filter_mode == "unavailable":
             empty_text = _get_resp("shop_no_unavailable").format(empty=empty_text)
         elif filter_mode == "available":
             empty_text = _get_resp("shop_no_available").format(empty=empty_text)
-        kb_back = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📋 Show All Products", callback_data="shopfilter_all")],
-            [InlineKeyboardButton("🏠 Home", callback_data="main_menu")],
-        ])
-        try:
-            await q.edit_message_text(empty_text, parse_mode="Markdown", reply_markup=kb_back)
-        except Exception:
-            await context.bot.send_message(q.from_user.id, empty_text,
-                                           parse_mode="Markdown", reply_markup=kb_back)
+        await _safe_edit(q, empty_text, parse_mode="Markdown",
+                         reply_markup=_classic_empty_keyboard(filter_mode))
         return
-
-    # 🆕 Phase D: If categorized mode is ON, show categories first
-    if _use_categorized_shop():
-        grouped = get_products_grouped_by_category()
-        if len(grouped) > 1 or (len(grouped) == 1 and 0 in grouped):
-            # More than one category OR uncategorized only — show the picker
-            title = "🛒 *Shop — Categories*\n━━━━━━━━━━━━━━━━━━━━\n\nSelect a category to browse:"
-            try:
-                await q.edit_message_text(title, parse_mode="Markdown",
-                                          reply_markup=shop_categories_keyboard(grouped))
-            except Exception:
-                try: await q.message.delete()
-                except: pass
-                await context.bot.send_message(q.from_user.id, title, parse_mode="Markdown",
-                                              reply_markup=shop_categories_keyboard(grouped))
-            return
-        # If only one category exists and it has products → fall through to flat list
 
     fmt = _get_display_format()
     if fmt == "carousel":
@@ -596,13 +630,11 @@ async def shop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _show_carousel(update, context, products, 0, is_initial=True, user=q.from_user)
         return
 
-    # ── Raw mode (flat list) ──
     page = context.user_data.get('shop_page', 1)
-    # 🆕 v59: Pass filter_mode so keyboard can render filter toggle buttons
     kb, pg, tp = all_products_keyboard(products, page, user=q.from_user,
-                                       filter_mode=filter_mode)
+                                       filter_mode=filter_mode,
+                                       shop_mode=SHOP_MODE_CLASSIC)
     title = _get_resp("shop_title", user_id=q.from_user.id).format(page=pg, total_pages=tp)
-    # 🆕 v59: Append filter mode indicator
     _flt = _filter_label(filter_mode)
     try:
         from i18n import tr_user
@@ -610,13 +642,7 @@ async def shop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
     title += f"\n_Filter: {_flt}_"
-    try:
-        await q.edit_message_text(title, parse_mode="Markdown", reply_markup=kb)
-    except Exception:
-        try: await q.message.delete()
-        except: pass
-        await context.bot.send_message(q.from_user.id, title, parse_mode="Markdown", reply_markup=kb)
-
+    await _safe_edit(q, title, parse_mode="Markdown", reply_markup=kb)
 
 def _filter_label(mode):
     """Human-readable label for a filter mode."""
@@ -629,59 +655,70 @@ def _filter_label(mode):
 
 # 🆕 v59: Handle filter switch callbacks (shopfilter_all / shopfilter_available / shopfilter_unavailable)
 async def shop_filter_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Switch the shop filter (all/available/unavailable) and re-render shop."""
+    """Switch Classic Shop's stock filter and re-render the persisted view."""
     q = update.callback_query
     await q.answer()
     mode = q.data.replace("shopfilter_", "")
     if mode not in DEFAULT_SHOP_FILTER_VALID:
         mode = "all"
     _set_user_shop_filter(context, mode)
-    # Re-render shop with new filter
-    await shop_callback(update, context)
+    await shop_callback(update, context, _already_answered=True)
 
 
-# 🆕 NEW: View all products (bypass categories — flat list)
+async def shop_mode_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Persist a user's explicit Categorized/Classic selection."""
+    q = update.callback_query
+    requested = (q.data or "").replace("shopmode_", "").strip().lower()
+    if requested not in (SHOP_MODE_CATEGORIZED, SHOP_MODE_CLASSIC):
+        await q.answer("❌ Invalid Shop mode", show_alert=True)
+        return
+    saved = set_user_shop_mode(q.from_user.id, requested)
+    context.user_data["shop_page"] = 1
+    context.user_data["shop_cat_page"] = 1
+    readable = "Categorized" if saved == SHOP_MODE_CATEGORIZED else "Classic"
+    await q.answer(f"{readable} Shop saved ✅")
+    await shop_callback(update, context, _already_answered=True)
+
+
 async def shop_all_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Flat product list (called when 'View All Products' tapped)"""
+    """Backward-compatible old 'View All' route: save/open Classic mode."""
     q = update.callback_query
     await q.answer()
-    nav_push(context, 'shop')  # 🔙 Back goes to shop
-    products = get_all_active_products()
-    if not products:
-        await q.edit_message_text(_get_resp("no_products", user_id=q.from_user.id), parse_mode="Markdown", reply_markup=back_btn())
-        return
-    # 🆕 v98: auto-group by first word (default ON, admin toggle in Customization)
-    try:
-        from utils import sort_products_by_first_word
-        products = sort_products_by_first_word(products)
-    except Exception:
-        pass
-    page = 1
-    context.user_data['shop_page'] = page
-    kb, pg, tp = all_products_keyboard(products, page, user=q.from_user)
-    title = _get_resp("shop_title", user_id=q.from_user.id).format(page=pg, total_pages=tp)
-    try:
-        await q.edit_message_text(title, parse_mode="Markdown", reply_markup=kb)
-    except Exception:
-        try: await q.message.delete()
-        except: pass
-        await context.bot.send_message(q.from_user.id, title, parse_mode="Markdown", reply_markup=kb)
+    set_user_shop_mode(q.from_user.id, SHOP_MODE_CLASSIC)
+    context.user_data['shop_page'] = 1
+    await shop_callback(update, context, _already_answered=True)
 
 
-# 🆕 NEW: Show products of a specific category
 async def shop_category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User tapped a category in categorized shop"""
+    """Open a live category-specific product page from the Categorized picker."""
     q = update.callback_query
     await q.answer()
-    nav_push(context, 'shop')  # 🔙 Back goes to shop categories
-    cat_id = int(q.data.replace("shopcat_", ""))
-    grouped = get_products_grouped_by_category()
-    if cat_id not in grouped:
-        await q.edit_message_text("❌ Category not found.", reply_markup=back_btn())
+    try:
+        cat_id = int((q.data or "").replace("shopcat_", ""))
+    except (TypeError, ValueError):
+        await q.answer("❌ Invalid category", show_alert=True)
         return
-    info = grouped[cat_id]
-    products = info['products']
-    # 🆕 v98: auto-group by first word within this category
+    # A stale category button is itself an intent to browse categories.  Keep
+    # the return path coherent by selecting Categorized mode for this user.
+    if get_user_shop_mode(q.from_user.id) != SHOP_MODE_CATEGORIZED:
+        set_user_shop_mode(q.from_user.id, SHOP_MODE_CATEGORIZED)
+    nav_push(context, 'shop')
+    grouped = get_products_grouped_by_category()
+    info = grouped.get(cat_id)
+    if not info:
+        await _safe_edit(q, "❌ This category is no longer available.",
+                         reply_markup=shop_categories_keyboard(
+                             get_products_grouped_by_category(),
+                             user_mode=SHOP_MODE_CATEGORIZED))
+        return
+    products = info.get('products') or []
+    if not products:
+        title = _category_page_title(info, 1, 1)
+        await _safe_edit(q, title + "\n\nNo products in this category yet.",
+                         reply_markup=InlineKeyboardMarkup([[
+                             InlineKeyboardButton("🔙 Categories", callback_data="shop")
+                         ]]))
+        return
     try:
         from utils import sort_products_by_first_word
         products = sort_products_by_first_word(products)
@@ -690,37 +727,34 @@ async def shop_category_callback(update: Update, context: ContextTypes.DEFAULT_T
     page = 1
     context.user_data['shop_cat_page'] = page
     kb, pg, tp = shop_category_products_keyboard(products, cat_id, page, user=q.from_user)
-    title = f"📂 *{info['emoji']} {info['name']}*\n━━━━━━━━━━━━━━━━━━━━\n(Page {pg}/{tp})"
-    try:
-        await q.edit_message_text(title, parse_mode="Markdown", reply_markup=kb)
-    except Exception:
-        try: await q.message.delete()
-        except: pass
-        await context.bot.send_message(q.from_user.id, title, parse_mode="Markdown", reply_markup=kb)
+    await _safe_edit(q, _category_page_title(info, pg, tp), reply_markup=kb)
 
 
 async def shop_category_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Pagination inside a category"""
+    """Paginate a live category page; visibility changes take effect at once."""
     q = update.callback_query
     await q.answer()
-    # data format: shopcatpg_<cat>_<page>
-    parts = q.data.replace("shopcatpg_", "").split("_")
-    cat_id = int(parts[0]); page = int(parts[1])
+    try:
+        parts = (q.data or "").replace("shopcatpg_", "").split("_")
+        cat_id, page = int(parts[0]), max(1, int(parts[1]))
+    except (IndexError, TypeError, ValueError):
+        await _safe_edit(q, "❌ Category page is invalid.", reply_markup=back_btn())
+        return
     grouped = get_products_grouped_by_category()
-    if cat_id not in grouped:
-        await q.edit_message_text("❌", reply_markup=back_btn()); return
-    info = grouped[cat_id]
+    info = grouped.get(cat_id)
+    if not info or not info.get('products'):
+        await _safe_edit(q, "❌ This category is no longer available.",
+                         reply_markup=shop_categories_keyboard(
+                             grouped, user_mode=SHOP_MODE_CATEGORIZED))
+        return
     prods_sorted = info['products']
-    # 🆕 v98: match grouping applied on page 1 so pagination stays consistent
     try:
         from utils import sort_products_by_first_word
         prods_sorted = sort_products_by_first_word(prods_sorted)
     except Exception:
         pass
     kb, pg, tp = shop_category_products_keyboard(prods_sorted, cat_id, page, user=q.from_user)
-    title = f"📂 *{info['emoji']} {info['name']}*\n━━━━━━━━━━━━━━━━━━━━\n(Page {pg}/{tp})"
-    await q.edit_message_text(title, parse_mode="Markdown", reply_markup=kb)
-
+    await _safe_edit(q, _category_page_title(info, pg, tp), reply_markup=kb)
 
 async def page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Raw mode pagination — 🆕 v59: respects current filter mode."""
@@ -740,10 +774,11 @@ async def page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
     if not products:
         # Filter became empty after stock change — re-route to shop_callback for proper empty UI
-        await shop_callback(update, context)
+        await shop_callback(update, context, _already_answered=True)
         return
     kb, pg, tp = all_products_keyboard(products, page, user=q.from_user,
-                                       filter_mode=filter_mode)
+                                       filter_mode=filter_mode,
+                                       shop_mode=SHOP_MODE_CLASSIC)
     title = _get_resp("shop_title", user_id=q.from_user.id).format(page=pg, total_pages=tp)
     title += f"\n_Filter: {_filter_label(filter_mode)}_"
     await q.edit_message_text(title, parse_mode="Markdown", reply_markup=kb)
@@ -787,6 +822,7 @@ def _carousel_keyboard(idx, total, product, user=None):
         nav,
         [home_btn,
          InlineKeyboardButton(_sl("cnav_list", "📋 List View"), callback_data="cnav_listview")],
+        [InlineKeyboardButton("🗂️ Categorized", callback_data="shopmode_categorized")],
     ])
 
 
@@ -890,7 +926,9 @@ async def carousel_nav_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await q.answer()
     action = q.data.replace("cnav_", "")
 
-    products = get_all_active_products()
+    # Keep the selected Classic stock filter while navigating carousel cards.
+    from database import get_products_filtered
+    products = get_products_filtered(_get_user_shop_filter(context))
     # 🆕 v98: apply auto-grouping to carousel too, for consistent order
     try:
         from utils import sort_products_by_first_word
@@ -908,7 +946,9 @@ async def carousel_nav_callback(update: Update, context: ContextTypes.DEFAULT_TY
         except: pass
         context.user_data['shop_page'] = 1
         page = 1
-        kb, pg, tp = all_products_keyboard(products, page, user=q.from_user)
+        kb, pg, tp = all_products_keyboard(
+            products, page, user=q.from_user,
+            filter_mode=_get_user_shop_filter(context), shop_mode=SHOP_MODE_CLASSIC)
         title = _get_resp("shop_title", user_id=q.from_user.id).format(page=pg, total_pages=tp)
         await context.bot.send_message(q.from_user.id, title,
                                        parse_mode="Markdown", reply_markup=kb)

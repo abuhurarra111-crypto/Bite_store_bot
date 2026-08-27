@@ -8,6 +8,29 @@
 
 ---
 
+# 🚀 v170.63 (2026-08-27) — 🗂️ PERSISTED SHOP MODES + CATEGORY PICKER
+
+## User-selectable Shop mode
+- **Categorized** is now the default for every new/unset user. Each user can switch between **Categorized** and **Classic**, and that explicit choice is stored in the database so it survives restarts and later Shop visits.
+- Categorized Shop always opens the category picker; Classic preserves the previous flat catalog, product layout, pagination, stock filters, and optional carousel behavior.
+- Both views visibly offer the other mode. Legacy `shopall` links now safely open and remember Classic mode.
+
+## Category upgrade
+- Upgraded the existing `categories` records in place — no duplicate category system or product/category IDs were created.
+- The picker is compact **two columns by default**, removes old stock/count clutter, and gives category buttons Telegram's blue `primary` style by default.
+- Category name/icon input now uses premium-emoji-preserving capture. A saved Telegram custom emoji is sent as the real button `icon_custom_emoji_id`, rather than leaking HTML markup in a label.
+- Added persisted category presentation fields and admin controls: description/header, blue/green/red button style, enabled/disabled, show/hide, per-category empty visibility, global empty-category policy, one/two-column picker layout, and up/down ordering.
+- Empty categories remain hidden by default. Product/category edits are queried live on every Shop open/category click, so presentation changes take effect immediately.
+
+## Catalog/API safety
+- Hidden or disabled categories now hide linked products consistently from Categorized Shop, Classic Shop, Flash Sales, stale product callbacks/purchases, and the existing reseller catalog/checkout guard.
+- The Reseller API payload contract already supplied `categoryId` and category filtering, so no public endpoint or documentation contract was changed. Only the existing visibility lifecycle is now enforced consistently.
+
+## Verification
+- Added focused offline tests for persisted defaults/switches, two-column blue buttons, premium category emoji rendering, ordering, empty-state controls, category header, Shop callback rendering, and native/Classic/reseller visibility alignment.
+
+---
+
 # 🚀 v170.62 (2026-08-26) — 📎 SAFE SUPPLIER FILE + CAPTION RECOVERY
 
 ## Root cause and safe recovery
