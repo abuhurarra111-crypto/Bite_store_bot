@@ -281,7 +281,8 @@ class ResellerLifecyclePricingTests(unittest.TestCase):
         self.assertEqual(ext_suppliers.restore_bulk_unsynced_supplier_products(sid), [])
         self.assertFalse(any(int(x["id"]) == pids[1] for x in reseller_api._resellable_products()))
 
-    def test_category_deactivation_keeps_linked_product_disabled_after_refresh(self):
+    def test_category_delete_unassigns_linked_mirror_without_deactivating_it(self):
+        """v170.65: category deletion preserves supplier-product lifecycle data."""
         sid = ext_suppliers.add_supplier("Category lifecycle catalog", "insta_api", "https://example.invalid", "test-key")
         eid = ext_suppliers.upsert_ext_product(
             sid, "category-linked", "Category linked", "desc", 2.0, 10,
@@ -289,11 +290,24 @@ class ResellerLifecyclePricingTests(unittest.TestCase):
         )
         ext_suppliers.update_ext_product(eid, synced_to_shop=1)
         pid = int(ext_suppliers.get_ext_product(eid)["shop_product_id"])
-        database.delete_category(self.category_id)
-        self.assertEqual(int(ext_suppliers.get_ext_product(eid)["owner_active"]), 0)
-        ext_suppliers.update_ext_product(eid, stock=12)  # ordinary source refresh
-        self.assertFalse(database.product_is_catalog_available(database.get_product(pid)))
-        self.assertFalse(any(int(x["id"]) == pid for x in reseller_api._resellable_products()))
+        before = dict(database.get_product(pid))
+        result = database.delete_category(self.category_id)
+        self.assertTrue(result["deleted"])
+        self.assertEqual(result["unassigned_count"], 1)
+        self.assertIsNone(database.get_category(self.category_id))
+        self.assertEqual(int(ext_suppliers.get_ext_product(eid)["owner_active"]), 1)
+        self.assertEqual(int(ext_suppliers.get_ext_product(eid)["category_id"]), 0)
+        after_delete = dict(database.get_product(pid))
+        self.assertIsNone(after_delete["category_id"])
+        self.assertEqual(after_delete["is_active"], before["is_active"])
+        self.assertEqual(after_delete["stock"], before["stock"])
+        # An ordinary supplier refresh must retain the unassigned state rather
+        # than using the old implicit category #1 fallback.
+        ext_suppliers.update_ext_product(eid, stock=12)
+        refreshed = dict(database.get_product(pid))
+        self.assertIsNone(refreshed["category_id"])
+        self.assertTrue(database.product_is_catalog_available(refreshed))
+        self.assertTrue(any(int(x["id"]) == pid for x in reseller_api._resellable_products()))
 
     def test_credentials_continuation_rechecks_live_product_state(self):
         pid = self._product(name="Credential product", price=2.0, stock=3)

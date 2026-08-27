@@ -684,6 +684,10 @@ def mirror_ext_to_products(ext_product_id):
         local_bonus_stock = 0
     stock = remote_stock + local_bonus_stock
     cat_id = int(ep.get("category_id") or 0)
+    # v170.65: category deletion intentionally unassigns products.  Preserve
+    # that zero/empty association as NULL in the shop mirror instead of the
+    # old implicit category #1 fallback; otherwise a routine supplier refresh
+    # could silently reattach a just-unassigned item.
     # 🐛 v106 FIX: description was synced as plain text — if supplier's
     # description contains HTML markup (<b>/<blockquote>/<tg-emoji>/etc.),
     # wrap in [[HTML]] sentinel so shop rendering preserves the formatting.
@@ -724,7 +728,7 @@ def mirror_ext_to_products(ext_product_id):
                          product_format=?
                      WHERE id=?""",
                   (display_name, desc, sell, cost, stock,
-                   cat_id or 1, is_active, prod_fmt, shop_pid))
+                   (cat_id if cat_id > 0 else None), is_active, prod_fmt, shop_pid))
         was_new = False
         pid = shop_pid
     else:
@@ -735,7 +739,7 @@ def mirror_ext_to_products(ext_product_id):
                       is_active, product_format, delivery_template,
                       ext_supplier_id, ext_product_id)
                      VALUES (?, ?, ?, ?, ?, ?, '', '', '', '', ?, ?, 1, ?, ?)""",
-                  (cat_id or 1, display_name, desc, sell, cost, stock,
+                  ((cat_id if cat_id > 0 else None), display_name, desc, sell, cost, stock,
                    is_active, prod_fmt,
                    int(ep.get("supplier_id") or 0),
                    int(ep.get("id"))))

@@ -1896,6 +1896,16 @@ def main():
             CAT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, cat_name_received)],
             CAT_EMOJI: [CommandHandler("skip", cat_emoji_skip),
                         MessageHandler(filters.TEXT & ~filters.COMMAND, cat_emoji_received)],
+            # v170.65: post-name/icon in-stock unassigned product selector.
+            CAT_PRODUCT_SELECT: [
+                CallbackQueryHandler(category_product_picker_toggle_callback, pattern=r"^catpick_tgl_"),
+                CallbackQueryHandler(category_product_picker_page_callback, pattern=r"^catpick_page_"),
+                CallbackQueryHandler(category_product_picker_select_page_callback, pattern=r"^catpick_pageall_"),
+                CallbackQueryHandler(category_product_picker_clear_callback, pattern=r"^catpick_clear_"),
+                CallbackQueryHandler(category_product_picker_finish_callback, pattern=r"^catpick_finish$"),
+                CallbackQueryHandler(category_product_picker_empty_callback, pattern=r"^catpick_empty$"),
+                CallbackQueryHandler(category_product_picker_cancel_callback, pattern=r"^catpick_cancel$"),
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel_conversation),
                    CallbackQueryHandler(conv_cancel_callback, pattern="^conv_cancel$")],

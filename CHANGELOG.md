@@ -8,6 +8,30 @@
 
 ---
 
+# 🚀 v170.65 (2026-08-27) — 🏷️ SAFE CATEGORY MANAGEMENT + ASSIGNMENT WIZARD
+
+## Non-destructive category deletion
+- Deleting a category now removes **only that category**. Every linked product is unassigned (`category_id` cleared), while its active/hidden/archive state, stock, pricing, delivery data, account pool, orders, and history remain untouched.
+- The confirmation screen shows linked and in-stock counts and explicitly states the preservation rule before the owner confirms.
+- Supplier-mirror category metadata is cleared in the same transaction. A routine supplier refresh now preserves the unassigned state instead of silently restoring the old implicit category-#1 fallback.
+
+## Add Category product-assignment wizard
+- After category name and normal/Premium icon, the owner sees a paginated checkbox picker of **only in-stock, currently unassigned** products. A product already linked to any live, hidden, or disabled category is excluded.
+- The picker supports individual ticks, **Select This Page**, **Clear**, cross-page selection, Create Empty Category, and a final **Create & Assign Selected** action.
+- Category creation and product assignment run in one write transaction with all-or-nothing selection semantics. Selected products are re-checked at confirmation, so a stale tick cannot take a product from another category or create a partial category; a failed assignment rolls the new category back too.
+- New supplier imports are represented as unassigned until categorised, and selected mirror products keep their category through later supplier refreshes.
+
+## Buyer category navigation + Screen Editor
+- Every populated and buyer-visible empty category product page now ends with exactly the same two essential controls: **Back** (`shop`, returning to the Categorized picker) and **Home** (`main_menu`, the main-screen route).
+- The unwanted Classic switch was removed from category product pages; Classic remains available safely from the Categorized picker.
+- The existing Shop Screen Editor entries `nav_categories_back` and `nav_shop_home` now render the real shared category controls, including custom label, Premium icon, padding, and style. Category pagination also uses the existing shared Previous/Next registry controls, so category-page controls no longer require per-category edits.
+
+## Verification
+- Added focused regression coverage for: safe deletion/no product-or-order mutation, in-stock-only re-eligibility, no duplicate assignment, page selection/clear/individual ticks/finalization, atomic rollback, future dangling-reference repair, supplier mirror persistence, buyer empty/populated navigation, global labels/styles, callback byte bounds, and Screen Editor exposure.
+- Updated the previous category Premium-emoji test and supplier lifecycle test to assert the new owner-approved behavior. Full offline suite: **74 tests passed**.
+
+---
+
 # 🚀 v170.64 (2026-08-27) — 📝 EDIT ITEMS CATALOG PAGINATION
 
 ## Root cause and fix

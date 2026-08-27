@@ -237,7 +237,7 @@ def ensure_supplier_retry_columns(c):
 # Railway provides RAILWAY_DEPLOYMENT_ID; Render/Git deploys provide one of the
 # Render/Git identifiers below. The release fallback covers hosts that expose a
 # platform marker but no per-deployment ID. Bump _RELEASE_VERSION each release.
-_RELEASE_VERSION = "v170.64"
+_RELEASE_VERSION = "v170.65"
 _DEPLOYMENT_ID_ENV_KEYS = (
     "RAILWAY_DEPLOYMENT_ID",
     "RAILWAY_GIT_COMMIT_SHA",
@@ -1730,29 +1730,254 @@ def get_products_grouped_by_category(filter_mode="all", include_empty=None):
     return grouped
 
 
-def delete_category(cid):
-    """Deactivate a category and make linked mirror deactivation durable.
+def _normalise_category_product_ids(product_ids):
+    """Return unique positive product IDs without trusting callback/session data."""
+    clean = set()
+    for value in product_ids or ():
+        try:
+            pid = int(value)
+        except (TypeError, ValueError):
+            continue
+        if pid > 0:
+            clean.add(pid)
+    return sorted(clean)
 
-    A supplier mirror refresh may otherwise set its local row active again after
-    this category-level owner action.  Route every affected product through the
-    same owner-state helper after the short category transaction, so local,
-    source-backed, and reseller catalogs remain aligned.
+
+def _category_product_chunks(product_ids, chunk_size=500):
+    """SQLite-safe batches for a large owner bulk selection."""
+    values = list(product_ids or [])
+    for start in range(0, len(values), max(1, int(chunk_size or 500))):
+        yield values[start:start + max(1, int(chunk_size or 500))]
+
+
+def _ext_product_columns(cursor):
+    """Optional supplier tables must not make category actions unsafe on old DBs."""
+    try:
+        cursor.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ext_products'")
+        if not cursor.fetchone():
+            return set()
+        cursor.execute("PRAGMA table_info(ext_products)")
+        return {str(row[1]) for row in cursor.fetchall()}
+    except Exception:
+        return set()
+
+
+def get_unassigned_in_stock_products():
+    """Products eligible for the Add Category assignment wizard.
+
+    Eligibility intentionally means exactly the owner-approved business rule:
+    the product has positive stock and is not linked to any existing category.
+    It does *not* silently activate, unhide, or otherwise alter the product.
+    Archived supplier mirrors remain excluded because they are deliberately
+    removed from the live catalog until their own restore flow is used.
     """
+    try:
+        _ensure_is_hidden_column()
+    except Exception:
+        pass
     ensure_shop_category_schema()
     conn = get_connection(); c = conn.cursor()
     try:
-        c.execute("SELECT id FROM products WHERE category_id=?", (int(cid),))
-        product_ids = [int(r[0]) for r in c.fetchall()]
-        c.execute("UPDATE categories SET is_active=0 WHERE id=?", (cid,))
-        c.execute("UPDATE products SET is_active=0 WHERE category_id=?", (cid,))
-        conn.commit()
+        ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
+        conn.commit()  # persist the additive legacy-schema repair before read
+        c.execute("""SELECT p.*
+                     FROM products p
+                     LEFT JOIN categories linked ON linked.id=p.category_id
+                     WHERE COALESCE(p.stock,0)>0
+                       AND COALESCE(p.is_archived,0)=0
+                       AND (p.category_id IS NULL OR p.category_id=0
+                            OR linked.id IS NULL)
+                     ORDER BY p.id DESC""")
+        return c.fetchall()
     finally:
         conn.close()
-    for pid in product_ids:
+
+
+def create_category_with_unassigned_in_stock_products(
+        name, emoji="📦", description="", button_style="primary",
+        show_when_empty=False, product_ids=None):
+    """Atomically create a category and assign selected eligible products.
+
+    A product is re-checked inside the write transaction.  Thus a stale
+    Telegram tick can never steal a product already placed into another
+    category, and either the category plus every selected assignment commits
+    together or neither does.  Product lifecycle/stock/order data is never
+    changed; only ``category_id`` is updated.
+    """
+    ensure_shop_category_schema()
+    selected_ids = _normalise_category_product_ids(product_ids)
+    clean_name = str(name or "").strip() or "Category"
+    clean_emoji = str(emoji or "📦").strip() or "📦"
+    conn = get_connection(); c = conn.cursor()
+    try:
+        # Make an older owner backup safe before opening the explicit atomic
+        # transaction.  ``ensure_column`` may itself perform schema DDL.
+        ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
+        conn.commit()
+        c.execute("BEGIN IMMEDIATE")
+
+        # Freeze eligibility *before* inserting the new category.  This avoids
+        # an unusual legacy dangling ``category_id`` coincidentally becoming
+        # the new category's auto-incremented ID midway through this operation.
+        assigned_ids = []
+        for chunk in _category_product_chunks(selected_ids):
+            marks = ",".join("?" for _ in chunk)
+            # A missing legacy category reference is treated as unassigned so
+            # the wizard can repair it.  A real active/hidden/inactive category
+            # still counts as assigned and is never overwritten.
+            c.execute(f"""SELECT p.id FROM products p
+                          WHERE p.id IN ({marks})
+                            AND COALESCE(p.stock,0)>0
+                            AND COALESCE(p.is_archived,0)=0
+                            AND (p.category_id IS NULL OR p.category_id=0
+                                 OR NOT EXISTS (
+                                     SELECT 1 FROM categories linked
+                                     WHERE linked.id=p.category_id
+                                 ))""", chunk)
+            assigned_ids.extend(int(row[0]) for row in c.fetchall())
+
+        # The owner-confirmed bulk action is all-or-nothing.  If a tick became
+        # stale (another category claimed it, it sold out, or it was archived),
+        # do not create a half-populated category or assign only part of the
+        # selection.  The caller can refresh and confirm the current list.
+        if len(assigned_ids) != len(selected_ids):
+            unavailable_ids = sorted(set(selected_ids) - set(assigned_ids))
+            conn.rollback()
+            return {
+                "created": False,
+                "category_id": 0,
+                "requested_count": len(selected_ids),
+                "assigned_count": 0,
+                "unavailable_product_ids": unavailable_ids,
+            }
+
+        c.execute("SELECT COALESCE(MAX(display_order),0)+1 FROM categories")
+        next_order = int(c.fetchone()[0] or 1)
+        c.execute("""INSERT INTO categories
+                     (name,emoji,description,is_active,is_hidden,show_when_empty,
+                      display_order,button_style)
+                     VALUES (?,?,?,?,?,?,?,?)""",
+                  (clean_name, clean_emoji, str(description or "").strip(), 1, 0,
+                   1 if show_when_empty else 0, next_order,
+                   _normalise_category_button_style(button_style)))
+        cid = int(c.lastrowid)
+        for chunk in _category_product_chunks(assigned_ids):
+            marks = ",".join("?" for _ in chunk)
+            c.execute(f"UPDATE products SET category_id=? WHERE id IN ({marks})",
+                      [cid] + chunk)
+
+        # Keep external supplier mirror metadata aligned in this *same*
+        # transaction.  Otherwise a normal supplier refresh could undo a
+        # category assignment made from this new wizard.
+        ext_columns = _ext_product_columns(c)
+        c.execute("PRAGMA table_info(products)")
+        product_columns = {str(row[1]) for row in c.fetchall()}
+        if assigned_ids and "category_id" in ext_columns:
+            for chunk in _category_product_chunks(assigned_ids):
+                marks = ",".join("?" for _ in chunk)
+                if "shop_product_id" in ext_columns:
+                    c.execute(f"UPDATE ext_products SET category_id=? "
+                              f"WHERE shop_product_id IN ({marks})", [cid] + chunk)
+                # Some old mirrors carry the ext ID on the shop row even when
+                # ``shop_product_id`` was not backfilled yet.
+                if "ext_product_id" in product_columns:
+                    c.execute(f"SELECT ext_product_id FROM products "
+                              f"WHERE id IN ({marks}) AND COALESCE(ext_product_id,0)>0", chunk)
+                    ext_ids = [int(row[0]) for row in c.fetchall()]
+                    if ext_ids:
+                        ext_marks = ",".join("?" for _ in ext_ids)
+                        c.execute(f"UPDATE ext_products SET category_id=? "
+                                  f"WHERE id IN ({ext_marks})", [cid] + ext_ids)
+
+        conn.commit()
+        return {
+            "created": True,
+            "category_id": cid,
+            "requested_count": len(selected_ids),
+            "assigned_count": len(assigned_ids),
+            "assigned_product_ids": assigned_ids,
+        }
+    except Exception:
         try:
-            set_product_active(pid, False)
+            conn.rollback()
         except Exception:
             pass
+        raise
+    finally:
+        conn.close()
+
+
+def delete_category(cid):
+    """Delete one category while safely unassigning every linked product.
+
+    This is intentionally not the historical category deactivation behavior.
+    The owner requested a true category deletion that preserves each linked
+    product's active/hidden/archive state, stock, delivery data, orders and all
+    other product data.  Supplier mirror category metadata is cleared in the
+    same transaction so a later supplier refresh cannot reattach a product to
+    the deleted category.
+    """
+    try:
+        cid = int(cid)
+    except (TypeError, ValueError):
+        return {"deleted": False, "unassigned_count": 0, "in_stock_count": 0}
+    if cid <= 0:
+        return {"deleted": False, "unassigned_count": 0, "in_stock_count": 0}
+
+    ensure_shop_category_schema()
+    conn = get_connection(); c = conn.cursor()
+    try:
+        ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
+        conn.commit()
+        c.execute("BEGIN IMMEDIATE")
+        c.execute("SELECT id FROM categories WHERE id=?", (cid,))
+        if not c.fetchone():
+            conn.rollback()
+            return {"deleted": False, "unassigned_count": 0, "in_stock_count": 0}
+
+        c.execute("""SELECT id, COALESCE(stock,0) AS stock
+                     FROM products WHERE category_id=? ORDER BY id""", (cid,))
+        linked = c.fetchall()
+        product_ids = [int(row["id"]) for row in linked]
+        in_stock_count = sum(1 for row in linked if int(row["stock"] or 0) > 0)
+
+        # Do not change is_active, is_hidden, is_archived, stock, price,
+        # delivery fields or any order/account table.  Category ownership alone
+        # is cleared, as requested.
+        c.execute("UPDATE products SET category_id=NULL WHERE category_id=?", (cid,))
+
+        ext_columns = _ext_product_columns(c)
+        if "category_id" in ext_columns:
+            if product_ids and "shop_product_id" in ext_columns:
+                for chunk in _category_product_chunks(product_ids):
+                    marks = ",".join("?" for _ in chunk)
+                    c.execute(f"UPDATE ext_products SET category_id=0 "
+                              f"WHERE shop_product_id IN ({marks})", chunk)
+            # Clear any supplier row that recorded the deleted category even if
+            # its shop mirror is no longer linked (a safe no-op on normal DBs).
+            c.execute("UPDATE ext_products SET category_id=0 WHERE category_id=?", (cid,))
+
+        c.execute("DELETE FROM categories WHERE id=?", (cid,))
+        conn.commit()
+        return {
+            "deleted": True,
+            "unassigned_count": len(product_ids),
+            "in_stock_count": in_stock_count,
+            "unassigned_product_ids": product_ids,
+        }
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+
+
+# Explicit descriptive alias for callers/readers of the new category workflow.
+def delete_category_and_unassign_products(cid):
+    return delete_category(cid)
 
 
 # ── Products ──

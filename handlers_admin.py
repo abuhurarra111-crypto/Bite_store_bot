@@ -21,6 +21,9 @@ from templates_bundle import (
  PROD_CAT, PROD_NAME, PROD_DESC, PROD_PRICE, PROD_COST, PROD_STOCK,
  PROD_WARRANTY, PROD_QUANTITY, PROD_PHOTO, PROD_DELIVERY_TEXT,
  SET_VALUE, EDIT_RESP_VALUE, BAN_INPUT, UNBAN_INPUT) = range(16)
+# v170.65: Add Category now holds name/icon temporarily and only creates the
+# row after the owner confirms the in-stock, unassigned product selection.
+CAT_PRODUCT_SELECT = 16
 
 def _r(key):
     from database import get_response_with_auto_register
@@ -263,6 +266,139 @@ async def cat_name_received(u,c):
     return CAT_EMOJI
 
 
+_CATEGORY_PRODUCT_PAGE_SIZE = 12
+_CATEGORY_PRODUCT_SELECTION_KEY = "cat_selected_products"
+_CATEGORY_PRODUCT_PAGE_KEY = "cat_product_picker_page"
+
+
+def _category_picker_selected(context):
+    """Normalise transient checkbox state; never trust callback/session values."""
+    raw = context.user_data.get(_CATEGORY_PRODUCT_SELECTION_KEY, set()) or set()
+    clean = set()
+    for value in raw:
+        try:
+            pid = int(value)
+        except (TypeError, ValueError):
+            continue
+        if pid > 0:
+            clean.add(pid)
+    context.user_data[_CATEGORY_PRODUCT_SELECTION_KEY] = clean
+    return clean
+
+
+def _category_product_picker_content(context, page=0):
+    """Build the paginated Add Category product-picker screen.
+
+    The source query is rebuilt for every tap.  A selected product therefore
+    disappears immediately if another category owns it, even before final
+    confirmation, and the final database transaction re-checks it once more.
+    """
+    from utils import html_strip_tags
+    try:
+        from button_system import extract_emoji_from_html, make_premium_button
+    except Exception:
+        extract_emoji_from_html = None
+        make_premium_button = None
+
+    products = list(get_unassigned_in_stock_products())
+    candidate_ids = {int(p["id"]) for p in products}
+    selected = _category_picker_selected(context)
+    selected.intersection_update(candidate_ids)
+    context.user_data[_CATEGORY_PRODUCT_SELECTION_KEY] = selected
+
+    total_pages = max(1, (len(products) + _CATEGORY_PRODUCT_PAGE_SIZE - 1)
+                      // _CATEGORY_PRODUCT_PAGE_SIZE)
+    try:
+        page = int(page)
+    except (TypeError, ValueError):
+        page = 0
+    page = max(0, min(page, total_pages - 1))
+    context.user_data[_CATEGORY_PRODUCT_PAGE_KEY] = page
+    chunk = products[page * _CATEGORY_PRODUCT_PAGE_SIZE:
+                     (page + 1) * _CATEGORY_PRODUCT_PAGE_SIZE]
+
+    name = html_strip_tags(str(context.user_data.get("cat_n") or "Category"))
+    name = escape_md(name.strip() or "Category")
+    text = (
+        "🏷️ *New Category — Select Products*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Category: *{name}*\n"
+        f"In-stock, unassigned products: *{len(products)}*\n"
+        f"Selected: *{len(selected)}*  ·  Page *{page + 1}/{total_pages}*\n\n"
+    )
+    if products:
+        text += ("Tick one product or multiple products. Products already in a "
+                 "category never appear here.\n")
+    else:
+        text += ("No in-stock unassigned products right now. You can still create "
+                 "an empty category.\n")
+
+    rows = []
+    for product in chunk:
+        p = dict(product)
+        pid = int(p.get("id") or 0)
+        raw_name = str(p.get("name") or f"Product #{pid}")
+        premium_id = ""
+        if extract_emoji_from_html:
+            try:
+                premium_id, plain_name = extract_emoji_from_html(raw_name)
+                raw_name = plain_name or raw_name
+            except Exception:
+                premium_id = ""
+        plain_name = html_strip_tags(raw_name).replace("\n", " ").strip()
+        if len(plain_name) > 46:
+            plain_name = plain_name[:43].rstrip() + "..."
+        stock = int(p.get("stock") or 0)
+        mark = "✅" if pid in selected else "☐"
+        label = f"{mark} #{pid} · {plain_name or f'Product #{pid}'}  ({stock})"
+        callback_data = f"catpick_tgl_{pid}_{page}"
+        if premium_id and make_premium_button:
+            # ``make_premium_button(..., emoji_id=...)`` deliberately strips a
+            # leading symbol cluster to avoid duplicate emoji icons.  Keep the
+            # checkbox after normal text so its selected/unselected state stays
+            # visible for Premium-name products too.
+            premium_label = f"Product #{pid} · {mark} {plain_name or f'Product #{pid}'}  ({stock})"
+            rows.append([make_premium_button(premium_label, emoji_id=premium_id,
+                                               callback_data=callback_data)])
+        else:
+            rows.append([InlineKeyboardButton(label, callback_data=callback_data)])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"catpick_page_{page - 1}"))
+    if page < total_pages - 1:
+        nav.append(InlineKeyboardButton("Next ➡️", callback_data=f"catpick_page_{page + 1}"))
+    if nav:
+        rows.append(nav)
+    if products:
+        rows.append([
+            InlineKeyboardButton("☑️ Select This Page", callback_data=f"catpick_pageall_{page}"),
+            InlineKeyboardButton("🧹 Clear", callback_data=f"catpick_clear_{page}"),
+        ])
+    if selected:
+        rows.append([InlineKeyboardButton(
+            f"✅ Create & Assign Selected ({len(selected)})", callback_data="catpick_finish")])
+    else:
+        rows.append([InlineKeyboardButton("⏭️ Create Empty Category", callback_data="catpick_empty")])
+    rows.append([InlineKeyboardButton("❌ Cancel", callback_data="catpick_cancel")])
+    return text, InlineKeyboardMarkup(rows), page
+
+
+async def _show_category_product_picker(q, context, page=0):
+    text, markup, _page = _category_product_picker_content(context, page=page)
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=markup)
+
+
+async def _begin_category_product_picker(u, context, emoji):
+    """Hold category metadata in session and show the first checkbox page."""
+    context.user_data['cat_e'] = str(emoji or "📦").strip() or "📦"
+    context.user_data[_CATEGORY_PRODUCT_SELECTION_KEY] = set()
+    context.user_data[_CATEGORY_PRODUCT_PAGE_KEY] = 0
+    text, markup, _page = _category_product_picker_content(context, page=0)
+    await u.message.reply_text(text, parse_mode="Markdown", reply_markup=markup)
+    return CAT_PRODUCT_SELECT
+
+
 async def cat_emoji_received(u,c):
     if u.effective_user.id != ADMIN_ID:
         return ConversationHandler.END
@@ -272,23 +408,174 @@ async def cat_emoji_received(u,c):
         await u.message.reply_text("❌ Send an emoji/icon, or use /skip.",
                                    reply_markup=inline_cancel_btn())
         return CAT_EMOJI
-    cid = add_category(c.user_data.get('cat_n', 'Category'), emoji)
-    c.user_data.pop('cat_n', None)
-    await u.message.reply_text(
-        f"✅ Category added (#{cid}). Its Shop button is blue by default.",
-        reply_markup=back_btn())
-    return ConversationHandler.END
+    return await _begin_category_product_picker(u, c, emoji)
 
 
 async def cat_emoji_skip(u,c):
     if u.effective_user.id != ADMIN_ID:
         return ConversationHandler.END
-    cid = add_category(c.user_data.get('cat_n', 'Category'), "📦")
-    c.user_data.pop('cat_n', None)
-    await u.message.reply_text(
-        f"✅ Category added (#{cid}). Its Shop button is blue by default.",
-        reply_markup=back_btn())
+    return await _begin_category_product_picker(u, c, "📦")
+
+
+async def category_product_picker_toggle_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return ConversationHandler.END
+    try:
+        raw = str(q.data or "").replace("catpick_tgl_", "", 1)
+        pid_s, page_s = raw.rsplit("_", 1)
+        pid, page = int(pid_s), int(page_s)
+    except (TypeError, ValueError):
+        await q.answer("Invalid product", show_alert=True)
+        return CAT_PRODUCT_SELECT
+    current_ids = {int(p["id"]) for p in get_unassigned_in_stock_products()}
+    selected = _category_picker_selected(c)
+    if pid not in current_ids:
+        selected.discard(pid)
+        c.user_data[_CATEGORY_PRODUCT_SELECTION_KEY] = selected
+        await q.answer("This product is no longer available for this category.", show_alert=True)
+    elif pid in selected:
+        selected.remove(pid)
+        c.user_data[_CATEGORY_PRODUCT_SELECTION_KEY] = selected
+        await q.answer("Removed")
+    else:
+        selected.add(pid)
+        c.user_data[_CATEGORY_PRODUCT_SELECTION_KEY] = selected
+        await q.answer("Selected")
+    await _show_category_product_picker(q, c, page=page)
+    return CAT_PRODUCT_SELECT
+
+
+async def category_product_picker_page_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return ConversationHandler.END
+    try:
+        page = int(str(q.data or "").replace("catpick_page_", "", 1))
+    except (TypeError, ValueError):
+        page = 0
+    await q.answer()
+    await _show_category_product_picker(q, c, page=page)
+    return CAT_PRODUCT_SELECT
+
+
+async def category_product_picker_select_page_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return ConversationHandler.END
+    try:
+        page = int(str(q.data or "").replace("catpick_pageall_", "", 1))
+    except (TypeError, ValueError):
+        page = 0
+    products = list(get_unassigned_in_stock_products())
+    total_pages = max(1, (len(products) + _CATEGORY_PRODUCT_PAGE_SIZE - 1)
+                      // _CATEGORY_PRODUCT_PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+    page_ids = {int(p["id"]) for p in products[
+        page * _CATEGORY_PRODUCT_PAGE_SIZE:(page + 1) * _CATEGORY_PRODUCT_PAGE_SIZE]}
+    selected = _category_picker_selected(c)
+    selected.update(page_ids)
+    c.user_data[_CATEGORY_PRODUCT_SELECTION_KEY] = selected
+    await q.answer(f"Selected {len(page_ids)} product(s)")
+    await _show_category_product_picker(q, c, page=page)
+    return CAT_PRODUCT_SELECT
+
+
+async def category_product_picker_clear_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return ConversationHandler.END
+    try:
+        page = int(str(q.data or "").replace("catpick_clear_", "", 1))
+    except (TypeError, ValueError):
+        page = 0
+    c.user_data[_CATEGORY_PRODUCT_SELECTION_KEY] = set()
+    await q.answer("Selection cleared")
+    await _show_category_product_picker(q, c, page=page)
+    return CAT_PRODUCT_SELECT
+
+
+async def _finish_category_product_picker(u, c, allow_empty=False):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return ConversationHandler.END
+    name = c.user_data.get('cat_n')
+    if not name:
+        for key in ('cat_n', 'cat_e', _CATEGORY_PRODUCT_SELECTION_KEY,
+                    _CATEGORY_PRODUCT_PAGE_KEY):
+            c.user_data.pop(key, None)
+        await q.answer("Category setup expired. Please start again.", show_alert=True)
+        return ConversationHandler.END
+    selected = _category_picker_selected(c)
+    if not selected and not allow_empty:
+        await q.answer("Select a product, or choose Create Empty Category.", show_alert=True)
+        return CAT_PRODUCT_SELECT
+    try:
+        result = create_category_with_unassigned_in_stock_products(
+            name, c.user_data.get('cat_e', '📦'), product_ids=selected)
+    except Exception:
+        for key in ('cat_n', 'cat_e', _CATEGORY_PRODUCT_SELECTION_KEY,
+                    _CATEGORY_PRODUCT_PAGE_KEY):
+            c.user_data.pop(key, None)
+        await q.answer("Category was not created; no product changed.", show_alert=True)
+        await _safe_edit(q,
+            "❌ *Category was not created.*\n\nNo product was changed. Please try again.",
+            parse_mode="Markdown", reply_markup=back_btn("admin_categories"))
+        return ConversationHandler.END
+
+    if not result.get("created"):
+        # Strict all-or-nothing bulk semantics: retain the name/icon session,
+        # prune stale ticks through the live renderer, and let the owner review
+        # the current list rather than creating a partial category.
+        stale = set(result.get("unavailable_product_ids") or [])
+        selected.difference_update(stale)
+        c.user_data[_CATEGORY_PRODUCT_SELECTION_KEY] = selected
+        await q.answer("Selection changed — no category was created.", show_alert=True)
+        await _show_category_product_picker(q, c,
+                                            page=c.user_data.get(_CATEGORY_PRODUCT_PAGE_KEY, 0))
+        return CAT_PRODUCT_SELECT
+
+    await q.answer()
+    for key in ('cat_n', 'cat_e', _CATEGORY_PRODUCT_SELECTION_KEY,
+                _CATEGORY_PRODUCT_PAGE_KEY):
+        c.user_data.pop(key, None)
+    assigned = int(result.get('assigned_count') or 0)
+    from utils import html_strip_tags
+    safe_name = escape_md(html_strip_tags(str(name)).strip() or "Category")
+    text = (
+        "✅ *Category Created*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🏷️ *{safe_name}*  ·  #{int(result['category_id'])}\n"
+        f"📦 Assigned in-stock products: *{assigned}*"
+    )
+    if not assigned:
+        text += "\n\nThe category is empty; products and orders were not changed."
+    await _safe_edit(q, text, parse_mode="Markdown",
+                     reply_markup=back_btn("admin_categories"))
     return ConversationHandler.END
+
+
+async def category_product_picker_finish_callback(u, c):
+    return await _finish_category_product_picker(u, c, allow_empty=False)
+
+
+async def category_product_picker_empty_callback(u, c):
+    return await _finish_category_product_picker(u, c, allow_empty=True)
+
+
+async def category_product_picker_cancel_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return ConversationHandler.END
+    for key in ('cat_n', 'cat_e', _CATEGORY_PRODUCT_SELECTION_KEY,
+                _CATEGORY_PRODUCT_PAGE_KEY):
+        c.user_data.pop(key, None)
+    await q.answer("Cancelled")
+    await _safe_edit(q, "❌ *Category creation cancelled.*", parse_mode="Markdown",
+                     reply_markup=back_btn("admin_categories"))
+    return ConversationHandler.END
+
+
 async def delete_category_callback(u,c):
     await delete_category_confirm_callback(u, c)
 
@@ -2743,7 +3030,7 @@ async def cancel_conversation(u,c):
     # Previously, c.user_data.clear() wiped ALL state including nav_stack,
     # pending orders, language preference, AI mode, etc.
     conv_keys = [
-        'cat_n', 'cat_e',
+        'cat_n', 'cat_e', 'cat_selected_products', 'cat_product_picker_page',
         'pc', 'pn', 'pd', 'pp', 'pcp', 'ps', 'pw', 'pq', 'pph', 'delivery_mode',
         'sk', 'erk',
         'cb_new_type', 'cb_new_label', 'cb_new_action',
@@ -7669,39 +7956,66 @@ async def category_presentation_set_callback(u, c):
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 async def delete_category_confirm_callback(u, c):
-    """Show confirmation screen before deleting category."""
+    """Confirm the v170.65 non-destructive category deletion."""
     q = u.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
+    try:
+        cid = int(str(q.data or "").replace("delcat_", "", 1))
+    except (TypeError, ValueError):
+        await q.answer("Invalid category", show_alert=True); return
+    cat = get_category(cid, include_inactive=True)
+    if not cat:
+        await q.answer("Category no longer exists", show_alert=True); return
+    conn = get_connection(); cur = conn.cursor()
+    try:
+        cur.execute("""SELECT COUNT(*) AS total,
+                              SUM(CASE WHEN COALESCE(stock,0)>0 THEN 1 ELSE 0 END) AS in_stock
+                       FROM products WHERE category_id=?""", (cid,))
+        counts = cur.fetchone()
+        linked_total = int(counts["total"] or 0)
+        linked_in_stock = int(counts["in_stock"] or 0)
+    finally:
+        conn.close()
     await q.answer()
-    cid = int(q.data.replace("delcat_", ""))
-    
     text = (
-        f"⚠️ *DELETE CATEGORY — CONFIRM*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Are you sure you want to delete this category?\n\n"
-        f"🚨 *WARNING:* All products inside this category will also be deleted!\n"
-        f"This action cannot be undone."
+        "⚠️ *DELETE CATEGORY — CONFIRM*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "This deletes only the category.\n\n"
+        f"📦 Linked products: *{linked_total}*  ·  In stock: *{linked_in_stock}*\n\n"
+        "✅ Every linked product will become *unassigned*.\n"
+        "✅ Products, stock, active/hidden state, delivery data, accounts, orders and history stay unchanged.\n\n"
+        "The deleted category's name/layout cannot be restored automatically."
     )
     kb = [
-        [InlineKeyboardButton("✅ YES, Delete", callback_data=f"delcatdo_{cid}"),
+        [InlineKeyboardButton("✅ YES, Delete Category", callback_data=f"delcatdo_{cid}"),
          InlineKeyboardButton("❌ No, Cancel", callback_data=f"viewcat_{cid}")]
     ]
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 
 async def delete_category_do_callback(u, c):
-    """Actually perform soft delete of category."""
+    """Delete the category and unassign, never deactivate, linked products."""
     q = u.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
-    await q.answer()
-    cid = int(q.data.replace("delcatdo_", ""))
-    
-    delete_category(cid)
-    await q.answer("Category deleted safely ✅")
-    
-    # Refresh categories view
+    try:
+        cid = int(str(q.data or "").replace("delcatdo_", "", 1))
+    except (TypeError, ValueError):
+        await q.answer("Invalid category", show_alert=True); return
+    try:
+        result = delete_category(cid)
+    except Exception:
+        await q.answer("Delete failed — nothing was changed.", show_alert=True)
+        return
+    if not result.get("deleted"):
+        await q.answer("Category no longer exists", show_alert=True)
+        return
+    unassigned = int(result.get("unassigned_count") or 0)
+    await q.answer(f"Category deleted; {unassigned} product(s) unassigned ✅")
+
+    # Refresh categories view.  The products remain intact and become eligible
+    # for the new-category wizard whenever their stock is above zero.
     set_cb_data(u, "admin_categories")
     await admin_categories_callback(u, c)
 

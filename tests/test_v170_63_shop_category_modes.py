@@ -169,7 +169,14 @@ class ShopCategoryModeTests(unittest.TestCase):
         self.assertEqual(context.user_data["cat_n"], premium)
 
         update.message = _Message(text="📦")
-        asyncio.run(handlers_admin.cat_emoji_received(update, context))
+        wizard_state = asyncio.run(handlers_admin.cat_emoji_received(update, context))
+        self.assertEqual(wizard_state, handlers_admin.CAT_PRODUCT_SELECT)
+        self.assertEqual(database.get_categories(), [],
+                         "v170.65 creates the category only after picker confirmation")
+        confirm = _Query("catpick_empty", user_id=ADMIN_ID)
+        finish_state = asyncio.run(handlers_admin.category_product_picker_empty_callback(
+            SimpleNamespace(callback_query=confirm), context))
+        self.assertEqual(finish_state, handlers_admin.ConversationHandler.END)
         created = database.get_categories()[-1]
         self.assertEqual(created["name"], premium)
         self.assertEqual(created["button_style"], "primary")

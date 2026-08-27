@@ -3229,7 +3229,7 @@ SCREEN_TREE = {
     "shop_screen": {
         "icon": "🛒",
         "title": "Shop / Product List",
-        "description": "The screen with categories + paginated product list",
+        "description": "Category picker, every category's paginated product page, and the Classic list. Shared Back/Home and pager controls apply everywhere.",
         "texts": [
             ("shop_title",            "📝 Shop Title"),
             ("shop_categories_title", "📝 Categories Title"),

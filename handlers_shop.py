@@ -9,7 +9,7 @@ from database import (get_all_active_products, get_product,
                       product_is_catalog_available, get_user_shop_mode,
                       set_user_shop_mode, SHOP_MODE_CATEGORIZED, SHOP_MODE_CLASSIC)
 from keyboards import (all_products_keyboard, product_detail_keyboard, back_btn,
-                       shop_categories_keyboard,
+                       shop_categories_keyboard, shop_category_footer_keyboard,
                        shop_category_products_keyboard)
 from config import DEFAULT_RESPONSES, USD_TO_PKR_RATE, ADMIN_ID
 from utils import (fmt_price,
@@ -714,10 +714,10 @@ async def shop_category_callback(update: Update, context: ContextTypes.DEFAULT_T
     products = info.get('products') or []
     if not products:
         title = _category_page_title(info, 1, 1)
+        # v170.65: even an empty category page keeps the exact shared
+        # Back-to-categories + Home-to-main-menu footer.
         await _safe_edit(q, title + "\n\nNo products in this category yet.",
-                         reply_markup=InlineKeyboardMarkup([[
-                             InlineKeyboardButton("🔙 Categories", callback_data="shop")
-                         ]]))
+                         reply_markup=shop_category_footer_keyboard(user=q.from_user))
         return
     try:
         from utils import sort_products_by_first_word

@@ -1935,13 +1935,41 @@ def shop_categories_keyboard(grouped, user_mode="categorized"):
         InlineKeyboardButton(categorized_label, callback_data="shopmode_categorized"),
         InlineKeyboardButton(classic_label, callback_data="shopmode_classic"),
     ])
-    home_lbl = _apply_styler("shop_home", "🏠 Home")
+    # v170.65: the picker and every category page share the same Home registry
+    # control, so one Screen-by-Screen Editor change reaches both routes.
+    home_b = _rb("nav_shop_home", callback_data="main_menu")
+    if home_b is None:
+        home_b = InlineKeyboardButton(_apply_styler("shop_home", "🏠 Home"),
+                                      callback_data="main_menu")
     pts_lbl = _apply_styler("shop_buy_points", "💎 Buy Points")
     kb.append([
-        InlineKeyboardButton(home_lbl, callback_data="main_menu"),
+        home_b,
         InlineKeyboardButton(pts_lbl, callback_data="buy_points"),
     ])
     return InlineKeyboardMarkup(kb)
+
+
+def shop_category_footer_keyboard(user=None):
+    """The exact shared Back + Home footer for every category product page.
+
+    Both are essential registry buttons.  Their label, premium icon, padding
+    and color are changed once in Screen-by-Screen Editor → Shop / Product List
+    and are then rendered identically for every category.
+    """
+    user_id = (getattr(user, "id", None) if user is not None and not isinstance(user, dict)
+               else (user.get("id") if isinstance(user, dict) else (user if isinstance(user, int) else None)))
+    back_b = _rb("nav_categories_back", callback_data="shop", user_id=user_id)
+    home_b = _rb("nav_shop_home", callback_data="main_menu", user_id=user_id)
+    # Essential registry entries normally cannot be hidden.  Keep a safe,
+    # navigable fallback if an older/custom registry ever fails to load.
+    if back_b is None:
+        back_b = InlineKeyboardButton(_apply_styler("shop_back_cats", "🔙 Categories"),
+                                      callback_data="shop")
+    if home_b is None:
+        home_b = InlineKeyboardButton(_apply_styler("shop_home", "🏠 Home"),
+                                      callback_data="main_menu")
+    return InlineKeyboardMarkup([[back_b, home_b]])
+
 
 def shop_category_products_keyboard(products, cat_id, page=1, per_page=10, user=None):
     """Products inside a specific category — paginated"""
@@ -2015,25 +2043,27 @@ def shop_category_products_keyboard(products, cat_id, page=1, per_page=10, user=
                                             callback_data=f"prod_{p['id']}")])
         else:
             kb.append([InlineKeyboardButton(label, callback_data=f"prod_{p['id']}")])
-    # Pagination within category
+    # v170.65: category pagination uses the same global prev/next registry
+    # entries shown in the Shop Screen Editor.  Only callback data changes.
     nav = []
     if page > 1:
-        nav.append(InlineKeyboardButton(_apply_styler("shop_pagination", "⬅️"),
-                                         callback_data=f"shopcatpg_{cat_id}_{page-1}"))
+        prev_b = _rb("nav_shop_prev_page", callback_data=f"shopcatpg_{cat_id}_{page-1}",
+                     user_id=user_id)
+        nav.append(prev_b or InlineKeyboardButton(
+            _apply_styler("shop_pagination", "⬅️"),
+            callback_data=f"shopcatpg_{cat_id}_{page-1}"))
     if page < total_pages:
-        nav.append(InlineKeyboardButton(_apply_styler("shop_pagination", "➡️"),
-                                         callback_data=f"shopcatpg_{cat_id}_{page+1}"))
+        next_b = _rb("nav_shop_next_page", callback_data=f"shopcatpg_{cat_id}_{page+1}",
+                     user_id=user_id)
+        nav.append(next_b or InlineKeyboardButton(
+            _apply_styler("shop_pagination", "➡️"),
+            callback_data=f"shopcatpg_{cat_id}_{page+1}"))
     if nav:
         kb.append(nav)
-    back_lbl = _apply_styler("shop_back_cats", "🔙 Categories")
-    home_lbl = _apply_styler("shop_home", "🏠 Home")
-    # ``shop`` reopens the persisted Categorized picker; Classic is an
-    # explicit user choice and is remembered by the callback handler.
-    kb.append([
-        InlineKeyboardButton(back_lbl, callback_data="shop"),
-        InlineKeyboardButton("📋 Classic", callback_data="shopmode_classic"),
-    ])
-    kb.append([InlineKeyboardButton(home_lbl, callback_data="main_menu")])
+    # The category page intentionally has exactly these two shared navigation
+    # controls — no Classic-mode switch here.  Classic remains safely available
+    # from the category picker, while Back always returns to that picker.
+    kb.extend(shop_category_footer_keyboard(user=user).inline_keyboard)
     return InlineKeyboardMarkup(kb), page, total_pages
 
 
