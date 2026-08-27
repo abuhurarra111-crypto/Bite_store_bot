@@ -1990,6 +1990,61 @@ def delete_category_and_unassign_products(cid):
     return delete_category(cid)
 
 
+def assign_product_to_category(pid, cid):
+    """v170.79: attach one existing product to an existing category.
+
+    Only ``category_id`` changes — stock, pricing, delivery data, orders and
+    visibility flags stay untouched.  Returns True when a row was updated.
+    """
+    try:
+        pid, cid = int(pid), int(cid)
+    except (TypeError, ValueError):
+        return False
+    if not get_category(cid, include_inactive=True):
+        return False
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("UPDATE products SET category_id=? WHERE id=?", (cid, pid))
+        changed = c.rowcount > 0
+        conn.commit()
+        return changed
+    finally:
+        conn.close()
+
+
+def unassign_product_from_category(pid, cid):
+    """v170.79: detach a product from a category (category_id → NULL only)."""
+    try:
+        pid, cid = int(pid), int(cid)
+    except (TypeError, ValueError):
+        return False
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("UPDATE products SET category_id=NULL WHERE id=? AND category_id=?",
+                  (pid, cid))
+        changed = c.rowcount > 0
+        conn.commit()
+        return changed
+    finally:
+        conn.close()
+
+
+def get_products_in_category(cid, include_hidden=True):
+    """v170.79: list the products currently assigned to one category."""
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("""SELECT * FROM products
+                     WHERE category_id=? AND is_active=1
+                       AND COALESCE(is_archived,0)=0
+                     ORDER BY id""", (int(cid),))
+        rows = [dict(r) for r in c.fetchall()]
+    finally:
+        conn.close()
+    if include_hidden:
+        return rows
+    return [r for r in rows if not int(r.get("is_hidden") or 0)]
+
+
 # ── Products ──
 # 🔧 UPDATED: Now accepts warranty, quantity, photo_id
 # v127: Default Free-via-Referrals settings for every NEW product.

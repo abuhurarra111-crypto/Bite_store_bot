@@ -282,6 +282,83 @@ def _heal_icon_fill_one_time_reset():
         _log(f"heal_icon_fill: {e}", "ERROR")
 
 
+_REFERENCE_CATEGORIES = (
+    "Super Grok", "Google Ultra - Family", "Chatgpt", "Gamma Ai",
+    "Figma", "Canva", "Gemini Ai Pro", "Outlook Mails",
+    "Capcut", "Lovable", "Microsoft", "Replit",
+    "Notion", "Google Flow - Extension", "VPNS", "Hostinger",
+    "Netflix", "Elevate", "Eleven Labs", "Join Secret",
+    "Perplexity", "Claude",
+)
+
+
+def _harvest_premium_emoji_ids():
+    """Collect this bot's OWN previously-used premium emoji ids from the DB."""
+    import re as _re
+    ids, seen = [], set()
+    try:
+        from database import get_connection
+        conn = get_connection(); c = conn.cursor()
+        try:
+            for table, col in (("bot_settings", "value"), ("bot_responses", "value")):
+                try:
+                    for (v,) in c.execute(
+                            f"SELECT {col} FROM {table} WHERE {col} LIKE '%tg-emoji%'"):
+                        for eid in _re.findall(r'emoji-id="(\d+)"', v or ""):
+                            if eid not in seen:
+                                seen.add(eid); ids.append(eid)
+                except Exception:
+                    continue
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return ids
+
+
+def _heal_seed_reference_categories():
+    """🆕 v170.79 ONE-TIME: replace all old categories with the owner's 22
+    reference categories (Shopee-style), each named with one of this bot's
+    own premium custom emojis so the emoji renders as the button icon.
+
+    Non-destructive: old categories are deleted through the v170.65 safe
+    delete (products only get category_id cleared — stock/pricing/orders and
+    every other field stay untouched).  Guarded by a settings flag so later
+    owner edits (rename/delete/reorder) are never overwritten.
+    """
+    try:
+        import random as _random
+        from database import (get_setting, set_setting, get_categories,
+                              delete_category, add_category)
+        if get_setting("ref_categories_v17079_seeded", "") == "1":
+            return
+        set_setting("ref_categories_v17079_seeded", "1")
+        pool = _harvest_premium_emoji_ids()
+        _random.Random(20260827).shuffle(pool)
+        removed = 0
+        for cat in (get_categories(include_inactive=True, include_hidden=True) or []):
+            try:
+                if delete_category(int(cat["id"])):
+                    removed += 1
+            except Exception:
+                continue
+        created = 0
+        for idx, name in enumerate(_REFERENCE_CATEGORIES):
+            if pool:
+                eid = pool[idx % len(pool)]
+                full = f'[[HTML]]<tg-emoji emoji-id="{eid}">⭐</tg-emoji> {name}'
+            else:
+                full = name
+            try:
+                if add_category(full, "", show_when_empty=True):
+                    created += 1
+            except Exception:
+                continue
+        _log(f"Reference categories seeded: {created} created, {removed} old removed")
+    except Exception as e:
+        _log(f"heal_seed_categories: {e}", "ERROR")
+
+
 def _heal_category_picker_title():
     """🆕 v170.74: refresh the buyer category picker title to the new
     reference-style default ("📁 Categories / Pick a category to browse.")
@@ -491,6 +568,10 @@ def run_all_heals() -> list:
         _heal_icon_fill_one_time_reset()
     except Exception as e:
         _log(f"heal_icon_fill outer: {e}", "ERROR")
+    try:
+        _heal_seed_reference_categories()
+    except Exception as e:
+        _log(f"heal_seed_categories outer: {e}", "ERROR")
     _log("Self-heal completed")
     return list(_HEAL_REPORT)
 

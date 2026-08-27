@@ -7671,6 +7671,7 @@ async def _render_category_detail(q, cid):
     )
     kb = [
         [InlineKeyboardButton("✏️ Rename Category", callback_data=f"editcat_name_{cid}")],
+        [InlineKeyboardButton("📦 Assign Products", callback_data=f"catasg_{cid}_0")],
         [InlineKeyboardButton("📝 Edit Category Header", callback_data=f"editcat_description_{cid}")],
         [InlineKeyboardButton(
             "🚫 Disable Category" if active else "✅ Enable Category",
@@ -7703,6 +7704,85 @@ async def view_category_callback(u, c):
     except (TypeError, ValueError):
         await q.answer("❌ Invalid category", show_alert=True); return
     await _render_category_detail(q, cid)
+
+
+_CATASG_PAGE_SIZE = 6
+
+
+async def _render_category_assign(q, cid, page=0):
+    """v170.79: instant add/remove product assignment for ONE category.
+
+    ➕ taps attach an unassigned in-stock product; ➖ taps detach a currently
+    assigned product.  Only products.category_id changes — stock, pricing,
+    delivery, orders and visibility are never touched.
+    """
+    from database import (get_category, get_unassigned_in_stock_products,
+                          get_products_in_category)
+    from utils import html_strip_tags
+    cat = get_category(cid, include_inactive=True)
+    if not cat:
+        await q.answer("❌ Category not found", show_alert=True)
+        return
+    unassigned = get_unassigned_in_stock_products()
+    assigned = get_products_in_category(cid)
+    pages = max(1, (len(unassigned) + _CATASG_PAGE_SIZE - 1) // _CATASG_PAGE_SIZE)
+    page = max(0, min(int(page or 0), pages - 1))
+    chunk = unassigned[page * _CATASG_PAGE_SIZE:(page + 1) * _CATASG_PAGE_SIZE]
+    name = html_strip_tags(str(cat["name"] or "Category")).strip()
+    text = (
+        f"[[HTML]]📦 <b>Assign Products</b> — {name}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"✅ In this category: <b>{len(assigned)}</b>\n"
+        f"🆓 Unassigned in-stock: <b>{len(unassigned)}</b>"
+        + (f"  ·  page {page + 1}/{pages}" if pages > 1 else "") + "\n\n"
+        "➕ tap = add to category · ➖ tap = remove"
+    )
+    kb = []
+    for p in chunk:
+        pname = html_strip_tags(str(p.get("name") or "Product")).strip()[:30]
+        kb.append([InlineKeyboardButton(
+            f"➕ {pname}", callback_data=f"catasg_add_{cid}_{int(p['id'])}_{page}")])
+    for p in assigned[:6]:
+        pname = html_strip_tags(str(p.get("name") or "Product")).strip()[:30]
+        kb.append([InlineKeyboardButton(
+            f"➖ {pname}", callback_data=f"catasg_rm_{cid}_{int(p['id'])}_{page}")])
+    if pages > 1:
+        kb.append([
+            InlineKeyboardButton("⬅️ Prev", callback_data=f"catasg_{cid}_{max(0, page - 1)}"),
+            InlineKeyboardButton("➡️ Next", callback_data=f"catasg_{cid}_{min(pages - 1, page + 1)}"),
+        ])
+    kb.append([InlineKeyboardButton("🔙 Back to Category", callback_data=f"viewcat_{cid}")])
+    await _safe_edit(q, text, reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def category_assign_products_callback(u, c):
+    """Route all catasg_* taps: open panel, page, add product, remove product."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    from database import assign_product_to_category, unassign_product_from_category
+    raw = str(q.data or "")
+    try:
+        if raw.startswith("catasg_add_"):
+            cid, pid, page = (int(x) for x in raw.replace("catasg_add_", "", 1).split("_"))
+            if assign_product_to_category(pid, cid):
+                await q.answer("✅ Added to category")
+            else:
+                await q.answer("❌ Product/category not found", show_alert=True)
+            await _render_category_assign(q, cid, page)
+        elif raw.startswith("catasg_rm_"):
+            cid, pid, page = (int(x) for x in raw.replace("catasg_rm_", "", 1).split("_"))
+            if unassign_product_from_category(pid, cid):
+                await q.answer("✅ Removed from category")
+            else:
+                await q.answer("❌ Product was not in this category", show_alert=True)
+            await _render_category_assign(q, cid, page)
+        else:
+            cid, page = (int(x) for x in raw.replace("catasg_", "", 1).split("_"))
+            await q.answer()
+            await _render_category_assign(q, cid, page)
+    except (TypeError, ValueError):
+        await q.answer("❌ Invalid request", show_alert=True)
 
 
 async def edit_category_field_callback(u, c):
