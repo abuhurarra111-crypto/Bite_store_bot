@@ -1901,7 +1901,8 @@ def _category_picker_icon_snug_fill(label):
     return min(40, max(0, -(-(target - width) // 2)))
 
 
-def _category_picker_default_grid_label(label, has_custom_icon=False, snug=True):
+def _category_picker_default_grid_label(label, has_custom_icon=False, snug=True,
+                                        uniform=True):
     """Return the category label for the default grid, honoring owner styling.
 
     v170.72: no forced filler padding — Telegram centers plain labels itself.
@@ -1939,7 +1940,7 @@ def _category_picker_default_grid_label(label, has_custom_icon=False, snug=True)
         # would left-anchor the text and break centering).
         target = 16 if has_custom_icon else 18
         width = _category_picker_visual_width(label)
-        if width < target:
+        if uniform and width < target:
             # Hangul filler renders ≈ 2 latin units wide; floor keeps the
             # final width safely UNDER the target so no device overflows.
             each = max(0, (target - width) // 4)
@@ -2056,8 +2057,15 @@ def _category_picker_button(info, columns=2):
         # Shop Now formula (clean label + icon, ZERO fillers) is now used:
         # premium icon + name render centered together.  No snug fill in any
         # icon mode.
+        # v170.85: a premium API icon renders immediately BEFORE the label
+        # string, so ANY leading filler splits the icon from the name and
+        # breaks the centered pair.  Premium-mode icon tiles therefore stay
+        # perfectly CLEAN (the Shop Now formula — icon + name centered
+        # together); the uniform size fill applies only to tiles whose emoji
+        # lives inside the text.
         label = _category_picker_default_grid_label(
-            label, has_custom_icon=bool(custom_emoji_id), snug=False)
+            label, has_custom_icon=bool(custom_emoji_id), snug=False,
+            uniform=not (custom_emoji_id and icon_mode == "premium"))
 
     # ``_make_btn`` delegates to make_premium_button and therefore maps this
     # sentinel to icon_custom_emoji_id rather than leaking markup to users.

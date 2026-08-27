@@ -125,8 +125,8 @@ class ReferencePickerTests(unittest.TestCase):
         icon = (getattr(tile, "icon_custom_emoji_id", None)
                 or (tile.api_kwargs or {}).get("icon_custom_emoji_id"))
         self.assertEqual(icon, "5310129635848103696")
-        # v170.83: uniform symmetric fill — equal-width tiles, still centered.
-        self.assertEqual(tile.text, PAD * 2 + 'Chatgpt' + PAD * 2)
+        # v170.85: premium-icon tiles stay CLEAN so icon + name center together.
+        self.assertEqual(tile.text, "Chatgpt")
         self.assertEqual(len(tile.text) - len(tile.text.lstrip("\u3164")),
                          len(tile.text) - len(tile.text.rstrip("\u3164")))
 

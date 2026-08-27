@@ -98,7 +98,9 @@ class IconModeTests(unittest.TestCase):
         database.set_setting("shop_category_icon_mode", "premium")
         tile = self._tile()
         self.assertEqual(self._icon_of(tile), "5310129635848103696")
-        self.assertEqual(tile.text, PAD * 2 + "Chatgpt" + PAD * 2)
+        # v170.85: premium tiles carry ZERO fillers → icon + name centered.
+        self.assertEqual(tile.text, "Chatgpt")
+        self.assertNotIn(PAD, tile.text)
 
     def test_panel_toggle_saves_both_modes(self):
         ctx = SimpleNamespace(user_data={})

@@ -130,7 +130,7 @@ class ShopCategoryModeTests(unittest.TestCase):
         # the centered text is pulled left beside the API-pinned icon; there
         # are never fillers on the LEFT of an icon tile.
         # v170.81: snug fill retired — icon + clean text center together.
-        self.assertEqual(category_row[1].text, PAD * 2 + 'Premium' + PAD * 2)  # v170.83 uniform fill
+        self.assertEqual(category_row[1].text, 'Premium')  # v170.85: premium tile clean → pair centered
         self.assertEqual(len(category_row[1].text) - len(category_row[1].text.lstrip("\u3164")),
                          len(category_row[1].text) - len(category_row[1].text.rstrip("\u3164")))  # symmetric = centered
         self.assertEqual(category_row[0].text.strip("\u3164"), "💻 Tools")

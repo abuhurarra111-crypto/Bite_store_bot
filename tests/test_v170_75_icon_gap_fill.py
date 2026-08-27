@@ -89,27 +89,27 @@ class IconGapFillTests(unittest.TestCase):
     def test_default_icon_tile_text_is_pulled_left_beside_the_icon(self):
         icon_tile, plain_tile = self._tiles()
         self.assertEqual(self._icon_of(icon_tile), "5310129635848103696")
-        # v170.83: uniform symmetric fill — equal-width tiles, still centered.
-        self.assertEqual(icon_tile.text, PAD * 1 + "Redeem links" + PAD * 1)
+        # v170.85: premium-icon tiles stay CLEAN so icon + name center together.
+        self.assertEqual(icon_tile.text, "Redeem links")
         # plain tiles get the same symmetric uniform fill (still centered).
         self.assertEqual(plain_tile.text, PAD * 1 + "🤖 Ai Tools" + PAD * 1)
 
     def test_fill_zero_restores_the_old_centered_look(self):
         database.set_setting("shop_category_icon_fill", "0")
         icon_tile, _ = self._tiles()
-        self.assertEqual(icon_tile.text, PAD * 1 + "Redeem links" + PAD * 1)
+        self.assertEqual(icon_tile.text, "Redeem links")
 
     def test_fill_is_clamped_and_editable(self):
         database.set_setting("shop_category_icon_fill", "99")
         icon_tile, _ = self._tiles()
-        # v170.83: fill setting no longer distorts tiles (uniform symmetric).
-        self.assertEqual(icon_tile.text, PAD * 1 + "Redeem links" + PAD * 1)
+        # v170.85: fill setting no longer distorts icon tiles (kept clean).
+        self.assertEqual(icon_tile.text, "Redeem links")
 
     def test_fill_combines_with_center_padding_without_left_fillers(self):
         database.set_setting("shop_category_pad", "3")
         icon_tile, plain_tile = self._tiles()
-        # v170.83: owner pad 3 adds on top of the uniform symmetric fill.
-        self.assertEqual(icon_tile.text, PAD * 4 + "Redeem links" + PAD * 4)
+        # v170.85: owner pad still applies symmetrically on icon tiles.
+        self.assertEqual(icon_tile.text, PAD * 3 + "Redeem links" + PAD * 3)
         self.assertEqual(plain_tile.text, PAD * 4 + "🤖 Ai Tools" + PAD * 4)
 
     def test_right_alignment_deliberately_bypasses_icon_fill(self):
