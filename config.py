@@ -610,3 +610,7 @@ DEFAULT_RESPONSES.update({
         "📡 Use header: `X-API-Key: {api_key}`"
     ),
 })
+
+
+# 🔖 Version indicator (exposed at /health for deploy verification)
+BOT_VERSION = "v170.78"

@@ -1104,7 +1104,11 @@ if _FASTAPI_OK:
 
     @app.get("/health", include_in_schema=False)
     async def _health():
-        return {"status": "ok"}
+        try:
+            from config import BOT_VERSION as _v
+        except Exception:
+            _v = "unknown"
+        return {"status": "ok", "version": _v}
 
     @app.get("/api-docs/", include_in_schema=False)
     async def _api_docs():

@@ -262,6 +262,26 @@ def _heal_orphaned_sessions():
     pass
 
 
+def _heal_icon_fill_one_time_reset():
+    """🆕 v170.78 one-time: the owner lowered the icon gap fill to 4 while
+    debugging the old fixed-fill logic.  Under the new AUTO-snug math the
+    neutral value 8 is required for the text to reach the icon.  This runs
+    exactly once (guarded by a settings flag) so any later manual choice by
+    the owner is respected forever after.
+    """
+    try:
+        from database import get_setting, set_setting
+        if get_setting("icon_fill_v17078_reset", "") == "1":
+            return
+        set_setting("icon_fill_v17078_reset", "1")
+        current = str(get_setting("shop_category_icon_fill", "8") or "8")
+        if current != "8" and current != "0":
+            set_setting("shop_category_icon_fill", "8")
+            _log(f"Icon gap fill one-time reset {current} → 8 (auto-snug neutral)")
+    except Exception as e:
+        _log(f"heal_icon_fill: {e}", "ERROR")
+
+
 def _heal_category_picker_title():
     """🆕 v170.74: refresh the buyer category picker title to the new
     reference-style default ("📁 Categories / Pick a category to browse.")
@@ -467,6 +487,10 @@ def run_all_heals() -> list:
         _heal_category_picker_title()
     except Exception as e:
         _log(f"heal_cat_title outer: {e}", "ERROR")
+    try:
+        _heal_icon_fill_one_time_reset()
+    except Exception as e:
+        _log(f"heal_icon_fill outer: {e}", "ERROR")
     _log("Self-heal completed")
     return list(_HEAL_REPORT)
 
