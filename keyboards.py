@@ -1928,6 +1928,23 @@ def _category_picker_default_grid_label(label, has_custom_icon=False, snug=True)
         align = "center"
     if align == "center":
         left = right = pad
+        # v170.83: Telegram splits a row's width by each button's label
+        # length, so clean short names ("VPNS") rendered as tiny chips next
+        # to long ones — the owner wants every tile as big and equal as the
+        # v170.79 screenshot.  Labels are therefore padded SYMMETRICALLY to
+        # one uniform visual width: equal fillers on BOTH sides keep the
+        # text (and an in-text emoji) perfectly centered while every tile
+        # claims the same footprint.  The target stays safely below the
+        # tile's visible capacity so the string never overflows (overflow
+        # would left-anchor the text and break centering).
+        target = 16 if has_custom_icon else 18
+        width = _category_picker_visual_width(label)
+        if width < target:
+            # Hangul filler renders ≈ 2 latin units wide; floor keeps the
+            # final width safely UNDER the target so no device overflows.
+            each = max(0, (target - width) // 4)
+            left += each
+            right += each
     else:
         # One-sided fillers push the text to the other edge.  Even at pad 0 a
         # small effective padding is required for the shift to be visible.

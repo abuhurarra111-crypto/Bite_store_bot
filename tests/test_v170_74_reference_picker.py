@@ -30,6 +30,8 @@ os.environ["DB_PATH"] = str(Path(_IMPORT_TEMP.name) / "import.db")
 import database
 import handlers_admin
 import keyboards
+
+PAD = "\u3164"
 import self_heal
 from config import DEFAULT_RESPONSES
 
@@ -123,9 +125,10 @@ class ReferencePickerTests(unittest.TestCase):
         icon = (getattr(tile, "icon_custom_emoji_id", None)
                 or (tile.api_kwargs or {}).get("icon_custom_emoji_id"))
         self.assertEqual(icon, "5310129635848103696")
-        # v170.81: snug fill retired — icon + clean text center together.
-        self.assertEqual(tile.text, "Chatgpt")
-        self.assertFalse(tile.text.startswith("\u3164"))
+        # v170.83: uniform symmetric fill — equal-width tiles, still centered.
+        self.assertEqual(tile.text, PAD * 2 + 'Chatgpt' + PAD * 2)
+        self.assertEqual(len(tile.text) - len(tile.text.lstrip("\u3164")),
+                         len(tile.text) - len(tile.text.rstrip("\u3164")))
 
     def test_legacy_emoji_field_never_becomes_api_icon_anymore(self):
         # v170.76: a premium emoji stored in the OLD icon field renders as its
@@ -141,7 +144,7 @@ class ReferencePickerTests(unittest.TestCase):
         icon = (getattr(tile, "icon_custom_emoji_id", None)
                 or (tile.api_kwargs or {}).get("icon_custom_emoji_id"))
         self.assertIsNone(icon)
-        self.assertEqual(tile.text, "🔗 Redeem links")
+        self.assertEqual(tile.text, '🔗 Redeem links')
 
     def test_icon_edit_callback_is_rejected_with_guidance(self):
         cid = database.add_category("Netflix", "🎬")
@@ -187,7 +190,7 @@ class ReferencePickerTests(unittest.TestCase):
             database.get_products_grouped_by_category())
         tile = [r for r in markup.inline_keyboard
                 if str(r[0].callback_data or "").startswith("shopcat_")][0][0]
-        self.assertEqual(tile.text, "🎬 Netflix")
+        self.assertEqual(tile.text, PAD * 2 + '🎬 Netflix' + PAD * 2)
 
 
 if __name__ == "__main__":

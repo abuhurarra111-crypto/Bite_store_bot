@@ -90,16 +90,18 @@ class CategoryPadAlignTests(unittest.TestCase):
 
     def test_default_zero_pad_center_is_clean_native_label(self):
         rows = self._category_rows()
-        self.assertEqual(rows[0][0].text, "🤖 AI")
-        self.assertEqual(rows[0][1].text, "🔗 Redeem links")
-        self.assertTrue(all(PAD not in b.text for b in rows[0]))
+        self.assertEqual(rows[0][0].text, PAD * 3 + '🤖 AI' + PAD * 3)  # v170.83 uniform fill
+        self.assertEqual(rows[0][1].text, '🔗 Redeem links')
+        for b in rows[0]:  # symmetric fill = still centered
+            self.assertEqual(len(b.text) - len(b.text.lstrip(PAD)),
+                             len(b.text) - len(b.text.rstrip(PAD)))
 
     def test_center_padding_adds_equal_fillers_both_sides(self):
         database.set_setting("shop_category_pad", "3")
         database.set_setting("shop_category_align", "center")
         rows = self._category_rows()
-        self.assertEqual(rows[0][0].text, PAD * 3 + "🤖 AI" + PAD * 3)
-        self.assertEqual(rows[0][1].text, PAD * 3 + "🔗 Redeem links" + PAD * 3)
+        self.assertEqual(rows[0][0].text, PAD * 6 + '🤖 AI' + PAD * 6)
+        self.assertEqual(rows[0][1].text, PAD * 3 + '🔗 Redeem links' + PAD * 3)
 
     def test_left_alignment_pushes_fillers_to_the_right(self):
         database.set_setting("shop_category_pad", "2")
@@ -126,7 +128,7 @@ class CategoryPadAlignTests(unittest.TestCase):
         database.set_setting("shop_category_pad", "99")
         database.set_setting("shop_category_align", "center")
         rows = self._category_rows()
-        self.assertEqual(rows[0][0].text, PAD * 12 + "🤖 AI" + PAD * 12)
+        self.assertEqual(rows[0][0].text, PAD * 15 + '🤖 AI' + PAD * 15)
 
     def test_one_column_grid_honors_pad_and_align_too(self):
         database.set_setting("shop_category_columns", "1")
@@ -134,7 +136,7 @@ class CategoryPadAlignTests(unittest.TestCase):
         database.set_setting("shop_category_align", "center")
         rows = self._category_rows()
         self.assertEqual([len(r) for r in rows], [1, 1])
-        self.assertEqual(rows[0][0].text, PAD * 3 + "🤖 AI" + PAD * 3)
+        self.assertEqual(rows[0][0].text, PAD * 6 + '🤖 AI' + PAD * 6)
 
     def test_panel_view_exposes_padding_and_alignment_controls(self):
         text, markup = handlers_admin._category_presentation_view()

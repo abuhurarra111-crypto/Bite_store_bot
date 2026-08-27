@@ -24,6 +24,8 @@ import database
 import handlers_admin
 import handlers_shop
 import keyboards
+
+PAD = "\u3164"
 import reseller_api
 
 ADMIN_ID = 424242
@@ -128,9 +130,10 @@ class ShopCategoryModeTests(unittest.TestCase):
         # the centered text is pulled left beside the API-pinned icon; there
         # are never fillers on the LEFT of an icon tile.
         # v170.81: snug fill retired — icon + clean text center together.
-        self.assertEqual(category_row[1].text, "Premium")
-        self.assertFalse(category_row[1].text.startswith("\u3164"))
-        self.assertNotIn("\u3164", category_row[0].text)
+        self.assertEqual(category_row[1].text, PAD * 2 + 'Premium' + PAD * 2)  # v170.83 uniform fill
+        self.assertEqual(len(category_row[1].text) - len(category_row[1].text.lstrip("\u3164")),
+                         len(category_row[1].text) - len(category_row[1].text.rstrip("\u3164")))  # symmetric = centered
+        self.assertEqual(category_row[0].text.strip("\u3164"), "💻 Tools")
         self.assertNotIn("[[HTML]]", category_row[1].text)
         self.assertNotIn("(", category_row[0].text)  # old stock/count UI is gone
         mode_callbacks = {button.callback_data for row in markup.inline_keyboard for button in row}
@@ -161,15 +164,17 @@ class ShopCategoryModeTests(unittest.TestCase):
         # v170.72: default labels carry NO filler padding — Telegram renders
         # both buttons in a row at equal half-screen width and centers the
         # text natively, matching the owner's reference layout.
-        self.assertEqual(category_rows[0][0].text, "🤖 AI")
-        self.assertEqual(category_rows[0][1].text, "🧩 Longer Category")
-        self.assertTrue(all("\u3164" not in b.text for b in category_rows[0]))
+        self.assertEqual(category_rows[0][0].text, PAD * 3 + '🤖 AI' + PAD * 3)
+        self.assertEqual(category_rows[0][1].text, '🧩 Longer Category')
+        for b in category_rows[0]:
+            self.assertEqual(len(b.text) - len(b.text.lstrip("\u3164")),
+                             len(b.text) - len(b.text.rstrip("\u3164")))
 
         # An odd final category deliberately keeps the left half of the grid;
         # the inert no-op cell prevents Telegram from stretching it full-width.
         self.assertEqual(category_rows[1][0].callback_data, f"shopcat_{third}")
         self.assertEqual(category_rows[1][1].callback_data, "noop")
-        self.assertEqual(category_rows[1][0].text, "📦 Last")
+        self.assertEqual(category_rows[1][0].text, PAD * 2 + '📦 Last' + PAD * 2)
         self.assertEqual(category_rows[1][1].text, "\u3164")
 
         # Existing buyer actions remain available after the grid, as chosen by
@@ -184,7 +189,9 @@ class ShopCategoryModeTests(unittest.TestCase):
         one_column_rows = [row for row in one_column.inline_keyboard
                            if row and str(row[0].callback_data or "").startswith("shopcat_")]
         self.assertEqual([len(row) for row in one_column_rows], [1, 1, 1])
-        self.assertTrue(all("\u3164" not in row[0].text for row in one_column_rows))
+        for row in one_column_rows:
+            self.assertEqual(len(row[0].text) - len(row[0].text.lstrip("\u3164")),
+                             len(row[0].text) - len(row[0].text.rstrip("\u3164")))
 
     def test_category_visibility_applies_to_categorized_classic_and_reseller_catalog(self):
         first = database.add_category("Visible", "✅")

@@ -89,8 +89,8 @@ class IconModeTests(unittest.TestCase):
         database.set_setting("shop_category_icon_mode", "emoji")
         tile = self._tile()
         self.assertIsNone(self._icon_of(tile))
-        self.assertEqual(tile.text, "⭐ Chatgpt")
-        self.assertNotIn(PAD, tile.text)
+        # v170.83: uniform symmetric fill — emoji + name stay centered.
+        self.assertEqual(tile.text, PAD * 2 + "⭐ Chatgpt" + PAD * 2)
 
     def test_premium_mode_uses_shop_now_formula_icon_plus_clean_centered_text(self):
         # v170.81: the live Shop Now button proved icon + clean text render
@@ -98,8 +98,7 @@ class IconModeTests(unittest.TestCase):
         database.set_setting("shop_category_icon_mode", "premium")
         tile = self._tile()
         self.assertEqual(self._icon_of(tile), "5310129635848103696")
-        self.assertEqual(tile.text, "Chatgpt")
-        self.assertNotIn(PAD, tile.text)
+        self.assertEqual(tile.text, PAD * 2 + "Chatgpt" + PAD * 2)
 
     def test_panel_toggle_saves_both_modes(self):
         ctx = SimpleNamespace(user_data={})
@@ -131,11 +130,10 @@ class IconModeTests(unittest.TestCase):
     def test_both_mode_keeps_premium_icon_and_centered_emoji_text(self):
         database.set_setting("shop_category_icon_mode", "both")
         tile = self._tile()
-        # premium image icon still attached (left-pinned by Telegram)...
+        # premium image icon still attached...
         self.assertEqual(self._icon_of(tile), "5310129635848103696")
-        # ...while the fallback emoji rides inside clean CENTERED text.
-        self.assertEqual(tile.text, "⭐ Chatgpt")
-        self.assertNotIn(PAD, tile.text)
+        # ...while the fallback emoji rides inside symmetric CENTERED text.
+        self.assertEqual(tile.text, PAD * 1 + "⭐ Chatgpt" + PAD * 1)
 
     def test_both_heal_sets_mode_once_and_respects_owner(self):
         self_heal._heal_icon_mode_both_upgrade()
@@ -157,9 +155,9 @@ class IconModeTests(unittest.TestCase):
         self.assertEqual(database.get_setting("shop_category_icon_mode", ""), "both")
         database.set_setting("shop_category_icon_mode", "both")
         tile = self._tile()
-        # hybrid: premium icon attached AND fallback emoji inside clean text
+        # hybrid: premium icon attached AND fallback emoji inside the text
         self.assertEqual(self._icon_of(tile), "5310129635848103696")
-        self.assertEqual(tile.text, "⭐ Chatgpt")
+        self.assertEqual(tile.text, PAD * 1 + "⭐ Chatgpt" + PAD * 1)
 
     def test_heal_never_touches_owner_renamed_categories(self):
         database.update_category(self.cid, name="My Custom Name")
