@@ -7985,7 +7985,7 @@ def _category_presentation_view():
         icon_fill = 8
     icon_fill = max(0, min(icon_fill, 14))
     icon_mode = str(get_setting("shop_category_icon_mode", "premium") or "premium").strip().lower()
-    if icon_mode not in ("premium", "emoji"):
+    if icon_mode not in ("premium", "emoji", "both"):
         icon_mode = "premium"
     align_names = {"left": "⬅️ Left", "center": "🎯 Center", "right": "➡️ Right"}
     text = (
@@ -8017,9 +8017,11 @@ def _category_presentation_view():
                               callback_data="catpresent_align_center"),
          InlineKeyboardButton("➡️ Right" + (" ✓" if align == "right" else ""),
                               callback_data="catpresent_align_right")],
-        [InlineKeyboardButton("😊 Emoji (Centered)" + (" ✓" if icon_mode == "emoji" else ""),
+        [InlineKeyboardButton("😊 Emoji" + (" ✓" if icon_mode == "emoji" else ""),
                               callback_data="catpresent_iconmode_emoji"),
-         InlineKeyboardButton("🖼 Premium (Left)" + (" ✓" if icon_mode == "premium" else ""),
+         InlineKeyboardButton("✨ Both" + (" ✓" if icon_mode == "both" else ""),
+                              callback_data="catpresent_iconmode_both"),
+         InlineKeyboardButton("🖼 Premium" + (" ✓" if icon_mode == "premium" else ""),
                               callback_data="catpresent_iconmode_premium")],
         [InlineKeyboardButton(f"🧲 Icon-Text Gap Fill: {icon_fill}", callback_data="noop")],
         [InlineKeyboardButton("➖ 1", callback_data="catpresent_fill_minus"),
@@ -8079,11 +8081,12 @@ async def category_presentation_set_callback(u, c):
     elif raw.startswith("catpresent_iconmode_"):
         # v170.80: premium image icon (Telegram pins left) vs centered emoji.
         value = raw.rsplit("_", 1)[-1]
-        if value not in ("premium", "emoji"):
+        if value not in ("premium", "emoji", "both"):
             await q.answer("❌ Invalid icon style", show_alert=True); return
         set_setting("shop_category_icon_mode", value)
-        await q.answer("✅ Icon style: " + ("😊 Emoji (Centered)" if value == "emoji"
-                                            else "🖼 Premium (Left)"))
+        labels = {"emoji": "😊 Emoji (Centered)", "both": "✨ Both (premium icon + emoji text)",
+                  "premium": "🖼 Premium (Centered)"}
+        await q.answer("✅ Icon style: " + labels[value])
     elif raw.startswith("catpresent_fill_"):
         # v170.75: icon-text gap fill for premium-icon tiles (0-14).
         try:

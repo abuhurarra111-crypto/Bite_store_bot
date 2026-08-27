@@ -1901,7 +1901,7 @@ def _category_picker_icon_snug_fill(label):
     return min(40, max(0, -(-(target - width) // 2)))
 
 
-def _category_picker_default_grid_label(label, has_custom_icon=False):
+def _category_picker_default_grid_label(label, has_custom_icon=False, snug=True):
     """Return the category label for the default grid, honoring owner styling.
 
     v170.72: no forced filler padding — Telegram centers plain labels itself.
@@ -1939,7 +1939,7 @@ def _category_picker_default_grid_label(label, has_custom_icon=False):
     # hard-left beside the icon.  The owner setting fine-tunes it:
     #   0 = off (old centered look) · 8 = neutral auto · below/above 8 nudges
     #   the auto amount smaller/larger.
-    if has_custom_icon and align != "right" and icon_fill > 0:
+    if snug and has_custom_icon and align != "right" and icon_fill > 0:
         snug = _category_picker_icon_snug_fill(label) + (icon_fill - 8)
         right = max(right, max(0, snug))
     if left <= 0 and right <= 0:
@@ -1993,11 +1993,15 @@ def _category_picker_button(info, columns=2):
     # ONLY from a Premium custom emoji inside the category NAME.  A legacy
     # emoji field still shows inline as plain text (e.g. "🤖 Ai Tools") so
     # old categories keep their look, but it never becomes an API icon.
-    # v170.80: owner-selectable icon style.
+    # v170.81: owner-selectable icon style.
     #   "premium" → real premium image icon, Telegram pins it at the LEFT
-    #               edge (client limitation — cannot be centered).
+    #               edge (client limitation — cannot be centered); text is
+    #               pulled snugly beside it.
     #   "emoji"   → the premium emoji's plain fallback stays INSIDE the text,
     #               so emoji + name render perfectly CENTERED together.
+    #   "both"    → hybrid trick: the premium image icon stays at the left
+    #               AND the themed fallback emoji rides inside the centered
+    #               text ("🤖 Chatgpt" centered + premium icon left).
     icon_mode = "premium"
     try:
         from database import get_setting
@@ -2006,13 +2010,14 @@ def _category_picker_button(info, columns=2):
     except Exception:
         pass
     custom_emoji_id = name_emoji_id
-    if icon_mode == "emoji":
+    if icon_mode in ("emoji", "both"):
         fallback = ""
         if name_emoji_id:
             import re as _re
             m = _re.search(r"<tg-emoji[^>]*>(.*?)</tg-emoji>", raw_name)
             fallback = (m.group(1) or "").strip() if m else ""
-        custom_emoji_id = ""
+        if icon_mode == "emoji":
+            custom_emoji_id = ""
         label = f"{fallback or icon_text} {name_text}".strip()
     else:
         label = name_text if custom_emoji_id else f"{icon_text} {name_text}".strip()
@@ -2027,8 +2032,15 @@ def _category_picker_button(info, columns=2):
     else:
         # v170.73: the owner's picker padding + alignment settings apply to
         # every unstylized category tile in both one- and two-column grids.
+        # v170.81 DISCOVERY: the main menu's Shop Now button proves that a
+        # premium icon renders ADJACENT to the button text and centers WITH
+        # it whenever the text is clean — the old left-pinned look was our
+        # own snug-fill fillers pushing the text full-width.  So the exact
+        # Shop Now formula (clean label + icon, ZERO fillers) is now used:
+        # premium icon + name render centered together.  No snug fill in any
+        # icon mode.
         label = _category_picker_default_grid_label(
-            label, has_custom_icon=bool(custom_emoji_id))
+            label, has_custom_icon=bool(custom_emoji_id), snug=False)
 
     # ``_make_btn`` delegates to make_premium_button and therefore maps this
     # sentinel to icon_custom_emoji_id rather than leaking markup to users.

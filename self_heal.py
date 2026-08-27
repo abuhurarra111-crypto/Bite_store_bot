@@ -409,6 +409,23 @@ def _heal_icon_mode_and_themed_fallbacks():
         _log(f"heal_icon_mode: {e}", "ERROR")
 
 
+def _heal_icon_mode_both_upgrade():
+    """🆕 v170.81 ONE-TIME: the main menu's Shop Now button proved a premium
+    icon centers WITH the text when the label carries no filler characters.
+    Premium mode now uses that exact formula, so the owner's real request —
+    premium emoji + name centered together — is finally possible.  Switch the
+    picker back to premium once; later owner toggles are respected forever."""
+    try:
+        from database import get_setting, set_setting
+        if get_setting("icon_mode_v17081_both", "") == "1":
+            return
+        set_setting("icon_mode_v17081_both", "1")
+        set_setting("shop_category_icon_mode", "premium")
+        _log("Icon style set to Premium (icon + name centered, Shop Now formula)")
+    except Exception as e:
+        _log(f"heal_icon_both: {e}", "ERROR")
+
+
 def _heal_category_picker_title():
     """🆕 v170.74: refresh the buyer category picker title to the new
     reference-style default ("📁 Categories / Pick a category to browse.")
@@ -626,6 +643,10 @@ def run_all_heals() -> list:
         _heal_icon_mode_and_themed_fallbacks()
     except Exception as e:
         _log(f"heal_icon_mode outer: {e}", "ERROR")
+    try:
+        _heal_icon_mode_both_upgrade()
+    except Exception as e:
+        _log(f"heal_icon_both outer: {e}", "ERROR")
     _log("Self-heal completed")
     return list(_HEAL_REPORT)
 

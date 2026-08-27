@@ -123,8 +123,8 @@ class ReferencePickerTests(unittest.TestCase):
         icon = (getattr(tile, "icon_custom_emoji_id", None)
                 or (tile.api_kwargs or {}).get("icon_custom_emoji_id"))
         self.assertEqual(icon, "5310129635848103696")
-        # v170.77 auto-snug: "Chatgpt" width 7 → ceil((34-7)/2) = 14 fillers.
-        self.assertEqual(tile.text, "Chatgpt" + "\u3164" * 14)
+        # v170.81: snug fill retired — icon + clean text center together.
+        self.assertEqual(tile.text, "Chatgpt")
         self.assertFalse(tile.text.startswith("\u3164"))
 
     def test_legacy_emoji_field_never_becomes_api_icon_anymore(self):

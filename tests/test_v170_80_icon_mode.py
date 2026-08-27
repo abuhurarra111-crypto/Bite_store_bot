@@ -92,12 +92,14 @@ class IconModeTests(unittest.TestCase):
         self.assertEqual(tile.text, "⭐ Chatgpt")
         self.assertNotIn(PAD, tile.text)
 
-    def test_premium_mode_keeps_left_pinned_icon_with_snug_text(self):
+    def test_premium_mode_uses_shop_now_formula_icon_plus_clean_centered_text(self):
+        # v170.81: the live Shop Now button proved icon + clean text render
+        # CENTERED together — so premium tiles carry ZERO filler characters.
         database.set_setting("shop_category_icon_mode", "premium")
         tile = self._tile()
         self.assertEqual(self._icon_of(tile), "5310129635848103696")
-        self.assertTrue(tile.text.startswith("Chatgpt"))
-        self.assertIn(PAD, tile.text)
+        self.assertEqual(tile.text, "Chatgpt")
+        self.assertNotIn(PAD, tile.text)
 
     def test_panel_toggle_saves_both_modes(self):
         ctx = SimpleNamespace(user_data={})
@@ -125,6 +127,39 @@ class IconModeTests(unittest.TestCase):
         self_heal._heal_icon_mode_and_themed_fallbacks()
         database.invalidate_settings_cache()
         self.assertEqual(database.get_setting("shop_category_icon_mode", ""), "premium")
+
+    def test_both_mode_keeps_premium_icon_and_centered_emoji_text(self):
+        database.set_setting("shop_category_icon_mode", "both")
+        tile = self._tile()
+        # premium image icon still attached (left-pinned by Telegram)...
+        self.assertEqual(self._icon_of(tile), "5310129635848103696")
+        # ...while the fallback emoji rides inside clean CENTERED text.
+        self.assertEqual(tile.text, "⭐ Chatgpt")
+        self.assertNotIn(PAD, tile.text)
+
+    def test_both_heal_sets_mode_once_and_respects_owner(self):
+        self_heal._heal_icon_mode_both_upgrade()
+        database.invalidate_settings_cache()
+        self.assertEqual(database.get_setting("shop_category_icon_mode", ""), "premium")
+        database.set_setting("shop_category_icon_mode", "premium")
+        self_heal._heal_icon_mode_both_upgrade()
+        database.invalidate_settings_cache()
+        self.assertEqual(database.get_setting("shop_category_icon_mode", ""), "premium")
+
+    def test_panel_offers_all_three_modes(self):
+        text, markup = handlers_admin._category_presentation_view()
+        callbacks = {b.callback_data for row in markup.inline_keyboard for b in row}
+        self.assertIn("catpresent_iconmode_both", callbacks)
+        ctx = SimpleNamespace(user_data={})
+        q = _Query("catpresent_iconmode_both")
+        asyncio.run(handlers_admin.category_presentation_set_callback(
+            SimpleNamespace(callback_query=q), ctx))
+        self.assertEqual(database.get_setting("shop_category_icon_mode", ""), "both")
+        database.set_setting("shop_category_icon_mode", "both")
+        tile = self._tile()
+        # hybrid: premium icon attached AND fallback emoji inside clean text
+        self.assertEqual(self._icon_of(tile), "5310129635848103696")
+        self.assertEqual(tile.text, "⭐ Chatgpt")
 
     def test_heal_never_touches_owner_renamed_categories(self):
         database.update_category(self.cid, name="My Custom Name")

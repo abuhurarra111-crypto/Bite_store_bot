@@ -127,7 +127,8 @@ class ShopCategoryModeTests(unittest.TestCase):
         # v170.75: premium-icon tiles get right-side snug fill (default 8) so
         # the centered text is pulled left beside the API-pinned icon; there
         # are never fillers on the LEFT of an icon tile.
-        self.assertEqual(category_row[1].text, "Premium" + "\u3164" * 14)
+        # v170.81: snug fill retired — icon + clean text center together.
+        self.assertEqual(category_row[1].text, "Premium")
         self.assertFalse(category_row[1].text.startswith("\u3164"))
         self.assertNotIn("\u3164", category_row[0].text)
         self.assertNotIn("[[HTML]]", category_row[1].text)
