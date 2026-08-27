@@ -289,9 +289,12 @@ def _reset_database_for_new_deployment():
     if previous_key == deploy_key:
         return False
 
+    # Railway captures long-running Python stdout asynchronously; flush this
+    # policy-critical line so a deployment log can prove the fresh-DB reset.
     print(
         f"🆕 [{_RELEASE_VERSION}] New deployment detected; "
-        f"starting with a fresh database (previous marker: {previous_key or 'none'})."
+        f"starting with a fresh database (previous marker: {previous_key or 'none'}).",
+        flush=True,
     )
     try:
         _ensure_db_parent(DB_PATH)

@@ -30,7 +30,7 @@
 - Suppressed routine `httpx`/`httpcore` request logging and added a defensive token-redaction filter. This prevents Telegram Bot API URLs (which contain the bot token) and other token-shaped values from being emitted in hosted logs.
 
 ## Verification
-- Added focused offline tests for persisted defaults/switches, two-column blue buttons, premium category emoji rendering, ordering, empty-state controls, category header, Shop callback rendering, native/Classic/reseller visibility alignment, stale-page clamping, and credential-safe logging.
+- Added focused offline tests for persisted defaults/switches, two-column blue buttons, premium category emoji rendering, ordering, empty-state controls, category header, Shop callback rendering, native/Classic/reseller visibility alignment, stale-page clamping, credential-safe logging, and fresh-deployment reset/preserve behavior.
 
 ---
 
