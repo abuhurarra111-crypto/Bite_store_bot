@@ -7910,7 +7910,7 @@ def _category_presentation_view():
         f"Grid: *{columns} per row*\n"
         f"Button padding: *{pad}*  (0 = compact, bigger = wider tiles)\n"
         f"Text alignment: *{align_names[align]}*\n"
-        f"Icon-text gap fill: *{icon_fill}*  (premium-icon tiles: text ko icon ke paas khinchta hai; 0 = centered)\n"
+        f"Icon-text gap fill: *{icon_fill}*  (8 = auto-snug best; 0 = off/centered; ±1 nudge)\n"
         f"Empty categories: *{'Shown globally' if show_empty else 'Hidden by default'}*\n\n"
         "⚠️ Bohot zyada padding chhoti screens par text clip kar sakti hai.\n"
         "A category's own ‘Show even when empty’ option overrides the global hidden default."

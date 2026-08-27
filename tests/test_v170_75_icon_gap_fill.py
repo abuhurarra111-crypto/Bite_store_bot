@@ -89,9 +89,9 @@ class IconGapFillTests(unittest.TestCase):
     def test_default_icon_tile_text_is_pulled_left_beside_the_icon(self):
         icon_tile, plain_tile = self._tiles()
         self.assertEqual(self._icon_of(icon_tile), "5310129635848103696")
-        # default fill 8: fillers ONLY on the right so the centered text
-        # shifts left, snug beside the pinned icon.
-        self.assertEqual(icon_tile.text, "Redeem links" + PAD * 8)
+        # default (neutral 8): AUTO snug — "Redeem links" width 12, 2-col
+        # target 34 → ceil(22/2) = 11 right fillers, none on the left.
+        self.assertEqual(icon_tile.text, "Redeem links" + PAD * 11)
         self.assertFalse(icon_tile.text.startswith(PAD))
         # tiles without an API icon stay perfectly clean/centered.
         self.assertEqual(plain_tile.text, "🤖 Ai Tools")
@@ -102,15 +102,15 @@ class IconGapFillTests(unittest.TestCase):
         self.assertEqual(icon_tile.text, "Redeem links")
 
     def test_fill_is_clamped_and_editable(self):
-        database.set_setting("shop_category_icon_fill", "99")
+        database.set_setting("shop_category_icon_fill", "99")  # clamps to 14 → +6 nudge
         icon_tile, _ = self._tiles()
-        self.assertEqual(icon_tile.text, "Redeem links" + PAD * 14)
+        self.assertEqual(icon_tile.text, "Redeem links" + PAD * 17)
 
     def test_fill_combines_with_center_padding_without_left_fillers(self):
         database.set_setting("shop_category_pad", "3")
         icon_tile, plain_tile = self._tiles()
-        # icon tile: pad 3 left + max(pad, fill 8) right
-        self.assertEqual(icon_tile.text, PAD * 3 + "Redeem links" + PAD * 8)
+        # icon tile: pad 3 left + max(pad, auto-snug 11) right
+        self.assertEqual(icon_tile.text, PAD * 3 + "Redeem links" + PAD * 11)
         self.assertEqual(plain_tile.text, PAD * 3 + "🤖 Ai Tools" + PAD * 3)
 
     def test_right_alignment_deliberately_bypasses_icon_fill(self):

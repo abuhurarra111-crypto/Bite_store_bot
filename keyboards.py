@@ -1883,6 +1883,24 @@ def _category_picker_clip_label(label, max_width):
     return ("".join(kept).rstrip() or "Category") + "…"
 
 
+def _category_picker_icon_snug_fill(label):
+    """v170.77: AUTO right-fill so icon-tile text always reaches the icon.
+
+    Telegram clients pin an API icon at the LEFT edge of the button while the
+    text is centered independently in the full tile width.  A fixed filler
+    count therefore worked only for long names — short names ("Rename") were
+    still centered with a gap.  The fill is now computed from the label's own
+    visual width against a target that exceeds the tile width on large
+    phones, guaranteeing overflow: overflowing centered text renders from its
+    START (left-anchored), so the name lands right beside the icon and only
+    invisible fillers are clipped off-screen.
+    """
+    width = _category_picker_visual_width(label)
+    target = 34 if _category_picker_columns() == 2 else 68
+    # Hangul filler is visually ≈ 2 latin units wide.
+    return min(40, max(0, -(-(target - width) // 2)))
+
+
 def _category_picker_default_grid_label(label, has_custom_icon=False):
     """Return the category label for the default grid, honoring owner styling.
 
@@ -1915,13 +1933,15 @@ def _category_picker_default_grid_label(label, has_custom_icon=False):
         # small effective padding is required for the shift to be visible.
         total = max(pad, 3) * 2
         left, right = (0, total) if align == "left" else (total, 0)
-    # v170.75: an API-attached premium icon is pinned by Telegram at the LEFT
-    # edge of the tile while the text is centered separately, leaving an ugly
-    # gap between icon and name.  Right-side fillers pull the centered text
-    # left until it sits snugly beside the icon (one visual space apart).
-    # The fill amount is owner-editable (0 restores the old centered look).
-    if has_custom_icon and align != "right":
-        right = max(right, icon_fill)
+    # v170.77: an API-attached premium icon is pinned by Telegram at the LEFT
+    # edge of the tile while the text is centered separately.  The right-side
+    # fill is now AUTO-SIZED per label so even short names overflow and pin
+    # hard-left beside the icon.  The owner setting fine-tunes it:
+    #   0 = off (old centered look) · 8 = neutral auto · below/above 8 nudges
+    #   the auto amount smaller/larger.
+    if has_custom_icon and align != "right" and icon_fill > 0:
+        snug = _category_picker_icon_snug_fill(label) + (icon_fill - 8)
+        right = max(right, max(0, snug))
     if left <= 0 and right <= 0:
         return label
     return (_CATEGORY_PICKER_PAD_CHAR * left) + label + (_CATEGORY_PICKER_PAD_CHAR * right)
