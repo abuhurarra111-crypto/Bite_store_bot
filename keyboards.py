@@ -1884,19 +1884,19 @@ def _category_picker_clip_label(label, max_width):
 
 
 def _category_picker_default_grid_label(label, has_custom_icon=False):
-    """Left-align an uncustomized two-column category tile to equal width.
+    """Center-align an uncustomized two-column category tile to equal width.
 
-    v170.66 originally centered labels with Hangul filler, which pushed short
-    names like "AI" to the right side of the button.  Left-aligning keeps the
-    icon + name glued together at the start, matching the lower buttons
-    (Categorized / Classic / Buy Points) which are already left-aligned.
+    v170.67: Text is centered with Hangul filler distributed equally on both
+    sides, matching the lower buttons (Categorized / Classic / Buy Points).
     """
     icon_width = 2 if has_custom_icon else 0
     text_width_target = max(1, _CATEGORY_PICKER_TWO_COLUMN_WIDTH - icon_width)
     label = _category_picker_clip_label(label, text_width_target)
     extra = max(0, text_width_target - _category_picker_visual_width(label))
-    # Left-aligned: all filler goes AFTER the label so text starts at the left edge.
-    return label + (_CATEGORY_PICKER_PAD_CHAR * extra)
+    # Center-aligned: filler distributed equally on both sides
+    left_pad = extra // 2
+    right_pad = extra - left_pad
+    return (_CATEGORY_PICKER_PAD_CHAR * left_pad) + label + (_CATEGORY_PICKER_PAD_CHAR * right_pad)
 
 
 def _category_picker_spacer():
