@@ -1380,6 +1380,8 @@ def ensure_shop_category_schema(cursor=None):
                        ("shop_category_align", "center"))
         cursor.execute("INSERT OR IGNORE INTO bot_settings(key,value) VALUES (?,?)",
                        ("shop_category_icon_fill", "8"))
+        cursor.execute("INSERT OR IGNORE INTO bot_settings(key,value) VALUES (?,?)",
+                       ("shop_category_icon_mode", "premium"))
         # Existing categories once had no ordering column.  Give them their old
         # ID order only once; later manual reorders (including a valid order 0)
         # must never be silently overwritten.

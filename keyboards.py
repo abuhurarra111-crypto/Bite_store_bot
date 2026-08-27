@@ -1993,8 +1993,29 @@ def _category_picker_button(info, columns=2):
     # ONLY from a Premium custom emoji inside the category NAME.  A legacy
     # emoji field still shows inline as plain text (e.g. "🤖 Ai Tools") so
     # old categories keep their look, but it never becomes an API icon.
+    # v170.80: owner-selectable icon style.
+    #   "premium" → real premium image icon, Telegram pins it at the LEFT
+    #               edge (client limitation — cannot be centered).
+    #   "emoji"   → the premium emoji's plain fallback stays INSIDE the text,
+    #               so emoji + name render perfectly CENTERED together.
+    icon_mode = "premium"
+    try:
+        from database import get_setting
+        icon_mode = str(get_setting("shop_category_icon_mode", "premium")
+                        or "premium").strip().lower()
+    except Exception:
+        pass
     custom_emoji_id = name_emoji_id
-    label = name_text if custom_emoji_id else f"{icon_text} {name_text}".strip()
+    if icon_mode == "emoji":
+        fallback = ""
+        if name_emoji_id:
+            import re as _re
+            m = _re.search(r"<tg-emoji[^>]*>(.*?)</tg-emoji>", raw_name)
+            fallback = (m.group(1) or "").strip() if m else ""
+        custom_emoji_id = ""
+        label = f"{fallback or icon_text} {name_text}".strip()
+    else:
+        label = name_text if custom_emoji_id else f"{icon_text} {name_text}".strip()
     label = label[:48].rstrip() or "Category"
     # A deliberate per-category or global Button Styler choice remains fully
     # editable.  Otherwise the default two-column picker uses equal-width,

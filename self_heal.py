@@ -359,6 +359,56 @@ def _heal_seed_reference_categories():
         _log(f"heal_seed_categories: {e}", "ERROR")
 
 
+_REFERENCE_FALLBACK_EMOJIS = {
+    "Super Grok": "🚀", "Google Ultra - Family": "🌈", "Chatgpt": "🤖",
+    "Gamma Ai": "✨", "Figma": "🎨", "Canva": "🖌️", "Gemini Ai Pro": "💎",
+    "Outlook Mails": "📧", "Capcut": "✂️", "Lovable": "💜", "Microsoft": "🪟",
+    "Replit": "💻", "Notion": "📝", "Google Flow - Extension": "🔗",
+    "VPNS": "🛡️", "Hostinger": "🌐", "Netflix": "🎬", "Elevate": "📦",
+    "Eleven Labs": "🎙️", "Join Secret": "🔑", "Perplexity": "🔍",
+    "Claude": "🧠",
+}
+
+
+def _heal_icon_mode_and_themed_fallbacks():
+    """🆕 v170.80 ONE-TIME: switch the picker to the owner-requested CENTERED
+    emoji style and replace the generic ⭐ fallback inside each seeded
+    reference category name with a themed emoji (🤖 Chatgpt, 🎬 Netflix...).
+
+    Only names still in the untouched seeded form are updated — any category
+    the owner renamed is left exactly as the owner made it.  The owner can
+    switch back to 🖼 Premium (Left) any time from Picker Settings.
+    """
+    try:
+        import re as _re
+        from database import (get_setting, set_setting, get_categories,
+                              update_category)
+        if get_setting("icon_mode_v17080_set", "") == "1":
+            return
+        set_setting("icon_mode_v17080_set", "1")
+        set_setting("shop_category_icon_mode", "emoji")
+        updated = 0
+        for cat in (get_categories(include_inactive=True, include_hidden=True) or []):
+            name = str(cat["name"] or "")
+            m = _re.match(
+                r'^\[\[HTML\]\]<tg-emoji emoji-id="(\d+)">⭐</tg-emoji> (.+)$', name)
+            if not m:
+                continue
+            themed = _REFERENCE_FALLBACK_EMOJIS.get(m.group(2).strip())
+            if not themed:
+                continue
+            new_name = (f'[[HTML]]<tg-emoji emoji-id="{m.group(1)}">{themed}'
+                        f"</tg-emoji> {m.group(2)}")
+            try:
+                if update_category(int(cat["id"]), name=new_name):
+                    updated += 1
+            except Exception:
+                continue
+        _log(f"Icon mode set to centered emoji; themed fallbacks applied to {updated} categories")
+    except Exception as e:
+        _log(f"heal_icon_mode: {e}", "ERROR")
+
+
 def _heal_category_picker_title():
     """🆕 v170.74: refresh the buyer category picker title to the new
     reference-style default ("📁 Categories / Pick a category to browse.")
@@ -572,6 +622,10 @@ def run_all_heals() -> list:
         _heal_seed_reference_categories()
     except Exception as e:
         _log(f"heal_seed_categories outer: {e}", "ERROR")
+    try:
+        _heal_icon_mode_and_themed_fallbacks()
+    except Exception as e:
+        _log(f"heal_icon_mode outer: {e}", "ERROR")
     _log("Self-heal completed")
     return list(_HEAL_REPORT)
 

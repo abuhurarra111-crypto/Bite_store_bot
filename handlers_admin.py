@@ -7984,6 +7984,9 @@ def _category_presentation_view():
     except Exception:
         icon_fill = 8
     icon_fill = max(0, min(icon_fill, 14))
+    icon_mode = str(get_setting("shop_category_icon_mode", "premium") or "premium").strip().lower()
+    if icon_mode not in ("premium", "emoji"):
+        icon_mode = "premium"
     align_names = {"left": "⬅️ Left", "center": "🎯 Center", "right": "➡️ Right"}
     text = (
         "⚙️ *Category Picker Settings*\n━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -8014,6 +8017,10 @@ def _category_presentation_view():
                               callback_data="catpresent_align_center"),
          InlineKeyboardButton("➡️ Right" + (" ✓" if align == "right" else ""),
                               callback_data="catpresent_align_right")],
+        [InlineKeyboardButton("😊 Emoji (Centered)" + (" ✓" if icon_mode == "emoji" else ""),
+                              callback_data="catpresent_iconmode_emoji"),
+         InlineKeyboardButton("🖼 Premium (Left)" + (" ✓" if icon_mode == "premium" else ""),
+                              callback_data="catpresent_iconmode_premium")],
         [InlineKeyboardButton(f"🧲 Icon-Text Gap Fill: {icon_fill}", callback_data="noop")],
         [InlineKeyboardButton("➖ 1", callback_data="catpresent_fill_minus"),
          InlineKeyboardButton("🧹 0", callback_data="catpresent_fill_zero"),
@@ -8069,6 +8076,14 @@ async def category_presentation_set_callback(u, c):
         pad = max(0, min(pad, 12))
         set_setting("shop_category_pad", str(pad))
         await q.answer(f"✅ Padding: {pad}")
+    elif raw.startswith("catpresent_iconmode_"):
+        # v170.80: premium image icon (Telegram pins left) vs centered emoji.
+        value = raw.rsplit("_", 1)[-1]
+        if value not in ("premium", "emoji"):
+            await q.answer("❌ Invalid icon style", show_alert=True); return
+        set_setting("shop_category_icon_mode", value)
+        await q.answer("✅ Icon style: " + ("😊 Emoji (Centered)" if value == "emoji"
+                                            else "🖼 Premium (Left)"))
     elif raw.startswith("catpresent_fill_"):
         # v170.75: icon-text gap fill for premium-icon tiles (0-14).
         try:
@@ -10714,7 +10729,7 @@ _BACKUP_KEYS_PREFIXES = ("btn_label_", "btn_style_", "grpstyle_", "btn_hidden_",
                          "pd_", "react_", "tplbtn", "tplbtnemoji", "fj_verify",
                          "shop_categorized", "shop_show_empty_categories",
                          "shop_category_columns", "shop_category_pad",
-                         "shop_category_align", "shop_category_icon_fill",
+                         "shop_category_align", "shop_category_icon_fill", "shop_category_icon_mode",
                          "auto_", "show_", "product_emoji")
 
 def _collect_backup():
@@ -10727,7 +10742,7 @@ def _collect_backup():
                 "button_size", "menu_style", "display_format",
                 "main_menu_layout", "shop_categorized", "shop_show_empty_categories",
                 "shop_category_columns", "shop_category_pad", "shop_category_align",
-                "shop_category_icon_fill", "product_emoji"):
+                "shop_category_icon_fill", "shop_category_icon_mode", "product_emoji"):
             out[key] = value
     conn.close()
     return _json.dumps(out, ensure_ascii=False, indent=1)
