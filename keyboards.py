@@ -1884,15 +1884,21 @@ def _category_picker_clip_label(label, max_width):
 
 
 def _category_picker_default_grid_label(label, has_custom_icon=False):
-    """Return category label as-is for center alignment.
+    """Return category label with center-aligned padding.
     
-    v170.69: Removed Hangul Filler padding. Telegram auto-centers short labels
-    in wide buttons, matching lower buttons (Categorized / Classic / Buy Points).
+    v170.70: Hangul Filler distributed equally on both sides for center alignment
+    with full-width buttons, matching the screenshot example.
     """
-    # Clip to max width but return plain text — no filler padding
     icon_width = 2 if has_custom_icon else 0
     text_width_target = max(1, _CATEGORY_PICKER_TWO_COLUMN_WIDTH - icon_width)
-    return _category_picker_clip_label(label, text_width_target)
+    label = _category_picker_clip_label(label, text_width_target)
+    # Calculate padding needed to reach target width
+    current_width = _category_picker_visual_width(label)
+    extra = max(0, text_width_target - current_width)
+    # Center-aligned: filler distributed equally on both sides
+    left_pad = extra // 2
+    right_pad = extra - left_pad
+    return (_CATEGORY_PICKER_PAD_CHAR * left_pad) + label + (_CATEGORY_PICKER_PAD_CHAR * right_pad)
 
 
 def _category_picker_spacer():
