@@ -3334,7 +3334,13 @@ async def ext_prod_emoji_received(update, context):
 
 
 async def ext_prod_cat_callback(update, context):
-    """Pick a category for the product."""
+    """Pick a category for the product — uses the same visual style as the
+    shop category picker (2-column grid, blue primary buttons, equal-width
+    left-aligned tiles) so the owner gets a consistent experience across
+    both screens.  v170.67: category_id on ext_products is preserved across
+    deactivate/activate + supplier re-sync, so re-activating a product
+    returns it to the exact category the owner originally chose."""
+    from keyboards import _category_picker_button, _category_picker_columns, _category_picker_spacer
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
@@ -3349,18 +3355,41 @@ async def ext_prod_cat_callback(update, context):
     cats = [dict(r) for r in get_categories(include_inactive=False, include_hidden=True)]
     if not cats:
         await q.answer("⚠️ No categories exist yet.", show_alert=True); return
-    text = (
+    columns = _category_picker_columns()
+    # Build the same two-column grid as shop_categories_keyboard
+    kb = []
+    buttons = []
+    for cat in cats:
+        try:
+            btn = _category_picker_button(dict(cat), columns=columns)
+            _cb = f"ext_prod_setcat_{eid}_{int(cat['id'])}"
+            try:
+                new_btn = InlineKeyboardButton(btn.text, callback_data=_cb)
+                icon = getattr(btn, "icon_custom_emoji_id", None)
+                if icon: new_btn.icon_custom_emoji_id = icon
+                sty = getattr(btn, "style", None)
+                if sty: new_btn.style = sty
+            except Exception:
+                new_btn = InlineKeyboardButton(str(btn.text or cat["name"])[:48],
+                                                callback_data=_cb)
+            buttons.append(new_btn)
+        except Exception:
+            name = str(cat.get("name") or "Category")[:48]
+            buttons.append(InlineKeyboardButton(name,
+                callback_data=f"ext_prod_setcat_{eid}_{int(cat['id'])}",
+                style="primary"))
+    for pos in range(0, len(buttons), columns):
+        row = buttons[pos:pos + columns]
+        if columns == 2 and len(row) == 1:
+            row.append(_category_picker_spacer())
+        kb.append(row)
+    kb.append([InlineKeyboardButton("🔙 Back", callback_data=f"ext_prod_view_{eid}")])
+    await _safe_edit(q,
         f"🏷 *Pick category for #{eid}*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"_Tap a category to assign this product to it._"
-    )
-    kb = []
-    for cat in cats:
-        kb.append([InlineKeyboardButton(f"🏷 {cat['name'][:40]}",
-                    callback_data=f"ext_prod_setcat_{eid}_{cat['id']}")])
-    kb.append([InlineKeyboardButton("🔙 Back", callback_data=f"ext_prod_view_{eid}")])
-    await _safe_edit(q, text, parse_mode="Markdown",
-                     reply_markup=InlineKeyboardMarkup(kb))
+        f"_Tap a category to assign this product to it._",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(kb))
 
 
 async def ext_prod_setcat_callback(update, context):
