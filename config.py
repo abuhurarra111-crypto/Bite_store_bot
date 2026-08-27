@@ -145,10 +145,9 @@ You're all set to use the bot.""",
     # ══════════════════════════════════════
     "shop_title": "🛍️ Product List\n(Page {page}/{total_pages})",
 
-    "shop_categories_title": """🛍️ *Shop — Categories*
-━━━━━━━━━━━━━━━━━━━━
+    "shop_categories_title": """📁 *Categories*
 
-Select a category to browse:""",
+_Pick a category to browse._""",
 
     "product_detail": """📦 *{name}*
 ━━━━━━━━━━━━━━━━━━━━

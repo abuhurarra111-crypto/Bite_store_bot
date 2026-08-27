@@ -262,6 +262,36 @@ def _heal_orphaned_sessions():
     pass
 
 
+def _heal_category_picker_title():
+    """🆕 v170.74: refresh the buyer category picker title to the new
+    reference-style default ("📁 Categories / Pick a category to browse.")
+    ONLY while the stored text is still the untouched old default.
+    Admin-customized titles are never overwritten.
+    """
+    try:
+        from database import get_connection
+        from config import DEFAULT_RESPONSES
+        old_default = ("🛍️ *Shop — Categories*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                       "Select a category to browse:")
+        new_default = DEFAULT_RESPONSES.get("shop_categories_title", "")
+        if not new_default or new_default == old_default:
+            return
+        conn = get_connection()
+        c = conn.cursor()
+        try:
+            c.execute("SELECT value FROM bot_responses WHERE key='shop_categories_title'")
+            row = c.fetchone()
+            if row and str(row[0]) == old_default:
+                c.execute("UPDATE bot_responses SET value=? WHERE key='shop_categories_title'",
+                          (new_default,))
+                conn.commit()
+                _log("Category picker title refreshed to the new reference default")
+        finally:
+            conn.close()
+    except Exception as e:
+        _log(f"heal_cat_title: {e}", "ERROR")
+
+
 def _heal_bybit_instruction_text():
     """🆕 v112: update the Bybit Pay instruction default ONLY when it is still
     the untouched old default ("Transaction Hash"). Admin-customized text is
@@ -433,6 +463,10 @@ def run_all_heals() -> list:
         _heal_bybit_instruction_text()
     except Exception as e:
         _log(f"heal_bybit outer: {e}", "ERROR")
+    try:
+        _heal_category_picker_title()
+    except Exception as e:
+        _log(f"heal_cat_title outer: {e}", "ERROR")
     _log("Self-heal completed")
     return list(_HEAL_REPORT)
 

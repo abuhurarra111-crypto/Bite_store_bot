@@ -183,15 +183,15 @@ RESPONSE_TRANSLATIONS = {
     },
 
     "shop_categories_title": {
-        "ur":  "🛍️ *دکان — زمرے*\n━━━━━━━━━━━━━━━━━━━━\n\nبراؤز کرنے کے لیے زمرہ منتخب کریں:",
-        "ru":  "🛍️ *Shop — Categories*\n━━━━━━━━━━━━━━━━━━━━\n\nBrowse k liye category select karein:",
-        "hi":  "🛍️ *Shop — Categories*\n━━━━━━━━━━━━━━━━━━━━\n\nBrowse karne ke liye category choose karo:",
-        "ar":  "🛍️ *المتجر — الفئات*\n━━━━━━━━━━━━━━━━━━━━\n\nاختر فئة للتصفح:",
-        "es":  "🛍️ *Tienda — Categorías*\n━━━━━━━━━━━━━━━━━━━━\n\nSelecciona una categoría:",
-        "fr":  "🛍️ *Boutique — Catégories*\n━━━━━━━━━━━━━━━━━━━━\n\nSélectionnez une catégorie :",
-        "ru_lang": "🛍️ *Магазин — Категории*\n━━━━━━━━━━━━━━━━━━━━\n\nВыберите категорию:",
-        "zh":  "🛍️ *商店 — 分类*\n━━━━━━━━━━━━━━━━━━━━\n\n选择一个分类浏览:",
-        "de":  "🛍️ *Shop — Kategorien*\n━━━━━━━━━━━━━━━━━━━━\n\nWähle eine Kategorie:",
+        "ur":  "📁 *زمرے*\n\n_براؤز کرنے کے لیے زمرہ منتخب کریں۔_",
+        "ru":  "📁 *Categories*\n\n_Pick a category to browse._",
+        "hi":  "📁 *Categories*\n\n_Browse karne ke liye category choose karo._",
+        "ar":  "📁 *الفئات*\n\n_اختر فئة للتصفح._",
+        "es":  "📁 *Categorías*\n\n_Elige una categoría para explorar._",
+        "fr":  "📁 *Catégories*\n\n_Choisissez une catégorie à parcourir._",
+        "ru_lang": "📁 *Категории*\n\n_Выберите категорию для просмотра._",
+        "zh":  "📁 *分类*\n\n_选择一个分类浏览。_",
+        "de":  "📁 *Kategorien*\n\n_Wähle eine Kategorie zum Stöbern._",
     },
 
     "product_detail": {
