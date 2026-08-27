@@ -121,6 +121,32 @@ class SeedRemovalTests(unittest.TestCase):
                   database.get_products_in_category(int(cat[0]["id"]))}
         self.assertEqual(inside, set(pids[:2]))  # exactly the ticked two
 
+    def test_product_rows_use_warranty_style_colors_icons_and_price(self):
+        # v170.86: both product lists mirror the Warranty list — full-width
+        # colored buttons, premium emoji icon, "#id Name — price".
+        pid = database.add_product(
+            None, '[[HTML]]<tg-emoji emoji-id="777">🔥</tg-emoji> Prod', "x", 9.99, 0.0, 5)
+        ctx = SimpleNamespace(user_data={})
+        ctx.user_data["cat_n"] = "X"
+        ctx.user_data["cat_selected_products"] = set()
+        text, markup, _ = handlers_admin._category_product_picker_content(ctx, page=0)
+        row = [b for r in markup.inline_keyboard for b in r
+               if str(b.callback_data or "").startswith("catpick_tgl_")][0]
+        style = getattr(row, "style", None) or (row.api_kwargs or {}).get("style")
+        icon = (getattr(row, "icon_custom_emoji_id", None)
+                or (row.api_kwargs or {}).get("icon_custom_emoji_id"))
+        self.assertEqual(style, "primary")        # unticked = blue
+        self.assertEqual(icon, "777")             # premium icon attached
+        self.assertIn("☐", row.text)              # tick mark stays visible
+        self.assertIn("$9.99", row.text)          # warranty-style price
+        ctx.user_data["cat_selected_products"] = {pid}
+        text, markup, _ = handlers_admin._category_product_picker_content(ctx, page=0)
+        row = [b for r in markup.inline_keyboard for b in r
+               if str(b.callback_data or "").startswith("catpick_tgl_")][0]
+        style = getattr(row, "style", None) or (row.api_kwargs or {}).get("style")
+        self.assertEqual(style, "success")        # ticked = green
+        self.assertIn("✅", row.text)
+
     def test_non_admin_cannot_finish_bulk_flow(self):
         ctx = SimpleNamespace(user_data={"cat_n": "X"})
         q = _Query("catpick_finish", user_id=999)

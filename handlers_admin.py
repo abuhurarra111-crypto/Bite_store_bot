@@ -349,16 +349,23 @@ def _category_product_picker_content(context, page=0):
             plain_name = plain_name[:43].rstrip() + "..."
         stock = int(p.get("stock") or 0)
         mark = "✅" if pid in selected else "☐"
-        label = f"{mark} #{pid} · {plain_name or f'Product #{pid}'}  ({stock})"
+        # v170.86: warranty-style row — premium emoji icon + "#id Name — price",
+        # GREEN when ticked, BLUE otherwise, exactly like the Warranty list.
+        price_txt = fmt_price(p.get("price"))
         callback_data = f"catpick_tgl_{pid}_{page}"
+        row_style = "success" if pid in selected else "primary"
         if premium_id and make_premium_button:
-            # ``make_premium_button(..., emoji_id=...)`` deliberately strips a
-            # leading symbol cluster to avoid duplicate emoji icons.  Keep the
-            # checkbox after normal text so its selected/unselected state stays
-            # visible for Premium-name products too.
-            premium_label = f"Product #{pid} · {mark} {plain_name or f'Product #{pid}'}  ({stock})"
-            rows.append([make_premium_button(premium_label, emoji_id=premium_id,
-                                               callback_data=callback_data)])
+            # Premium icon strips the leading symbol — keep the ✅/☐ mark
+            # after the id so the tick state never disappears.
+            label = f"#{pid} · {mark} {plain_name[:25] or f'Product #{pid}'} — {price_txt} ({stock})"
+            rows.append([make_premium_button(label, emoji_id=premium_id,
+                                             style=row_style,
+                                             callback_data=callback_data)])
+            continue
+        label = f"{mark} #{pid} {plain_name[:25] or f'Product #{pid}'} — {price_txt} ({stock})"
+        if make_premium_button:
+            rows.append([make_premium_button(label, style=row_style,
+                                             callback_data=callback_data)])
         else:
             rows.append([InlineKeyboardButton(label, callback_data=callback_data)])
 
@@ -7738,14 +7745,47 @@ async def _render_category_assign(q, cid, page=0):
         "➕ tap = add to category · ➖ tap = remove"
     )
     kb = []
+    # v170.86: warranty-style product rows — full-width GREEN buttons with the
+    # product's own premium emoji icon and "#id Name — price", exactly like
+    # the list inside the Warranty button.  ➖ rows use RED so remove taps are
+    # unmistakable.
+    try:
+        from button_system import make_premium_button, extract_emoji_from_html
+        _have_helpers = True
+    except Exception:
+        _have_helpers = False
+
+    def _wr_row(p, prefix, style, cb):
+        raw_name = str(p.get("name") or "Product")
+        eid = ""
+        plain = raw_name
+        if _have_helpers:
+            try:
+                _eid, _plain = extract_emoji_from_html(raw_name)
+                if _plain:
+                    plain = _plain
+                eid = _eid or ""
+            except Exception:
+                pass
+        plain = html_strip_tags(plain).replace("\n", " ").strip()
+        price_txt = fmt_price(p.get("price"))
+        if eid and _have_helpers:
+            # A premium icon strips the label's LEADING symbol, so the ➕/➖
+            # mark rides after the id where it always stays visible.
+            label = f"#{int(p['id'])} · {prefix} {plain[:25]} — {price_txt}"
+            return [make_premium_button(label, emoji_id=eid, style=style,
+                                        callback_data=cb)]
+        label = f"{prefix} #{int(p['id'])} {plain[:25]} — {price_txt}"
+        if _have_helpers:
+            return [make_premium_button(label, style=style, callback_data=cb)]
+        return [InlineKeyboardButton(label, callback_data=cb)]
+
     for p in chunk:
-        pname = html_strip_tags(str(p.get("name") or "Product")).strip()[:30]
-        kb.append([InlineKeyboardButton(
-            f"➕ {pname}", callback_data=f"catasg_add_{cid}_{int(p['id'])}_{page}")])
+        kb.append(_wr_row(p, "➕", "success",
+                          f"catasg_add_{cid}_{int(p['id'])}_{page}"))
     for p in assigned[:6]:
-        pname = html_strip_tags(str(p.get("name") or "Product")).strip()[:30]
-        kb.append([InlineKeyboardButton(
-            f"➖ {pname}", callback_data=f"catasg_rm_{cid}_{int(p['id'])}_{page}")])
+        kb.append(_wr_row(p, "➖", "danger",
+                          f"catasg_rm_{cid}_{int(p['id'])}_{page}"))
     if pages > 1:
         kb.append([
             InlineKeyboardButton("⬅️ Prev", callback_data=f"catasg_{cid}_{max(0, page - 1)}"),
