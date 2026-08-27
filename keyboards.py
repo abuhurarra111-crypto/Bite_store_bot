@@ -1845,7 +1845,73 @@ def _category_picker_columns():
         return 2
 
 
-def _category_picker_button(info):
+# v170.66: Telegram sizes inline buttons from their label text.  Category names
+# such as "AI" therefore used to look like tiny chips beside longer names even
+# though both buttons occupied one Python keyboard row.  The reference layout
+# is a true visual two-column grid, so unstylized category labels are clipped
+# and padded to one consistent, mobile-safe visual width.  A real owner style
+# override still wins through the existing Button Styler.
+_CATEGORY_PICKER_TWO_COLUMN_WIDTH = 24
+_CATEGORY_PICKER_PAD_CHAR = "\u3164"  # Hangul Filler: visibly blank, not trimmed by Telegram.
+
+
+def _category_picker_visual_width(text):
+    """Approximate Telegram label width using the Button Styler's emoji rule."""
+    width = 0
+    for char in str(text or ""):
+        codepoint = ord(char)
+        width += 2 if codepoint >= 0x1F000 or 0x2600 <= codepoint <= 0x27BF else 1
+    return width
+
+
+def _category_picker_clip_label(label, max_width):
+    """Keep a two-column category label within its fixed visual slot."""
+    label = str(label or "").strip()
+    if _category_picker_visual_width(label) <= max_width:
+        return label
+    # Reserve one visual unit for a clear truncation marker.  This prevents an
+    # unusually long category name from making just one button wider than its
+    # paired category and breaking the screenshot-style grid.
+    budget = max(1, int(max_width) - 1)
+    kept, used = [], 0
+    for char in label:
+        char_width = _category_picker_visual_width(char)
+        if used + char_width > budget:
+            break
+        kept.append(char)
+        used += char_width
+    return ("".join(kept).rstrip() or "Category") + "…"
+
+
+def _category_picker_default_grid_label(label, has_custom_icon=False):
+    """Center/pad an uncustomized two-column category tile to equal width.
+
+    Telegram renders a Premium icon outside ``text``.  Reserve its visual slot
+    but put all filler after the text so the icon and name stay glued together.
+    """
+    icon_width = 2 if has_custom_icon else 0
+    text_width_target = max(1, _CATEGORY_PICKER_TWO_COLUMN_WIDTH - icon_width)
+    label = _category_picker_clip_label(label, text_width_target)
+    extra = max(0, text_width_target - _category_picker_visual_width(label))
+    if has_custom_icon:
+        return label + (_CATEGORY_PICKER_PAD_CHAR * extra)
+    left = extra // 2
+    return ((_CATEGORY_PICKER_PAD_CHAR * left) + label +
+            (_CATEGORY_PICKER_PAD_CHAR * (extra - left)))
+
+
+def _category_picker_spacer():
+    """Safe blank second cell so an odd final category remains half-width.
+
+    Telegram has no non-button grid spacer.  A Hangul-filler no-op has a stable
+    half-row footprint, exposes no product/category action, and is handled by
+    the app's existing generic ``noop`` callback.
+    """
+    return InlineKeyboardButton(_CATEGORY_PICKER_PAD_CHAR * _CATEGORY_PICKER_TWO_COLUMN_WIDTH,
+                                callback_data="noop")
+
+
+def _category_picker_button(info, columns=2):
     """Build one category button with a real Telegram custom-emoji icon.
 
     Category names and icons are stored in the same ``[[HTML]]<tg-emoji>``
@@ -1881,8 +1947,16 @@ def _category_picker_button(info):
     custom_emoji_id = name_emoji_id or icon_emoji_id
     label = name_text if custom_emoji_id else f"{icon_text} {name_text}".strip()
     label = label[:48].rstrip() or "Category"
+    # A deliberate per-category or global Button Styler choice remains fully
+    # editable.  Otherwise the default two-column picker uses equal-width,
+    # centered tiles exactly like the owner-provided reference layout.
     if is_styled(f"cat_{cid}"):
         label = _apply_styler(f"cat_{cid}", label)
+    elif is_styled("shop_category"):
+        label = _apply_styler("shop_category", label)
+    elif int(columns or 2) == 2:
+        label = _category_picker_default_grid_label(
+            label, has_custom_icon=bool(custom_emoji_id))
     else:
         label = _apply_styler("shop_category", label)
 
@@ -1901,28 +1975,39 @@ def shop_categories_keyboard(grouped, user_mode="categorized"):
     """Compact user-facing category picker.
 
     Categories are provided by the database in persisted display order.  The
-    default grid is two per row and each category defaults to Telegram's blue
-    ``primary`` style.  Unlike the old picker, counts are intentionally omitted
-    for the clean screenshot-style visual; empty categories are decided by the
-    database presentation controls before they reach this function.
+    editable default is two per row; unstylized buttons receive equal visual
+    width so each pair fills one row like the owner-provided reference.  Each
+    category defaults to Telegram's blue ``primary`` style.  Unlike the old
+    picker, counts are intentionally omitted for the clean screenshot-style
+    visual; empty categories are decided by the database presentation controls
+    before they reach this function.
     """
     kb = []
     buttons = []
+    columns = _category_picker_columns()
     for _cid, info in (grouped or {}).items():
         try:
-            buttons.append(_category_picker_button(dict(info)))
+            buttons.append(_category_picker_button(dict(info), columns=columns))
         except Exception:
             # A malformed legacy label must not prevent every other category
-            # from appearing.  The safe plain fallback remains blue.
+            # from appearing.  The safe plain fallback remains blue and uses
+            # the same default two-column width treatment.
             try:
                 name = str(info.get("name") or "Category")[:48]
+                if columns == 2:
+                    name = _category_picker_default_grid_label(name)
                 buttons.append(_make_btn(name, callback_data=f"shopcat_{int(_cid)}",
                                          style="primary"))
             except Exception:
                 pass
-    columns = _category_picker_columns()
     for pos in range(0, len(buttons), columns):
-        kb.append(buttons[pos:pos + columns])
+        row = buttons[pos:pos + columns]
+        # Owner-selected behavior for an odd count: keep the real category in
+        # the left half of the fixed two-column grid instead of stretching it
+        # across a full row.
+        if columns == 2 and len(row) == 1:
+            row.append(_category_picker_spacer())
+        kb.append(row)
     if not buttons:
         kb.append([InlineKeyboardButton("📭 No visible categories yet", callback_data="shop")])
 

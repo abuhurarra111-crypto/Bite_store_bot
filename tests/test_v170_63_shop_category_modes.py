@@ -68,6 +68,10 @@ class ShopCategoryModeTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         database.DB_PATH = str(Path(self.tmp.name) / "shop.db")
+        # A test changes the persisted grid setting below.  The production cache
+        # is intentionally short-lived, but a new temporary DB must never read
+        # that prior database's cached value.
+        database.invalidate_settings_cache()
         database._WAL_SETUP_DONE = False
         database.setup_database()
         database.migrate_reseller_tables()
@@ -120,6 +124,10 @@ class ShopCategoryModeTests(unittest.TestCase):
         self.assertEqual(category_row[1].callback_data, f"shopcat_{second}")
         self.assertEqual(category_row[1].style, "primary")
         self.assertEqual(category_row[1].icon_custom_emoji_id, "123456789")
+        # The Premium icon is outside button.text, so the default fixed grid
+        # reserves its visual slot before padding the text.
+        self.assertEqual(keyboards._category_picker_visual_width(category_row[1].text) + 2,
+                         keyboards._CATEGORY_PICKER_TWO_COLUMN_WIDTH)
         self.assertNotIn("[[HTML]]", category_row[1].text)
         self.assertNotIn("(", category_row[0].text)  # old stock/count UI is gone
         mode_callbacks = {button.callback_data for row in markup.inline_keyboard for button in row}
@@ -131,6 +139,51 @@ class ShopCategoryModeTests(unittest.TestCase):
         self.assertEqual(list(grouped), [first, second, empty])
         self.assertTrue(database.move_category(empty, "up"))
         self.assertEqual(list(database.get_products_grouped_by_category()), [first, empty, second])
+
+    def test_category_picker_default_two_column_tiles_are_equal_width_with_safe_odd_spacer(self):
+        first = database.add_category("AI", "🤖")
+        second = database.add_category("Longer Category", "🧩")
+        third = database.add_category("Last", "📦")
+        self._product(first, "A")
+        self._product(second, "B")
+        self._product(third, "C")
+        database.set_setting("shop_category_columns", "2")
+
+        markup = keyboards.shop_categories_keyboard(database.get_products_grouped_by_category())
+        category_rows = [row for row in markup.inline_keyboard
+                         if row and str(row[0].callback_data or "").startswith("shopcat_")]
+        self.assertEqual(len(category_rows), 2)
+        self.assertEqual([b.callback_data for b in category_rows[0]],
+                         [f"shopcat_{first}", f"shopcat_{second}"])
+        # The default labels are padded to a shared visual target, so short
+        # category names cannot turn into tiny chips beside longer names.
+        first_widths = [keyboards._category_picker_visual_width(button.text)
+                        + (2 if getattr(button, "icon_custom_emoji_id", None) else 0)
+                        for button in category_rows[0]]
+        self.assertEqual(first_widths, [keyboards._CATEGORY_PICKER_TWO_COLUMN_WIDTH] * 2)
+
+        # An odd final category deliberately keeps the left half of the grid;
+        # the inert no-op cell prevents Telegram from stretching it full-width.
+        self.assertEqual(category_rows[1][0].callback_data, f"shopcat_{third}")
+        self.assertEqual(category_rows[1][1].callback_data, "noop")
+        self.assertEqual(keyboards._category_picker_visual_width(category_rows[1][0].text),
+                         keyboards._CATEGORY_PICKER_TWO_COLUMN_WIDTH)
+        self.assertEqual(keyboards._category_picker_visual_width(category_rows[1][1].text),
+                         keyboards._CATEGORY_PICKER_TWO_COLUMN_WIDTH)
+
+        # Existing buyer actions remain available after the grid, as chosen by
+        # the owner: Classic and Buy Points are not removed for screenshot UX.
+        callbacks = {button.callback_data for row in markup.inline_keyboard for button in row}
+        self.assertTrue({"shopmode_categorized", "shopmode_classic", "buy_points", "main_menu"}
+                        .issubset(callbacks))
+
+        # The owner can still deliberately choose the legacy one-column layout.
+        database.set_setting("shop_category_columns", "1")
+        one_column = keyboards.shop_categories_keyboard(database.get_products_grouped_by_category())
+        one_column_rows = [row for row in one_column.inline_keyboard
+                           if row and str(row[0].callback_data or "").startswith("shopcat_")]
+        self.assertEqual([len(row) for row in one_column_rows], [1, 1, 1])
+        self.assertTrue(all("\u3164" not in row[0].text for row in one_column_rows))
 
     def test_category_visibility_applies_to_categorized_classic_and_reseller_catalog(self):
         first = database.add_category("Visible", "✅")

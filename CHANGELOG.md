@@ -8,6 +8,22 @@
 
 ---
 
+# 🚀 v170.66 (2026-08-27) — 🗂️ FULL-WIDTH TWO-COLUMN CATEGORY GRID
+
+## Reference-layout category buttons
+- The buyer Category picker now gives each unstylized category a fixed, equal visual width in the default **two-column** grid. Short labels can no longer render as tiny chips beside longer category names; each pair fills the available keyboard row like the owner-provided reference.
+- Long display labels are safely compacted only for that button slot, preventing one oversized name from breaking its paired tile. Category records and their full names are unchanged.
+- An odd final category remains in the left half of the two-column grid, with a safe inert spacer in the right half instead of being stretched across the full row.
+- The global picker setting remains owner-editable: **two per row** is still the default, while a deliberate one-per-row setting remains available. Existing per-category and global Button Styler overrides still take precedence.
+
+## Preserved buyer actions
+- Categorized/Classic mode selection and **Buy Points** remain in the picker footer, as explicitly requested. No category, product, stock, order, delivery, or account behavior changed.
+
+## Verification
+- Added regression coverage for equal-width default category tiles, the safe odd-row spacer, Premium-icon width reservation, preserved Classic/Buy Points/Home actions, and the still-editable one-column override.
+
+---
+
 # 🚀 v170.65 (2026-08-27) — 🏷️ SAFE CATEGORY MANAGEMENT + ASSIGNMENT WIZARD
 
 ## Non-destructive category deletion
