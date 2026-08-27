@@ -1884,18 +1884,38 @@ def _category_picker_clip_label(label, max_width):
 
 
 def _category_picker_default_grid_label(label, has_custom_icon=False):
-    """Return the clean category label for the default two-column grid.
+    """Return the category label for the default grid, honoring owner styling.
 
-    v170.72: NO filler padding at all.  Telegram already renders every inline
-    button in the same row at an identical half-screen width and centers the
-    label text itself (exactly like the owner's reference bot).  The old
-    Hangul-filler padding (v170.66–v170.71) made labels longer than the tile,
-    so Telegram clipped them on the right ("Ai Tool…", "Redeem lin…") and the
-    text looked pushed to one side.  Only genuinely long names are clipped so
-    a predictable "…" appears instead of an arbitrary mid-word cut.
+    v170.72: no forced filler padding — Telegram centers plain labels itself.
+    v170.73: owner-editable padding + text alignment via the Category Picker
+    Settings panel (Admin → Categories → Picker Settings):
+      * ``shop_category_pad``   (0-12): invisible filler units that make the
+        label look wider/fuller ("bigger" tiles). 0 = compact native look.
+      * ``shop_category_align`` (left/center/right): where the text sits.
+        Left/right need fillers on the opposite side to visibly shift text,
+        so a minimum effective padding is used for those modes even at 0.
     """
     max_width = _CATEGORY_PICKER_TWO_COLUMN_WIDTH - (2 if has_custom_icon else 0)
-    return _category_picker_clip_label(label, max_width)
+    label = _category_picker_clip_label(label, max_width)
+    try:
+        from database import get_setting
+        pad = int(get_setting("shop_category_pad", "0") or 0)
+        align = str(get_setting("shop_category_align", "center") or "center").strip().lower()
+    except Exception:
+        pad, align = 0, "center"
+    pad = max(0, min(pad, 12))
+    if align not in ("left", "center", "right"):
+        align = "center"
+    if align == "center":
+        left = right = pad
+    else:
+        # One-sided fillers push the text to the other edge.  Even at pad 0 a
+        # small effective padding is required for the shift to be visible.
+        total = max(pad, 3) * 2
+        left, right = (0, total) if align == "left" else (total, 0)
+    if left <= 0 and right <= 0:
+        return label
+    return (_CATEGORY_PICKER_PAD_CHAR * left) + label + (_CATEGORY_PICKER_PAD_CHAR * right)
 
 
 def _category_picker_spacer():
@@ -1953,11 +1973,11 @@ def _category_picker_button(info, columns=2):
         label = _apply_styler(f"cat_{cid}", label)
     elif is_styled("shop_category"):
         label = _apply_styler("shop_category", label)
-    elif int(columns or 2) == 2:
+    else:
+        # v170.73: the owner's picker padding + alignment settings apply to
+        # every unstylized category tile in both one- and two-column grids.
         label = _category_picker_default_grid_label(
             label, has_custom_icon=bool(custom_emoji_id))
-    else:
-        label = _apply_styler("shop_category", label)
 
     # ``_make_btn`` delegates to make_premium_button and therefore maps this
     # sentinel to icon_custom_emoji_id rather than leaking markup to users.
@@ -1993,8 +2013,7 @@ def shop_categories_keyboard(grouped, user_mode="categorized"):
             # the same default two-column width treatment.
             try:
                 name = str(info.get("name") or "Category")[:48]
-                if columns == 2:
-                    name = _category_picker_default_grid_label(name)
+                name = _category_picker_default_grid_label(name)
                 buttons.append(_make_btn(name, callback_data=f"shopcat_{int(_cid)}",
                                          style="primary"))
             except Exception:

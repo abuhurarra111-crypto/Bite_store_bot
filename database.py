@@ -1373,6 +1373,11 @@ def ensure_shop_category_schema(cursor=None):
                        ("shop_show_empty_categories", "0"))
         cursor.execute("INSERT OR IGNORE INTO bot_settings(key,value) VALUES (?,?)",
                        ("shop_category_columns", "2"))
+        # v170.73: owner-editable picker tile padding + text alignment.
+        cursor.execute("INSERT OR IGNORE INTO bot_settings(key,value) VALUES (?,?)",
+                       ("shop_category_pad", "0"))
+        cursor.execute("INSERT OR IGNORE INTO bot_settings(key,value) VALUES (?,?)",
+                       ("shop_category_align", "center"))
         # Existing categories once had no ordering column.  Give them their old
         # ID order only once; later manual reorders (including a valid order 0)
         # must never be silently overwritten.

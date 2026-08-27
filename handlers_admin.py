@@ -7882,22 +7882,30 @@ async def category_style_callback(u, c):
         ]))
 
 
-async def category_presentation_callback(u, c):
-    """Global picker settings: two-column default and empty-category policy."""
-    q = u.callback_query
-    if q.from_user.id != ADMIN_ID:
-        await q.answer("❌", show_alert=True); return
-    await q.answer()
+def _category_presentation_view():
+    """Shared Category Picker Settings panel (v170.73: + padding & alignment)."""
     show_empty = get_setting("shop_show_empty_categories", "0") == "1"
     try:
         columns = int(get_setting("shop_category_columns", "2") or 2)
     except Exception:
         columns = 2
     columns = columns if columns in (1, 2) else 2
+    try:
+        pad = int(get_setting("shop_category_pad", "0") or 0)
+    except Exception:
+        pad = 0
+    pad = max(0, min(pad, 12))
+    align = str(get_setting("shop_category_align", "center") or "center").strip().lower()
+    if align not in ("left", "center", "right"):
+        align = "center"
+    align_names = {"left": "⬅️ Left", "center": "🎯 Center", "right": "➡️ Right"}
     text = (
         "⚙️ *Category Picker Settings*\n━━━━━━━━━━━━━━━━━━━━\n\n"
         f"Grid: *{columns} per row*\n"
+        f"Button padding: *{pad}*  (0 = compact, bigger = wider tiles)\n"
+        f"Text alignment: *{align_names[align]}*\n"
         f"Empty categories: *{'Shown globally' if show_empty else 'Hidden by default'}*\n\n"
+        "⚠️ Bohot zyada padding chhoti screens par text clip kar sakti hai.\n"
         "A category's own ‘Show even when empty’ option overrides the global hidden default."
     )
     kb = [
@@ -7908,9 +7916,30 @@ async def category_presentation_callback(u, c):
                               callback_data="catpresent_cols_1"),
          InlineKeyboardButton("2️⃣ Two per row" + (" ✓" if columns == 2 else ""),
                               callback_data="catpresent_cols_2")],
+        [InlineKeyboardButton(f"📐 Button Padding: {pad}", callback_data="noop")],
+        [InlineKeyboardButton("➖ 1", callback_data="catpresent_pad_minus"),
+         InlineKeyboardButton("🧹 0", callback_data="catpresent_pad_zero"),
+         InlineKeyboardButton("➕ 1", callback_data="catpresent_pad_plus"),
+         InlineKeyboardButton("➕ 3", callback_data="catpresent_pad_plus3")],
+        [InlineKeyboardButton("⬅️ Left" + (" ✓" if align == "left" else ""),
+                              callback_data="catpresent_align_left"),
+         InlineKeyboardButton("🎯 Center" + (" ✓" if align == "center" else ""),
+                              callback_data="catpresent_align_center"),
+         InlineKeyboardButton("➡️ Right" + (" ✓" if align == "right" else ""),
+                              callback_data="catpresent_align_right")],
         [InlineKeyboardButton("🔙 Back to Categories", callback_data="admin_categories")],
     ]
-    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    return text, InlineKeyboardMarkup(kb)
+
+
+async def category_presentation_callback(u, c):
+    """Global picker settings: grid, padding, alignment, empty-category policy."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    text, markup = _category_presentation_view()
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=markup)
 
 
 async def category_presentation_set_callback(u, c):
@@ -7928,32 +7957,38 @@ async def category_presentation_set_callback(u, c):
             await q.answer("❌ Invalid grid size", show_alert=True); return
         set_setting("shop_category_columns", value)
         await q.answer("✅ Grid size saved")
+    elif raw.startswith("catpresent_pad_"):
+        # v170.73: owner-editable tile padding (0-12 filler units).
+        try:
+            pad = int(get_setting("shop_category_pad", "0") or 0)
+        except Exception:
+            pad = 0
+        action = raw.rsplit("_", 1)[-1]
+        if action == "minus":
+            pad -= 1
+        elif action == "plus":
+            pad += 1
+        elif action == "plus3":
+            pad += 3
+        elif action == "zero":
+            pad = 0
+        else:
+            await q.answer("❌ Invalid padding action", show_alert=True); return
+        pad = max(0, min(pad, 12))
+        set_setting("shop_category_pad", str(pad))
+        await q.answer(f"✅ Padding: {pad}")
+    elif raw.startswith("catpresent_align_"):
+        # v170.73: owner-editable label alignment inside the tiles.
+        value = raw.rsplit("_", 1)[-1]
+        if value not in ("left", "center", "right"):
+            await q.answer("❌ Invalid alignment", show_alert=True); return
+        set_setting("shop_category_align", value)
+        await q.answer(f"✅ Alignment: {value.title()}")
     else:
         await q.answer("❌ Invalid setting", show_alert=True); return
     # Render directly to avoid a duplicate callback answer.
-    show_empty = get_setting("shop_show_empty_categories", "0") == "1"
-    try:
-        columns = int(get_setting("shop_category_columns", "2") or 2)
-    except Exception:
-        columns = 2
-    columns = columns if columns in (1, 2) else 2
-    text = (
-        "⚙️ *Category Picker Settings*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Grid: *{columns} per row*\n"
-        f"Empty categories: *{'Shown globally' if show_empty else 'Hidden by default'}*\n\n"
-        "A category's own ‘Show even when empty’ option overrides the global hidden default."
-    )
-    kb = [
-        [InlineKeyboardButton(
-            "🫥 Hide Empty Categories Globally" if show_empty else "👁️ Show Empty Categories Globally",
-            callback_data="catpresent_empty")],
-        [InlineKeyboardButton("1️⃣ One per row" + (" ✓" if columns == 1 else ""),
-                              callback_data="catpresent_cols_1"),
-         InlineKeyboardButton("2️⃣ Two per row" + (" ✓" if columns == 2 else ""),
-                              callback_data="catpresent_cols_2")],
-        [InlineKeyboardButton("🔙 Back to Categories", callback_data="admin_categories")],
-    ]
-    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    text, markup = _category_presentation_view()
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=markup)
 
 async def delete_category_confirm_callback(u, c):
     """Confirm the v170.65 non-destructive category deletion."""
@@ -10566,7 +10601,8 @@ _BACKUP_KEYS_PREFIXES = ("btn_label_", "btn_style_", "grpstyle_", "btn_hidden_",
                          "menu_style", "button_size", "display_format",
                          "pd_", "react_", "tplbtn", "tplbtnemoji", "fj_verify",
                          "shop_categorized", "shop_show_empty_categories",
-                         "shop_category_columns", "auto_", "show_", "product_emoji")
+                         "shop_category_columns", "shop_category_pad",
+                         "shop_category_align", "auto_", "show_", "product_emoji")
 
 def _collect_backup():
     import json as _json
@@ -10577,7 +10613,7 @@ def _collect_backup():
         if key.startswith(_BACKUP_KEYS_PREFIXES) or key in (
                 "button_size", "menu_style", "display_format",
                 "main_menu_layout", "shop_categorized", "shop_show_empty_categories",
-                "shop_category_columns", "product_emoji"):
+                "shop_category_columns", "shop_category_pad", "shop_category_align", "product_emoji"):
             out[key] = value
     conn.close()
     return _json.dumps(out, ensure_ascii=False, indent=1)
