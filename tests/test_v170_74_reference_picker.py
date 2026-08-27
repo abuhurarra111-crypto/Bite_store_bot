@@ -119,8 +119,10 @@ class ReferencePickerTests(unittest.TestCase):
         icon = (getattr(tile, "icon_custom_emoji_id", None)
                 or (tile.api_kwargs or {}).get("icon_custom_emoji_id"))
         self.assertEqual(icon, "5310129635848103696")
-        # Reference look: clean centered name only, no leftover markup/filler.
-        self.assertEqual(tile.text, "Chatgpt")
+        # v170.75: reference look — text pulled snugly beside the pinned icon
+        # via right-side fillers only (owner-editable gap fill, default 8).
+        self.assertEqual(tile.text, "Chatgpt" + "\u3164" * 8)
+        self.assertFalse(tile.text.startswith("\u3164"))
 
     def test_normal_emoji_icon_still_works_without_premium(self):
         cid = database.add_category("Netflix", "📦")

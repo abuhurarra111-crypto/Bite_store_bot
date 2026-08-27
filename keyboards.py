@@ -1901,9 +1901,11 @@ def _category_picker_default_grid_label(label, has_custom_icon=False):
         from database import get_setting
         pad = int(get_setting("shop_category_pad", "0") or 0)
         align = str(get_setting("shop_category_align", "center") or "center").strip().lower()
+        icon_fill = int(get_setting("shop_category_icon_fill", "8") or 8)
     except Exception:
-        pad, align = 0, "center"
+        pad, align, icon_fill = 0, "center", 8
     pad = max(0, min(pad, 12))
+    icon_fill = max(0, min(icon_fill, 14))
     if align not in ("left", "center", "right"):
         align = "center"
     if align == "center":
@@ -1913,6 +1915,13 @@ def _category_picker_default_grid_label(label, has_custom_icon=False):
         # small effective padding is required for the shift to be visible.
         total = max(pad, 3) * 2
         left, right = (0, total) if align == "left" else (total, 0)
+    # v170.75: an API-attached premium icon is pinned by Telegram at the LEFT
+    # edge of the tile while the text is centered separately, leaving an ugly
+    # gap between icon and name.  Right-side fillers pull the centered text
+    # left until it sits snugly beside the icon (one visual space apart).
+    # The fill amount is owner-editable (0 restores the old centered look).
+    if has_custom_icon and align != "right":
+        right = max(right, icon_fill)
     if left <= 0 and right <= 0:
         return label
     return (_CATEGORY_PICKER_PAD_CHAR * left) + label + (_CATEGORY_PICKER_PAD_CHAR * right)

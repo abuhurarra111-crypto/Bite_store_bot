@@ -124,11 +124,12 @@ class ShopCategoryModeTests(unittest.TestCase):
         self.assertEqual(category_row[1].callback_data, f"shopcat_{second}")
         self.assertEqual(category_row[1].style, "primary")
         self.assertEqual(category_row[1].icon_custom_emoji_id, "123456789")
-        # v170.72: no filler padding — Telegram centers the label itself, so
-        # the button text is exactly the clean category name.
-        self.assertEqual(category_row[1].text, "Premium")
+        # v170.75: premium-icon tiles get right-side snug fill (default 8) so
+        # the centered text is pulled left beside the API-pinned icon; there
+        # are never fillers on the LEFT of an icon tile.
+        self.assertEqual(category_row[1].text, "Premium" + "\u3164" * 8)
+        self.assertFalse(category_row[1].text.startswith("\u3164"))
         self.assertNotIn("\u3164", category_row[0].text)
-        self.assertNotIn("\u3164", category_row[1].text)
         self.assertNotIn("[[HTML]]", category_row[1].text)
         self.assertNotIn("(", category_row[0].text)  # old stock/count UI is gone
         mode_callbacks = {button.callback_data for row in markup.inline_keyboard for button in row}

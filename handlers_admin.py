@@ -7898,12 +7898,18 @@ def _category_presentation_view():
     align = str(get_setting("shop_category_align", "center") or "center").strip().lower()
     if align not in ("left", "center", "right"):
         align = "center"
+    try:
+        icon_fill = int(get_setting("shop_category_icon_fill", "8") or 8)
+    except Exception:
+        icon_fill = 8
+    icon_fill = max(0, min(icon_fill, 14))
     align_names = {"left": "⬅️ Left", "center": "🎯 Center", "right": "➡️ Right"}
     text = (
         "⚙️ *Category Picker Settings*\n━━━━━━━━━━━━━━━━━━━━\n\n"
         f"Grid: *{columns} per row*\n"
         f"Button padding: *{pad}*  (0 = compact, bigger = wider tiles)\n"
         f"Text alignment: *{align_names[align]}*\n"
+        f"Icon-text gap fill: *{icon_fill}*  (premium-icon tiles: text ko icon ke paas khinchta hai; 0 = centered)\n"
         f"Empty categories: *{'Shown globally' if show_empty else 'Hidden by default'}*\n\n"
         "⚠️ Bohot zyada padding chhoti screens par text clip kar sakti hai.\n"
         "A category's own ‘Show even when empty’ option overrides the global hidden default."
@@ -7927,6 +7933,11 @@ def _category_presentation_view():
                               callback_data="catpresent_align_center"),
          InlineKeyboardButton("➡️ Right" + (" ✓" if align == "right" else ""),
                               callback_data="catpresent_align_right")],
+        [InlineKeyboardButton(f"🧲 Icon-Text Gap Fill: {icon_fill}", callback_data="noop")],
+        [InlineKeyboardButton("➖ 1", callback_data="catpresent_fill_minus"),
+         InlineKeyboardButton("🧹 0", callback_data="catpresent_fill_zero"),
+         InlineKeyboardButton("➕ 1", callback_data="catpresent_fill_plus"),
+         InlineKeyboardButton("♻️ 8", callback_data="catpresent_fill_default")],
         [InlineKeyboardButton("🔙 Back to Categories", callback_data="admin_categories")],
     ]
     return text, InlineKeyboardMarkup(kb)
@@ -7977,6 +7988,26 @@ async def category_presentation_set_callback(u, c):
         pad = max(0, min(pad, 12))
         set_setting("shop_category_pad", str(pad))
         await q.answer(f"✅ Padding: {pad}")
+    elif raw.startswith("catpresent_fill_"):
+        # v170.75: icon-text gap fill for premium-icon tiles (0-14).
+        try:
+            fill = int(get_setting("shop_category_icon_fill", "8") or 8)
+        except Exception:
+            fill = 8
+        action = raw.rsplit("_", 1)[-1]
+        if action == "minus":
+            fill -= 1
+        elif action == "plus":
+            fill += 1
+        elif action == "zero":
+            fill = 0
+        elif action == "default":
+            fill = 8
+        else:
+            await q.answer("❌ Invalid fill action", show_alert=True); return
+        fill = max(0, min(fill, 14))
+        set_setting("shop_category_icon_fill", str(fill))
+        await q.answer(f"✅ Icon gap fill: {fill}")
     elif raw.startswith("catpresent_align_"):
         # v170.73: owner-editable label alignment inside the tiles.
         value = raw.rsplit("_", 1)[-1]
@@ -10602,7 +10633,8 @@ _BACKUP_KEYS_PREFIXES = ("btn_label_", "btn_style_", "grpstyle_", "btn_hidden_",
                          "pd_", "react_", "tplbtn", "tplbtnemoji", "fj_verify",
                          "shop_categorized", "shop_show_empty_categories",
                          "shop_category_columns", "shop_category_pad",
-                         "shop_category_align", "auto_", "show_", "product_emoji")
+                         "shop_category_align", "shop_category_icon_fill",
+                         "auto_", "show_", "product_emoji")
 
 def _collect_backup():
     import json as _json
@@ -10613,7 +10645,8 @@ def _collect_backup():
         if key.startswith(_BACKUP_KEYS_PREFIXES) or key in (
                 "button_size", "menu_style", "display_format",
                 "main_menu_layout", "shop_categorized", "shop_show_empty_categories",
-                "shop_category_columns", "shop_category_pad", "shop_category_align", "product_emoji"):
+                "shop_category_columns", "shop_category_pad", "shop_category_align",
+                "shop_category_icon_fill", "product_emoji"):
             out[key] = value
     conn.close()
     return _json.dumps(out, ensure_ascii=False, indent=1)
