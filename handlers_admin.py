@@ -293,12 +293,46 @@ async def delete_category_callback(u,c):
     await delete_category_confirm_callback(u, c)
 
 # ── Products ──
-async def admin_products_callback(u,c):
-    q=u.callback_query
-    if q.from_user.id!=ADMIN_ID: await q.answer("❌",show_alert=True); return
-    # 🆕 v135: admin sees ALL products (including hidden/deactivated ones)
-    # so restored DB products can be edited/reactivated safely.
-    await q.answer(); await _safe_edit(q, "🛍️ *Add Products:*",parse_mode="Markdown",reply_markup=admin_products_keyboard(get_all_products(include_hidden=True, include_inactive=True)))
+async def _show_admin_products(q, page=0):
+    """Render one Telegram-safe page of the owner Edit Items catalog."""
+    # Admin must continue seeing active, hidden and deactivated products so a
+    # restored item can always be edited, reactivated or unhidden.
+    products = get_all_products(include_hidden=True, include_inactive=True)
+    _chunk, current_page, total_pages, total_products = admin_products_page_meta(
+        products, page=page)
+    text = (
+        "📝 *Edit Items*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"*{total_products}* item(s) • Page *{current_page + 1}/{total_pages}*\n"
+        "Tap an item to edit it. Use Previous/Next to browse every item."
+    )
+    await _safe_edit(
+        q, text, parse_mode="Markdown",
+        reply_markup=admin_products_keyboard(products, page=current_page))
+
+
+async def admin_products_callback(u, c):
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True)
+        return
+    await q.answer()
+    await _show_admin_products(q, page=0)
+
+
+async def admin_products_page_callback(u, c):
+    """Move through the paginated owner Edit Items catalog."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True)
+        return
+    try:
+        page = int(str(q.data).removeprefix("adminprodpg_"))
+    except (TypeError, ValueError):
+        await q.answer("Invalid page", show_alert=True)
+        return
+    await q.answer()
+    await _show_admin_products(q, page=page)
 
 async def bulk_product_delete_start_callback(u, c):
     """Start multi-select product delete screen."""

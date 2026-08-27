@@ -1,0 +1,139 @@
+{
+  "artifact": "Bite_Store_Ready_DB_20260827_041922_v170_64.db",
+  "version": "v170.64",
+  "source_backup": "bite_store_backup_20260827_041922_source.db",
+  "source_sha256": "f36c42e5c3024cac8e66e41811fe4e9bb676dad4e25b22906884a3b105cb65f7",
+  "artifact_sha256": "1d2030a300d24b317468b00a91fa98e7f083ad42ae8040af5884bbde9a2db5fe",
+  "artifact_bytes": 8404992,
+  "artifact_mode": "0o600",
+  "source_health": {
+    "integrity_check": [
+      "ok"
+    ],
+    "foreign_key_violations": 0
+  },
+  "migrations": {
+    "first_errors": [],
+    "second_errors": [],
+    "idempotent_schema_and_row_counts": true
+  },
+  "integrity_check": [
+    "ok"
+  ],
+  "foreign_key_violations": 0,
+  "core_row_counts_before": {
+    "users": 2250,
+    "categories": 4,
+    "products": 120,
+    "orders": 1864,
+    "ext_suppliers": 7,
+    "ext_products": 353,
+    "product_tier_discounts": 11,
+    "api_keys": 76,
+    "reseller_orders": 29,
+    "order_deliveries": 901,
+    "ext_orders": 445
+  },
+  "core_row_counts_after": {
+    "users": 2250,
+    "categories": 4,
+    "products": 120,
+    "orders": 1864,
+    "ext_suppliers": 7,
+    "ext_products": 353,
+    "product_tier_discounts": 11,
+    "api_keys": 76,
+    "reseller_orders": 29,
+    "order_deliveries": 901,
+    "ext_orders": 445
+  },
+  "core_preexisting_data_digests_match": true,
+  "category_upgrade": {
+    "required_category_columns": [
+      "button_style",
+      "description",
+      "display_order",
+      "emoji",
+      "id",
+      "is_active",
+      "is_hidden",
+      "name",
+      "show_when_empty"
+    ],
+    "user_shop_preference_columns": [
+      "shop_mode",
+      "updated_at",
+      "user_id"
+    ],
+    "default_mode_for_unset_user": "categorized",
+    "default_show_empty_categories": "0",
+    "default_category_columns": "2",
+    "active_category_summary": [
+      {
+        "id": 1,
+        "order": 1,
+        "hidden": 0,
+        "style": "primary"
+      },
+      {
+        "id": 2,
+        "order": 2,
+        "hidden": 0,
+        "style": "primary"
+      },
+      {
+        "id": 3,
+        "order": 3,
+        "hidden": 0,
+        "style": "primary"
+      },
+      {
+        "id": 4,
+        "order": 4,
+        "hidden": 0,
+        "style": "primary"
+      }
+    ],
+    "visible_picker_summary": [
+      {
+        "id": 1,
+        "products": 92,
+        "style": "primary"
+      },
+      {
+        "id": 2,
+        "products": 2,
+        "style": "primary"
+      }
+    ]
+  },
+  "edit_items_pagination_smoke": {
+    "owner_product_count": 120,
+    "page_size": 20,
+    "page_count": 6,
+    "page_button_counts": [
+      26,
+      27,
+      27,
+      27,
+      27,
+      26
+    ],
+    "maximum_buttons_on_one_page": 27,
+    "product_callbacks_cover_every_item_once": true,
+    "max_callback_data_bytes": 15,
+    "handler_callback_answers": 2,
+    "handler_edits": 2,
+    "first_page_indicator_rendered": true,
+    "last_page_indicator_rendered": true,
+    "last_page_button_count": 26
+  },
+  "validation_passed": true,
+  "notes": [
+    "The immutable source was not modified; this is a separately migrated working copy.",
+    "No pre-existing core catalog, order, user, reseller, or supplier values changed during migration.",
+    "Edit Items was rendered against all restored products using the new safe paginator.",
+    "Hosted deployments start with an empty database by owner policy. Restore this artifact manually only after deployment.",
+    "Ready DB artifacts are intentionally Git-ignored because they contain owner data."
+  ]
+}

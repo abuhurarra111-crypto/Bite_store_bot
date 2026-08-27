@@ -997,17 +997,51 @@ def admin_categories_keyboard(cats):
     kb.append([_btn("🔙", "🔙 Return", "🔙 Return", "🔙 Back to Admin Panel", callback_data="admin_panel")])
     return InlineKeyboardMarkup(kb)
 
-def admin_products_keyboard(prods):
-    """🆕 v40.1: Per-product styler applies here too.
-    🆕 v45: premium-emoji-aware (icon from product name)."""
+ADMIN_PRODUCTS_PAGE_SIZE = 20
+
+
+def admin_products_page_meta(prods, page=0, per_page=ADMIN_PRODUCTS_PAGE_SIZE):
+    """Return a Telegram-safe page of the owner Edit Items catalog.
+
+    Telegram accepts at most 100 inline buttons in one keyboard.  Restored
+    stores commonly have more products than that, so never render the whole
+    admin catalog in a single reply markup.
+    """
+    items = list(prods or [])
+    try:
+        per_page = int(per_page)
+    except (TypeError, ValueError):
+        per_page = ADMIN_PRODUCTS_PAGE_SIZE
+    # Five permanent action rows plus two navigation buttons must remain
+    # comfortably below Telegram's 100-button ceiling even for direct callers.
+    per_page = max(1, min(per_page, 80))
+    total_pages = max(1, (len(items) + per_page - 1) // per_page)
+    try:
+        page = int(page)
+    except (TypeError, ValueError):
+        page = 0
+    page = max(0, min(page, total_pages - 1))
+    start = page * per_page
+    return items[start:start + per_page], page, total_pages, len(items)
+
+
+def admin_products_keyboard(prods, page=0, per_page=ADMIN_PRODUCTS_PAGE_SIZE):
+    """Paginated owner Edit Items keyboard with premium-emoji-safe labels.
+
+    Keeping this list paginated avoids Telegram rejecting a restored catalog
+    with more than 100 buttons, which otherwise looks like a non-responsive
+    Edit Items button to the owner.
+    """
     from button_system import is_styled
     try:
         from button_system import make_premium_button, extract_emoji_from_html
     except Exception:
         make_premium_button = None
         extract_emoji_from_html = None
+    page_prods, page, total_pages, _total = admin_products_page_meta(
+        prods, page=page, per_page=per_page)
     kb = []
-    for p in prods:
+    for p in page_prods:
         raw = p.get('name', '') if hasattr(p, 'get') else p['name']
         raw = raw or ''
         if extract_emoji_from_html:
@@ -1041,6 +1075,21 @@ def admin_products_keyboard(prods):
                                             callback_data=f"viewprod_{p['id']}")])
         else:
             kb.append([InlineKeyboardButton(lbl, callback_data=f"viewprod_{p['id']}")])
+
+    if total_pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton("⬅️ Previous",
+                                             callback_data=f"adminprodpg_{page - 1}"))
+        # The page indicator lives in the screen heading. Do not make it a
+        # clickable no-op button: Telegram rejects an identical edit as
+        # "message is not modified", which could otherwise create a duplicate
+        # fallback message if the owner taps the current page label.
+        if page < total_pages - 1:
+            nav.append(InlineKeyboardButton("Next ➡️",
+                                             callback_data=f"adminprodpg_{page + 1}"))
+        kb.append(nav)
+
     kb.append([_btn("➕", "➕ Add", "➕ Add Item", "➕ Add New Product", callback_data="add_product")])
     kb.append([InlineKeyboardButton("💰 Bulk Price Editor", callback_data="bulkprice_start")])
     # 🆕 v157: Bulk Discount (users see discount + destination alert)

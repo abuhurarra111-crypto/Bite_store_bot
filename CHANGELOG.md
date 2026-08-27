@@ -8,6 +8,20 @@
 
 ---
 
+# 🚀 v170.64 (2026-08-27) — 📝 EDIT ITEMS CATALOG PAGINATION
+
+## Root cause and fix
+- The owner’s restored catalog contains 120 products. The previous **Edit Items** screen attempted to send all 120 item buttons plus five fixed action buttons in one inline keyboard (125 total), above Telegram’s 100-button maximum. Telegram rejected that reply markup after the callback was answered, which looked like an unresponsive button.
+- **Edit Items** now renders 20 products per page with a clear item count, page indicator, and Previous/Next controls. A new dedicated callback route handles page changes, including safe clamping of stale page buttons.
+- Every product remains owner-visible, including hidden and deactivated rows. Existing product-detail, Add Item, Bulk Price, Bulk Discount, Bulk Delete, and Back callbacks are retained.
+- The keyboard also enforces an 80-item upper bound for any direct caller, keeping its largest possible markup below Telegram’s 100-button ceiling.
+
+## Scope and verification
+- This release changes only the owner Edit Items list behavior and the deployment release marker. Categorized/Classic Shop modes, category controls, buyer product pagination, and reseller visibility behavior are unchanged.
+- Added offline regression coverage using a 120-product catalog: button ceiling, every retained action, first/last/stale-page rendering, authorization, direct-handler execution, defensive page-size cap, and dispatcher route registration. Full offline suite: **68 tests passed**.
+
+---
+
 # 🚀 v170.63 (2026-08-27) — 🗂️ PERSISTED SHOP MODES + CATEGORY PICKER
 
 ## User-selectable Shop mode
