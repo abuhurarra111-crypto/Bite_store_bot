@@ -124,10 +124,11 @@ class ShopCategoryModeTests(unittest.TestCase):
         self.assertEqual(category_row[1].callback_data, f"shopcat_{second}")
         self.assertEqual(category_row[1].style, "primary")
         self.assertEqual(category_row[1].icon_custom_emoji_id, "123456789")
-        # The Premium icon is outside button.text, so the default fixed grid
-        # reserves its visual slot before padding the text.
-        self.assertEqual(keyboards._category_picker_visual_width(category_row[1].text) + 2,
-                         keyboards._CATEGORY_PICKER_TWO_COLUMN_WIDTH)
+        # v170.72: no filler padding — Telegram centers the label itself, so
+        # the button text is exactly the clean category name.
+        self.assertEqual(category_row[1].text, "Premium")
+        self.assertNotIn("\u3164", category_row[0].text)
+        self.assertNotIn("\u3164", category_row[1].text)
         self.assertNotIn("[[HTML]]", category_row[1].text)
         self.assertNotIn("(", category_row[0].text)  # old stock/count UI is gone
         mode_callbacks = {button.callback_data for row in markup.inline_keyboard for button in row}
@@ -155,21 +156,19 @@ class ShopCategoryModeTests(unittest.TestCase):
         self.assertEqual(len(category_rows), 2)
         self.assertEqual([b.callback_data for b in category_rows[0]],
                          [f"shopcat_{first}", f"shopcat_{second}"])
-        # The default labels are padded to a shared visual target, so short
-        # category names cannot turn into tiny chips beside longer names.
-        first_widths = [keyboards._category_picker_visual_width(button.text)
-                        + (2 if getattr(button, "icon_custom_emoji_id", None) else 0)
-                        for button in category_rows[0]]
-        self.assertEqual(first_widths, [keyboards._CATEGORY_PICKER_TWO_COLUMN_WIDTH] * 2)
+        # v170.72: default labels carry NO filler padding — Telegram renders
+        # both buttons in a row at equal half-screen width and centers the
+        # text natively, matching the owner's reference layout.
+        self.assertEqual(category_rows[0][0].text, "🤖 AI")
+        self.assertEqual(category_rows[0][1].text, "🧩 Longer Category")
+        self.assertTrue(all("\u3164" not in b.text for b in category_rows[0]))
 
         # An odd final category deliberately keeps the left half of the grid;
         # the inert no-op cell prevents Telegram from stretching it full-width.
         self.assertEqual(category_rows[1][0].callback_data, f"shopcat_{third}")
         self.assertEqual(category_rows[1][1].callback_data, "noop")
-        self.assertEqual(keyboards._category_picker_visual_width(category_rows[1][0].text),
-                         keyboards._CATEGORY_PICKER_TWO_COLUMN_WIDTH)
-        self.assertEqual(keyboards._category_picker_visual_width(category_rows[1][1].text),
-                         keyboards._CATEGORY_PICKER_TWO_COLUMN_WIDTH)
+        self.assertEqual(category_rows[1][0].text, "📦 Last")
+        self.assertEqual(category_rows[1][1].text, "\u3164")
 
         # Existing buyer actions remain available after the grid, as chosen by
         # the owner: Classic and Buy Points are not removed for screenshot UX.

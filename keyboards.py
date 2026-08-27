@@ -1884,23 +1884,29 @@ def _category_picker_clip_label(label, max_width):
 
 
 def _category_picker_default_grid_label(label, has_custom_icon=False):
-    """Return category label with center-aligned padding.
-    
-    v170.71: Fixed equal padding on both sides for perfect center alignment.
+    """Return the clean category label for the default two-column grid.
+
+    v170.72: NO filler padding at all.  Telegram already renders every inline
+    button in the same row at an identical half-screen width and centers the
+    label text itself (exactly like the owner's reference bot).  The old
+    Hangul-filler padding (v170.66–v170.71) made labels longer than the tile,
+    so Telegram clipped them on the right ("Ai Tool…", "Redeem lin…") and the
+    text looked pushed to one side.  Only genuinely long names are clipped so
+    a predictable "…" appears instead of an arbitrary mid-word cut.
     """
-    # Fixed padding for center alignment
-    pad = 5  # Equal Hangul filler on both sides
-    return (_CATEGORY_PICKER_PAD_CHAR * pad) + label + (_CATEGORY_PICKER_PAD_CHAR * pad)
+    max_width = _CATEGORY_PICKER_TWO_COLUMN_WIDTH - (2 if has_custom_icon else 0)
+    return _category_picker_clip_label(label, max_width)
 
 
 def _category_picker_spacer():
     """Safe blank second cell so an odd final category remains half-width.
 
-    Telegram has no non-button grid spacer.  A Hangul-filler no-op has a stable
-    half-row footprint, exposes no product/category action, and is handled by
-    the app's existing generic ``noop`` callback.
+    Telegram has no non-button grid spacer.  A single Hangul-filler no-op has
+    a stable half-row footprint (Telegram equalizes widths within the row),
+    exposes no product/category action, and is handled by the app's existing
+    generic ``noop`` callback.
     """
-    return InlineKeyboardButton(_CATEGORY_PICKER_PAD_CHAR * _CATEGORY_PICKER_TWO_COLUMN_WIDTH,
+    return InlineKeyboardButton(_CATEGORY_PICKER_PAD_CHAR,
                                 callback_data="noop")
 
 
