@@ -2,6 +2,7 @@
 # 🤖 BITE STORE BOT
 # ============================================
 import logging
+import re
 import sys
 import os
 import warnings
@@ -388,6 +389,42 @@ from fake_engagement import broadcast_overview_callback, broadcast_overview_togg
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 
 
+# Never allow credentials into hosted logs.  In particular, httpx's normal
+# request logger includes the full Telegram Bot API URL, whose path contains
+# the bot token.  Keep successful HTTP requests quiet and redact token-shaped
+# strings defensively from any warning/error record that remains.
+def _redact_sensitive_log_text(value):
+    text = str(value or "")
+    patterns = (
+        (r"\b\d{6,12}:[A-Za-z0-9_-]{20,}\b", "[REDACTED_TELEGRAM_TOKEN]"),
+        (r"\bgh[pousr]_[A-Za-z0-9_-]{20,}\b", "[REDACTED_GITHUB_TOKEN]"),
+        (r"(?i)(\bBearer\s+)[^\s,;\"']+", r"\1[REDACTED]"),
+    )
+    for pattern, replacement in patterns:
+        text = re.sub(pattern, replacement, text)
+    return text
+
+
+class _SensitiveLogRedactionFilter(logging.Filter):
+    def filter(self, record):
+        try:
+            rendered = record.getMessage()
+            redacted = _redact_sensitive_log_text(rendered)
+            if redacted != rendered:
+                # Collapse arguments after rendering so logging will not append
+                # the original secret during later handler formatting.
+                record.msg = redacted
+                record.args = ()
+        except Exception:
+            pass
+        return True
+
+
+_sensitive_log_filter = _SensitiveLogRedactionFilter()
+for _handler in logging.getLogger().handlers:
+    _handler.addFilter(_sensitive_log_filter)
+for _http_logger in ("httpx", "httpcore"):
+    logging.getLogger(_http_logger).setLevel(logging.WARNING)
 
 
 async def global_error_handler(update, context):

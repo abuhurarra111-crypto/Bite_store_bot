@@ -26,8 +26,11 @@
 - Hidden or disabled categories now hide linked products consistently from Categorized Shop, Classic Shop, Flash Sales, stale product callbacks/purchases, and the existing reseller catalog/checkout guard.
 - The Reseller API payload contract already supplied `categoryId` and category filtering, so no public endpoint or documentation contract was changed. Only the existing visibility lifecycle is now enforced consistently.
 
+## Logging security
+- Suppressed routine `httpx`/`httpcore` request logging and added a defensive token-redaction filter. This prevents Telegram Bot API URLs (which contain the bot token) and other token-shaped values from being emitted in hosted logs.
+
 ## Verification
-- Added focused offline tests for persisted defaults/switches, two-column blue buttons, premium category emoji rendering, ordering, empty-state controls, category header, Shop callback rendering, and native/Classic/reseller visibility alignment.
+- Added focused offline tests for persisted defaults/switches, two-column blue buttons, premium category emoji rendering, ordering, empty-state controls, category header, Shop callback rendering, native/Classic/reseller visibility alignment, stale-page clamping, and credential-safe logging.
 
 ---
 
