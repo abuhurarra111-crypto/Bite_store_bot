@@ -613,4 +613,4 @@ DEFAULT_RESPONSES.update({
 
 
 # 🔖 Version indicator (exposed at /health for deploy verification)
-BOT_VERSION = "v170.81"
+BOT_VERSION = "v170.82"

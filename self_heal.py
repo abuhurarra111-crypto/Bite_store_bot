@@ -409,7 +409,37 @@ def _heal_icon_mode_and_themed_fallbacks():
         _log(f"heal_icon_mode: {e}", "ERROR")
 
 
+def _heal_remove_seeded_reference_categories():
+    """🆕 v170.82 ONE-TIME: the owner now builds categories himself with the
+    bulk-select Add Category flow, so every still-untouched v170.79 seeded
+    reference category is deleted.  ``delete_category`` only clears each
+    linked product's ``category_id`` — stock, pricing, delivery data, orders
+    and visibility are never modified.  Owner-renamed categories no longer
+    match the seeded-name pattern and therefore survive untouched."""
+    try:
+        import re
+        from database import (get_setting, set_setting, get_all_categories,
+                              delete_category)
+        if get_setting("ref_categories_v17082_removed", "") == "1":
+            return
+        set_setting("ref_categories_v17082_removed", "1")
+        pattern = re.compile(
+            r'^\[\[HTML\]\]<tg-emoji emoji-id="\d+">.*?</tg-emoji> (.+)$')
+        removed = 0
+        for cat in get_all_categories(include_inactive=True):
+            m = pattern.match(str(cat["name"] or ""))
+            if m and m.group(1).strip() in _REFERENCE_CATEGORIES:
+                res = delete_category(int(cat["id"]))
+                if res.get("deleted"):
+                    removed += 1
+        _log(f"Removed {removed} seeded reference categories "
+             "(products safely unassigned; owner builds categories manually now)")
+    except Exception as e:
+        _log(f"heal_remove_seeded_categories: {e}", "ERROR")
+
+
 def _heal_icon_mode_both_upgrade():
+
     """🆕 v170.81 ONE-TIME: the main menu's Shop Now button proved a premium
     icon centers WITH the text when the label carries no filler characters.
     Premium mode now uses that exact formula, so the owner's real request —
@@ -647,6 +677,10 @@ def run_all_heals() -> list:
         _heal_icon_mode_both_upgrade()
     except Exception as e:
         _log(f"heal_icon_both outer: {e}", "ERROR")
+    try:
+        _heal_remove_seeded_reference_categories()
+    except Exception as e:
+        _log(f"heal_remove_seeded outer: {e}", "ERROR")
     _log("Self-heal completed")
     return list(_HEAL_REPORT)
 
