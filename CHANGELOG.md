@@ -24,7 +24,7 @@
 
 ## Catalog/API safety
 - Hidden or disabled categories now hide linked products consistently from Categorized Shop, Classic Shop, Flash Sales, stale product callbacks/purchases, and the existing reseller catalog/checkout guard.
-- The Reseller API payload contract already supplied `categoryId` and category filtering, so no public endpoint or documentation contract was changed. Only the existing visibility lifecycle is now enforced consistently.
+- The Reseller API payload contract already supplied `categoryId` and category filtering, so no public endpoint/payload contract changed. Its public docs now clarify that products in hidden/disabled categories are omitted; the existing visibility lifecycle is enforced consistently.
 
 ## Logging security
 - Suppressed routine `httpx`/`httpcore` request logging and added a defensive token-redaction filter. This prevents Telegram Bot API URLs (which contain the bot token) and other token-shaped values from being emitted in hosted logs.

@@ -1030,7 +1030,7 @@ if _FASTAPI_OK:
             "3. `POST /v1/orders` — place an order; your wallet is debited only for a live checkout quote.\n"
             "4. Read the response or poll `GET /v1/orders/{id}` for delivery status.\n\n"
             "## Live catalog and pricing\n"
-            "- Archived, disabled, or unavailable products are omitted. Sold-out items remain visible with `inStock: false`.\n"
+            "- Products that are archived, disabled, hidden, or assigned to a hidden/disabled category are omitted. Sold-out items remain visible with `inStock: false`.\n"
             "- `price` is the live one-unit price. `normalPrice` is the key-aware normal rate.\n"
             "- `promotion` includes current Flash Sale, percentage discount, and stock-valid quantity tiers.\n"
             "- Priority is **Flash Sale → eligible quantity tier → percentage discount → normal price**.\n"
