@@ -1484,12 +1484,15 @@ def get_category(cid, include_inactive=True):
     return row
 
 
-def add_category(name, emoji="📦", description="", button_style="primary",
+def add_category(name, emoji="", description="", button_style="primary",
                  show_when_empty=False):
-    """Create an ordered, blue-by-default category without replacing old CRUD."""
+    """Create an ordered, blue-by-default category without replacing old CRUD.
+
+    v170.76: the separate icon system is removed — ``emoji`` may be empty and
+    a Premium custom emoji inside ``name`` becomes the button icon."""
     ensure_shop_category_schema()
     clean_name = str(name or "").strip() or "Category"
-    clean_emoji = str(emoji or "📦").strip() or "📦"
+    clean_emoji = str(emoji or "").strip()
     conn = get_connection(); c = conn.cursor()
     c.execute("SELECT COALESCE(MAX(display_order),0)+1 FROM categories")
     next_order = int(c.fetchone()[0] or 1)

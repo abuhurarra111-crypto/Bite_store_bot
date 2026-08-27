@@ -260,10 +260,9 @@ async def cat_name_received(u,c):
                                    reply_markup=inline_cancel_btn())
         return CAT_NAME
     c.user_data['cat_n'] = name
-    await u.message.reply_text(
-        "Emoji/icon? Send a normal or Premium custom emoji.\n"
-        "Use /skip for 📦.", reply_markup=inline_cancel_btn())
-    return CAT_EMOJI
+    # v170.76: the separate icon step is gone — a Premium custom emoji inside
+    # the category NAME automatically becomes the button icon.
+    return await _begin_category_product_picker(u, c, "")
 
 
 _CATEGORY_PRODUCT_PAGE_SIZE = 12
@@ -7671,8 +7670,7 @@ async def _render_category_detail(q, cid):
         f"<i>Changes take effect on the next Shop/API request.</i>"
     )
     kb = [
-        [InlineKeyboardButton("✏️ Rename Category", callback_data=f"editcat_name_{cid}"),
-         InlineKeyboardButton("🎨 Change Icon", callback_data=f"editcat_emoji_{cid}")],
+        [InlineKeyboardButton("✏️ Rename Category", callback_data=f"editcat_name_{cid}")],
         [InlineKeyboardButton("📝 Edit Category Header", callback_data=f"editcat_description_{cid}")],
         [InlineKeyboardButton(
             "🚫 Disable Category" if active else "✅ Enable Category",
@@ -7718,13 +7716,19 @@ async def edit_category_field_callback(u, c):
         field, cid = parts[0], int(parts[1])
     except (IndexError, TypeError, ValueError):
         await q.answer("❌ Invalid edit request", show_alert=True); return ConversationHandler.END
-    if field not in ("name", "emoji", "description") or not get_category(cid, include_inactive=True):
+    if field == "emoji":
+        # v170.76: the separate icon system is removed. The button icon now
+        # comes from a Premium custom emoji placed inside the category NAME.
+        await q.answer("🎨 Icon option khatam — premium emoji ab category NAME "
+                       "ke andar lagayen (✏️ Rename Category).", show_alert=True)
+        return ConversationHandler.END
+    if field not in ("name", "description") or not get_category(cid, include_inactive=True):
         await q.answer("❌ Category not found", show_alert=True); return ConversationHandler.END
     c.user_data['edit_cat_id'] = cid
     c.user_data['edit_cat_field'] = field
     prompts = {
-        "name": "Type the new category name. Premium custom emoji is supported.",
-        "emoji": "Send the new icon. A Premium custom emoji is supported.",
+        "name": ("Type the new category name. A Premium custom emoji inside the "
+                 "name automatically becomes the button icon."),
         "description": "Type the optional header shown above this category's products. Premium emoji is supported.",
     }
     await _safe_edit(q,
@@ -7740,7 +7744,7 @@ async def edit_category_field_received(u, c):
         return True
     cid = c.user_data.get('edit_cat_id')
     field = c.user_data.get('edit_cat_field')
-    if not cid or field not in ("name", "emoji", "description"):
+    if not cid or field not in ("name", "description"):
         await u.message.reply_text("❌ Session lost.", reply_markup=back_btn())
         c.user_data.pop('edit_cat_id', None)
         c.user_data.pop('edit_cat_field', None)
@@ -7751,9 +7755,6 @@ async def edit_category_field_received(u, c):
     if field == "name" and len(plain) < 2:
         await u.message.reply_text("❌ Name too short.", reply_markup=inline_cancel_btn())
         return False
-    if field == "emoji" and not plain:
-        await u.message.reply_text("❌ Send an emoji/icon.", reply_markup=inline_cancel_btn())
-        return False
     if field == "description" and len(plain) > 1000:
         await u.message.reply_text("❌ Header is too long (max 1000 characters).",
                                    reply_markup=inline_cancel_btn())
@@ -7762,7 +7763,7 @@ async def edit_category_field_received(u, c):
         await u.message.reply_text("❌ Category was not found.", reply_markup=back_btn())
         return True
     display, display_mode = safe_display(value, preferred_mode="Markdown", message=u.message)
-    field_label = {"name": "Name", "emoji": "Icon", "description": "Header"}[field]
+    field_label = {"name": "Name", "description": "Header"}[field]
     if display_mode == "HTML":
         text = f"✅ <b>Category Updated!</b>\n\n{field_label}: {display}"
     else:

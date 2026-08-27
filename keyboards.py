@@ -1959,7 +1959,7 @@ def _category_picker_button(info, columns=2):
 
     cid = int(info.get("id") or 0)
     raw_name = str(info.get("name") or "Category")
-    raw_emoji = str(info.get("emoji") or "📦")
+    raw_emoji = str(info.get("emoji") or "")
     if extract_emoji_from_html:
         name_emoji_id, name_text = extract_emoji_from_html(raw_name)
         icon_emoji_id, icon_text = extract_emoji_from_html(raw_emoji)
@@ -1969,10 +1969,11 @@ def _category_picker_button(info, columns=2):
     name_text = (name_text or html_strip_tags(raw_name) or "Category").strip()
     icon_text = (icon_text or html_strip_tags(raw_emoji) or "").strip()
 
-    # A premium emoji serves as the button's icon, replacing the ordinary
-    # category icon to keep the requested compact grid clean rather than show
-    # two icons.  Normal names retain their existing emoji + name behavior.
-    custom_emoji_id = name_emoji_id or icon_emoji_id
+    # v170.76: the separate icon system is removed — the button icon comes
+    # ONLY from a Premium custom emoji inside the category NAME.  A legacy
+    # emoji field still shows inline as plain text (e.g. "🤖 Ai Tools") so
+    # old categories keep their look, but it never becomes an API icon.
+    custom_emoji_id = name_emoji_id
     label = name_text if custom_emoji_id else f"{icon_text} {name_text}".strip()
     label = label[:48].rstrip() or "Category"
     # A deliberate per-category or global Button Styler choice remains fully

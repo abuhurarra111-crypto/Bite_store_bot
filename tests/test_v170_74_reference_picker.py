@@ -101,16 +101,20 @@ class ReferencePickerTests(unittest.TestCase):
         conn.close()
         self.assertEqual(value, custom)
 
-    def test_icon_wizard_saves_premium_emoji_and_picker_shows_brand_icon(self):
-        cid = database.add_category("Chatgpt", "🤖")
+    def test_premium_emoji_in_name_becomes_brand_icon(self):
+        cid = database.add_category("Chatgpt", "")
         database.add_product(cid, "P", "x", 1.0, 0.0, 3)
+        # Rename with a premium custom emoji INSIDE the name (v170.76 flow).
         msg = _PremiumEmojiMessage()
+        msg.text = "⭐ Chatgpt"
+        msg.text_html_urled = ('<tg-emoji emoji-id="5310129635848103696">⭐</tg-emoji>'
+                               " Chatgpt")
         update = SimpleNamespace(effective_user=SimpleNamespace(id=ADMIN_ID), message=msg)
-        context = SimpleNamespace(user_data={"edit_cat_id": cid, "edit_cat_field": "emoji"})
+        context = SimpleNamespace(user_data={"edit_cat_id": cid, "edit_cat_field": "name"})
         done = asyncio.run(handlers_admin.edit_category_field_received(update, context))
         self.assertTrue(done)
         self.assertIn('emoji-id="5310129635848103696"',
-                      str(dict(database.get_category(cid))["emoji"]))
+                      str(dict(database.get_category(cid))["name"]))
 
         markup = keyboards.shop_categories_keyboard(
             database.get_products_grouped_by_category())
@@ -119,21 +123,66 @@ class ReferencePickerTests(unittest.TestCase):
         icon = (getattr(tile, "icon_custom_emoji_id", None)
                 or (tile.api_kwargs or {}).get("icon_custom_emoji_id"))
         self.assertEqual(icon, "5310129635848103696")
-        # v170.75: reference look — text pulled snugly beside the pinned icon
-        # via right-side fillers only (owner-editable gap fill, default 8).
+        # v170.75 reference look: text pulled snugly beside the pinned icon.
         self.assertEqual(tile.text, "Chatgpt" + "\u3164" * 8)
         self.assertFalse(tile.text.startswith("\u3164"))
 
-    def test_normal_emoji_icon_still_works_without_premium(self):
-        cid = database.add_category("Netflix", "📦")
+    def test_legacy_emoji_field_never_becomes_api_icon_anymore(self):
+        # v170.76: a premium emoji stored in the OLD icon field renders as its
+        # plain fallback inline — the API icon comes only from the name.
+        cid = database.add_category(
+            "Redeem links",
+            '[[HTML]]<tg-emoji emoji-id="5310129635848103696">🔗</tg-emoji>')
         database.add_product(cid, "P", "x", 1.0, 0.0, 3)
-        msg = _PremiumEmojiMessage()
-        msg.text = "🎬"
-        msg.text_html_urled = "🎬"
-        msg.entities = []
-        update = SimpleNamespace(effective_user=SimpleNamespace(id=ADMIN_ID), message=msg)
-        context = SimpleNamespace(user_data={"edit_cat_id": cid, "edit_cat_field": "emoji"})
-        self.assertTrue(asyncio.run(handlers_admin.edit_category_field_received(update, context)))
+        markup = keyboards.shop_categories_keyboard(
+            database.get_products_grouped_by_category())
+        tile = [r for r in markup.inline_keyboard
+                if str(r[0].callback_data or "").startswith("shopcat_")][0][0]
+        icon = (getattr(tile, "icon_custom_emoji_id", None)
+                or (tile.api_kwargs or {}).get("icon_custom_emoji_id"))
+        self.assertIsNone(icon)
+        self.assertEqual(tile.text, "🔗 Redeem links")
+
+    def test_icon_edit_callback_is_rejected_with_guidance(self):
+        cid = database.add_category("Netflix", "🎬")
+
+        class _Q:
+            data = f"editcat_emoji_{cid}"
+            from_user = SimpleNamespace(id=ADMIN_ID)
+            answers = []
+            async def answer(self, *a, **k): _Q.answers.append((a, k))
+            async def edit_message_text(self, *a, **k): return None
+            async def edit_message_caption(self, *a, **k): return None
+
+        state = asyncio.run(handlers_admin.edit_category_field_callback(
+            SimpleNamespace(callback_query=_Q()), SimpleNamespace(user_data={})))
+        from telegram.ext import ConversationHandler
+        self.assertEqual(state, ConversationHandler.END)
+        self.assertTrue(any("NAME" in str(a) for a, _ in _Q.answers))
+
+    def test_detail_panel_no_longer_offers_change_icon(self):
+        cid = database.add_category("Tools", "💻")
+
+        class _Q:
+            data = f"viewcat_{cid}"
+            from_user = SimpleNamespace(id=ADMIN_ID)
+            edits = []
+            async def answer(self, *a, **k): pass
+            async def edit_message_text(self, text, **k):
+                _Q.edits.append((text, k)); return None
+            async def edit_message_caption(self, caption, **k):
+                _Q.edits.append((caption, k)); return None
+
+        asyncio.run(handlers_admin._render_category_detail(_Q(), cid))
+        _text, kwargs = _Q.edits[-1]
+        callbacks = {b.callback_data for row in kwargs["reply_markup"].inline_keyboard
+                     for b in row}
+        self.assertNotIn(f"editcat_emoji_{cid}", callbacks)
+        self.assertIn(f"editcat_name_{cid}", callbacks)
+
+    def test_normal_emoji_in_name_still_works_without_premium(self):
+        cid = database.add_category("🎬 Netflix", "")
+        database.add_product(cid, "P", "x", 1.0, 0.0, 3)
         markup = keyboards.shop_categories_keyboard(
             database.get_products_grouped_by_category())
         tile = [r for r in markup.inline_keyboard

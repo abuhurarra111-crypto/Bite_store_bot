@@ -218,12 +218,10 @@ class ShopCategoryModeTests(unittest.TestCase):
                              entities=entities),
         )
         state = asyncio.run(handlers_admin.cat_name_received(update, context))
-        self.assertEqual(state, handlers_admin.CAT_EMOJI)
+        # v170.76: the separate icon step is gone — name goes straight to the
+        # product picker, and a premium emoji in the NAME becomes the icon.
+        self.assertEqual(state, handlers_admin.CAT_PRODUCT_SELECT)
         self.assertEqual(context.user_data["cat_n"], premium)
-
-        update.message = _Message(text="📦")
-        wizard_state = asyncio.run(handlers_admin.cat_emoji_received(update, context))
-        self.assertEqual(wizard_state, handlers_admin.CAT_PRODUCT_SELECT)
         self.assertEqual(database.get_categories(), [],
                          "v170.65 creates the category only after picker confirmation")
         confirm = _Query("catpick_empty", user_id=ADMIN_ID)
@@ -234,13 +232,15 @@ class ShopCategoryModeTests(unittest.TestCase):
         self.assertEqual(created["name"], premium)
         self.assertEqual(created["button_style"], "primary")
 
+        # v170.76: the legacy emoji field is no longer editable — an attempt
+        # is safely refused and nothing is saved.
         context.user_data = {"edit_cat_id": int(created["id"]), "edit_cat_field": "emoji"}
         update.message = _Message(
             text="✨", html='<tg-emoji emoji-id="111222333">✨</tg-emoji>', entities=entities,
         )
         self.assertTrue(asyncio.run(handlers_admin.edit_category_field_received(update, context)))
         edited = database.get_category(created["id"])
-        self.assertEqual(edited["emoji"], '[[HTML]]<tg-emoji emoji-id="111222333">✨</tg-emoji>')
+        self.assertNotIn("111222333", str(edited["emoji"] or ""))
         button = keyboards.shop_categories_keyboard(
             database.get_products_grouped_by_category(include_empty=True)
         ).inline_keyboard[0][0]
