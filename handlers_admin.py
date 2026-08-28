@@ -2640,11 +2640,41 @@ async def _broadcast_payload_to_all_users(bot, payload, reply_markup=None, notif
             await prog.start()
         except Exception:
             prog = None
-    s = f = 0
+    s = f = blocked = 0
+    stopped = False
+    import asyncio as _aio
+    try:
+        from telegram.error import Forbidden as _Forbidden, RetryAfter as _RetryAfter, TimedOut as _TimedOut
+    except Exception:
+        _Forbidden = _RetryAfter = _TimedOut = ()
     for usr in users:
+        # 🆕 v170.89: 🛑 Stop button under the live progress message
+        if prog is not None and prog.cancelled:
+            stopped = True
+            break
         try:
             await _send_payload(bot, row_uid(usr), payload, reply_markup=reply_markup)
             s += 1
+        except _Forbidden:
+            # 🆕 v170.89: user ne bot BLOCK kiya hua hai — ye "failure" nahi,
+            # Telegram inhe kabhi deliver nahi karega. Alag ginte hain.
+            blocked += 1
+        except _RetryAfter as e:
+            # 🆕 v170.89: flood control — wait then retry ONCE (pehle ye
+            # seedha failed count me chala jata tha).
+            try:
+                await _aio.sleep(float(getattr(e, "retry_after", 2)) + 0.5)
+                await _send_payload(bot, row_uid(usr), payload, reply_markup=reply_markup)
+                s += 1
+            except Exception:
+                f += 1
+        except _TimedOut:
+            try:
+                await _aio.sleep(1.0)
+                await _send_payload(bot, row_uid(usr), payload, reply_markup=reply_markup)
+                s += 1
+            except Exception:
+                f += 1
         except Exception:
             f += 1
         if prog is not None:
@@ -2652,14 +2682,21 @@ async def _broadcast_payload_to_all_users(bot, payload, reply_markup=None, notif
                 await prog.bump()
             except Exception:
                 pass
+        # 🆕 v170.89: gentle pacing — stay under Telegram's ~30 msg/sec
+        await _aio.sleep(0.05)
     if prog is not None:
         try:
+            head = (f"🛑 *{title} — Stopped by you!*" if stopped
+                    else f"✅ *{title} — Complete!*")
             await prog.finish(
-                f"✅ *{title} — Complete!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"📤 Sent: *{s:,}* | ❌ Failed: *{f:,}*")
+                f"{head}\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📤 Sent: *{s:,}* | 🚫 Blocked bot: *{blocked:,}* | ❌ Failed: *{f:,}*"
+                + ("\n\n_🚫 Blocked = un users ne bot block kiya hua hai — "
+                   "Telegram unhe kabhi deliver nahi karta. Ye normal hai._"
+                   if blocked else ""))
         except Exception:
             pass
-    return s, f
+    return s, f, blocked
 
 
 async def _broadcast_payload_to_fake_destination(bot, payload, reply_markup=None):
@@ -2668,8 +2705,8 @@ async def _broadcast_payload_to_fake_destination(bot, payload, reply_markup=None
     dest_chat = get_setting('dest_chat_id', '').strip()
     s = f = 0
     if mode in ('bot_only', 'both'):
-        ss, ff = await _broadcast_payload_to_all_users(bot, payload, reply_markup=reply_markup)
-        s += ss; f += ff
+        ss, ff, _bl = await _broadcast_payload_to_all_users(bot, payload, reply_markup=reply_markup)
+        s += ss; f += ff + _bl
     if mode in ('group_only', 'both') and dest_chat:
         try:
             await _send_payload(bot, dest_chat, payload, reply_markup=reply_markup)
@@ -2677,6 +2714,18 @@ async def _broadcast_payload_to_fake_destination(bot, payload, reply_markup=None
         except Exception:
             f += 1
     return s, f
+
+
+async def broadcast_stop_callback(u, c):
+    """🆕 v170.89: 🛑 Stop Broadcasting button (global / pinned / poll —
+    every BroadcastProgress message carries it)."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    key = str(q.data or "").replace("bcstop_", "", 1)
+    from utils import BroadcastProgress
+    BroadcastProgress.request_stop(key)
+    await q.answer("🛑 Stopping broadcast…")
 
 
 async def _send_global_broadcast_now(update, context):
@@ -2700,13 +2749,13 @@ async def _send_global_broadcast_now(update, context):
     _bot = context.bot
 
     async def _bg_broadcast():
-        s, f = await _broadcast_payload_to_all_users(
+        s, f, blocked = await _broadcast_payload_to_all_users(
             _bot, payload, reply_markup=markup,
             notify_uid=ADMIN_ID, title="Global Broadcast")
         try:
             await _bot.send_message(
                 ADMIN_ID,
-                f"✅ Broadcast sent: {s} | ❌ Failed: {f}",
+                f"✅ Broadcast sent: {s} | 🚫 Blocked bot: {blocked} | ❌ Failed: {f}",
                 reply_markup=admin_menu_keyboard())
         except Exception:
             pass
@@ -11536,6 +11585,9 @@ async def _broadcast_poll_to_users(bot, poll_id, progress=None):
     sent = failed = 0
     tg_ids = []
     for usr in users:
+        # 🆕 v170.89: 🛑 Stop button support
+        if progress is not None and getattr(progress, "cancelled", False):
+            break
         uid = row_uid(usr)
         try:
             m = await bot.send_poll(

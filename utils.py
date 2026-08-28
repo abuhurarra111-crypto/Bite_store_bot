@@ -1148,6 +1148,10 @@ class BroadcastProgress:
         await prog.finish(done_msg="✅ Broadcast complete!")
     """
 
+    # 🆕 v170.89: stop-request registry — the 🛑 button under the progress
+    # message writes the key here; every send loop polls `cancelled`.
+    _STOP_REQUESTS = set()
+
     def __init__(self, bot, chat_id, title="📣 Broadcasting", total=0):
         self.bot = bot
         self.chat_id = chat_id
@@ -1159,6 +1163,26 @@ class BroadcastProgress:
         self._refresh_gap = 1.2  # seconds — safe for Telegram edit limits
         self._emoji_cycle = ["🎯", "📡", "📤", "⏳", "🚀", "✨"]
         self._cycle_i = 0
+        import uuid as _uuid
+        self.stop_key = _uuid.uuid4().hex[:12]
+
+    @classmethod
+    def request_stop(cls, key):
+        """Called by the bcstop_ callback — flags this broadcast to halt."""
+        if key:
+            cls._STOP_REQUESTS.add(str(key))
+
+    @property
+    def cancelled(self):
+        return self.stop_key in type(self)._STOP_REQUESTS
+
+    def _stop_markup(self):
+        try:
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            return InlineKeyboardMarkup([[InlineKeyboardButton(
+                "🛑 Stop Broadcasting", callback_data=f"bcstop_{self.stop_key}")]])
+        except Exception:
+            return None
 
     def _bar(self):
         pct = min(1.0, (self.done / self.total) if self.total else 0)
@@ -1179,7 +1203,8 @@ class BroadcastProgress:
     async def start(self):
         try:
             m = await self.bot.send_message(self.chat_id, self._render(),
-                                            parse_mode="Markdown")
+                                            parse_mode="Markdown",
+                                            reply_markup=self._stop_markup())
             self.msg_id = m.message_id
         except Exception:
             self.msg_id = None
@@ -1195,7 +1220,8 @@ class BroadcastProgress:
             try:
                 await self.bot.edit_message_text(
                     chat_id=self.chat_id, message_id=self.msg_id,
-                    text=self._render(), parse_mode="Markdown")
+                    text=self._render(), parse_mode="Markdown",
+                    reply_markup=self._stop_markup())
             except Exception:
                 pass
 
@@ -1204,6 +1230,7 @@ class BroadcastProgress:
         await self._refresh()
 
     async def finish(self, done_msg=None):
+        type(self)._STOP_REQUESTS.discard(self.stop_key)
         if self.msg_id:
             try:
                 final = done_msg or (

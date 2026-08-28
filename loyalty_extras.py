@@ -1654,8 +1654,18 @@ async def broadcast_and_pin(bot, pin_id: int) -> tuple:
         await _prog.start()
     except Exception:
         _prog = None
-    sent = pinned = failed = 0
+    sent = pinned = failed = blocked = 0
+    stopped = False
+    import asyncio as _aio
+    try:
+        from telegram.error import Forbidden as _Forbidden, RetryAfter as _RetryAfter
+    except Exception:
+        _Forbidden = _RetryAfter = ()
     for u in users:
+        # 🆕 v170.89: 🛑 Stop button under the live progress
+        if _prog is not None and _prog.cancelled:
+            stopped = True
+            break
         uid = u["user_id"] if hasattr(u, "__getitem__") else u.get("user_id")
         if not uid:
             continue
@@ -1673,6 +1683,27 @@ async def broadcast_and_pin(bot, pin_id: int) -> tuple:
                 msg_map[str(uid)] = m.message_id
             except Exception as _pe:
                 logger.debug(f"[pin_broadcast] pin failed uid={uid}: {_pe}")
+        except _Forbidden:
+            # 🆕 v170.89: user ne bot block kiya — delivery kabhi possible
+            # nahi, isliye "failed" ke bajaye alag count.
+            blocked += 1
+        except _RetryAfter as _ra:
+            try:
+                await _aio.sleep(float(getattr(_ra, "retry_after", 2)) + 0.5)
+                m = await bot.send_message(chat_id=uid, text=send_text,
+                                           parse_mode=send_mode,
+                                           disable_web_page_preview=True)
+                sent += 1
+                try:
+                    await bot.pin_chat_message(chat_id=uid,
+                                               message_id=m.message_id,
+                                               disable_notification=False)
+                    pinned += 1
+                    msg_map[str(uid)] = m.message_id
+                except Exception:
+                    pass
+            except Exception:
+                failed += 1
         except Exception as _e:
             failed += 1
             logger.debug(f"[pin_broadcast] send failed uid={uid}: {_e}")
@@ -1681,6 +1712,7 @@ async def broadcast_and_pin(bot, pin_id: int) -> tuple:
                 await _prog.bump()
             except Exception:
                 pass
+        await _aio.sleep(0.05)  # 🆕 v170.89: flood-safe pacing
 
     # Persist the map + mark as broadcasted
     try:
@@ -1693,9 +1725,12 @@ async def broadcast_and_pin(bot, pin_id: int) -> tuple:
 
     if _prog is not None:
         try:
+            _head = ("🛑 *📌 Pinned Broadcast — Stopped by you!*" if stopped
+                     else "✅ *📌 Pinned Broadcast — Complete!*")
             await _prog.finish(
-                f"✅ *📌 Pinned Broadcast — Complete!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"📤 Sent: *{sent:,}* | 📌 Pinned: *{pinned:,}* | ❌ Failed: *{failed:,}*")
+                f"{_head}\n━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"📤 Sent: *{sent:,}* | 📌 Pinned: *{pinned:,}* | "
+                f"🚫 Blocked bot: *{blocked:,}* | ❌ Failed: *{failed:,}*")
         except Exception:
             pass
     return sent, pinned, failed

@@ -1808,10 +1808,15 @@ def get_unassigned_in_stock_products():
         c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='freebies'")
         freebie_clause = ("AND p.id NOT IN (SELECT product_id FROM freebies "
                           "WHERE enabled=1) " if c.fetchone() else "")
+        # 🐛 v170.89 ROOT-CAUSE FIX: "Delete Product" is a SOFT delete
+        # (is_active=0), and this pool never filtered it — so deleted old
+        # copies of products (e.g. ChatGPT Plus duplicates) kept appearing
+        # in the assign list, looking like "already-categorized" items.
         c.execute(f"""SELECT p.*
                      FROM products p
                      LEFT JOIN categories linked ON linked.id=p.category_id
                      WHERE COALESCE(p.is_archived,0)=0
+                       AND COALESCE(p.is_active,1)=1
                        {freebie_clause}
                        AND (p.category_id IS NULL OR p.category_id=0
                             OR linked.id IS NULL)
@@ -1856,6 +1861,7 @@ def create_category_with_unassigned_in_stock_products(
             c.execute(f"""SELECT p.id FROM products p
                           WHERE p.id IN ({marks})
                             AND COALESCE(p.is_archived,0)=0
+                            AND COALESCE(p.is_active,1)=1
                             AND (p.category_id IS NULL OR p.category_id=0
                                  OR NOT EXISTS (
                                      SELECT 1 FROM categories linked

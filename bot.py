@@ -2594,6 +2594,7 @@ def main():
         ("^viewcat_", view_category_callback),
         ("^catasg_", category_assign_products_callback),
         ("^uncat_", uncat_settings_callback),
+        ("^bcstop_", broadcast_stop_callback),  # 🆕 v170.89: 🛑 Stop Broadcasting
                 ("^manhist_", manual_hist_callback),
         ("^editman_", edit_manual_order_callback),
         ("^delset_", delivery_settings_callback),
