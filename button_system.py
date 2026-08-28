@@ -1377,6 +1377,8 @@ EXTRA_KEYS = [
     ("shop_buy_points",  "💎 Shop — Buy Points Button"),
     ("shop_view_all",    "📋 Shop — View All Products"),
     ("shop_category",    "📂 Shop — Category Buttons (default)"),
+    ("shop_uncategorized", "📦 Shop — Uncategorized Button"),
+    ("shop_mode_toggle", "🔁 Shop — View Toggle (Classic/Categorized)"),
     ("shop_back_cats",   "🔙 Shop — Back to Categories"),
     # ── PRODUCT DETAIL ──
     ("prod_favorite",    "⭐ Product Detail — Add/Remove Favorite"),
@@ -1523,6 +1525,7 @@ def get_grouped_keys():
     # Static dynamic
     shop_keys     = {"shop_product", "shop_pagination", "shop_home",
                       "shop_buy_points", "shop_view_all", "shop_category",
+                      "shop_uncategorized", "shop_mode_toggle",
                       "shop_back_cats"}
     prod_keys     = {"prod_favorite", "prod_buy", "prod_buyx", "prod_req", "prod_review",
                       "prod_back_shop", "prod_home"}

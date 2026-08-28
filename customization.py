@@ -3246,6 +3246,8 @@ SCREEN_TREE = {
             {"id": "nav_categories_back", "kind": "registry"},
             {"id": "shop_buy_points",     "kind": "dynamic"},
             {"id": "shop_view_all",       "kind": "dynamic"},
+            {"id": "shop_uncategorized",  "kind": "dynamic"},   # 🆕 v170.87
+            {"id": "shop_mode_toggle",    "kind": "dynamic"},   # 🆕 v170.87
         ],
         "children": [
             "product_detail_screen",

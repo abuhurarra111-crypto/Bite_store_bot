@@ -608,12 +608,13 @@ def all_products_keyboard(products, page=1, per_page=10, user=None, filter_mode=
     # visible route back to the persisted Categorized picker.  Other screens
     # that reuse this keyboard leave ``shop_mode`` unset and remain unchanged.
     if shop_mode in ("categorized", "classic"):
-        cat_label = "🗂️ Categorized ✓" if shop_mode == "categorized" else "🗂️ Categorized"
-        classic_label = "📋 Classic ✓" if shop_mode == "classic" else "📋 Classic"
-        kb.append([
-            InlineKeyboardButton(cat_label, callback_data="shopmode_categorized"),
-            InlineKeyboardButton(classic_label, callback_data="shopmode_classic"),
-        ])
+        # v170.87: ONE toggle button — each tap flips between the two views.
+        if shop_mode == "classic":
+            toggle_label, toggle_cb = "🗂️ Categorized View", "shopmode_categorized"
+        else:
+            toggle_label, toggle_cb = "📋 Classic View", "shopmode_classic"
+        toggle_label = _apply_styler("shop_mode_toggle", toggle_label)
+        kb.append([_make_btn(toggle_label, callback_data=toggle_cb)])
 
     # 🆕 v52: Home + Buy Points now editable via Navigation group too
     bottom_row = []
@@ -992,6 +993,7 @@ def admin_categories_keyboard(cats):
                                            callback_data=f"viewcat_{cid}")])
         else:
             kb.append([_make_btn(label, style=style, callback_data=f"viewcat_{cid}")])
+    kb.append([InlineKeyboardButton("📦 Uncategorized Settings", callback_data="uncat_settings")])
     kb.append([InlineKeyboardButton("⚙️ Category Picker Settings", callback_data="catpresent")])
     kb.append([_btn("➕", "➕ Add", "➕ Add Category", "➕ Add New Category", callback_data="add_category")])
     kb.append([_btn("🔙", "🔙 Return", "🔙 Return", "🔙 Back to Admin Panel", callback_data="admin_panel")])
@@ -1146,11 +1148,22 @@ def select_category_keyboard(cats):
         premium_id = name_id or icon_id
         label = (name or "Category") if premium_id else f"{icon} {name or 'Category'}"
         label = label[:60].rstrip() or "Category"
+        # v170.87: owner asked for the SAME look as the shop picker — a
+        # two-column blue grid with premium icons and centered labels.
+        label = _category_picker_clip_label(label, _CATEGORY_PICKER_TWO_COLUMN_WIDTH)
         if premium_id and make_premium_button:
-            kb.append([make_premium_button(label, emoji_id=premium_id,
-                                           callback_data=f"selcat_{cid}")])
+            row_btn = make_premium_button(f'[[HTML]]<tg-emoji emoji-id="{premium_id}">◼️</tg-emoji> {label}',
+                                          style="primary", callback_data=f"selcat_{cid}")
         else:
-            kb.append([InlineKeyboardButton(label, callback_data=f"selcat_{cid}")])
+            row_btn = _make_btn(label, style="primary", callback_data=f"selcat_{cid}")
+        kb.append(row_btn)
+    rows = []
+    for pos in range(0, len(kb), 2):
+        pair = kb[pos:pos + 2]
+        if len(pair) == 1:
+            pair.append(_category_picker_spacer())
+        rows.append(pair)
+    kb = rows
     kb.append([_btn("❌", "❌ Cancel", "❌ Cancel", "❌ Cancel", callback_data="admin_products")])
     return InlineKeyboardMarkup(kb)
 
@@ -2092,8 +2105,15 @@ def shop_categories_keyboard(grouped, user_mode="categorized"):
     kb = []
     buttons = []
     columns = _category_picker_columns()
+    uncat_info = None
     for _cid, info in (grouped or {}).items():
         try:
+            if int(_cid) == 0:
+                # v170.87: Uncategorized never joins the grid — it renders as
+                # its own FULL-WIDTH row after every real category (always
+                # last, owner-approved placement).
+                uncat_info = dict(info)
+                continue
             buttons.append(_category_picker_button(dict(info), columns=columns))
         except Exception:
             # A malformed legacy label must not prevent every other category
@@ -2114,18 +2134,34 @@ def shop_categories_keyboard(grouped, user_mode="categorized"):
         if columns == 2 and len(row) == 1:
             row.append(_category_picker_spacer())
         kb.append(row)
-    if not buttons:
+    if uncat_info is not None:
+        # v170.87: owner-editable full-width Uncategorized tile (label lives
+        # in settings and supports a premium emoji in the text, which keeps
+        # the centered icon+name formula).
+        try:
+            from database import get_setting
+            uncat_label = str(get_setting("shop_uncat_label", "") or "").strip()
+        except Exception:
+            uncat_label = ""
+        if not uncat_label:
+            uncat_label = "📦 Uncategorized"
+        try:
+            from button_system import is_styled as _is_styled
+            if _is_styled("shop_uncategorized"):
+                uncat_label = _apply_styler("shop_uncategorized", uncat_label)
+        except Exception:
+            pass
+        kb.append([_make_btn(uncat_label, style="primary", callback_data="shopcat_0")])
+    if not buttons and uncat_info is None:
         kb.append([InlineKeyboardButton("📭 No visible categories yet", callback_data="shop")])
 
-    # A visible, one-tap and persisted mode selector.  The selected option is
-    # still clickable (a harmless refresh) so Telegram has no disabled-button
-    # ambiguity and users can always see both supported modes.
-    categorized_label = "🗂️ Categorized ✓" if user_mode == "categorized" else "🗂️ Categorized"
-    classic_label = "📋 Classic ✓" if user_mode == "classic" else "📋 Classic"
-    kb.append([
-        InlineKeyboardButton(categorized_label, callback_data="shopmode_categorized"),
-        InlineKeyboardButton(classic_label, callback_data="shopmode_classic"),
-    ])
+    # v170.87: ONE toggle button — each tap flips between the two views.
+    if user_mode == "classic":
+        toggle_label, toggle_cb = "🗂️ Categorized View", "shopmode_categorized"
+    else:
+        toggle_label, toggle_cb = "📋 Classic View", "shopmode_classic"
+    toggle_label = _apply_styler("shop_mode_toggle", toggle_label)
+    kb.append([_make_btn(toggle_label, callback_data=toggle_cb)])
     # v170.65: the picker and every category page share the same Home registry
     # control, so one Screen-by-Screen Editor change reaches both routes.
     home_b = _rb("nav_shop_home", callback_data="main_menu")

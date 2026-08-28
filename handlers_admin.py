@@ -322,14 +322,14 @@ def _category_product_picker_content(context, page=0):
         "🏷️ *New Category — Select Products*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"Category: *{name}*\n"
-        f"In-stock, unassigned products: *{len(products)}*\n"
+        f"Unassigned products (out-of-stock included): *{len(products)}*\n"
         f"Selected: *{len(selected)}*  ·  Page *{page + 1}/{total_pages}*\n\n"
     )
     if products:
         text += ("Tick one product or multiple products. Products already in a "
                  "category never appear here.\n")
     else:
-        text += ("No in-stock unassigned products right now. You can still create "
+        text += ("No unassigned products right now. You can still create "
                  "an empty category.\n")
 
     rows = []
@@ -7740,7 +7740,7 @@ async def _render_category_assign(q, cid, page=0):
         f"[[HTML]]📦 <b>Assign Products</b> — {name}\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"✅ In this category: <b>{len(assigned)}</b>\n"
-        f"🆓 Unassigned in-stock: <b>{len(unassigned)}</b>"
+        f"🆓 Unassigned (out-of-stock included): <b>{len(unassigned)}</b>"
         + (f"  ·  page {page + 1}/{pages}" if pages > 1 else "") + "\n\n"
         "➕ tap = add to category · ➖ tap = remove"
     )
@@ -7769,13 +7769,14 @@ async def _render_category_assign(q, cid, page=0):
                 pass
         plain = html_strip_tags(plain).replace("\n", " ").strip()
         price_txt = fmt_price(p.get("price"))
+        stock_txt = f" ({int(p.get('stock') or 0)})"  # 0 = out of stock, still assignable
         if eid and _have_helpers:
             # A premium icon strips the label's LEADING symbol, so the ➕/➖
             # mark rides after the id where it always stays visible.
-            label = f"#{int(p['id'])} · {prefix} {plain[:25]} — {price_txt}"
+            label = f"#{int(p['id'])} · {prefix} {plain[:25]} — {price_txt}{stock_txt}"
             return [make_premium_button(label, emoji_id=eid, style=style,
                                         callback_data=cb)]
-        label = f"{prefix} #{int(p['id'])} {plain[:25]} — {price_txt}"
+        label = f"{prefix} #{int(p['id'])} {plain[:25]} — {price_txt}{stock_txt}"
         if _have_helpers:
             return [make_premium_button(label, style=style, callback_data=cb)]
         return [InlineKeyboardButton(label, callback_data=cb)]
@@ -7793,6 +7794,75 @@ async def _render_category_assign(q, cid, page=0):
         ])
     kb.append([InlineKeyboardButton("🔙 Back to Category", callback_data=f"viewcat_{cid}")])
     await _safe_edit(q, text, reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def uncat_settings_callback(u, c):
+    """🆕 v170.87: editable settings for the full-width Uncategorized tile."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    from database import get_setting, set_setting
+    data = str(q.data or "")
+    if data == "uncat_edit_label":
+        c.user_data['uncat_edit'] = True
+        await q.answer()
+        await _safe_edit(q,
+            "📦 *Uncategorized Button Label*\n\n"
+            "Send the new label. Premium custom emoji in the text is fully "
+            "supported (it becomes the button icon, centered formula intact).\n\n"
+            "_Example:_ `📦 Other Products`",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "❌ Cancel", callback_data="uncat_settings")]]))
+        return
+    if data == "uncat_reset":
+        c.user_data.pop('uncat_edit', None)
+        set_setting("shop_uncat_label", "")
+        await q.answer("♻️ Reset to default")
+    else:
+        await q.answer()
+        c.user_data.pop('uncat_edit', None)
+    current = str(get_setting("shop_uncat_label", "") or "").strip() or "📦 Uncategorized"
+    from utils import html_strip_tags
+    shown = html_strip_tags(current).strip() or "📦 Uncategorized"
+    text = (
+        "📦 *Uncategorized — Settings*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Current label: `{shown}`\n\n"
+        "This tile is always FULL-WIDTH and stays at the BOTTOM of the "
+        "category picker, below every category you add."
+    )
+    kb = [
+        [InlineKeyboardButton("✏️ Edit Label", callback_data="uncat_edit_label")],
+        [InlineKeyboardButton("♻️ Reset Default", callback_data="uncat_reset")],
+        [InlineKeyboardButton("🔙 Back to Categories", callback_data="admin_categories")],
+    ]
+    await _safe_edit(q, text, parse_mode="Markdown",
+                     reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def uncat_label_received(u, c):
+    """Text-router hook: save the owner's new Uncategorized label."""
+    if u.effective_user.id != ADMIN_ID:
+        return True
+    from utils import capture_user_text, html_strip_tags
+    from database import set_setting
+    value = (capture_user_text(u.message) or u.message.text or "").strip()
+    plain = html_strip_tags(value).strip()
+    if len(plain) < 2:
+        await u.message.reply_text("❌ Label too short (min 2 characters).")
+        return False
+    if len(plain) > 40:
+        await u.message.reply_text("❌ Label too long (max 40 characters).")
+        return False
+    set_setting("shop_uncat_label", value)
+    c.user_data.pop('uncat_edit', None)
+    await u.message.reply_text(
+        f"✅ *Uncategorized label saved!*\n\n`{plain}`",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+            "🔙 Back", callback_data="uncat_settings")]]))
+    return True
 
 
 async def category_assign_products_callback(u, c):

@@ -795,6 +795,9 @@ async def handle_text(update, context):
         if await edit_product_field_received(update, context): return
     if context.user_data.get('edit_cat_id'):
         if await edit_category_field_received(update, context): return
+    if context.user_data.get('uncat_edit'):
+        from handlers_admin import uncat_label_received
+        if await uncat_label_received(update, context): return
     if context.user_data.get('edit_acct_id'):
         if await edit_account_field_received(update, context): return
 
@@ -2590,6 +2593,7 @@ def main():
         ("^delprod_", delete_product_callback),
         ("^viewcat_", view_category_callback),
         ("^catasg_", category_assign_products_callback),
+        ("^uncat_", uncat_settings_callback),
                 ("^manhist_", manual_hist_callback),
         ("^editman_", edit_manual_order_callback),
         ("^delset_", delivery_settings_callback),

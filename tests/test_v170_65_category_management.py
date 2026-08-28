@@ -106,7 +106,10 @@ class CategoryManagementTests(unittest.TestCase):
             conn.close()
 
         initial_candidates = {int(p["id"]) for p in database.get_unassigned_in_stock_products()}
-        self.assertEqual(initial_candidates, {unassigned, invalid_legacy_link})
+        # v170.87: out-of-stock unassigned products are deliberately eligible
+        # now, so the owner can pre-assign items before restocking them.
+        self.assertEqual(initial_candidates,
+                         {unassigned, invalid_legacy_link, out_of_stock})
         before = dict(database.get_product(linked))
 
         deleted = database.delete_category(old_category)
@@ -130,10 +133,15 @@ class CategoryManagementTests(unittest.TestCase):
             conn.close()
 
         after_delete_candidates = {int(p["id"]) for p in database.get_unassigned_in_stock_products()}
-        self.assertEqual(after_delete_candidates, {linked, unassigned, invalid_legacy_link})
-        # Products from a deleted category re-enter only if they are in stock.
-        self.assertNotIn(linked_out_of_stock, after_delete_candidates)
-        self.assertNotIn(out_of_stock, after_delete_candidates)
+        # v170.87: zero-stock items (freshly unassigned or already loose) are
+        # candidates too; archived mirrors stay excluded.
+        self.assertEqual(after_delete_candidates,
+                         {linked, linked_out_of_stock, unassigned,
+                          invalid_legacy_link, out_of_stock})
+        # v170.87: out-of-stock products re-enter the pool too (owner can
+        # pre-assign them before restocking).
+        self.assertIn(linked_out_of_stock, after_delete_candidates)
+        self.assertIn(out_of_stock, after_delete_candidates)  # v170.87: eligible now
         self.assertNotIn(archived, after_delete_candidates)
         self.assertNotIn(assigned_elsewhere, after_delete_candidates)
 
@@ -145,7 +153,9 @@ class CategoryManagementTests(unittest.TestCase):
         self.assertFalse(stale_submit["created"])
         self.assertEqual(stale_submit["requested_count"], 5)
         self.assertEqual(stale_submit["assigned_count"], 0)
-        self.assertEqual(len(stale_submit["unavailable_product_ids"]), 3)
+        # v170.87: out_of_stock is eligible now, so only the two truly
+        # unavailable picks (assigned_elsewhere + archived) block the submit.
+        self.assertEqual(len(stale_submit["unavailable_product_ids"]), 2)
         self.assertEqual(len(database.get_categories(include_inactive=True)), category_count_before_stale_submit)
         self.assertIsNone(database.get_product(linked)["category_id"])
         self.assertIsNone(database.get_product(unassigned)["category_id"])
@@ -174,7 +184,7 @@ class CategoryManagementTests(unittest.TestCase):
         eligible_again = {int(p["id"]) for p in database.get_unassigned_in_stock_products()}
         self.assertIn(linked, eligible_again)
         self.assertIn(unassigned, eligible_again)
-        self.assertNotIn(out_of_stock, eligible_again)
+        self.assertIn(out_of_stock, eligible_again)  # v170.87: eligible now
 
     def test_new_wizard_assignment_survives_supplier_mirror_refresh(self):
         ext_suppliers.ensure_ext_supplier_tables()

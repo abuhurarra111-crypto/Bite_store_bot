@@ -1795,8 +1795,7 @@ def get_unassigned_in_stock_products():
         c.execute("""SELECT p.*
                      FROM products p
                      LEFT JOIN categories linked ON linked.id=p.category_id
-                     WHERE COALESCE(p.stock,0)>0
-                       AND COALESCE(p.is_archived,0)=0
+                     WHERE COALESCE(p.is_archived,0)=0
                        AND (p.category_id IS NULL OR p.category_id=0
                             OR linked.id IS NULL)
                      ORDER BY p.id DESC""")
@@ -1839,7 +1838,6 @@ def create_category_with_unassigned_in_stock_products(
             # still counts as assigned and is never overwritten.
             c.execute(f"""SELECT p.id FROM products p
                           WHERE p.id IN ({marks})
-                            AND COALESCE(p.stock,0)>0
                             AND COALESCE(p.is_archived,0)=0
                             AND (p.category_id IS NULL OR p.category_id=0
                                  OR NOT EXISTS (

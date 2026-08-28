@@ -137,8 +137,9 @@ class ShopCategoryModeTests(unittest.TestCase):
         self.assertNotIn("[[HTML]]", category_row[1].text)
         self.assertNotIn("(", category_row[0].text)  # old stock/count UI is gone
         mode_callbacks = {button.callback_data for row in markup.inline_keyboard for button in row}
-        self.assertIn("shopmode_categorized", mode_callbacks)
+        # v170.87: single toggle — only the OTHER view's callback is offered.
         self.assertIn("shopmode_classic", mode_callbacks)
+        self.assertNotIn("shopmode_categorized", mode_callbacks)
 
         database.set_category_show_when_empty(empty, True)
         grouped = database.get_products_grouped_by_category()
@@ -180,8 +181,10 @@ class ShopCategoryModeTests(unittest.TestCase):
         # Existing buyer actions remain available after the grid, as chosen by
         # the owner: Classic and Buy Points are not removed for screenshot UX.
         callbacks = {button.callback_data for row in markup.inline_keyboard for button in row}
-        self.assertTrue({"shopmode_categorized", "shopmode_classic", "buy_points", "main_menu"}
+        # v170.87: ONE toggle button — categorized view offers the Classic tap.
+        self.assertTrue({"shopmode_classic", "buy_points", "main_menu"}
                         .issubset(callbacks))
+        self.assertNotIn("shopmode_categorized", callbacks)
 
         # The owner can still deliberately choose the legacy one-column layout.
         database.set_setting("shop_category_columns", "1")
