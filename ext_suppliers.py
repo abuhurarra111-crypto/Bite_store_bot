@@ -576,7 +576,9 @@ def update_ext_product(eid, **fields):
         try:
             ep_check = get_ext_product(eid)
             if ep_check and ep_check.get("synced_to_shop"):
-                mirror_ext_to_products(eid)
+                # v170.90: only an explicit category_id update may rewrite the
+                # shop row's category — price/stock refreshes never touch it.
+                mirror_ext_to_products(eid, sync_category=("category_id" in fields))
         except Exception as e:
             logger.debug(f"[mirror] update failed: {e}")
     return True
@@ -611,13 +613,22 @@ def toggle_ext_product_active(eid):
 # to the shop's `products` table. This way the existing shop UI, filters,
 # search, categories, and purchase pipeline all work unchanged.
 
-def mirror_ext_to_products(ext_product_id):
+def mirror_ext_to_products(ext_product_id, sync_category=False):
     """Sync ONE ext_product to a matching row in `products` table.
     - Creates a new products row if none exists (linked via ext_product_id)
     - Updates existing row if already linked
     - Uses sell_price for `price`, cost_usd for `cost_price`
     - Preserves premium-emoji formatting in the name if emoji_id present
     Returns (products.id, was_new: bool)
+
+    🐛 v170.90 ROOT-CAUSE FIX: `sync_category` — the routine auto-sync
+    (price/stock refresh) used to overwrite products.category_id with
+    ext_products.category_id on EVERY mirror. When the owner assigned a
+    supplier product to a category from the shop-side wizard, the next
+    supplier tick silently threw it back to Uncategorized ("5 minute baad
+    product category se bahar"). Now the owner's shop category is the
+    source of truth: the UPDATE branch only touches category_id when the
+    caller explicitly changed the category (sync_category=True).
     """
     from database import get_connection as _gc, ensure_column as _ec
     ep = get_ext_product(ext_product_id)
@@ -721,14 +732,25 @@ def mirror_ext_to_products(ext_product_id):
 
     old_shop_price = float(row["price"] or 0) if row else 0.0
     if row:
-        # Update existing mirror row
-        c.execute("""UPDATE products
-                     SET name=?, description=?, price=?, cost_price=?,
-                         stock=?, category_id=?, is_active=?, is_archived=0,
-                         product_format=?
-                     WHERE id=?""",
-                  (display_name, desc, sell, cost, stock,
-                   (cat_id if cat_id > 0 else None), is_active, prod_fmt, shop_pid))
+        # Update existing mirror row.
+        # v170.90: category_id is only written on an explicit category
+        # change; otherwise the owner's shop-side assignment is preserved.
+        if sync_category:
+            c.execute("""UPDATE products
+                         SET name=?, description=?, price=?, cost_price=?,
+                             stock=?, category_id=?, is_active=?, is_archived=0,
+                             product_format=?
+                         WHERE id=?""",
+                      (display_name, desc, sell, cost, stock,
+                       (cat_id if cat_id > 0 else None), is_active, prod_fmt, shop_pid))
+        else:
+            c.execute("""UPDATE products
+                         SET name=?, description=?, price=?, cost_price=?,
+                             stock=?, is_active=?, is_archived=0,
+                             product_format=?
+                         WHERE id=?""",
+                      (display_name, desc, sell, cost, stock,
+                       is_active, prod_fmt, shop_pid))
         was_new = False
         pid = shop_pid
     else:

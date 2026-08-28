@@ -438,6 +438,50 @@ def _heal_remove_seeded_reference_categories():
         _log(f"heal_remove_seeded_categories: {e}", "ERROR")
 
 
+def _heal_ext_mirror_category_backfill():
+    """🆕 v170.90 ONE-TIME: repair supplier master records whose category
+    drifted from the owner's shop-side assignment.
+
+    Root cause fixed in v170.90: the shop-side assign panel never updated
+    ext_products.category_id, so the supplier auto-sync mirror kept
+    rewriting products.category_id back to NULL — assigned products
+    "automatically" returned to Uncategorized minutes later.  This heal
+    copies the owner's current shop category onto the linked ext row so
+    already-made assignments stay put after restore.  Shop row = owner
+    intent = source of truth; runs once (flag ext_cat_sync_v17090).
+    """
+    from database import get_connection, get_setting, set_setting
+    if str(get_setting("ext_cat_sync_v17090", "") or "") == "1":
+        return
+    conn = get_connection(); c = conn.cursor()
+    try:
+        c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ext_products'")
+        if c.fetchone():
+            ext_cols = {str(r[1]) for r in c.execute("PRAGMA table_info(ext_products)")}
+            if {"category_id", "shop_product_id"} <= ext_cols:
+                c.execute("""UPDATE ext_products
+                             SET category_id=(
+                                 SELECT p.category_id FROM products p
+                                 WHERE p.id=ext_products.shop_product_id)
+                             WHERE COALESCE(shop_product_id,0)>0
+                               AND EXISTS (
+                                   SELECT 1 FROM products p
+                                   WHERE p.id=ext_products.shop_product_id
+                                     AND COALESCE(p.category_id,0)>0
+                                     AND COALESCE(p.category_id,0)
+                                         != COALESCE(ext_products.category_id,0))""")
+                fixed = c.rowcount or 0
+                conn.commit()
+                if fixed:
+                    print(f"[SelfHeal] v170.90: re-anchored {fixed} supplier "
+                          f"product(s) to the owner's shop category")
+    except Exception as e:
+        print(f"[SelfHeal] ext category backfill failed: {e}")
+    finally:
+        conn.close()
+    set_setting("ext_cat_sync_v17090", "1")
+
+
 def _heal_all_categories_always_visible():
     """🆕 v170.88 ONE-TIME: the owner wants EVERY category visible in the
     shop picker on one page, with no emptiness/stock-based hiding (a new
@@ -707,6 +751,7 @@ def run_all_heals() -> list:
         _log(f"heal_remove_seeded outer: {e}", "ERROR")
     try:
         _heal_all_categories_always_visible()
+        _heal_ext_mirror_category_backfill()
     except Exception as e:
         _log(f"heal_all_cats_visible outer: {e}", "ERROR")
     _log("Self-heal completed")

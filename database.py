@@ -2029,10 +2029,43 @@ def assign_product_to_category(pid, cid):
     try:
         c.execute("UPDATE products SET category_id=? WHERE id=?", (cid, pid))
         changed = c.rowcount > 0
+        # 🐛 v170.90 ROOT-CAUSE FIX: keep the supplier master record
+        # (ext_products.category_id) aligned in the SAME transaction —
+        # otherwise the 30-second supplier auto-sync mirror used to rewrite
+        # products.category_id from the stale ext row and the product
+        # "automatically" fell back to Uncategorized minutes later.
+        if changed:
+            _sync_ext_mirror_category(c, pid, cid)
         conn.commit()
         return changed
     finally:
         conn.close()
+
+
+def _sync_ext_mirror_category(c, pid, cid):
+    """Best-effort: mirror a shop-side category change onto the linked
+    ext_products row (both link directions, old backups included)."""
+    try:
+        c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ext_products'")
+        if not c.fetchone():
+            return
+        ext_columns = {str(r[1]) for r in c.execute("PRAGMA table_info(ext_products)")}
+        if "category_id" not in ext_columns:
+            return
+        ext_cid = int(cid) if cid else 0
+        if "shop_product_id" in ext_columns:
+            c.execute("UPDATE ext_products SET category_id=? WHERE shop_product_id=?",
+                      (ext_cid, int(pid)))
+        c.execute("PRAGMA table_info(products)")
+        if "ext_product_id" in {str(r[1]) for r in c.fetchall()}:
+            c.execute("SELECT ext_product_id FROM products WHERE id=? "
+                      "AND COALESCE(ext_product_id,0)>0", (int(pid),))
+            row = c.fetchone()
+            if row:
+                c.execute("UPDATE ext_products SET category_id=? WHERE id=?",
+                          (ext_cid, int(row[0])))
+    except Exception:
+        pass
 
 
 def unassign_product_from_category(pid, cid):
@@ -2046,6 +2079,10 @@ def unassign_product_from_category(pid, cid):
         c.execute("UPDATE products SET category_id=NULL WHERE id=? AND category_id=?",
                   (pid, cid))
         changed = c.rowcount > 0
+        # v170.90: supplier master record follows the shop-side unassign too,
+        # so the auto-sync mirror can never re-attach the old category.
+        if changed:
+            _sync_ext_mirror_category(c, pid, 0)
         conn.commit()
         return changed
     finally:
