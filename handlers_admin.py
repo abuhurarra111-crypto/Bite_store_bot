@@ -7797,7 +7797,10 @@ async def _render_category_assign(q, cid, page=0):
 
 
 async def uncat_settings_callback(u, c):
-    """🆕 v170.87: editable settings for the full-width Uncategorized tile."""
+    """🆕 v170.87 / upgraded v170.88: FULL editable settings for the
+    Uncategorized tile — label, header, button color, hide/show, reset —
+    the same controls a real category offers (minus delete/reorder, since
+    this virtual bucket always sits last by owner-approved design)."""
     q = u.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
@@ -7805,6 +7808,7 @@ async def uncat_settings_callback(u, c):
     data = str(q.data or "")
     if data == "uncat_edit_label":
         c.user_data['uncat_edit'] = True
+        c.user_data.pop('uncat_edit_desc', None)
         await q.answer()
         await _safe_edit(q,
             "📦 *Uncategorized Button Label*\n\n"
@@ -7815,26 +7819,71 @@ async def uncat_settings_callback(u, c):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
                 "❌ Cancel", callback_data="uncat_settings")]]))
         return
-    if data == "uncat_reset":
+    if data == "uncat_edit_desc":
+        c.user_data['uncat_edit_desc'] = True
         c.user_data.pop('uncat_edit', None)
-        set_setting("shop_uncat_label", "")
-        await q.answer("♻️ Reset to default")
+        await q.answer()
+        await _safe_edit(q,
+            "📝 *Uncategorized Page Header*\n\n"
+            "Send the header text shown at the top of the Uncategorized "
+            "product page (max 1000 characters).",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                "❌ Cancel", callback_data="uncat_settings")]]))
+        return
+    if data.startswith("uncat_style_"):
+        value = data.replace("uncat_style_", "", 1)
+        if value in ("primary", "success", "danger"):
+            set_setting("shop_uncat_style", value)
+            labels = {"primary": "🔵 Blue", "success": "🟢 Green", "danger": "🔴 Red"}
+            await q.answer(f"✅ Color: {labels[value]}")
+        else:
+            await q.answer("❌ Invalid color", show_alert=True)
+    elif data == "uncat_hide":
+        hidden = str(get_setting("shop_uncat_hidden", "") or "") == "1"
+        set_setting("shop_uncat_hidden", "" if hidden else "1")
+        await q.answer("👁 Shown in shop" if hidden else "🙈 Hidden from shop")
+    elif data == "uncat_reset":
+        for key in ("shop_uncat_label", "shop_uncat_desc",
+                    "shop_uncat_style", "shop_uncat_hidden"):
+            set_setting(key, "")
+        c.user_data.pop('uncat_edit', None)
+        c.user_data.pop('uncat_edit_desc', None)
+        await q.answer("♻️ All Uncategorized settings reset")
     else:
         await q.answer()
         c.user_data.pop('uncat_edit', None)
-    current = str(get_setting("shop_uncat_label", "") or "").strip() or "📦 Uncategorized"
+        c.user_data.pop('uncat_edit_desc', None)
+
     from utils import html_strip_tags
+    current = str(get_setting("shop_uncat_label", "") or "").strip() or "📦 Uncategorized"
     shown = html_strip_tags(current).strip() or "📦 Uncategorized"
+    desc = html_strip_tags(str(get_setting("shop_uncat_desc", "") or "")).strip()
+    style = str(get_setting("shop_uncat_style", "") or "primary").strip().lower()
+    if style not in ("primary", "success", "danger"):
+        style = "primary"
+    hidden = str(get_setting("shop_uncat_hidden", "") or "") == "1"
     text = (
         "📦 *Uncategorized — Settings*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Current label: `{shown}`\n\n"
+        f"🏷️ Label: `{shown}`\n"
+        f"📝 Header: `{(desc[:60] + '…') if len(desc) > 60 else (desc or '—')}`\n"
+        f"🎨 Color: `{ {'primary': 'Blue', 'success': 'Green', 'danger': 'Red'}[style] }`\n"
+        f"👁 Visibility: `{'Hidden 🙈' if hidden else 'Shown ✅'}`\n\n"
         "This tile is always FULL-WIDTH and stays at the BOTTOM of the "
         "category picker, below every category you add."
     )
+    def _mark(v):
+        return " ✓" if style == v else ""
     kb = [
-        [InlineKeyboardButton("✏️ Edit Label", callback_data="uncat_edit_label")],
-        [InlineKeyboardButton("♻️ Reset Default", callback_data="uncat_reset")],
+        [InlineKeyboardButton("✏️ Edit Label", callback_data="uncat_edit_label"),
+         InlineKeyboardButton("📝 Edit Header", callback_data="uncat_edit_desc")],
+        [InlineKeyboardButton("🔵 Blue" + _mark("primary"), callback_data="uncat_style_primary"),
+         InlineKeyboardButton("🟢 Green" + _mark("success"), callback_data="uncat_style_success"),
+         InlineKeyboardButton("🔴 Red" + _mark("danger"), callback_data="uncat_style_danger")],
+        [InlineKeyboardButton("👁 Show in Shop" if hidden else "🙈 Hide from Shop",
+                              callback_data="uncat_hide")],
+        [InlineKeyboardButton("♻️ Reset All", callback_data="uncat_reset")],
         [InlineKeyboardButton("🔙 Back to Categories", callback_data="admin_categories")],
     ]
     await _safe_edit(q, text, parse_mode="Markdown",
@@ -7842,23 +7891,33 @@ async def uncat_settings_callback(u, c):
 
 
 async def uncat_label_received(u, c):
-    """Text-router hook: save the owner's new Uncategorized label."""
+    """Text-router hook: save the Uncategorized label OR page header."""
     if u.effective_user.id != ADMIN_ID:
         return True
     from utils import capture_user_text, html_strip_tags
     from database import set_setting
     value = (capture_user_text(u.message) or u.message.text or "").strip()
     plain = html_strip_tags(value).strip()
-    if len(plain) < 2:
-        await u.message.reply_text("❌ Label too short (min 2 characters).")
-        return False
-    if len(plain) > 40:
-        await u.message.reply_text("❌ Label too long (max 40 characters).")
-        return False
-    set_setting("shop_uncat_label", value)
-    c.user_data.pop('uncat_edit', None)
+    is_desc = bool(c.user_data.get('uncat_edit_desc'))
+    if is_desc:
+        if len(plain) > 1000:
+            await u.message.reply_text("❌ Header too long (max 1000 characters).")
+            return False
+        set_setting("shop_uncat_desc", value)
+        c.user_data.pop('uncat_edit_desc', None)
+        saved = "Header"
+    else:
+        if len(plain) < 2:
+            await u.message.reply_text("❌ Label too short (min 2 characters).")
+            return False
+        if len(plain) > 40:
+            await u.message.reply_text("❌ Label too long (max 40 characters).")
+            return False
+        set_setting("shop_uncat_label", value)
+        c.user_data.pop('uncat_edit', None)
+        saved = "Label"
     await u.message.reply_text(
-        f"✅ *Uncategorized label saved!*\n\n`{plain}`",
+        f"✅ *Uncategorized {saved} saved!*\n\n`{plain[:100]}`",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
             "🔙 Back", callback_data="uncat_settings")]]))

@@ -795,7 +795,7 @@ async def handle_text(update, context):
         if await edit_product_field_received(update, context): return
     if context.user_data.get('edit_cat_id'):
         if await edit_category_field_received(update, context): return
-    if context.user_data.get('uncat_edit'):
+    if context.user_data.get('uncat_edit') or context.user_data.get('uncat_edit_desc'):
         from handlers_admin import uncat_label_received
         if await uncat_label_received(update, context): return
     if context.user_data.get('edit_acct_id'):

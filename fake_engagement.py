@@ -4639,7 +4639,10 @@ async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None
         pass
 
     # 🆕 v60: Pre-flight check — abort broadcast if product is not buyable
-    if pid is not None:
+    # 🐛 v170.88 FIX: freebie-claim alerts must ALWAYS reach the configured
+    # destination — freebie products are legitimately out-of-stock/hidden in
+    # the shop, so the buyability pre-flight silently killed every alert.
+    if pid is not None and tpl_id != "bc_freebie":
         if not _is_product_broadcastable(pid):
             logger.info(f"[broadcast_store_message] SKIPPED pid={pid} — product hidden/deleted/out-of-stock")
             return 0
@@ -5331,7 +5334,10 @@ async def broadcast_store_message(bot, text, pid=None, btn_key=None, tpl_id=None
         pass
 
     # 🆕 v60: Pre-flight check — abort broadcast if product is not buyable
-    if pid is not None:
+    # 🐛 v170.88 FIX: freebie-claim alerts must ALWAYS reach the configured
+    # destination — freebie products are legitimately out-of-stock/hidden in
+    # the shop, so the buyability pre-flight silently killed every alert.
+    if pid is not None and tpl_id != "bc_freebie":
         if not _is_product_broadcastable(pid):
             logger.info(f"[broadcast_store_message] SKIPPED pid={pid} — product hidden/deleted/out-of-stock")
             return 0

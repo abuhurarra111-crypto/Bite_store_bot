@@ -116,8 +116,10 @@ class ShopCategoryModeTests(unittest.TestCase):
         self._product(second, "B")
 
         grouped = database.get_products_grouped_by_category()
-        self.assertEqual(list(grouped), [first, second])
-        self.assertNotIn(empty, grouped)  # default empty-category behavior
+        # 🆕 v170.88: EVERY active category is visible on the shop page —
+        # even empty ones (new categories default to show_when_empty=1).
+        self.assertEqual(list(grouped), [first, second, empty])
+        self.assertIn(empty, grouped)
         markup = keyboards.shop_categories_keyboard(grouped)
         category_row = markup.inline_keyboard[0]
         self.assertEqual(len(category_row), 2)

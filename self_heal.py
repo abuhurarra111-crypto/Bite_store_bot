@@ -438,6 +438,30 @@ def _heal_remove_seeded_reference_categories():
         _log(f"heal_remove_seeded_categories: {e}", "ERROR")
 
 
+def _heal_all_categories_always_visible():
+    """🆕 v170.88 ONE-TIME: the owner wants EVERY category visible in the
+    shop picker on one page, with no emptiness/stock-based hiding (a new
+    'Kaspersky' category with one out-of-stock product was invisible).
+    Flips show_when_empty on for all existing categories and enables the
+    global empty-categories setting; later owner changes are respected."""
+    try:
+        from database import get_setting, set_setting, get_connection
+        if get_setting("all_cats_visible_v17088", "") == "1":
+            return
+        set_setting("all_cats_visible_v17088", "1")
+        set_setting("shop_show_empty_categories", "1")
+        conn = get_connection(); c = conn.cursor()
+        try:
+            c.execute("UPDATE categories SET show_when_empty=1")
+            n = c.rowcount
+            conn.commit()
+        finally:
+            conn.close()
+        _log(f"All {n} categories set always-visible (one page, no hiding)")
+    except Exception as e:
+        _log(f"heal_all_cats_visible: {e}", "ERROR")
+
+
 def _heal_icon_mode_both_upgrade():
 
     """🆕 v170.81 ONE-TIME: the main menu's Shop Now button proved a premium
@@ -681,6 +705,10 @@ def run_all_heals() -> list:
         _heal_remove_seeded_reference_categories()
     except Exception as e:
         _log(f"heal_remove_seeded outer: {e}", "ERROR")
+    try:
+        _heal_all_categories_always_visible()
+    except Exception as e:
+        _log(f"heal_all_cats_visible outer: {e}", "ERROR")
     _log("Self-heal completed")
     return list(_HEAL_REPORT)
 

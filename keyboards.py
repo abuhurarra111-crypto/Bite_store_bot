@@ -614,7 +614,12 @@ def all_products_keyboard(products, page=1, per_page=10, user=None, filter_mode=
         else:
             toggle_label, toggle_cb = "📋 Classic View", "shopmode_classic"
         toggle_label = _apply_styler("shop_mode_toggle", toggle_label)
-        kb.append([_make_btn(toggle_label, callback_data=toggle_cb)])
+        try:
+            from button_system import resolve_button_style
+            _tstyle = resolve_button_style("shop_mode_toggle") or None
+        except Exception:
+            _tstyle = None
+        kb.append([_make_btn(toggle_label, style=_tstyle, callback_data=toggle_cb)])
 
     # 🆕 v52: Home + Buy Points now editable via Navigation group too
     bottom_row = []
@@ -2138,30 +2143,45 @@ def shop_categories_keyboard(grouped, user_mode="categorized"):
         # v170.87: owner-editable full-width Uncategorized tile (label lives
         # in settings and supports a premium emoji in the text, which keeps
         # the centered icon+name formula).
+        # v170.88: color + hide settings like a real category; the owner's
+        # Customization (Button Styler) color wins when set.
         try:
             from database import get_setting
+            uncat_hidden = str(get_setting("shop_uncat_hidden", "") or "") == "1"
             uncat_label = str(get_setting("shop_uncat_label", "") or "").strip()
+            uncat_style = str(get_setting("shop_uncat_style", "") or "primary").strip().lower()
         except Exception:
-            uncat_label = ""
+            uncat_hidden, uncat_label, uncat_style = False, "", "primary"
+        if uncat_style not in ("primary", "success", "danger"):
+            uncat_style = "primary"
         if not uncat_label:
             uncat_label = "📦 Uncategorized"
         try:
-            from button_system import is_styled as _is_styled
+            from button_system import is_styled as _is_styled, resolve_button_style
             if _is_styled("shop_uncategorized"):
                 uncat_label = _apply_styler("shop_uncategorized", uncat_label)
+            uncat_style = resolve_button_style("shop_uncategorized") or uncat_style
         except Exception:
             pass
-        kb.append([_make_btn(uncat_label, style="primary", callback_data="shopcat_0")])
+        if not uncat_hidden:
+            kb.append([_make_btn(uncat_label, style=uncat_style,
+                                 callback_data="shopcat_0")])
     if not buttons and uncat_info is None:
         kb.append([InlineKeyboardButton("📭 No visible categories yet", callback_data="shop")])
 
     # v170.87: ONE toggle button — each tap flips between the two views.
+    # v170.88: the owner's Customization color now actually applies.
     if user_mode == "classic":
         toggle_label, toggle_cb = "🗂️ Categorized View", "shopmode_categorized"
     else:
         toggle_label, toggle_cb = "📋 Classic View", "shopmode_classic"
     toggle_label = _apply_styler("shop_mode_toggle", toggle_label)
-    kb.append([_make_btn(toggle_label, callback_data=toggle_cb)])
+    try:
+        from button_system import resolve_button_style
+        _tstyle = resolve_button_style("shop_mode_toggle") or None
+    except Exception:
+        _tstyle = None
+    kb.append([_make_btn(toggle_label, style=_tstyle, callback_data=toggle_cb)])
     # v170.65: the picker and every category page share the same Home registry
     # control, so one Screen-by-Screen Editor change reaches both routes.
     home_b = _rb("nav_shop_home", callback_data="main_menu")

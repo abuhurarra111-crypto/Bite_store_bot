@@ -1487,7 +1487,7 @@ def get_category(cid, include_inactive=True):
 
 
 def add_category(name, emoji="", description="", button_style="primary",
-                 show_when_empty=False):
+                 show_when_empty=True):  # v170.88: new categories always visible
     """Create an ordered, blue-by-default category without replacing old CRUD.
 
     v170.76: the separate icon system is removed — ``emoji`` may be empty and
@@ -1717,9 +1717,19 @@ def get_products_grouped_by_category(filter_mode="all", include_empty=None):
         cid = int(product["category_id"] or 0)
         if cid <= 0:
             if uncategorized is None:
+                # v170.88: the Uncategorized bucket honors the owner's own
+                # settings (label/header/color), exactly like a real category.
+                try:
+                    _u_name = str(get_setting("shop_uncat_label", "") or "").strip() or "Uncategorized"
+                    _u_desc = str(get_setting("shop_uncat_desc", "") or "")
+                    _u_style = str(get_setting("shop_uncat_style", "") or "primary").strip().lower()
+                except Exception:
+                    _u_name, _u_desc, _u_style = "Uncategorized", "", "primary"
+                if _u_style not in ("primary", "success", "danger"):
+                    _u_style = "primary"
                 uncategorized = {
-                    "id": 0, "name": "Uncategorized", "emoji": "📦",
-                    "description": "", "button_style": "primary",
+                    "id": 0, "name": _u_name, "emoji": "📦",
+                    "description": _u_desc, "button_style": _u_style,
                     "display_order": 10**9, "show_when_empty": 0,
                     "products": [], "product_count": 0, "in_stock_count": 0,
                 }
@@ -1792,10 +1802,17 @@ def get_unassigned_in_stock_products():
     try:
         ensure_column(c, "products", "is_archived", "INTEGER DEFAULT 0")
         conn.commit()  # persist the additive legacy-schema repair before read
-        c.execute("""SELECT p.*
+        # v170.88: enabled freebies live in the Freebies system (excluded
+        # from the shop catalog), so offering them for category assignment
+        # only confused the owner — they are filtered out here too.
+        c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='freebies'")
+        freebie_clause = ("AND p.id NOT IN (SELECT product_id FROM freebies "
+                          "WHERE enabled=1) " if c.fetchone() else "")
+        c.execute(f"""SELECT p.*
                      FROM products p
                      LEFT JOIN categories linked ON linked.id=p.category_id
                      WHERE COALESCE(p.is_archived,0)=0
+                       {freebie_clause}
                        AND (p.category_id IS NULL OR p.category_id=0
                             OR linked.id IS NULL)
                      ORDER BY p.id DESC""")
@@ -1806,7 +1823,7 @@ def get_unassigned_in_stock_products():
 
 def create_category_with_unassigned_in_stock_products(
         name, emoji="📦", description="", button_style="primary",
-        show_when_empty=False, product_ids=None):
+        show_when_empty=True, product_ids=None):  # v170.88: always visible
     """Atomically create a category and assign selected eligible products.
 
     A product is re-checked inside the write transaction.  Thus a stale
