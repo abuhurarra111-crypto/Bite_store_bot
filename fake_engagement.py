@@ -1165,7 +1165,7 @@ async def run_fake_broadcast(bot, force_type=None):
                 _pn = (dict(_p).get("name", "Product") if _p else "Product")
             nm = generate_fake_username(name_style)
             stars = "⭐" * random.choice([4, 4, 5, 5, 5])
-            review = "Bohat acha product hai, highly recommended!"
+            review = "Great product, highly recommended!"
             try:
                 from customization import render_template as _rt
                 n_msg = _rt("bc_review", {"user": nm, "product": _pn, "stars": stars, "review": review})
@@ -1412,65 +1412,8 @@ PAKISTANI_FEMALE_NAMES = [
 
 # ────────────────────────────────────────────────────────────────
 # 🇵🇰 ROMAN URDU REVIEWS — Natural, human-like, no dashes
-# ────────────────────────────────────────────────────────────────
-# These are what Pakistani users would actually write.
-# Written in Roman Urdu (Urdu words using English letters).
-# Range: short to medium length. Clean. No marketing fluff.
-#
-# FORMAT: Each is a list of sentences. We randomly pick 1-3 to combine.
-
-# NOTE: These are DEFAULT sentences.
-# Admin can edit them from: Admin Panel → 📝 Message Templates → 🇵🇰 Urdu Review
-# Changes there override these defaults automatically.
-ROMAN_URDU_SENTENCES = [
-    # Positive experience
-    "bohat acha product hai",
-    "bilkul original mila",
-    "delivery bht fast thi",
-    "price ke hisaab se bohot acha hai",
-    "works perfectly",
-    "shukriya bite store",
-    "highly recommend karta hoon",
-    "awesome bro",
-    "ekdum sahi cheez hai",
-    "dobara zaroor lunga",
-    "quality se khush hoon",
-    "phir se order karunga",
-    "highly recommended",
-    "mast experience tha",
-    "trust this store",
-    "no issues at all",
-    "seedha kaam kiya",
-    "looks completely legit",
-    "genuine product hai",
-    "was hesitant but now a regular buyer",
-    "yaar sach mein acha hai",
-    "zabardast service",
-    "fast delivery and original",
-    "no risk at all",
-    "bahut khush hoon",
-    "superb product",
-    "outstanding quality",
-    "ekdum original",
-    "good price and great quality",
-    "recommend karta hoon dosto ko",
-    "satisfied hoon",
-    "sab kuch theek tha",
-    "no complaints",
-    "acha laga",
-    "pehle doubt tha par sab theek nikla",
-    "good seller hai",
-    "trusted store hai",
-    "jaldi deliver hua",
-    "2 ghante mein mil gaya",
-    "behtareen experience tha",
-    "ek dum fresh account",
-    "sab features chal rahe hain",
-    "subscription work kar raha hai",
-    "nice, worked straight away",
-    "worth the price",
-    "mujhe bohot zyada pasand aaya",
-]
+# 🆕 v170.92: ROMAN_URDU_SENTENCES pool REMOVED — reviews are
+# ALWAYS English now (user demand: no Roman Urdu anywhere).
 
 # ────────────────────────────────────────────────────────────────
 # 🌍 INTERNATIONAL NAMES
@@ -1650,6 +1593,8 @@ def ratings_only_enabled():
 def generate_fake_reviewer(pk_ratio=60):
     """
     Returns (display_name, language) where language is 'urdu' or 'english'.
+    (🆕 v170.92: language sirf naam ki diversity ke liye hai — review TEXT
+    hamesha English aata hai, user demand par Roman Urdu khatam.)
 
     pk_ratio: 0–100. 60 means 60% chance of Pakistani name.
     """
@@ -1682,17 +1627,15 @@ def generate_review_text(language, include_text=True):
         return ""  # Rating only — no text
 
     # Try to get sentences from admin-editable template pool first
+    # 🆕 v170.92: reviews ALWAYS English (user demand — no Roman Urdu anywhere)
     try:
         from customization import get_review_sentences
-        sentences = get_review_sentences(language)
+        sentences = get_review_sentences("english")
     except Exception:
         # Fallback to hardcoded defaults
-        sentences = ROMAN_URDU_SENTENCES if language == "urdu" else ENGLISH_SENTENCES
+        sentences = ENGLISH_SENTENCES
 
-    if language == "urdu":
-        num = random.choices([1, 2, 3], weights=[40, 40, 20])[0]
-    else:
-        num = random.choices([1, 2], weights=[60, 40])[0]
+    num = random.choices([1, 2, 3], weights=[40, 40, 20])[0]
 
     picked = random.sample(sentences, min(num, len(sentences)))
     return " ".join(picked)
@@ -2447,7 +2390,7 @@ async def broadcast_overview_callback(update, context):
         "(fake broadcast system)",
         "",
         "_Ye SAARE alerts bot bhejta hai (fake random + real event-based)._ "
-        "_Toggle se ON/OFF karo; template Edit Templates me editable hai._",
+        "_Toggle ON/OFF here; the template is editable via Edit Templates._",
         "",
     ]
     kb = []

@@ -1720,11 +1720,11 @@ async def _cmd_ban(update, context):
     if uid is None:
         await update.message.reply_text(
             "❌ *Usage:* `/ban <user_id> [reason]`\n"
-            "Ya kisi forwarded message par reply karke `/ban` bhejo.",
+            "Or reply to a forwarded message with `/ban`.",
             parse_mode="Markdown")
         return
     if uid == ADMIN_ID:
-        await update.message.reply_text("❌ Apne aap ko ban nahi kar sakte.")
+        await update.message.reply_text("❌ You cannot ban yourself.")
         return
     from database import ban_user, get_user
     try:
@@ -2364,12 +2364,12 @@ def main():
                 f"*🏠 Registry buttons (admin-renamed with premium):*\n{_list_or_none(reg_with_premium)}\n\n"
                 f"*🎨 Custom buttons with premium:*\n{_list_or_none(custom_with_premium)}\n\n"
                 f"*Sample JSON for `{sample_tpl}`:*\n```json\n{sample_json}\n```\n\n"
-                "_Agar JSON me `icon_custom_emoji_id` present hai but icon_\n"
-                "_phir bhi nahi dikhta to Telegram side ki shartein check karein:_\n"
-                "1. Bot OWNER ke account par Telegram Premium *active*?\n"
-                "2. Chat private/group/supergroup hai (NOT channel)?\n"
-                "3. Telegram app latest update hai (>= Feb 2026)?\n"
-                "4. Wo custom_emoji_id valid (sticker pack delete to nahi)?"
+                "_If the JSON contains `icon_custom_emoji_id` but the icon\n"
+                "_still doesn't show, check the Telegram-side conditions:_\n"
+                "1. Is Telegram Premium *active* on the bot OWNER's account?\n"
+                "2. Is the chat a private/group/supergroup (NOT a channel)?\n"
+                "3. Is the Telegram app up to date (>= Feb 2026)?\n"
+                "4. Is that custom_emoji_id valid (sticker pack not deleted)?"
             )
             await update.message.reply_text(msg, parse_mode="Markdown")
         except Exception as e:

@@ -116,6 +116,8 @@ async def autosync_price_stock_job(context):
         total_price_changes = 0
         total_stock_changes = 0
         change_details = []
+        # 🆕 v170.92 (supplier delete/deactivate): English admin notification
+        removed_events = []
 
         for sid in live_sup_ids:
             try:
@@ -133,8 +135,27 @@ async def autosync_price_stock_job(context):
                 # Bulk fetch supplier's live product list — ASYNC
                 fresh = await async_fetch_products(ad)
                 if not fresh:
-                    logger.debug(f"[AutoSync] no products / fetch fail sup#{sid}")
-                    continue
+                    # 🆕 v170.92 (Task: supplier delete): [] do cheezein ho sakti
+                    # hain — (a) fetch crash/glitch, (b) supplier ka catalog
+                    # really KHALI (sab products delete). Confusion avoid karne
+                    # ke liye 2 CONSECUTIVE empty fetches chahiye tab hi missing
+                    # detection chalti hai (ek glitch shop khali nahi kar sakta).
+                    _empty_key = f"autosync_empty_fetch_{sid}"
+                    try:
+                        _cnt = int(get_setting(_empty_key, "0") or 0) + 1
+                    except Exception:
+                        _cnt = 1
+                    if _cnt < 2:
+                        set_setting(_empty_key, str(_cnt))
+                        logger.debug(f"[AutoSync] empty fetch #{_cnt} sup#{sid} — waiting for 2nd confirmation")
+                        continue
+                    set_setting(_empty_key, "0")
+                    fresh = []  # genuine empty catalog — sab synced products missing
+                else:
+                    try:
+                        set_setting(f"autosync_empty_fetch_{sid}", "0")
+                    except Exception:
+                        pass
 
                 fresh_by_remote = {}
                 for p in fresh:
@@ -150,10 +171,23 @@ async def autosync_price_stock_job(context):
                         # Missing upstream catalog item: remove it from every
                         # customer/API catalog immediately, but retain stable
                         # local product/configuration for automatic reappearance.
+                        # 🆕 v170.92: ONE-SHOT — sirf pehli disappearance par
+                        # state-change + notification. Har 30s tick par repeat
+                        # nahi (pehle har tick par missing mark hota rehta tha
+                        # → notification spam).
+                        _already_missing = (int(ep.get("source_active") or 0) == 0
+                                            and float(ep.get("missing_since") or 0) > 0)
+                        if _already_missing:
+                            continue
                         try:
                             set_ext_product_source_active(int(ep["id"]), False, missing=True)
                             total_updated += 1
                             total_stock_changes += 1
+                            removed_events.append({
+                                "supplier": sup.get("name", f"Supplier #{sid}"),
+                                "product": ep.get("name") or f"Remote {remote_id}",
+                                "reason": "deleted",
+                            })
                             change_details.append({
                                 "supplier": sup.get("name", f"Supplier #{sid}"),
                                 "product": ep.get("name") or f"Remote {remote_id}",
@@ -169,9 +203,12 @@ async def autosync_price_stock_job(context):
                             logger.debug(f"[AutoSync] missing-state update failed ext#{ep.get('id')}: {_al}")
                         continue
 
-                    # Product is present again; clear one-shot missing alert.
+                    # Product is present again; clear one-shot missing alert
+                    # (🆕 v170.92: sirf tab jab wo wapas ACTIVE bhi ho —
+                    # deactivated product (inStock=False) par clear nahi).
                     try:
-                        set_setting(f"supplier_missing_alert_{int(ep['id'])}", "")
+                        if source_product_is_active(fresh_p):
+                            set_setting(f"supplier_missing_alert_{int(ep['id'])}", "")
                     except Exception:
                         pass
 
@@ -220,6 +257,14 @@ async def autosync_price_stock_job(context):
                         missing_since=0 if new_source_active else ep.get("missing_since") or 0,
                     )
                     total_updated += 1
+                    # 🆕 v170.92 (supplier deactivate): product supplier store par
+                    # ab inactive hai (inStock=False waghera) → removal event
+                    if source_changed and new_source_active == 0:
+                        removed_events.append({
+                            "supplier": sup.get("name", f"Supplier #{sid}"),
+                            "product": ep.get("name") or fresh_p.get("name") or f"Remote {remote_id}",
+                            "reason": "deactivated",
+                        })
                     if cost_changed:
                         total_price_changes += 1
                     if stock_changed:
@@ -259,6 +304,36 @@ async def autosync_price_stock_job(context):
                 f"stock changes: {total_stock_changes} | "
                 f"elapsed: {elapsed:.1f}s"
             )
+            # 🆕 v170.92 (Task: supplier delete/deactivate): CLEAR ENGLISH
+            # notification — kis supplier ne konsa product delete/deactivate
+            # kiya + bot se auto-remove confirm.
+            if removed_events:
+                try:
+                    _rm_lines = [
+                        "🗑️ *Auto-Removed from Your Store*",
+                        "━━━━━━━━━━━━━━━━━━━━",
+                        "",
+                    ]
+                    for _ev in removed_events[:15]:
+                        _reason = ("🗑 Deleted from the supplier's store"
+                                   if _ev.get("reason") == "deleted"
+                                   else "⏸ Deactivated by the supplier")
+                        _rm_lines.append(f"🏬 Supplier: *{escape_md(str(_ev.get('supplier') or '?')[:40])}*")
+                        _rm_lines.append(f"📦 Product: *{escape_md(str(_ev.get('product') or '?')[:70])}*")
+                        _rm_lines.append(f"📌 Reason: {_reason}")
+                        _rm_lines.append("✅ It has been automatically removed from your bot — customers can no longer see or order it.")
+                        _rm_lines.append("")
+                    if len(removed_events) > 15:
+                        _rm_lines.append(f"…and *{len(removed_events) - 15}* more products were also removed.")
+                        _rm_lines.append("")
+                    _rm_lines.append("♻️ If the supplier restores any product, it will automatically return to your store with its settings.")
+                    await context.bot.send_message(
+                        ADMIN_ID,
+                        "\n".join(_rm_lines)[:3900],
+                        parse_mode="Markdown")
+                except Exception as _rm_err:
+                    logger.debug(f"[AutoSync] removal notify failed: {_rm_err}")
+
             # Detailed admin notification. Price changes are always important;
             # stock-only changes keep a cooldown to avoid notification spam.
             try:
@@ -292,7 +367,7 @@ async def autosync_price_stock_job(context):
                             price_icon = "📈 Supplier price increased"
                         elif new_cost < old_cost:
                             price_icon = "📉 Supplier price decreased"
-                        elif ch.get("type") == "missing":
+                        elif ch.get("type") == "missing_unavailable":
                             price_icon = "⚠️ Supplier product missing/unavailable"
                         else:
                             price_icon = "📊 Stock changed"

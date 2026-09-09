@@ -320,15 +320,15 @@ async def cfr_add_callback(update, context):
     await q.edit_message_text(
         "➕ *Add Custom Reviews*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Apni reviews bhejo — *har line ek review* hai:\n\n"
+        "Send your reviews — *each line is one review*:\n\n"
         "Osm 😍\n"
         "Excellent 🔥\n"
         "Nice product 🪪\n\n"
         "✅ Premium emojis allowed\n"
-        "✅ Har review ke liye bot khud fake profile banayega\n"
-        "(random 3–5 ⭐, fake naam + ID)\n"
-        "✅ Reviews random times par destination par broadcast honge\n"
-        "(har review sirf ek bar)\n\n"
+        "✅ The bot creates a fake profile for every review\n"
+        "(random 3–5 ⭐, fake name + ID)\n"
+        "✅ Reviews are broadcast to the destination at random times\n"
+        "(each review exactly once)\n\n"
         "_(/cancel to cancel)_",
         parse_mode="Markdown")
     return CFR_LINES
@@ -343,7 +343,7 @@ async def cfr_lines_received(update, context):
         return None
     lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
     if not lines:
-        await update.message.reply_text("❌ Koi line nahi mili. Dobara bhejo.")
+        await update.message.reply_text("❌ No lines found. Please try again.")
         return None
     if len(lines) > 100:
         lines = lines[:100]
@@ -371,10 +371,10 @@ async def cfr_lines_received(update, context):
         try: conn.close()
         except Exception: pass
     if not cats:
-        await update.message.reply_text("❌ Koi category nahi mili.")
+        await update.message.reply_text("❌ No categories found.")
         return None
     from utils import html_strip_tags, escape_md
-    lines_txt = [f"✅ *{len(lines)} reviews* save hui — ab product choose karo:", ""]
+    lines_txt = [f"✅ *{len(lines)} reviews* saved — now choose a product:", ""]
     kb = []
     for cat in cats:
         pc = int(cat.get("pc") or 0)
@@ -385,7 +385,7 @@ async def cfr_lines_received(update, context):
             f"📂 {html_strip_tags(str(cat.get('name') or '?'))[:30]} ({pc})",
             callback_data=f"cfr_cat_{cat['id']}")])
     if not kb:
-        await update.message.reply_text("❌ Kisi category me products nahi hain.")
+        await update.message.reply_text("❌ No category has any products.")
         return None
     kb.append([InlineKeyboardButton("❌ Cancel", callback_data="cfr_cancel")])
     await update.message.reply_text("\n".join(lines_txt), parse_mode="Markdown",
@@ -412,7 +412,7 @@ async def cfr_cat_callback(update, context):
     prods = [dict(r) for r in c.fetchall()]
     conn.close()
     if not prods:
-        await q.edit_message_text("❌ Is category me active products nahi hain.",
+        await q.edit_message_text("❌ No active products in this category.",
                                   reply_markup=InlineKeyboardMarkup(
                                       [[InlineKeyboardButton("🔙 Back", callback_data="cfr_add")]]))
         return
@@ -492,7 +492,7 @@ async def cfr_prod_callback(update, context):
         return
     lines = context.user_data.get("cfr_lines") or []
     if not lines:
-        await q.edit_message_text("❌ Reviews missing — dobara add karo.",
+        await q.edit_message_text("❌ Reviews missing — please add them again.",
                                   reply_markup=InlineKeyboardMarkup(
                                       [[InlineKeyboardButton("➕ Add Reviews", callback_data="cfr_add")]]))
         return
@@ -517,8 +517,8 @@ async def cfr_prod_callback(update, context):
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📦 Product: *{escape_md(nm[:40])}*\n"
         f"➕ Inserted: *{inserted}* reviews (fake profiles + 3–5⭐)\n"
-        f"📤 Broadcast queue: *{pending_queue_count()}* pending — random times par\n"
-        f"destination par broadcast honge (har review sirf ek bar).",
+        f"📤 Broadcast queue: *{pending_queue_count()}* pending — they will be\n"
+        f"broadcast to the destination at random times (each review exactly once).",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(
             [[InlineKeyboardButton("📋 Queue Status", callback_data="cfr_queue")],
@@ -573,7 +573,7 @@ async def cfr_queue_callback(update, context):
             text += (f"{st} {r.get('fake_name', '?')[:18]} → {_em(str(nm)[:22])}: "
                      f"\"{_em(str(r.get('review_text') or '')[:36])}\"\n")
     else:
-        text += "_(queue khali — ➕ Add Custom Reviews se add karo)_"
+        text += "_(queue is empty — add some via ➕ Add Custom Reviews)_"
     kb = [[InlineKeyboardButton("🗑️ Clear Pending Queue", callback_data="cfr_clear")],
           [InlineKeyboardButton("🔙 Fake Activity Panel", callback_data="act_panel")]]
     await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))

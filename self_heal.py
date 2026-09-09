@@ -692,6 +692,63 @@ async def _gemini_safe_scan_optional(bot):
         _log(f"Gemini safe-scan failed: {e}", "WARN")
 
 
+def _heal_roman_urdu_responses():
+    """🆕 v170.92: DB me saved Roman Urdu text → English (user demand:
+    kahin bhi Roman Urdu nahi dikhega).
+
+    Sirf UN values ko touch karta hai jinme Roman Urdu markers hain —
+    admin ka customized ENGLISH text kabhi overwrite nahi hota.
+    1) bot_responses.payment_not_found_txid (agar Roman Urdu ho → naya
+       English default)
+    2) bot_settings.tpl_bc_freebie (saved freebie template me
+       "koi payment nahi!" fragment → English)
+    """
+    try:
+        from database import get_connection
+        _URDU_MARKERS = ("agar aap", "karein", "karo", "khol", "turant",
+                         "koi payment nahi", "koi referral nahi")
+        cur = get_connection()
+        c = cur.cursor()
+        try:
+            # 1) payment_not_found_txid
+            c.execute("SELECT value FROM bot_responses WHERE key='payment_not_found_txid'")
+            row = c.fetchone()
+            if row:
+                val = str(row[0] or "")
+                if any(m in val.lower() for m in _URDU_MARKERS):
+                    from config import DEFAULT_RESPONSES
+                    new_val = DEFAULT_RESPONSES.get("payment_not_found_txid")
+                    if new_val:
+                        c.execute("UPDATE bot_responses SET value=? WHERE key='payment_not_found_txid'",
+                                  (new_val,))
+                        cur.commit()
+                        _log("payment_not_found_txid: Roman Urdu text → English default")
+            # 2) tpl_bc_freebie (premium-emoji formatting preserve — sirf
+            #    Roman Urdu fragments replace hote hain)
+            c.execute("SELECT value FROM bot_settings WHERE key='tpl_bc_freebie'")
+            row = c.fetchone()
+            if row:
+                val = str(row[0] or "")
+                low = val.lower()
+                if "koi payment nahi" in low or "koi referral nahi" in low:
+                    upd = val.replace("100% free — koi payment nahi, koi referral nahi!",
+                                      "100% free — no payment, no referral needed!")
+                    upd = upd.replace("100% free — koi payment nahi!",
+                                      "100% free — no payment needed!")
+                    if upd != val:
+                        c.execute("UPDATE bot_settings SET value=? WHERE key='tpl_bc_freebie'",
+                                  (upd,))
+                        cur.commit()
+                        _log("tpl_bc_freebie: Roman Urdu fragments → English")
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+    except Exception as e:
+        _log(f"heal_roman_urdu outer: {e}", "ERROR")
+
+
 def run_all_heals() -> list:
     """Main entry — runs all safe self-heal steps synchronously.
     Returns the list of heal actions taken."""
@@ -725,6 +782,10 @@ def run_all_heals() -> list:
         _heal_bybit_instruction_text()
     except Exception as e:
         _log(f"heal_bybit outer: {e}", "ERROR")
+    try:
+        _heal_roman_urdu_responses()
+    except Exception as e:
+        _log(f"heal_roman_urdu outer: {e}", "ERROR")
     try:
         _heal_category_picker_title()
     except Exception as e:

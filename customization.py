@@ -762,7 +762,7 @@ TEMPLATES = [
         "default": (
             "🎁 *FREEBIE CLAIMED!* 🎉\n\n"
             "👤 {user} just got {product} for FREE!\n"
-            "🆓 100% free — koi payment nahi, koi referral nahi!\n\n"
+            "🆓 100% free — no payment, no referral needed!\n\n"
             "👉 Tap below and grab yours too!"
         ),
         "sample":  {"user": "s***a", "product": "🎨 Canva Pro"},
@@ -875,30 +875,38 @@ TEMPLATES = [
     # ── FAKE REVIEWS ──
     {
         "id":      "rv_urdu",
-        "name":    "🇵🇰 Urdu Review (Roman)",
+        "name":    "⭐ Review Sentences (Legacy Pool)",
         "section": "⭐ Fake Reviews",
         "vars":    "No variables — these are the sentence pool (one per line, bot picks randomly)",
+        # 🆕 v170.92: pool English kar diya (user demand — no Roman Urdu).
+        # ID "rv_urdu" purane DB overrides ke liye stable rakha gaya hai;
+        # generation ab hamesha rv_english pool use karta hai.
         "default": (
-            "bohat acha product hai\n"
-            "bilkul original mila\n"
-            "delivery bht fast thi\n"
-            "price ke hisaab se bohot acha hai\n"
             "works perfectly\n"
-            "shukriya bite store\n"
-            "highly recommend karta hoon\n"
-            "awesome bro\n"
-            "ekdum sahi cheez hai\n"
-            "dobara zaroor lunga\n"
-            "quality se khush hoon\n"
-            "phir se order karunga\n"
-            "mast experience tha\n"
-            "trust this store\n"
+            "great product\n"
+            "highly recommend\n"
+            "legit and fast\n"
+            "totally worth it\n"
             "no issues at all\n"
-            "seedha kaam kiya\n"
-            "genuine product hai\n"
-            "zabardast service\n"
-            "fast delivery and original\n"
-            "bahut khush hoon"
+            "exactly as described\n"
+            "works like a charm\n"
+            "super fast delivery\n"
+            "very satisfied\n"
+            "good quality\n"
+            "genuine product\n"
+            "amazing service\n"
+            "will buy again\n"
+            "loved it\n"
+            "solid purchase\n"
+            "great value for money\n"
+            "100% legit\n"
+            "fast and reliable\n"
+            "no complaints\n"
+            "got exactly what I paid for\n"
+            "trusted store\n"
+            "great experience overall\n"
+            "highly recommended\n"
+            "perfect quality"
         ),
         "sample":  {},
     },
@@ -1130,13 +1138,13 @@ TEMPLATE_VARIANTS = {
     # 🆕 v170.14: FREEBIES (fake + real hype) — jab user free product claim kare
     # ya periodic fake. Placeholders: {user}, {product}
     "bc_freebie": [
-        "🎁 *FREEBIE CLAIMED!* 🎉\n\n👤 {user} just got {product} for FREE!\n🆓 100% free — koi payment nahi!\n\n👉 Tap below and grab yours too!",
+        "🎁 *FREEBIE CLAIMED!* 🎉\n\n👤 {user} just got {product} for FREE!\n🆓 100% free — no payment needed!\n\n👉 Tap below and grab yours too!",
         "🎉 *SOMEONE GOT LUCKY!*\n\n👤 {user} claimed {product} for FREE!\n⚡ Limited free stock — hurry!\n\n🛒 Tap below and claim yours!",
-        "🎁 *FREE PRODUCT ALERT!*\n\n📦 {product}\n👤 {user} just claimed it FREE!\n\n🔥 Tap below — freebies sab ke liye!",
+        "🎁 *FREE PRODUCT ALERT!*\n\n📦 {product}\n👤 {user} just claimed it FREE!\n\n🔥 Tap below — freebies are for everyone!",
         "💥 *FREEBIE GONE FAST!*\n\n👤 {user} grabbed {product} for $0!\n🆓 Yes, 100% FREE.\n\n👉 Tap below and claim yours now!",
         "🎁 *FREE CLAIM!*\n\n👤 {user} just unlocked {product} FREE!\n🆓 No payment needed.\n\n👉 Tap below & grab it!",
-        "🎊 *IT'S FREE!*\n\n👤 {user} claimed {product} for FREE!\n⏰ Free stock limited — jaldi karo!\n\n🛒 Tap below and claim!",
-        "🎁 *FREEBIE DROP!*\n\n📦 {product}\n👤 {user} just claimed it FREE!\n\n🔥 Tap below — aapka bhi ho sakta hai!",
+        "🎊 *IT'S FREE!*\n\n👤 {user} claimed {product} for FREE!\n⏰ Free stock is limited — hurry!\n\n🛒 Tap below and claim!",
+        "🎁 *FREEBIE DROP!*\n\n📦 {product}\n👤 {user} just claimed it FREE!\n\n🔥 Tap below — yours could be next!",
         "🆓 *FREE PRODUCT!*\n\n👤 {user} just got {product} FREE!\n💯 100% free claim.\n\n👉 Tap below and grab yours!",
         "🎁 *FREE CLAIM ALERT!*\n\n👤 {user} claimed {product} for FREE!\n⚡ Hurry — freebies limited!\n\n🛒 Tap below!",
         "🎁 *FREEBIE CLAIMED!*\n━━━━━━━━━━━━━━━━━━━━\n\n📦 {product}\n👤 {user} just claimed it FREE!\n\n🆓 100% FREE — tap below and grab yours too!",
@@ -2150,12 +2158,12 @@ async def tplbtn_input_received(update, context):
         return ConversationHandler.END
 
     if not raw:
-        await update.message.reply_text("⚠️ Khali text save nahi ho sakti. Phir try karein:")
+        await update.message.reply_text("⚠️ Empty text cannot be saved. Please try again:")
         return TPL_BTN_INPUT
 
     if len(raw) > 64:
         await update.message.reply_text(
-            "⚠️ Button text 64 chars se zyada nahi ho sakta. Phir try karein:"
+            "⚠️ Button text cannot exceed 64 characters. Please try again:"
         )
         return TPL_BTN_INPUT
 

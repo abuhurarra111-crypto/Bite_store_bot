@@ -124,14 +124,14 @@ async def _show_groups(q):
     text = (
         "🎨 *Inline Button Styler*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Control the *size*, *alignment*, and *padding* of each inline button "
-        "individually set kar sakte hain.\n\n"
+        "Control the *size*, *alignment*, and *padding* of each inline "
+        "button individually.\n\n"
         "📏 *Size*: S / M / L / XL / **Full**\n"
         "↔️ *Align*: Left / Center / Right\n"
         "📐 *Pad*: 0-40 spaces\n\n"
         f"📊 Total styleable buttons: *{total_buttons}*\n\n"
-        "👇 *Group chunein:*\n"
-        "_Brackets ka number: total buttons (customized/total ✏️)_"
+        "👇 *Choose a group:*\n"
+        "_The number in brackets: total buttons (customized/total ✏️)_"
     )
     await _safe_edit(q, text, parse_mode="Markdown",
                      reply_markup=InlineKeyboardMarkup(kb))
@@ -572,7 +572,7 @@ async def bs_preview_callback(u, c):
         f"📏 Size: `{s['size']}` | ↔️ Align: `{s['align']}` | 📐 Pad: `{s['pad']}`\n\n"
         f"📋 Raw: `{sample}`\n"
         f"✨ Styled: `[{styled}]`\n\n"
-        "_Niche button real form mein:_"
+        "_The button below shows its real form:_"
     )
     try:
         await c.bot.send_message(q.from_user.id, msg,
@@ -882,16 +882,16 @@ async def btxt_panel_callback(u, c):
     text = (
         "📝 *Broadcast Button Text Editor*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Yaha aap fake-activity / broadcast messages ke saath jane wale "
-        "inline buttons (jaise 🛒 Buy Now) ka *text aur emoji* customize "
-        "kar sakte ho.\n\n"
+        "Here you can customize the *text and emoji* of the inline buttons "
+        "that go along with fake-activity / broadcast messages "
+        "(like 🛒 Buy Now).\n\n"
         f"✏️ *Customized:* {customized}/{total}\n\n"
         "⚠️ *Telegram Limitation Note:*\n"
-        "_Button labels mein sirf standard emojis aur text use ho sakte hain. "
-        "Premium/Custom emoji button text ke andar Telegram support hi nahi "
-        "karta (sirf message body mein ja sakti hai). Yeh editor standard "
-        "emojis ke liye hai._\n\n"
-        "👇 Edit karne ke liye button choose karein:"
+        "_Button labels support only standard emojis and text. "
+        "Premium/Custom emoji are not supported inside button text "
+        "(they only work in the message body). This editor is for standard "
+        "emojis._\n\n"
+        "👇 Choose a button to edit:"
     )
 
     kb = []
@@ -988,12 +988,12 @@ async def btxt_input_received(u, c):
     # Length safety — Telegram allows up to 64 chars for button text
     if len(new_text) > 64:
         await u.message.reply_text(
-            "⚠️ Button text 64 chars se zyada nahi ho sakta. Phir try karein:",
+            "⚠️ Button text cannot exceed 64 characters. Please try again:",
         )
         return BTXT_INPUT
 
     if not new_text:
-        await u.message.reply_text("⚠️ Khali text save nahi ho sakti. Phir try karein:")
+        await u.message.reply_text("⚠️ Empty text cannot be saved. Please try again:")
         return BTXT_INPUT
 
     set_button_text(key, new_text)
@@ -1051,9 +1051,9 @@ async def btxt_resetall_callback(u, c):
     ])
     await _safe_edit(q,
         "⚠️ *Reset ALL Button Texts?*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Yeh saari button text customizations delete kar dega aur har "
-        "broadcast/activity button apne default text par wapas chala jayega.\n\n"
-        "*Yaqeen hai?*",
+        "This will delete ALL button text customizations and reset every "
+        "broadcast/activity button back to its default text.\n\n"
+        "*Are you sure?*",
         parse_mode="Markdown", reply_markup=kb,
     )
 

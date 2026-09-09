@@ -1151,8 +1151,8 @@ async def admin_pin_expiry_callback(update: Update, context: ContextTypes.DEFAUL
         import asyncio as _aio
         _aio.create_task(_pin_bg())
         broadcast_note = (
-            "\n\n📢 *Real Pin Mode ACTIVE:* broadcast *background* me start "
-            "ho gaya — bot responsive hai, summary aayegi jab complete ho."
+            "\n\n📢 *Real Pin Mode ACTIVE:* the broadcast has started in the "
+            "background — the bot stays responsive, the summary will arrive when it completes."
         )
 
     location_note = ("pinned directly in every user's chat"

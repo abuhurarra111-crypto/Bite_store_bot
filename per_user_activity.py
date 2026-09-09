@@ -939,7 +939,7 @@ async def build_fake_message(bot, user_id: int) -> tuple[str, any]:
                 reviewer_name = _random_name()
                 language = "urdu"
                 stars_count = 5
-                review_text = "Bohat acha product hai, highly recommend!"
+                review_text = "Great product, highly recommend!"
                 
             masked = _mask_name(reviewer_name)
             stars_str = "⭐" * stars_count

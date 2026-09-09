@@ -2112,9 +2112,9 @@ async def handle_binance_screenshot(update, context):
     await update.message.reply_text(
         "📸 *Screenshot upload is no longer needed!*\n\n"
         "Please follow the Binance payment instructions.\n\n"
-        "✅ *Step 1/2:* Apna *Binance sender name* likhein:\n"
+        "✅ *Step 1/2:* Enter your *Binance sender name*:\n"
         "_(The name used for the payment)_\n\n"
-        "💡 _Example: `John Doe` ya `Ali Khan`_",
+        "💡 _Example: `John Doe` or `Ali Khan`_",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel Payment", callback_data="cancel_order")]]))
     return True
@@ -3131,13 +3131,13 @@ async def usdt_txid_received(update, context):
         cfg = _usdt_cfg(str((_o or {}).get('payment_method') or '')) if _o else None
         if _looks_like_deposit_address(note, cfg):
             await update.message.reply_text(
-                "⚠️ *Ye deposit ADDRESS hai, TXID nahi!*\n\n"
-                "Aap ne bot ka wallet address paste kar diya hai. Bot ko *transaction "
-                "ID (TXID)* chahiye — wo transaction ka 64-characters ka proof hota hai.\n\n"
-                "🪙 *TXID kaise copy karein:*\n"
-                "Trust Wallet → Transaction History → us payment pe tap karein → "
-                "copy karein (0x se start hone wala long hash).\n\n"
-                "Ab TXID paste karein:", parse_mode='Markdown')
+                "⚠️ *This is the deposit ADDRESS, not a TXID!*\n\n"
+                "You pasted the bot's wallet address. The bot needs the *transaction "
+                "ID (TXID)* — the 64-character proof of your transaction.\n\n"
+                "🪙 *How to copy the TXID:*\n"
+                "Trust Wallet → Transaction History → tap that payment → "
+                "copy it (the long hash starting with 0x).\n\n"
+                "Now paste the TXID:", parse_mode='Markdown')
             return True
     except Exception:
         pass

@@ -1641,9 +1641,9 @@ async def ban_input_start(u, c):
     await _safe_edit(q,
         "🚫 *Ban User*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "User ka Telegram ID bhejo (sirf number):\n\n"
-        "_Tip: kisi user ka ID Users list se, ya forwarded message se milega._\n"
-        "_Banned user ka sab kuch block ho jata hai (orders/freebies/deposit)._",
+        "Send the user's Telegram ID (numbers only):\n\n"
+        "_Tip: find a user's ID in the Users list, or from a forwarded message._\n"
+        "_A banned user loses access to everything (orders/freebies/deposits)._",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("❌ Cancel", callback_data="ban_panel")]]))
@@ -1659,7 +1659,7 @@ async def unban_input_start(u, c):
     await _safe_edit(q,
         "🔓 *Unban User*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "User ka Telegram ID bhejo (sirf number):",
+        "Send the user's Telegram ID (numbers only):",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("❌ Cancel", callback_data="ban_panel")]]))
@@ -1674,11 +1674,11 @@ async def ban_input_received(u, c):
     try:
         uid = int(raw.lstrip("@"))
     except Exception:
-        await u.message.reply_text("❌ Sirf number bhejo (Telegram ID).",
+        await u.message.reply_text("❌ Numbers only (Telegram ID).",
                                    parse_mode="Markdown")
         return BAN_INPUT
     if uid == ADMIN_ID:
-        await u.message.reply_text("❌ Apne aap ko ban nahi kar sakte.",
+        await u.message.reply_text("❌ You cannot ban yourself.",
                                    parse_mode="Markdown")
         return BAN_INPUT
     from database import ban_user, get_user
@@ -1706,7 +1706,7 @@ async def unban_input_received(u, c):
     try:
         uid = int(raw.lstrip("@"))
     except Exception:
-        await u.message.reply_text("❌ Sirf number bhejo (Telegram ID).",
+        await u.message.reply_text("❌ Numbers only (Telegram ID).",
                                    parse_mode="Markdown")
         return UNBAN_INPUT
     from database import unban_user
@@ -1985,7 +1985,7 @@ async def admin_effects_callback(u, c):
         [InlineKeyboardButton(f"🌍 Global: {g_lbl}", callback_data="fxeg")],
         [InlineKeyboardButton("✨ Apply Recommended Event Effects", callback_data="fxpack")],
     ]
-    lines.append("💡 _Suggested pack sirf event settings set karta hai; Global/commands ko touch nahi karta._")
+    lines.append("💡 _The suggested pack only sets event effects; it never touches Global/commands._")
     for cmd, label in FX_COMMANDS:
         v = command_effect(cmd)
         if v == OFF:
@@ -2456,7 +2456,7 @@ async def resp_template_apply_callback(u, c):
     default = DEFAULT_RESPONSES.get(key, "")
     tpls = get_response_templates(key, default)
     if idx < 1 or idx > len(tpls):
-        await q.answer("⚠️ Template nahi mila", show_alert=True); return EDIT_RESP_VALUE
+        await q.answer("⚠️ Template not found", show_alert=True); return EDIT_RESP_VALUE
     label, text = tpls[idx - 1]
     old = get_response(key, default)
     log_change("response", key, old, text, f"Response: {key} ({label})")
@@ -2691,8 +2691,8 @@ async def _broadcast_payload_to_all_users(bot, payload, reply_markup=None, notif
             await prog.finish(
                 f"{head}\n━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"📤 Sent: *{s:,}* | 🚫 Blocked bot: *{blocked:,}* | ❌ Failed: *{f:,}*"
-                + ("\n\n_🚫 Blocked = un users ne bot block kiya hua hai — "
-                   "Telegram unhe kabhi deliver nahi karta. Ye normal hai._"
+                + ("\n\n_🚫 Blocked = those users have blocked the bot — "
+                   "Telegram will never deliver to them. This is normal._"
                    if blocked else ""))
         except Exception:
             pass
@@ -2768,9 +2768,9 @@ async def _send_global_broadcast_now(update, context):
 
     try:
         await update.effective_message.reply_text(
-            "🚀 *Broadcast background me start ho gaya.*\n"
-            "Bot ab sab users ke liye responsive hai — live progress + summary "
-            "yahan aayegi.",
+            "🚀 *The broadcast has started in the background.*\n"
+            "The bot stays responsive for all users — live progress + the summary "
+            "will appear here.",
             parse_mode="Markdown", reply_markup=admin_menu_keyboard())
     except Exception:
         pass
@@ -2804,7 +2804,7 @@ async def broadcast_button_name_received(update, context):
         [InlineKeyboardButton('🛒 Product Checkout', callback_data='bcbtn_action_product')],
         [InlineKeyboardButton('❌ Cancel', callback_data='bcbtn_cancel')],
     ])
-    await msg.reply_text('🔘 Button kis kaam ka hoga? Select action:', reply_markup=kb)
+    await msg.reply_text('🔘 What should the button do? Select an action:', reply_markup=kb)
     return True
 
 
@@ -2823,14 +2823,14 @@ async def broadcast_button_action_callback(update, context):
             [InlineKeyboardButton('🔴 Red', callback_data='bcbtn_color_red'), InlineKeyboardButton('🔵 Blue', callback_data='bcbtn_color_blue'), InlineKeyboardButton('🟢 Green', callback_data='bcbtn_color_green')],
             [InlineKeyboardButton('❌ Cancel', callback_data='bcbtn_cancel')],
         ])
-        await _safe_edit(q, '🎨 Button color select karo:', reply_markup=kb)
+        await _safe_edit(q, '🎨 Select a button color:', reply_markup=kb)
         return
     if action == 'url':
         context.user_data.setdefault('broadcast_button', {})['action'] = 'url'
         context.user_data['broadcast_button_step'] = 'url'
         await _safe_edit(q,
             "🔗 *Custom Link Button*\\n\\n"
-            "Ab wo link paste karo jo button kholay (https://... ya https://t.me/...).",
+            "Now paste the link the button should open (https://... or https://t.me/...).",
             parse_mode="Markdown", reply_markup=inline_cancel_btn())
         return
     if action == 'product':
@@ -2853,7 +2853,7 @@ async def _show_broadcast_product_picker(update, context, page=0):
         products = []
     if not products:
         context.user_data.pop('broadcast_button_step', None)
-        await _safe_edit(update.callback_query, "❌ Koi buyable product nahi mila.",
+        await _safe_edit(update.callback_query, "❌ No buyable product found.",
                          reply_markup=InlineKeyboardMarkup(
                              [[InlineKeyboardButton("🔙 Cancel", callback_data='bcbtn_cancel')]]))
         return
@@ -2936,7 +2936,7 @@ async def broadcast_button_pick_callback(update, context):
         [InlineKeyboardButton('🔴 Red', callback_data='bcbtn_color_red'), InlineKeyboardButton('🔵 Blue', callback_data='bcbtn_color_blue'), InlineKeyboardButton('🟢 Green', callback_data='bcbtn_color_green')],
         [InlineKeyboardButton('❌ Cancel', callback_data='bcbtn_cancel')],
     ])
-    await _safe_edit(q, '🎨 Button color select karo:', reply_markup=kb)
+    await _safe_edit(q, '🎨 Select a button color:', reply_markup=kb)
 
 
 async def broadcast_button_url_received(update, context):
@@ -2946,7 +2946,7 @@ async def broadcast_button_url_received(update, context):
     url = (update.message.text or '').strip()
     if not url.lower().startswith(('http://', 'https://', 't.me/')):
         await update.message.reply_text(
-            "❌ Link `http://` ya `https://` se start hona chahiye. Dobara bhejo:",
+            "❌ The link must start with `http://` or `https://`. Please send it again:",
             parse_mode="Markdown")
         return True
     if url.lower().startswith('t.me/'):
@@ -2957,7 +2957,7 @@ async def broadcast_button_url_received(update, context):
         [InlineKeyboardButton('🔴 Red', callback_data='bcbtn_color_red'), InlineKeyboardButton('🔵 Blue', callback_data='bcbtn_color_blue'), InlineKeyboardButton('🟢 Green', callback_data='bcbtn_color_green')],
         [InlineKeyboardButton('❌ Cancel', callback_data='bcbtn_cancel')],
     ])
-    await update.message.reply_text('🎨 Button color select karo:', reply_markup=kb)
+    await update.message.reply_text('🎨 Select a button color:', reply_markup=kb)
     return True
 
 
@@ -3028,7 +3028,7 @@ async def handle_fake_custom_broadcast_message(update, context):
     import asyncio as _aio
     _aio.create_task(_bg_custom_broadcast())
     await update.message.reply_text(
-        "🚀 Custom broadcast background me start ho gaya — summary aayegi.",
+        "🚀 The custom broadcast has started in the background — the summary will follow.",
         reply_markup=admin_menu_keyboard())
     return True
 
@@ -3078,7 +3078,7 @@ async def handle_broadcast_message(u,c):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton('✅ Yes, add button', callback_data='bcbtn_yes'), InlineKeyboardButton('❌ No button', callback_data='bcbtn_no')]
     ])
-    await u.message.reply_text('🔘 Broadcast ke sath button add karna hai?', reply_markup=kb)
+    await u.message.reply_text('🔘 Add a button to the broadcast?', reply_markup=kb)
 
 async def cancel_conversation(u,c):
     # 🔧 BUG FIX #2: Only clear conversation-specific keys, NOT everything.
@@ -3236,7 +3236,7 @@ async def edit_product_emoji_received(u, c):
         # Keep it short (button labels have width limits)
         if len(val_raw) > 8 and not val.startswith("[[HTML]]"):
             await u.message.reply_text(
-                "⚠️ Bohat lamba hai — sirf 1 emoji ya 1-2 char ka symbol use karein."
+                "⚠️ Too long — use just 1 emoji or a 1-2 character symbol."
             )
             return EDIT_PRODUCT_EMOJI
         set_setting("product_emoji", val)
@@ -4830,7 +4830,7 @@ async def cp_new_callback(u, c):
     await q.answer()
     await _safe_edit(q,
         "➕ *New Custom Page*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        "*Step 1/3:* Page ka *title* likhein:\n\n"
+        "*Step 1/3:* Enter the page *title*:\n\n"
         "Example: `📋 Rules`, `🤔 FAQ`, `📜 Privacy Policy`\n\n"
         "Max 64 chars",
         parse_mode="Markdown", reply_markup=inline_cancel_btn())
@@ -5289,7 +5289,7 @@ async def admin_ai_callback(u, c):
     text = (
         "🤖 *AI Admin Assistant*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "_Salam Admin! Main aapka AI Assistant hoon._\n\n"
+        "_Hello Admin! I am your AI Assistant._\n\n"
         "Panel ki kisi bhi setting ke baare mein mujh se poochein:\n\n"
         "• Any language supported\n"
         "• Step-by-step navigation paths\n"
@@ -5299,7 +5299,7 @@ async def admin_ai_callback(u, c):
         "• `How to hide warranty?`\n"
         "• `How do I add a new product?`\n"
         "• `Carousel format kya hai?`\n"
-        "• `Custom page kaise banayein?`\n\n"
+        "• `How to create a custom page?`\n\n"
         "👇 Type your question below..."
     )
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=ai_welcome_keyboard())
@@ -5595,7 +5595,7 @@ async def reset_do_callback(u, c):
             "• Custom pages: removed\n"
             "• Button renames/hides: cleared\n"
             "• Toggles: defaults restored\n\n"
-            "Aap dobara customize kar saktay hain.",
+            "You can customize it again at any time.",
             parse_mode="Markdown",
             reply_markup=admin_menu_keyboard())
     except Exception as e:
@@ -8017,7 +8017,7 @@ async def edit_category_field_callback(u, c):
     if field == "emoji":
         # v170.76: the separate icon system is removed. The button icon now
         # comes from a Premium custom emoji placed inside the category NAME.
-        await q.answer("🎨 Icon option khatam — premium emoji ab category NAME "
+        await q.answer("🎨 Icon option ended — the premium emoji is now part of the category NAME "
                        "ke andar lagayen (✏️ Rename Category).", show_alert=True)
         return ConversationHandler.END
     if field not in ("name", "description") or not get_category(cid, include_inactive=True):
@@ -8213,7 +8213,7 @@ def _category_presentation_view():
         f"Text alignment: *{align_names[align]}*\n"
         f"Icon-text gap fill: *{icon_fill}*  (8 = auto-snug best; 0 = off/centered; ±1 nudge)\n"
         f"Empty categories: *{'Shown globally' if show_empty else 'Hidden by default'}*\n\n"
-        "⚠️ Bohot zyada padding chhoti screens par text clip kar sakti hai.\n"
+        "⚠️ Too much padding can clip text on smaller screens.\n"
         "A category's own ‘Show even when empty’ option overrides the global hidden default."
     )
     kb = [
@@ -10464,7 +10464,7 @@ async def bybit_test_callback(u, c):
                 _uval = (_ub[0].get("walletBalance") if _ub else "0") or "0"
                 bal_line += f"\n💼 *UNIFIED USDT balance:* `{escape_md(str(_uval))}`"
             if bal_line:
-                bal_line += "\n_⚠️ Agar FUND balance 0 hai lekin customer ne Bybit Pay se bheja hai, to paisa Bybit Pay balance mein hai — Bybit app → Bybit Pay → balance → Transfer to Funding karo, phir bot 20s mein detect kar lega._"
+                bal_line += "\n_⚠️ If the FUND balance is 0 but the customer paid via Bybit Pay, the money is in the Bybit Pay balance — Bybit app → Bybit Pay → balance → transfer it to Funding, and the bot will detect it within 20s._"
         except Exception:
             pass
         await q.edit_message_text(
@@ -10614,8 +10614,8 @@ async def persist_panel_callback(update, context):
             callback_data=f"persist_color_{pid}")])
     lines.append("")
     lines.append("🎨 _Color = REAL background (Bot API 9.4: 🟢green/🔵blue/🔴red)._")
-    lines.append("✅ _Save/reorder ke baad aap ka fresh reply keyboard isi chat mein foran bheja jata hai._")
-    lines.append("⭐ _Custom emoji icon ke liye bot owner ko Telegram Premium ya Fragment additional username chahiye._")
+    lines.append("✅ _After saving/reordering, your fresh reply keyboard is sent instantly in this chat._")
+    lines.append("⭐ _A custom emoji icon requires the bot owner to have Telegram Premium or a Fragment additional username._")
     kb.append([InlineKeyboardButton("🔄 Refresh My Keyboard", callback_data="persist_refresh")])
     kb.append([InlineKeyboardButton("🔙 Back to Customization", callback_data="admin_customization")])
     await _safe_edit(q, "\n".join(lines), parse_mode="Markdown",
@@ -10705,7 +10705,7 @@ async def persist_setcol_callback(update, context):
     except Exception:
         await q.answer("❌ Save failed", show_alert=True); return
     refreshed = await _refresh_persistent_keyboard_for_admin(context, q.from_user.id)
-    await q.answer("✅ Color saved + keyboard refreshed" if refreshed else "✅ Color saved; refresh retry karein")
+    await q.answer("✅ Color saved + keyboard refreshed" if refreshed else "✅ Color saved; retry the refresh")
     await persist_panel_callback(update, context)
 
 
@@ -10747,7 +10747,7 @@ async def persist_rename_received(update, context):
             set_setting(f"persist_emoji_{pid}", "")
             context.user_data.pop("persist_ren_pid", None)
             await update.message.reply_text(
-                "♻️ Reset to default ✅\n⌨️ Keyboard isi message ke saath refresh ho gaya.",
+                "♻️ Reset to default ✅\n⌨️ The keyboard was refreshed with this message.",
                 reply_markup=persistent_menu(update.effective_user.id),
             )
             return True
@@ -10779,7 +10779,7 @@ async def persist_rename_received(update, context):
         context.user_data.pop("persist_ren_pid", None)
         return True
     context.user_data.pop("persist_ren_pid", None)
-    note = "\n⭐ Premium emoji icon bhi set ho gaya." if emoji_id else ""
+    note = "\n⭐ Premium emoji icon has also been set." if emoji_id else ""
     await update.message.reply_text(
         f"✅ Persistent button `{pid}` → `{label_text}` saved.{note}\n"
         f"_Fresh reply keyboard isi message ke saath ab refresh ho gaya._",
@@ -10813,7 +10813,7 @@ async def persist_move_callback(update, context):
         await q.answer(f"❌ {e}", show_alert=True); return
     refreshed = await _refresh_persistent_keyboard_for_admin(context, q.from_user.id)
     if not refreshed:
-        await q.answer("⚠️ Order saved; refresh retry karein", show_alert=True)
+        await q.answer("⚠️ Order saved; retry the refresh", show_alert=True)
     await persist_panel_callback(update, context)
 
 
@@ -11363,8 +11363,8 @@ async def handle_admin_poll_message(update, context):
         if getattr(poll, "type", "regular") == "quiz":
             try:
                 await msg.reply_text(
-                    "⚠️ Quiz polls forward nahi ho sakte — sirf *regular poll* "
-                    "(ek ya multiple choice) bhejo/forward karo.",
+                    "⚠️ Quiz polls cannot be forwarded — only a *regular poll* "
+                    "(single or multiple choice) can be sent/forwarded.",
                     parse_mode="Markdown")
             except Exception:
                 pass
@@ -11426,7 +11426,7 @@ async def fwd_poll_no_callback(u, c):
     c.user_data.pop("fwd_poll", None)
     await q.answer("Cancelled")
     try:
-        await q.edit_message_text("❌ Poll cancel kar diya.",
+        await q.edit_message_text("❌ Poll cancelled.",
                                   reply_markup=InlineKeyboardMarkup(
                                       [[InlineKeyboardButton("🔙 Polls", callback_data="admin_polls")]]))
     except Exception:
@@ -11441,7 +11441,7 @@ async def fwd_poll_yes_callback(u, c):
         await q.answer("❌", show_alert=True); return
     data = c.user_data.pop("fwd_poll", None)
     if not data:
-        await q.answer("Poll data nahi mila — dobara poll bhejo.", show_alert=True)
+        await q.answer("Poll data not found — please send the poll again.", show_alert=True)
         try:
             await q.edit_message_text("❌ Poll data missing. Please forward the poll again.",
                                       reply_markup=InlineKeyboardMarkup(
@@ -11647,7 +11647,7 @@ async def poll_results_callback(u, c):
     from database import get_polls, get_poll_results
     polls = get_polls()
     if not polls:
-        await _safe_edit(q, "📊 *No polls yet.*\n\nAbhi koi poll nahi bana. ➕ Create Poll se banao.",
+        await _safe_edit(q, "📊 *No polls yet.*\n\nNo poll has been created yet. Use ➕ Create Poll.",
                          reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("➕ Create Poll", callback_data='poll_create')],
                                                             [InlineKeyboardButton("🔙 Polls", callback_data='admin_polls')]]))
         return
@@ -11942,7 +11942,7 @@ async def adm_uhist_enter_callback(u, c):
     c.user_data['ruid_step'] = 'uhist_id'
     await _safe_edit(q,
         "📋 *User Full History*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Jis user ki history dekhni hai uski *User ID* bhejo (number).\n\n"
+        "Send the *User ID* whose history you want to see (a number).\n\n"
         "_Orders + Points Ledger (deposits/refunds) + Actions dikhengi._",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="ruid_cancel")]]))
@@ -11953,14 +11953,14 @@ async def adm_uhist_id_received(u, c):
         return False
     txt = (u.message.text or '').strip()
     if not txt.isdigit():
-        await u.message.reply_text("❌ User ID number hota hai. Dobara bhejo:")
+        await u.message.reply_text("❌ The User ID must be a number. Please send it again:")
         return True
     uid = int(txt)
     c.user_data.pop('ruid_step', None)
     from database import get_user
     if not get_user(uid):
         await u.message.reply_text(
-            "❌ Ye user DB me nahi mila.", reply_markup=InlineKeyboardMarkup(
+            "❌ This user was not found in the database.", reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🔙 Users", callback_data="admin_users")]]))
         return True
     # show history by faking a callback renderer
@@ -12018,7 +12018,7 @@ async def adm_refund_uid_callback(u, c):
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="ruid_cancel")]]))
         except Exception:
             try:
-                await q.edit_message_text("💸 Refund amount (USD) type karo:",
+                await q.edit_message_text("💸 Type the refund amount (USD):",
                                           reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="ruid_cancel")]]))
             except Exception:
                 pass
@@ -12027,7 +12027,7 @@ async def adm_refund_uid_callback(u, c):
     try:
         await _safe_edit(q,
             "💸 *Refund by User ID*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Jis user ko refund karna hai uski *User ID* bhejo (number).\n\n"
+            "Send the *User ID* of the user to refund (a number).\n\n"
             "_User ID users list me `123456789` wala number hai._",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="ruid_cancel")]]))
@@ -12041,15 +12041,15 @@ async def adm_refund_uid_received(u, c):
         return False
     txt = (u.message.text or '').strip()
     if not txt.isdigit():
-        await u.message.reply_text("❌ User ID number hota hai. Dobara bhejo:")
+        await u.message.reply_text("❌ The User ID must be a number. Please send it again:")
         return True
     uid = int(txt)
     from database import get_user, get_user_points
     usr = get_user(uid)
     if not usr:
         await u.message.reply_text(
-            "❌ Ye user DB me nahi mila. User list me se ID check karo.\n"
-            "ID dobara bhejo ya /cancel:", reply_markup=InlineKeyboardMarkup(
+            "❌ This user was not found in the database. Check the ID in the Users list.\n"
+            "Send the ID again or /cancel:", reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("🔙 Users", callback_data="admin_users")]]))
         c.user_data['ruid_step'] = 'id'
         return True
@@ -12084,7 +12084,7 @@ async def adm_refund_uid_amt_received(u, c):
         if amt <= 0 or amt > 100000:
             raise ValueError
     except Exception:
-        await u.message.reply_text("❌ Sahi amount (USD) bhejo, e.g. `5` ya `2.5`:")
+        await u.message.reply_text("❌ Send a valid amount (USD), e.g. `5` or `2.5`:")
         return True
     c.user_data['ruid_amt'] = amt
     c.user_data['ruid_step'] = 'reason'
@@ -12256,7 +12256,7 @@ async def _bdiscount_prod_list(u, c, page=0):
     lines = [
         "🎉 *Bulk Discount — Tiered Pricing*",
         "━━━━━━━━━━━━━━━━━━━━",
-        "_(Sirf in-stock + manual products. Tap kar ke quantity tiers add karo.)_",
+        "_(Only in-stock + manual products. Tap to add quantity tiers.)_",
         "",
     ]
     kb = []
@@ -12909,7 +12909,7 @@ async def reseller_base_command(update, context):
         await update.message.reply_text(
             f"📊 Current base mode: *{cur}*\n\n"
             "• `cost` = supplier cost pe markup\n"
-            "• `price` = aap ki selling price pe markup (discount bhi de sakte ho)\n\n"
+            "• `price` = markup on your selling price (you can also give a discount)\n\n"
             "Usage: `/resellerbase cost|price`", parse_mode="Markdown")
         return
     mode = args[0].strip().lower()
@@ -13044,7 +13044,7 @@ async def reseller_webhook_command(update, context):
     elif raw.lower().startswith("http://") or raw.lower().startswith("https://"):
         val = raw[:500]
     else:
-        await update.message.reply_text("❌ URL `http(s)://...` hona chahiye (ya `off`)", parse_mode="Markdown")
+        await update.message.reply_text("❌ The URL must be `http(s)://...` (or `off`)", parse_mode="Markdown")
         return
     try:
         from database import update_api_key_fields, get_api_key_row
@@ -13090,7 +13090,7 @@ async def my_reseller_key_command(update, context):
             f"Status: 🟢 Active\n"
             f"💳 Wallet: *${bal:.2f}* (points: {get_user_points(uid)})\n"
             f"📨 Requests: {int(k.get('request_count') or 0)}\n\n"
-            "⚠️ Key plaintext sirf generate hote waqt dikhi thi — agar kho gayi to\n"
+            "⚠️ The key plaintext was shown only when generated — if it is lost\n"
             "store owner se keh kar revoke + nayi key bana lo.\n\n"
             "📚 API Docs: `<BASE_URL>/api-docs/`",
             parse_mode="Markdown")
@@ -13140,7 +13140,7 @@ async def admin_reseller_callback(update, context):
             from utils import escape_md as _emd2
             text += f"• {_emd2(str(uname)[:40])}: ${float(t.get('rev') or 0):,.2f} ({t.get('orders')} orders)\n"
     else:
-        text += "• (koi orders nahi abhi)\n"
+        text += "• (no orders yet)\n"
     kb = [
         [InlineKeyboardButton("🔑 Generate Key", callback_data="reseller_gen_panel")],
         [InlineKeyboardButton("📊 Dashboard", callback_data="reseller_dashboard_panel"),
@@ -13268,7 +13268,7 @@ async def reseller_keys_search_callback(update, context):
     await q.edit_message_text(
         "🔍 *Search Resellers*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Bhejo: API key (poori ya prefix), user ID, ya username/name:\n\n"
+        "Send: an API key (full or prefix), a user ID, or a username/name:\n\n"
         "_(/cancel to cancel)_", parse_mode="Markdown")
 
 
@@ -13435,7 +13435,7 @@ async def reseller_webhooks_callback(update, context):
     except Exception as e:
         await q.edit_message_text(f"❌ {e}"); return
     if not rows:
-        await q.edit_message_text("🔔 *Webhooks Log*\n\n(koi events nahi abhi)",
+        await q.edit_message_text("🔔 *Webhooks Log*\n\n(no events yet)",
                                   parse_mode="Markdown",
                                   reply_markup=InlineKeyboardMarkup(
                                       [[InlineKeyboardButton("🔙 Back", callback_data="reseller_panel")]]))
@@ -13495,7 +13495,7 @@ async def reseller_export_callback(update, context):
             pass
         return
     try:
-        await q.edit_message_text("✅ Reseller record bhej diya (file).",
+        await q.edit_message_text("✅ Reseller record sent (file).",
                                   reply_markup=InlineKeyboardMarkup(
                                       [[InlineKeyboardButton("🔙 Back", callback_data="reseller_panel")]]))
     except Exception:
@@ -13539,7 +13539,7 @@ async def reseller_export_key_callback(update, context):
             pass
         return
     try:
-        await q.edit_message_text("✅ Record bhej diya (file).",
+        await q.edit_message_text("✅ Record sent (file).",
                                   reply_markup=InlineKeyboardMarkup(
                                       [[InlineKeyboardButton("🔙 Back", callback_data=f"reseller_keycfg_panel_{kid}")]]))
     except Exception:
@@ -13704,7 +13704,7 @@ async def reseller_setprice_callback(update, context):
     await q.edit_message_text(
         f"💰 Set price for {label}\n\n"
         "Send: exact $ (`5.00`) · `+20%` / `-10%` · `+1.5` / `-0.5` · `default` (remove)\n"
-        "_(ALL products ke liye sirf exact $ ya `default`)_\n\n"
+        "_(for ALL products use only an exact $ value or `default`)_\n\n"
         "_(/cancel to cancel)_", parse_mode="Markdown")
 
 
@@ -13853,7 +13853,7 @@ async def _render_reseller_orders_panel(update, context, q):
         lines.append(f"🔍 `{_safe_search}` — {total_matched} match")
     lines.append("")
     if not rows:
-        lines.append("(koi orders nahi is filter mein)")
+        lines.append("(no orders for this filter)")
     kb = []
     for r in rows:
         st = {"delivered": "✅", "pending": "⏳", "processing": "🔄", "failed": "❌"}.get(r.get("status"), "❔")
@@ -13931,7 +13931,7 @@ async def _render_reseller_orders_panel(update, context, q):
             await q.edit_message_text(_plain_txt, reply_markup=InlineKeyboardMarkup(kb))
         except Exception as _e3:
             try:
-                await q.answer("⚠️ Render error — dobara try karein", show_alert=False)
+                await q.answer("⚠️ Render error — please try again", show_alert=False)
             except Exception:
                 pass
 
@@ -13945,7 +13945,7 @@ async def reseller_orders_search_callback(update, context):
     context.user_data["rs_step"] = {"action": "orders_search"}
     await q.edit_message_text(
         "🔍 *Search Reseller Orders*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Bhejo: *order ID*, *user ID*, *username*, ya product ka naam:\n\n"
+        "Send: an *order ID*, *user ID*, *username*, or a product name:\n\n"
         "_(/cancel to cancel)_",
         parse_mode="Markdown")
 
@@ -14213,7 +14213,7 @@ async def reseller_wizard_text(update, context):
             elif raw.endswith("%") or raw.startswith("+") or raw.startswith("-"):
                 if pid == 0:
                     await update.message.reply_text(
-                        "❌ ALL products ke liye sirf exact $ (e.g. `5.00`) ya `default` do.",
+                        "❌ For ALL products use only an exact $ value (e.g. `5.00`) or `default`.",
                         parse_mode="Markdown")
                 else:
                     cur = None
@@ -14282,7 +14282,7 @@ async def reseller_wizard_text(update, context):
                     uname = str(uid)
                 await update.message.reply_text(
                     f"✅ *{pts:g} points* added to {uname} (`{uid}`) wallet.\n"
-                    "Ledger mein record ho gaya.", parse_mode="Markdown")
+                    "Recorded in the ledger.", parse_mode="Markdown")
         else:
             await update.message.reply_text("❓ Unknown wizard step — send /cancel")
     except Exception as e:
@@ -14589,8 +14589,8 @@ async def reseller_api_show_callback(update, context):
         try:
             await q.edit_message_text(
                 "🔑 *Your Full Key*\n\n"
-                "⚠️ Is key ka plaintext recoverable nahi tha (security).\n"
-                "*Regenerate* karke nayi key banao.",
+                "⚠️ The plaintext of this key could not be recovered (security).\n"
+                "Use *Regenerate* to create a new key.",
                 parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         except Exception:
             pass
@@ -14706,7 +14706,7 @@ async def reseller_admin_products_callback(update, context, page=0):
     head = ["🗂️ *Reseller Products*"]
     if search:
         head.append(f"_🔍 '{search}' — {total} match_")
-    head.append("_(✅ = API key par available · ⛔ = API par nahi aayega)_")
+    head.append("_(✅ = available on the API key · ⛔ = will not appear on the API)_")
     lines = head + [""]
     kb = []
     for r in rows:
@@ -14770,7 +14770,7 @@ async def reseller_prod_search_callback(update, context):
     await q.edit_message_text(
         "🔍 *Search Products*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Product ka naam (ya part) ya ID bhejo:\n\n"
+        "Send a product name (or part of one) or an ID:\n\n"
         "_(/cancel to cancel)_", parse_mode="Markdown")
 
 
@@ -14904,7 +14904,7 @@ async def reseller_dashboard_callback(update, context):
         "🏆 *Top Resellers (by revenue):*",
     ]
     if not dash["keys"]:
-        lines.append("_(koi reseller orders nahi abhi)_")
+        lines.append("_(no reseller orders yet)_")
     for i, k in enumerate(dash["keys"][:8], 1):
         st = "🟢" if k["active"] else "🔴"
         tp = k["top_product"]
@@ -14925,7 +14925,7 @@ async def reseller_dashboard_callback(update, context):
             if x["revenue"] > 0 or bar:
                 lines.append(f"`{x['date']}` {'█' * max(1, int((x['revenue']/maxv)*20) if maxv else 0)} ${x['revenue']:.0f}")
         if not any(x["revenue"] > 0 for x in trend):
-            lines.append("_(is period mein koi revenue nahi)_")
+            lines.append("_(no revenue in this period)_")
     except Exception:
         pass
     kb = InlineKeyboardMarkup([

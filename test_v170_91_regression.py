@@ -4,7 +4,7 @@ v170.91 REGRESSION SUITE — Task 2 (Bugs 1-4 + Update 1)
 Repo ke andar persist karta hai (/tmp nahi). Run:
     python3 -m pytest test_v170_91_regression.py -v
 """
-import os, sys, shutil, tempfile, asyncio, sqlite3, threading, http.server, socketserver, random
+import os, sys, re, shutil, tempfile, asyncio, sqlite3, threading, http.server, socketserver, random
 
 # ── env PEHLE — database import se pehle ──
 _TMPDIR = tempfile.mkdtemp(prefix="v17091_regr_")
@@ -413,3 +413,222 @@ class TestUpdate1CustomReviews:
         conn.execute("DELETE FROM users WHERE username LIKE 'fake_reviewer_%'")
         conn.commit(); conn.close()
         assert st and st[0] == "pending"
+
+
+# ══════════════════════════════════════════════════════════════
+# 🆕 v170.92 — Task 3: supplier delete/deactivate auto-remove
+# ══════════════════════════════════════════════════════════════
+class TestTask3SupplierRemoval:
+    def test_source_active_instock_false(self):
+        from ext_suppliers import source_product_is_active as sa
+        # inStock=False → deactivated
+        assert sa({"name": "x", "raw": {"inStock": False}}) is False
+        assert sa({"inStock": False}) is False
+        assert sa({"in_stock": False}) is False
+        # inStock=True / absent / numeric stock 0 → available
+        assert sa({"inStock": True}) is True
+        assert sa({"stock": 0}) is True
+        assert sa({}) is True
+        # legacy flags
+        assert sa({"is_active": False}) is False
+        assert sa({"available": False}) is False
+
+    def test_missing_onetshot_and_notification(self):
+        import supplier_automation as sauto
+        import ext_suppliers as ex
+        import fake_engagement  # noqa
+        conn = _db()
+        # test supplier + product setup
+        conn.execute("DELETE FROM ext_products WHERE remote_id='v921test'")
+        conn.execute("DELETE FROM ext_suppliers WHERE name='V92 Test Supplier'")
+        cur = conn.execute(
+            "INSERT INTO ext_suppliers (name, base_url, api_key, adapter, enabled) "
+            "VALUES ('V92 Test Supplier', 'https://v92.test', 'k', 'prodseller', 1)")
+        sid = cur.lastrowid
+        ecur = conn.execute(
+            """INSERT INTO ext_products (supplier_id, remote_id, name, cost_usd, stock,
+               sell_price, markup_pct, synced_to_shop, owner_active, source_active)
+               VALUES (?, 'v921test', 'V92 Notion Test', 1.0, 50, 1.4, 40, 1, 1, 1)""", (sid,))
+        epid = ecur.lastrowid
+        conn.commit(); conn.close()
+        # mirror to products
+        pid, _ = ex.mirror_ext_to_products(epid)
+        conn = _db()
+        assert conn.execute("SELECT is_active FROM products WHERE id=?", (pid,)).fetchone()[0] == 1
+        conn.close()
+
+        # fake adapter: pehli baar → product LIST MEIN NAHI (deleted)
+        class FakeAd:
+            async def fetch_products(self):
+                return []
+        sent = []
+        class FakeBot:
+            async def send_message(self, chat_id, text, **kw):
+                sent.append(text); return True
+        class FakeCtx:
+            bot = FakeBot()
+
+        orig = {
+            "ls": ex.list_suppliers, "ga": ex.get_adapter_for_supplier,
+            "gep": ex.get_ext_products, "afc": None}
+        ex.list_suppliers = lambda include_disabled=False: [{"id": sid, "name": "V92 Test Supplier", "enabled": 1, "base_url": "https://v92.test", "api_key": "k"}]
+        ex.get_adapter_for_supplier = lambda sup: FakeAd()
+        import async_adapter_helpers as aah
+        async def fake_fetch(ad): return []
+        orig_afc = aah.async_fetch_products
+        aah.async_fetch_products = fake_fetch
+        orig_enabled = sauto.is_autosync_enabled
+        sauto.is_autosync_enabled = lambda: True
+
+        try:
+            # run 1: empty fetch → counter (glitch protection)
+            asyncio.run(sauto.autosync_price_stock_job(FakeCtx()))
+            # run 2: empty fetch confirmed → missing detection triggers
+            asyncio.run(sauto.autosync_price_stock_job(FakeCtx()))
+            # product ab shop me INACTIVE (auto-removed)
+            conn = _db()
+            st = conn.execute("SELECT is_active FROM products WHERE id=?", (pid,)).fetchone()[0]
+            src = conn.execute("SELECT source_active FROM ext_products WHERE id=?", (epid,)).fetchone()[0]
+            conn.close()
+            assert st == 0, "product shop me active raha — auto-remove fail"
+            assert src == 0
+            # ENGLISH notification aayi — supplier + product + auto-removed
+            assert any("Auto-Removed from Your Store" in t and "V92 Test Supplier" in t
+                       and "V92 Notion Test" in t for t in sent), sent[:1]
+            assert any("automatically removed from your bot" in t for t in sent)
+
+            # ── ONE-SHOT: dobara run → notification DOBARA NAHI ──
+            sent.clear()
+            asyncio.run(sauto.autosync_price_stock_job(FakeCtx()))
+            assert not any("Auto-Removed" in t for t in sent), "missing notification repeated (spam!)"
+
+            # ── RESTORE (inStock=True) → product wapas active ──
+            async def fake_fetch3(ad):
+                return [{"remote_id": "v921test", "name": "V92 Notion Test",
+                         "cost_usd": 1.0, "stock": 50, "raw": {"inStock": True}}]
+            aah.async_fetch_products = fake_fetch3
+            asyncio.run(sauto.autosync_price_stock_job(FakeCtx()))
+            conn = _db()
+            st = conn.execute("SELECT is_active FROM products WHERE id=?", (pid,)).fetchone()[0]
+            conn.close()
+            assert st == 1, "restore par product wapas active hona chahiye"
+
+            # ── DEACTIVATED (listed hai magar inStock=False) ──
+            async def fake_fetch2(ad):
+                return [{"remote_id": "v921test", "name": "V92 Notion Test",
+                         "cost_usd": 1.0, "stock": 50, "raw": {"inStock": False}}]
+            aah.async_fetch_products = fake_fetch2
+            sent.clear()
+            asyncio.run(sauto.autosync_price_stock_job(FakeCtx()))
+            conn = _db()
+            src = conn.execute("SELECT source_active FROM ext_products WHERE id=?", (epid,)).fetchone()[0]
+            st2 = conn.execute("SELECT is_active FROM products WHERE id=?", (pid,)).fetchone()[0]
+            conn.close()
+            assert src == 0, "inStock=False par source_active 0 hona chahiye (deactivated)"
+            assert st2 == 0, "deactivated product shop se remove hona chahiye"
+            assert any("Deactivated by the supplier" in t for t in sent), sent[:1]
+            assert any("automatically removed from your bot" in t for t in sent)
+        finally:
+            ex.list_suppliers = orig["ls"]
+            ex.get_adapter_for_supplier = orig["ga"]
+            aah.async_fetch_products = orig_afc
+            sauto.is_autosync_enabled = orig_enabled
+            conn = _db()
+            conn.execute("DELETE FROM products WHERE id=?", (pid,))
+            conn.execute("DELETE FROM ext_products WHERE id=?", (epid,))
+            conn.execute("DELETE FROM ext_suppliers WHERE id=?", (sid,))
+            conn.commit(); conn.close()
+
+
+# ══════════════════════════════════════════════════════════════
+# 🆕 v170.92 — Task 4: no Roman Urdu anywhere (user-visible)
+# ══════════════════════════════════════════════════════════════
+URDU_TOKENS = re.compile(
+    r'\b(kro|kardo|krdo|krdiya|kardiya|krna|karni|krny|karny|krke|karke|karo|karna|'
+    r'karein|chahiye|chaiye|nahi|nhi|hoga|hogya|hojaye|gya|gaya|apna|apni|apne|apny|'
+    r'aapka|aapki|aapke|kaise|kaisy|kasay|liye|lye|bataye|batayen|batao|btao|btaye|'
+    r'milenge|milega|diya|lena|dena|sakta|skta|sakte|skte|jata|jati|aata|aati|kuch|'
+    r'zaroori|zaruri|meherbani|shukriya|bohat|bohot|zyada|thoda|thori|acha|accha|'
+    r'theek|thik|masla|mushkil|khatam|khtm|abhi|jaldi|foran|turant|waqt|dost|bhai|'
+    r'hona|honi|hone|hony|hui|hua|honge|warna|magar|dobara|humesha|hamesha|kabhi|'
+    r'kyun|kese|jaisa|jesa|aise|aysay|waise|kholo|chalu|shuru|ruko|dekho|dkho|dikhao|'
+    r'likho|padho|bhejo|lelo|karlo|rakho|pata|pta|lazmi|sahi|galat|khud|hojata|hojta|'
+    r'hota|hote|hoti|hoty|karta|karti|krta|krti|khareedo|khareedein|chunein|likhein|'
+    r'likho|mere|mera|meri|paisa|paise|mein|khush|amdeed|swagat|naam|mubarak|pehlay|'
+    r'pehle|dosto|chuke|banaye|tap karein|choose karo|check karein|check karo)\b', re.I)
+
+
+class TestTask4NoRomanUrdu:
+    def test_template_b_all_english(self):
+        from response_templates import RESPONSE_TEMPLATE_B, extract_placeholders
+        from config import DEFAULT_RESPONSES
+        assert len(RESPONSE_TEMPLATE_B) >= 70
+        for k, v in RESPONSE_TEMPLATE_B.items():
+            assert not URDU_TOKENS.search(v), f"Template B '{k}' me Roman Urdu: {v[:60]!r}"
+            # placeholder safety bhi
+            d = DEFAULT_RESPONSES.get(k)
+            if d is not None:
+                extra = set(extract_placeholders(v)) - set(extract_placeholders(d))
+                assert not extra, f"Template B '{k}' extra placeholders: {extra}"
+
+    def test_review_text_always_english(self):
+        from fake_engagement import generate_review_text, generate_fake_reviewer
+        for _ in range(12):
+            name, lang = generate_fake_reviewer(pk_ratio=100)  # force "urdu" language
+            txt = generate_review_text(lang)
+            assert not URDU_TOKENS.search(txt), f"Roman Urdu review ({lang}): {txt!r}"
+
+    def test_i18n_ru_hi_no_roman_urdu(self):
+        import i18n
+        STR = r'"((?:[^"\\]|\\.)*)"'
+        src = open("i18n.py", encoding="utf-8").read()
+        bad = [m.group(0)[:80] for m in re.finditer(r'"(ru|hi)":\s*' + STR, src)
+               if URDU_TOKENS.search(m.group(2))]
+        assert not bad, f"i18n ru/hi Roman Urdu: {bad}"
+
+    def test_i18n_responses_ru_hi_no_roman_urdu(self):
+        import i18n_responses as ir
+        bad = []
+        for key, langs in ir.RESPONSE_TRANSLATIONS.items():
+            for lang in ("ru", "hi"):
+                v = langs.get(lang)
+                if v and URDU_TOKENS.search(v):
+                    bad.append((key, lang, v[:40]))
+        assert not bad, f"i18n_responses ru/hi Roman Urdu: {bad}"
+
+    def test_customization_defaults_no_roman_urdu(self):
+        import customization as cz
+        pools = cz.get_review_sentences("english") + cz.get_review_sentences("urdu")
+        for p in pools:
+            assert not URDU_TOKENS.search(p), f"Roman Urdu review sentence: {p!r}"
+
+    def test_selfheal_roman_urdu_db(self):
+        # ready DB copy par: Roman Urdu values → English (heal)
+        import shutil as _sh, tempfile as _tf
+        tmpd = _tf.mkdtemp()
+        tmpdb = os.path.join(tmpd, "heal.db")
+        _sh.copy("/home/user/bite_store_restore_ready.db", tmpdb)
+        # Roman Urdu value inject karo (jaise purane production DB me tha)
+        conn = sqlite3.connect(tmpdb)
+        conn.execute("UPDATE bot_responses SET value=? WHERE key='payment_not_found_txid'",
+                     ("⏳ test — agar aap ne pay kiya hai to Check Again dabayen turant verify ho jayegi",))
+        conn.execute("INSERT OR REPLACE INTO bot_settings (key, value) VALUES ('tpl_bc_freebie', "
+                     "'🎁 FREEBIE! 100% free — koi payment nahi, koi referral nahi!')")
+        conn.commit(); conn.close()
+        # heal chalao
+        os.environ["DB_PATH"] = tmpdb
+        import importlib
+        import database as dbm
+        importlib.reload(dbm)
+        import self_heal
+        importlib.reload(self_heal)
+        self_heal._heal_roman_urdu_responses()
+        conn = sqlite3.connect(tmpdb)
+        v1 = conn.execute("SELECT value FROM bot_responses WHERE key='payment_not_found_txid'").fetchone()[0]
+        v2 = conn.execute("SELECT value FROM bot_settings WHERE key='tpl_bc_freebie'").fetchone()[0]
+        conn.close()
+        assert not URDU_TOKENS.search(v1), f"heal fail (bot_responses): {v1[:80]!r}"
+        assert "koi payment nahi" not in v2.lower(), f"heal fail (tpl_bc_freebie): {v2[:80]!r}"
+        # env wapas
+        os.environ["DB_PATH"] = _REGDB
+        importlib.reload(dbm)

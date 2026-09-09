@@ -27,20 +27,20 @@ RESPONSE_TRANSLATIONS = {
 🆔 آپ کا یوزر آئی ڈی: {user_id}
 
 ⚡ Binance Pay سے ادائیگی کریں – خودکار تصدیق""",
-        "ru":  """🛍️ {shop_name} mein khush amdeed!
+        "ru":  """🛍️ Welcome to {shop_name}!
 
 ━━━━━━━━━━━━━━━━━━━━
 
-🆔 Aap ka User ID: {user_id}
+🆔 Your User ID: {user_id}
 
-⚡ Binance Pay sy payment karein – Automatic Verify""",
-        "hi":  """🛍️ {shop_name} mein swagat hai!
+⚡ Pay with Binance Pay — instant auto-verification""",
+        "hi":  """🛍️ Welcome to {shop_name}!
 
 ━━━━━━━━━━━━━━━━━━━━
 
-🆔 Aapka User ID: {user_id}
+🆔 Your User ID: {user_id}
 
-⚡ Binance Pay se payment karo – Auto Verify""",
+⚡ Pay with Binance Pay — instant auto-verification""",
         "ar":  """🛍️ مرحبًا بك في {shop_name}!
 
 ━━━━━━━━━━━━━━━━━━━━
@@ -95,24 +95,24 @@ RESPONSE_TRANSLATIONS = {
 💎 پوائنٹس: *{points}*
 👥 ریفرلز: *{referrals}*
 📅 شامل ہوئے: {joined}""",
-        "ru":  """📊 *Mera Account*
+        "ru":  """📊 *My Account*
 ━━━━━━━━━━━━━━━━━━━━
 
-👤 Naam: *{name}*
+👤 Name: *{name}*
 🆔 User ID: `{user_id}`
 📛 Username: @{username}
 💎 Points: *{points}*
 👥 Referrals: *{referrals}*
-📅 Join Kiya: {joined}""",
-        "hi":  """📊 *Mera Account*
+📅 Joined: {joined}""",
+        "hi":  """📊 *My Account*
 ━━━━━━━━━━━━━━━━━━━━
 
-👤 Naam: *{name}*
+👤 Name: *{name}*
 🆔 User ID: `{user_id}`
 📛 Username: @{username}
 💎 Points: *{points}*
 👥 Referrals: *{referrals}*
-📅 Join Kiya: {joined}""",
+📅 Joined: {joined}""",
         "ar":  """📊 *حسابي*
 ━━━━━━━━━━━━━━━━━━━━
 
@@ -185,7 +185,7 @@ RESPONSE_TRANSLATIONS = {
     "shop_categories_title": {
         "ur":  "📁 *زمرے*\n\n_براؤز کرنے کے لیے زمرہ منتخب کریں۔_",
         "ru":  "📁 *Categories*\n\n_Pick a category to browse._",
-        "hi":  "📁 *Categories*\n\n_Browse karne ke liye category choose karo._",
+        "hi":  "📁 *Categories*\n\n_Pick a category to browse._",
         "ar":  "📁 *الفئات*\n\n_اختر فئة للتصفح._",
         "es":  "📁 *Categorías*\n\n_Elige una categoría para explorar._",
         "fr":  "📁 *Catégories*\n\n_Choisissez une catégorie à parcourir._",
@@ -197,7 +197,7 @@ RESPONSE_TRANSLATIONS = {
     "product_detail": {
         "ur":  "📦 *{name}*\n━━━━━━━━━━━━━━━━━━━━\n\n📝 {description}\n\n💰 قیمت: *${price}* ≈ *{pkr}*\n📊 اسٹاک میں: *{stock}*",
         "ru":  "📦 *{name}*\n━━━━━━━━━━━━━━━━━━━━\n\n📝 {description}\n\n💰 Price: *${price}* ≈ *{pkr}*\n📊 Stock Available: *{stock}*",
-        "hi":  "📦 *{name}*\n━━━━━━━━━━━━━━━━━━━━\n\n📝 {description}\n\n💰 Price: *${price}* ≈ *{pkr}*\n📊 Stock me hai: *{stock}*",
+        "hi":  "📦 *{name}*\n━━━━━━━━━━━━━━━━━━━━\n\n📝 {description}\n\n💰 Price: *${price}* ≈ *{pkr}*\n📊 In Stock: *{stock}*",
         "ar":  "📦 *{name}*\n━━━━━━━━━━━━━━━━━━━━\n\n📝 {description}\n\n💰 السعر: *${price}* ≈ *{pkr}*\n📊 المخزون: *{stock}*",
         "es":  "📦 *{name}*\n━━━━━━━━━━━━━━━━━━━━\n\n📝 {description}\n\n💰 Precio: *${price}* ≈ *{pkr}*\n📊 En Stock: *{stock}*",
         "fr":  "📦 *{name}*\n━━━━━━━━━━━━━━━━━━━━\n\n📝 {description}\n\n💰 Prix : *${price}* ≈ *{pkr}*\n📊 En Stock : *{stock}*",
@@ -208,8 +208,8 @@ RESPONSE_TRANSLATIONS = {
 
     "no_products": {
         "ur": "😔 ابھی کوئی پروڈکٹ دستیاب نہیں۔\nجلد دوبارہ چیک کریں!",
-        "ru": "😔 Abhi koi product available nahi.\nThodi der baad check karein!",
-        "hi": "😔 Abhi koi product available nahi.\nThodi der baad check karo!",
+        "ru": "😔 No products available yet.\nCheck back soon!",
+        "hi": "😔 No products available yet.\nCheck back soon!",
         "ar": "😔 لا توجد منتجات متاحة حاليًا.\nيُرجى المراجعة لاحقًا!",
         "es": "😔 No hay productos disponibles aún.\n¡Vuelve pronto!",
         "fr": "😔 Aucun produit disponible pour le moment.\nRevenez bientôt !",
@@ -220,8 +220,8 @@ RESPONSE_TRANSLATIONS = {
 
     "out_of_stock": {
         "ur": "😔 اسٹاک ختم!",
-        "ru": "😔 Stock khatam!",
-        "hi": "😔 Stock khatam!",
+        "ru": "😔 Out of stock!",
+        "hi": "😔 Out of stock!",
         "ar": "😔 نفد المخزون!",
         "es": "😔 ¡Agotado!",
         "fr": "😔 En rupture de stock !",
@@ -232,8 +232,8 @@ RESPONSE_TRANSLATIONS = {
 
     "confirm_purchase": {
         "ur":  "🛒 *خریداری کی تصدیق*\n━━━━━━━━━━━━━━━━━━━━\n📦 *{product}*\n💰 قیمت: *${price}* ≈ *{pkr}*\n📦 مقدار: *1*\n\nادائیگی کا طریقہ منتخب کریں:",
-        "ru":  "🛒 *Confirm Purchase*\n━━━━━━━━━━━━━━━━━━━━\n📦 *{product}*\n💰 Price: *${price}* ≈ *{pkr}*\n📦 Quantity: *1*\n\nPayment method select karein:",
-        "hi":  "🛒 *Confirm Purchase*\n━━━━━━━━━━━━━━━━━━━━\n📦 *{product}*\n💰 Price: *${price}* ≈ *{pkr}*\n📦 Quantity: *1*\n\nPayment method choose karo:",
+        "ru":  "🛒 *Confirm Purchase*\n━━━━━━━━━━━━━━━━━━━━\n📦 *{product}*\n💰 Price: *${price}* ≈ *{pkr}*\n📦 Quantity: *1*\n\nChoose a payment method:",
+        "hi":  "🛒 *Confirm Purchase*\n━━━━━━━━━━━━━━━━━━━━\n📦 *{product}*\n💰 Price: *${price}* ≈ *{pkr}*\n📦 Quantity: *1*\n\nChoose a payment method:",
         "ar":  "🛒 *تأكيد الشراء*\n━━━━━━━━━━━━━━━━━━━━\n📦 *{product}*\n💰 السعر: *${price}* ≈ *{pkr}*\n📦 الكمية: *1*\n\nاختر طريقة الدفع:",
         "es":  "🛒 *Confirmar Compra*\n━━━━━━━━━━━━━━━━━━━━\n📦 *{product}*\n💰 Precio: *${price}* ≈ *{pkr}*\n📦 Cantidad: *1*\n\nSelecciona método de pago:",
         "fr":  "🛒 *Confirmer l'achat*\n━━━━━━━━━━━━━━━━━━━━\n📦 *{product}*\n💰 Prix : *${price}* ≈ *{pkr}*\n📦 Quantité : *1*\n\nChoisissez un mode de paiement :",

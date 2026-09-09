@@ -768,10 +768,10 @@ async def admin_replace_reject_callback(update: Update, context: ContextTypes.DE
         await q.edit_message_text(
             f"❌ *Reject Replacement — Order #{oid}*\n"
             f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"Rejection ki *wajah (reason)* type karo — ye user ko "
-            f"dikhayi jayegi.\n\n"
-            f"_Example: \"Account already used\" ya \"Warranty expired\"_\n\n"
-            f"Reason bhejo (ya ⏭ Skip):",
+            f"Type the *reason* for the rejection — it will be shown "
+            f"to the user.\n\n"
+            f"_Example: \"Account already used\" or \"Warranty expired\"_\n\n"
+            f"Send the reason (or tap ⏭ Skip):",
             parse_mode="Markdown", reply_markup=kb)
     except Exception:
         pass
@@ -809,7 +809,7 @@ async def admin_replace_reject_cancel_callback(update: Update, context: ContextT
     context.user_data.pop("rej_reason_oid", None)
     await q.answer("Cancelled")
     try:
-        await q.edit_message_text("❌ Reject cancel kar diya.", parse_mode="Markdown",
+        await q.edit_message_text("❌ Rejection cancelled.", parse_mode="Markdown",
                                   reply_markup=InlineKeyboardMarkup(
                                       [[InlineKeyboardButton("🔙 Admin Panel", callback_data="admin_panel")]]))
     except Exception:
@@ -1432,8 +1432,8 @@ async def ticket_reminder_job(context):
                     f"📬 *Your support ticket #{tid} is still open.*\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n\n"
                     f"Subject: *{escape_md(str(t.get('subject') or '')[:80])}*\n\n"
-                    f"Agar aapka masla hal ho gaya hai to ticket *close* kar dein "
-                    f"— warna ye khula rahega aur hum madad karte rahenge. ✅",
+                    f"If your issue has been resolved, please *close* the ticket — "
+                    f"otherwise it will stay open and we'll keep helping you. ✅",
                     parse_mode="Markdown",
                     reply_markup=InlineKeyboardMarkup([[
                         InlineKeyboardButton("🔒 Close Ticket", callback_data=f"st_uclose_{tid}")
@@ -1473,7 +1473,7 @@ async def st_user_close_callback(update, context):
             return
         if int(t.get('user_id') or 0) != uid:
             try:
-                await q.answer("❌ Ye aapka ticket nahi hai.", show_alert=True)
+                await q.answer("❌ This is not your ticket.", show_alert=True)
             except Exception:
                 pass
             return

@@ -256,7 +256,7 @@ async def refadm_top_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         await _safe_edit(q, f"❌ {e}"); return
     if not top:
-        await _safe_edit(q, "🏆 *Top Referrers*\n━━━━━━━━━━━━━━━━━━━━\n\n_Abhi koi counted referrals nahi._",
+        await _safe_edit(q, "🏆 *Top Referrers*\n━━━━━━━━━━━━━━━━━━━━\n\n_No counted referrals yet._",
                          parse_mode="Markdown",
                          reply_markup=InlineKeyboardMarkup([[
                              InlineKeyboardButton("🔙 Back", callback_data="refadm_panel")]]))

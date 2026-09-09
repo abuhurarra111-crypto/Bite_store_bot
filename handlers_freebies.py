@@ -210,8 +210,8 @@ async def _show_freebie_product(q, uid, pid):
         from database import freebie_restock_request
         _msg = ("ℹ️ *This freebie is not available right now.*\n"
                 "━━━━━━━━━━━━━━━━━━━━\n\n"
-                "🔔 *Notify Me* tap karo — jab ye freebie wapas aayega, "
-                "bot aapko message bhejega.")
+                "Tap *🔔 Notify Me* — when this freebie comes back, "
+                "the bot will message you.")
         try:
             from keyboards import _rb
             back = _rb("freebie_back", callback_data="main_menu")
@@ -281,8 +281,8 @@ async def _show_freebie_product(q, uid, pid):
     # 🆕 v170.43: freebie stock khatam → Notify Me
     if remaining is not None and remaining <= 0:
         from database import freebie_restock_request
-        lines.append("😔 Ye freebie abhi khatam ho gaya hai.")
-        lines.append("🔔 *Notify Me* tap karo — wapas aane par bot batayega.")
+        lines.append("😔 This freebie has just run out.")
+        lines.append("🔔 Tap *Notify Me* — the bot will tell you when it's back.")
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔔 Notify Me", callback_data=f"freebie_notify_{pid}")],
             [_menu_btn(), _back_btn()],
@@ -362,8 +362,8 @@ async def freebie_do_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     # 🆕 v170.43: freebie ka apna stock (max_claims) — khatam to block
     remaining = get_freebie_remaining_claims(pid)
     if remaining is not None and remaining <= 0:
-        await _safe_edit(q, "😔 Ye freebie abhi khatam ho gaya hai. "
-                            "🔔 Notify Me se wapas aane par pata chalega.",
+        await _safe_edit(q, "😔 This freebie has just run out. "
+                            "🔔 Tap Notify Me to be notified when it's back.",
                          reply_markup=InlineKeyboardMarkup([[
                              InlineKeyboardButton("🔔 Notify Me",
                                                   callback_data=f"freebie_notify_{pid}"),
@@ -585,7 +585,7 @@ async def _render_freebies_admin(q, context):
         res = get_products_not_in_freebies(search=search, page=page)
         items = res["items"]
         body = head_lines + [
-            "_➕ Freebie banao — product tap karo:_",
+            "_➕ Create a freebie — tap a product:_",
             f"📄 Page {res['page']}/{res['total_pages']} · Total {res['total']}",
             "",
         ]
@@ -619,7 +619,7 @@ async def _render_freebies_admin(q, context):
         label = "Freebies (ON)" if tab == "freebies" else "All Products"
         body = head_lines + [f"_{label} — Page {res['page']}/{res['total_pages']}_", ""]
         if not items:
-            body.append("_Koi products nahi milay._")
+            body.append("_No products found._")
         for f in items:
             pid = int(f["product_id"])
             raw = str(f.get("display_name") or f.get("name") or f"#{pid}")
@@ -749,7 +749,7 @@ async def fb_search_callback(update, context):
     context.user_data["freebie_step"] = {"action": "search"}
     await _safe_edit(q,
         "🔍 *Freebies Search*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        "Product ka naam (ya part) bhejo — matching freebies/products dikhenge:\n\n"
+        "Send a product name (or part of it) — matching freebies/products will be shown:\n\n"
         "_(/cancel to cancel)_", parse_mode="Markdown")
 
 
@@ -769,7 +769,7 @@ async def fb_bulk_callback(update, context):
         context.user_data["freebie_step"] = {"action": "bulk_limit"}
         await _safe_edit(q,
             "🔢 *All Freebies — Claim Limit*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Sab freebies ke liye ek hi claim limit set karo (number, `0`=unlimited):\n\n"
+            "Set one claim limit for ALL freebies (a number, `0` = unlimited):\n\n"
             "_(/cancel to cancel)_", parse_mode="Markdown")
         return
     await _render_freebies_admin(q, context)
@@ -833,7 +833,7 @@ async def fb_claimslog_callback(update, context):
              f"━━━━━━━━━━━━━━━━━━━━",
              f"Total: *{len(rows)}* · page {page+1}/{total_pages}", ""]
     if not chunk:
-        lines.append("_Koi claims nahi._")
+        lines.append("_No claims yet._")
     for r in chunk:
         uid = r.get("user_id")
         uname = f"@{r.get('username')}" if r.get("username") else (r.get("first_name") or "")
@@ -882,7 +882,7 @@ async def fb_clfilter_callback(update, context):
         context.user_data["freebie_step"] = {"action": "claims_user"}
         await _safe_edit(q,
             "👤 *Claims — By User*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-            "User ka Telegram ID bhejo (sirf number):\n\n"
+            "Send the user's Telegram ID (numbers only):\n\n"
             "_(/cancel to cancel)_", parse_mode="Markdown")
         return
     st["claims_page"] = 0
@@ -908,7 +908,7 @@ async def fb_restock_list_callback(update, context):
     lines = ["🔔 *Freebie Restock Requests*",
              "━━━━━━━━━━━━━━━━━━━━"]
     if not rows:
-        lines.append("_Koi pending requests nahi._")
+        lines.append("_No pending requests._")
     for r in rows:
         pname = _clean_name(r.get("name") or f"#{r.get('product_id')}", 30)
         lines.append(f"• #{r.get('product_id')} {pname}: *{r.get('n')}* users")
@@ -935,7 +935,7 @@ async def fb_analytics_callback(update, context):
     total_week = sum(d["count"] for d in daily)
     lines += ["", f"📅 Week total: *{total_week}* claims", "", "*🏆 Top Freebies:*"]
     if not top:
-        lines.append("_(koi claims nahi)_")
+        lines.append("_(no claims yet)_")
     for t in top:
         pname = _clean_name(t.get("name") or f"#{t.get('id')}", 26)
         lines.append(f"• {pname}: *{t.get('n')}* claims")
@@ -1020,7 +1020,7 @@ async def fb_claims_callback(update, context):
              f"━━━━━━━━━━━━━━━━━━━━",
              f"Total: *{get_freebie_total_claims(pid)}*", ""]
     if not rows:
-        lines.append("_Koi claims nahi._")
+        lines.append("_No claims yet._")
     for r in rows:
         uid = r.get("user_id")
         uname = f"@{r.get('username')}" if r.get("username") else (r.get("first_name") or "")
@@ -1237,7 +1237,7 @@ async def freebie_step_received(update, context):
         try:
             uid = int(txt)
         except Exception:
-            await update.message.reply_text("❌ Sirf number (Telegram ID) bhejo.")
+            await update.message.reply_text("❌ Numbers only (Telegram ID).")
             context.user_data["freebie_step"] = {"action": "claims_user"}
             return True
         st = _fb_view_state(context)

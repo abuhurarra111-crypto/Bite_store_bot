@@ -1351,7 +1351,7 @@ async def adm_wr_reject_cancel_callback(update, context):
     context.user_data.pop('wr_reject_wid', None)
     try:
         wid = int(q.data.replace("adm_wr_reject_cancel_", ""))
-        await q.edit_message_text("❌ Reject cancel kar diya.",
+        await q.edit_message_text("❌ Rejection cancelled.",
                                   reply_markup=InlineKeyboardMarkup(
                                       [[InlineKeyboardButton("🔙 Back", callback_data=f"adm_wr_view_{wid}")]]))
     except Exception:

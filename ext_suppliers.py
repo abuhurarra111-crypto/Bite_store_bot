@@ -422,7 +422,10 @@ def source_product_is_active(payload) -> bool:
         if isinstance(raw, dict):
             for _k, _v in raw.items():
                 d.setdefault(_k, _v)
-        for key in ("source_active", "is_active", "active", "enabled", "available"):
+        # 🆕 v170.92: `inStock` / `in_stock` False = supplier ne product apne
+        # store se deactivate kar diya (list me hai par buyable nahi). True ya
+        # absent = available (stock 0 alag cheez hai — wo temporary sold-out hai).
+        for key in ("source_active", "is_active", "active", "enabled", "available", "inStock", "in_stock"):
             if key not in d or d.get(key) is None:
                 continue
             value = d.get(key)

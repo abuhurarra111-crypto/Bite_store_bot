@@ -3778,24 +3778,24 @@ _LANG_SAMPLE_NATIVE = {
         "✅ ڈیلیور شدہ آرڈرز *آرڈر ہسٹری* میں دکھائی دیتے ہیں۔"
     ),
     "ru": (
-        "🛒 *Product Kaise Khareedein*\n"
+        "🛒 *How to Buy a Product*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "1️⃣ Main Menu se *Shop Now* par tap karein.\n"
-        "2️⃣ Apni pasand ka product kholen.\n"
-        "3️⃣ *Buy Now* (1 item) ya *Buy Multiple* (quantity) chunein.\n"
-        "4️⃣ Payment method chunein.\n"
-        "5️⃣ Bot ne jo exact amount dikhaya woh pay karein aur *Check Payment* tap karein.\n\n"
-        "✅ Delivered orders *Order History* mein dikhte hain."
+        "1️⃣ From Main Menu tap *Shop Now*.\n"
+        "2️⃣ Open the product you want.\n"
+        "3️⃣ Tap *Buy Now* (1 item) or *Buy Multiple* (quantity).\n"
+        "4️⃣ Choose a payment method.\n"
+        "5️⃣ Pay the exact amount shown and tap *Check Payment*.\n\n"
+        "✅ Delivered orders appear in *Order History*."
     ),
     "hi": (
-        "🛒 *Product Kaise Khareedein*\n"
+        "🛒 *How to Buy a Product*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "1️⃣ Main Menu se *Shop Now* dabao.\n"
-        "2️⃣ Apna product kholo.\n"
-        "3️⃣ *Buy Now* (1 item) ya *Buy Multiple* (quantity) chuno.\n"
-        "4️⃣ Payment method chuno.\n"
-        "5️⃣ Exact amount pay karo aur *Check Payment* dabao.\n\n"
-        "✅ Delivered orders *Order History* mein dikhte hain."
+        "1️⃣ From Main Menu tap *Shop Now*.\n"
+        "2️⃣ Open the product you want.\n"
+        "3️⃣ Tap *Buy Now* (1 item) or *Buy Multiple* (quantity).\n"
+        "4️⃣ Choose a payment method.\n"
+        "5️⃣ Pay the exact amount shown and tap *Check Payment*.\n\n"
+        "✅ Delivered orders appear in *Order History*."
     ),
     "ar": (
         "🛒 *كيفية شراء منتج*\n"
