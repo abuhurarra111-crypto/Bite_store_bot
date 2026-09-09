@@ -44,6 +44,7 @@
 import random
 import logging
 import asyncio
+import time
 from datetime import datetime
 from utils import smart_text_and_mode
 
@@ -181,12 +182,17 @@ def get_speed_seconds():
     A restored DB had pua_interval_unit=seconds, min=1, max=10 with 233 active
     users → hundreds of Telegram sends/second → FloodWait/429 → bot stuck in a
     loop. This floor makes that class of misconfiguration impossible.
+    🆕 v170.93: a "seconds" unit with max < 120 is treated as a mis-set/restored
+    config (e.g. min=1 max=60 SECONDS) and read as MINUTES instead. Per-user
+    floors cannot fix an AGGREGATE storm (2,700+ active jobs) — the global
+    throttle (fake_send_allowed_now) is the real safety net.
     """
     FLOOR_SECONDS = 30   # absolute minimum between two fake msgs for one user
     try:
         unit = _g("pua_interval_unit", "minutes")
         mn, mx = get_speed()
-        if unit == "minutes":
+        if unit != "seconds" or mx < 120:
+            # v170.93: minutes (or tiny seconds = misconfig) → minutes scale
             mn_s, mx_s = mn * 60, mx * 60
         else:
             mn_s, mx_s = mn, mx
@@ -196,6 +202,50 @@ def get_speed_seconds():
         return mn_s, mx_s
     except Exception:
         return FLOOR_SECONDS, 3600
+
+
+# ════════════════════════════════════════════════════════════
+# 🆕 v170.93 — GLOBAL FAKE-ACTIVITY THROTTLE (bot speed fix)
+# ════════════════════════════════════════════════════════════
+# ROOT CAUSE of the slow bot (2026-09-09): 2,765 active per-user jobs ×
+# 30-60s interval each = up to ~61 Telegram sends/sec of aggregate demand.
+# Railway logs showed ~366 job runs/min + 67 misfire warnings → the scheduler,
+# event loop and Telegram API were saturated, so every real button tap waited
+# seconds behind the storm. A per-user floor cannot fix an aggregate problem,
+# so this is a process-wide cap: at most ONE fake send per
+# pua_global_min_gap seconds across ALL users + the group job
+# (default 5s → max 12 fake msgs/min, still plenty of "alive" effect).
+_last_fake_send_ts = 0.0
+
+
+def fake_send_gap_seconds() -> int:
+    """Global minimum gap (seconds) between any two fake-activity sends."""
+    try:
+        return max(1, int(_g("pua_global_min_gap", "5")))
+    except Exception:
+        return 5
+
+
+def fake_send_allowed_now() -> bool:
+    """True only if pua_global_min_gap seconds passed since the last fake
+    send. Consumes the slot when True (the caller must then send)."""
+    global _last_fake_send_ts
+    now = time.time()
+    if now - _last_fake_send_ts < fake_send_gap_seconds():
+        return False
+    _last_fake_send_ts = now
+    return True
+
+
+def _is_permanent_block(exc) -> bool:
+    """True when Telegram says the user can NEVER receive messages (blocked
+    the bot / deactivated account) — their scheduled job is pure waste."""
+    try:
+        s = str(exc).lower()
+        return ("forbidden" in s or "bot was blocked" in s
+                or "user is deactivated" in s)
+    except Exception:
+        return False
 
 
 def get_first_delay():
@@ -1224,6 +1274,11 @@ async def _send_activity_to_user(bot, user_id: int):
         return
     if not is_user_active(user_id):
         return
+    # 🆕 v170.93 GLOBAL THROTTLE: max one fake send per pua_global_min_gap sec
+    # across the whole bot. Without this, thousands of per-user jobs saturate
+    # Telegram + the event loop and every real tap turns slow.
+    if not fake_send_allowed_now():
+        return
 
     msg, kb = await build_fake_message(bot, user_id)
     # 🐛 v170.5: build_fake_message ab (None, None) return kar sakta hai (e.g.
@@ -1243,15 +1298,24 @@ async def _send_activity_to_user(bot, user_id: int):
                 await bot.send_message(
                     chat_id=user_id, text=_text, parse_mode=_pm, reply_markup=kb)
             except Exception as e:
+                # 🆕 v170.93: user blocked the bot / deactivated → their job is
+                # dead forever; auto-deactivate so it stops burning API calls
+                # every cycle (2,538 of 2,765 jobs had NEVER delivered).
+                if _is_permanent_block(e):
+                    set_user_active(user_id, False)
+                    logger.info(f"[Activity] {user_id} unreachable (blocked/deactivated) — job auto-deactivated")
+                    return
                 try:
                     await bot.send_message(chat_id=user_id, text=_text, reply_markup=kb)
                 except Exception as e2:
+                    if _is_permanent_block(e2):
+                        set_user_active(user_id, False)
+                        logger.info(f"[Activity] {user_id} unreachable (blocked/deactivated) — job auto-deactivated")
+                        return
                     logger.debug(f"[Activity] Private send to {user_id} failed: {e2}")
             update_user_activity_log(user_id, msg[:50])
             logger.info(f"[Activity] ✅ Sent private activity to {user_id}")
     except Exception as e:
-        logger.debug(f"[Activity] Send to {user_id} failed: {e}")
-        logger.debug(f"[Activity] Send to {user_id} failed: {e}")
         logger.debug(f"[Activity] Send to {user_id} failed: {e}")
 
 
@@ -1365,6 +1429,12 @@ def schedule_group_activity_job(app):
     async def _group_job(context):
         global _group_job_scheduled
         _group_job_scheduled = False  # Reset so next one can be scheduled
+
+        # 🆕 v170.93: group sends share the SAME global throttle as per-user
+        # sends (skip + re-schedule when the cap is hit).
+        if not fake_send_allowed_now():
+            schedule_group_activity_job(context.application)
+            return
 
         # Check if still enabled and correct mode
         mode = _g("dest_mode", "bot_only")

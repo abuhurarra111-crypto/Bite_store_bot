@@ -44,8 +44,21 @@ _AUTOSYNC_BAL_RUNNING = False  # balance job lock
 DEFAULT_LOW_BAL_THRESHOLD = 3.00      # $3 default per new supplier
 LOW_BAL_ALERT_COOLDOWN = 6 * 3600     # don't DM same alert more than every 6h
 OOS_DELETE_AFTER_SECONDS = 5 * 24 * 3600  # v141: delete after 5 days continuously out of stock
-AUTOSYNC_PRICE_STOCK_INTERVAL = 30    # seconds — price+stock refresh
-AUTOSYNC_BALANCE_INTERVAL = 300       # seconds — every 5 min balance too
+# 🆕 v170.93: sync cadence is owner-configurable (default every 3 minutes).
+# The old hard-coded 30s tick kept 7 supplier APIs + the DB busy around the
+# clock; 180s is the new default (see get_autosync_price_stock_interval).
+AUTOSYNC_PRICE_STOCK_INTERVAL = 180   # seconds — price+stock refresh (default)
+AUTOSYNC_BALANCE_INTERVAL = 180       # seconds — balance refresh (default)
+
+
+def get_autosync_price_stock_interval() -> int:
+    """Live interval (seconds) for the price+stock tick.
+    Setting: autosync_interval_seconds (floor 60s, default 180)."""
+    try:
+        from database import get_setting
+        return max(60, int(get_setting("autosync_interval_seconds", "180") or 180))
+    except Exception:
+        return AUTOSYNC_PRICE_STOCK_INTERVAL
 
 
 # ============================================================
@@ -203,16 +216,19 @@ async def autosync_price_stock_job(context):
                             logger.debug(f"[AutoSync] missing-state update failed ext#{ep.get('id')}: {_al}")
                         continue
 
+                    fresh_p = fresh_by_remote[remote_id]
+
                     # Product is present again; clear one-shot missing alert
-                    # (🆕 v170.92: sirf tab jab wo wapas ACTIVE bhi ho —
-                    # deactivated product (inStock=False) par clear nahi).
+                    # (only when it is ACTIVE again — a deactivated product
+                    # keeps its alert).
+                    # 🐛 v170.93 fix: fresh_p was referenced BEFORE its
+                    # assignment — silent NameError every tick meant this
+                    # alert-clear never actually ran.
                     try:
                         if source_product_is_active(fresh_p):
                             set_setting(f"supplier_missing_alert_{int(ep['id'])}", "")
                     except Exception:
                         pass
-
-                    fresh_p = fresh_by_remote[remote_id]
 
                     new_cost = float(fresh_p.get("cost_usd") or 0)
                     new_stock = int(fresh_p.get("stock") or 0)
@@ -1141,7 +1157,7 @@ async def admin_autosync_callback(update, context):
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"Status: {'🟢 ON' if on else '🔴 OFF'}\n"
         f"Live products being synced: *{live}*\n\n"
-        f"🔄 Price + Stock refresh: every *{AUTOSYNC_PRICE_STOCK_INTERVAL}s*\n"
+        f"🔄 Price + Stock refresh: every *{get_autosync_price_stock_interval()}s*\n"
         f"💰 Balance refresh: every *{AUTOSYNC_BALANCE_INTERVAL}s* + after orders\n"
         f"⚠️ Low-bal alerts: *checked only after balance refresh events*\n\n"
         "_Only products you've explicitly tapped 🔄 Sync-to-Shop are auto-synced. "

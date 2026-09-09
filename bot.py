@@ -221,6 +221,7 @@ from completed_orders_v2 import (
 from supplier_automation import (
     autosync_price_stock_job, autosync_balance_job,
     AUTOSYNC_PRICE_STOCK_INTERVAL, AUTOSYNC_BALANCE_INTERVAL,
+    get_autosync_price_stock_interval,
     ext_sup_bulk_sync_callback,
     ext_sup_bulk_unsync_callback,
     ext_sup_lowbal_callback, ext_sup_lowbal_received, ext_sup_lowbal_cancel,
@@ -1315,13 +1316,14 @@ async def post_init(app):
         print(f'[Activity] Restore error: {e}')
 
     # 🆕 v85/v138: Supplier auto-sync jobs
-    #   - Every 30s: price+stock refresh for products with synced_to_shop=1
-    #   - Every 5 min: balance refresh + admin notifications/cooldowns
+    #   - Every 3 min (owner-configurable, setting autosync_interval_seconds):
+    #     price+stock refresh for products with synced_to_shop=1
+    #   - Every 3 min: balance refresh + admin notifications/cooldowns
     try:
         if app.job_queue:
             app.job_queue.run_repeating(
                 autosync_price_stock_job,
-                interval=AUTOSYNC_PRICE_STOCK_INTERVAL,
+                interval=get_autosync_price_stock_interval(),
                 first=45,
                 name="v85_autosync_price_stock",
             )

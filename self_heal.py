@@ -248,7 +248,9 @@ def _heal_activity_flood_settings():
         if unit == "seconds":
             mn = int(get_setting("pua_min_interval", "1") or 1)
             mx = int(get_setting("pua_max_interval", "10") or 10)
-            if mn < 30 or mx < 60:
+            # 🆕 v170.93: mx < 120 (pehle <60) — min=30/max=60-seconds edge bhi
+            # storm hai jab hazaron active jobs hon.
+            if mn < 30 or mx < 120:
                 set_setting("pua_min_interval", "1")
                 set_setting("pua_max_interval", "60")
                 set_setting("pua_interval_unit", "minutes")

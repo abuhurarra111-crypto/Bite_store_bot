@@ -632,3 +632,139 @@ class TestTask4NoRomanUrdu:
         # env wapas
         os.environ["DB_PATH"] = _REGDB
         importlib.reload(dbm)
+
+
+# ═══════════════════════════════════════════════════════════════
+# 🆕 v170.93 — BOT SPEED / FAKE-ACTIVITY STORM FIX
+# Root cause (2026-09-09): pua_interval_unit=seconds (min=1 max=60)
+# + 2,765 active per-user jobs = ~61 sends/sec aggregate demand →
+# scheduler/event-loop/Telegram saturation → every button tap slow.
+# Railway logs measured 366 job runs/min + 67 misfire warnings.
+# ═══════════════════════════════════════════════════════════════
+class TestSpeedStormFix:
+    def test_global_throttle_caps_send_rate(self):
+        """fake_send_allowed_now: do baar turant call → sirf pehli True."""
+        import per_user_activity as pua
+        pua._last_fake_send_ts = 0.0
+        assert pua.fake_send_allowed_now() is True      # slot mila
+        assert pua.fake_send_allowed_now() is False     # gap ke andar → block
+        pua._last_fake_send_ts = 0.0                    # reset → phir slot
+        assert pua.fake_send_allowed_now() is True
+
+    def test_global_throttle_gap_configurable(self):
+        import per_user_activity as pua
+        from database import set_setting, get_setting
+        old = get_setting("pua_global_min_gap", "")
+        try:
+            set_setting("pua_global_min_gap", "2")
+            assert pua.fake_send_gap_seconds() == 2
+            set_setting("pua_global_min_gap", "0")   # invalid → floor 1s
+            assert pua.fake_send_gap_seconds() == 1
+        finally:
+            if old:
+                from database import set_setting as _ss
+                _ss("pua_global_min_gap", old)
+
+    def test_seconds_misconfig_read_as_minutes(self):
+        """unit=seconds + max<120 (e.g. 1-60 SECONDS) → minutes-scale."""
+        import per_user_activity as pua
+        from database import set_setting
+        for k, v in (("pua_interval_unit", "seconds"),
+                     ("pua_min_interval", "1"),
+                     ("pua_max_interval", "60")):
+            set_setting(k, v)
+        mn_s, mx_s = pua.get_speed_seconds()
+        assert mn_s >= 60 and mx_s >= 3600, f"misconfig guard fail: {mn_s},{mx_s}"
+        # legit seconds config (>=120s) untouched
+        set_setting("pua_min_interval", "150")
+        set_setting("pua_max_interval", "300")
+        mn_s2, mx_s2 = pua.get_speed_seconds()
+        assert mn_s2 == 150 and mx_s2 == 300, f"legit seconds broken: {mn_s2},{mx_s2}"
+        # cleanup
+        set_setting("pua_interval_unit", "minutes")
+        set_setting("pua_min_interval", "1")
+        set_setting("pua_max_interval", "60")
+
+    def test_heal_fixes_seconds_flood_config(self):
+        """self-heal: unit=seconds → minutes 1-60 (incl. 30/60 edge)."""
+        import self_heal
+        from database import set_setting, get_setting
+        for k, v in (("pua_interval_unit", "seconds"),
+                     ("pua_min_interval", "30"),
+                     ("pua_max_interval", "60")):
+            set_setting(k, v)
+        self_heal._heal_activity_flood_settings()
+        assert get_setting("pua_interval_unit", "") == "minutes"
+        assert get_setting("pua_min_interval", "") == "1"
+        assert get_setting("pua_max_interval", "") == "60"
+
+    def test_autosync_interval_default_180(self):
+        """AutoSync 30s → 180s default (owner setting, floor 60s)."""
+        import supplier_automation as sa
+        from database import set_setting, get_setting
+        assert sa.get_autosync_price_stock_interval() == 180   # default
+        set_setting("autosync_interval_seconds", "60")
+        assert sa.get_autosync_price_stock_interval() == 60    # override
+        set_setting("autosync_interval_seconds", "10")
+        assert sa.get_autosync_price_stock_interval() == 60    # floor 60
+        from database import set_setting as _ss
+        _ss("autosync_interval_seconds", "180")
+
+    @pytest.mark.asyncio
+    async def test_forbidden_auto_deactivates_user(self):
+        """Blocked user → job auto-deactivate (no more doomed API calls)."""
+        import per_user_activity as pua
+        from database import set_setting
+
+        class _ForbiddenBot:
+            async def send_message(self, **kw):
+                raise Exception("Forbidden: bot was blocked by the user")
+
+        set_setting("pua_global_enabled", "1")
+        set_setting("dest_mode", "bot_only")
+        pua._last_fake_send_ts = 0.0
+        pua.register_user_job(424242)
+        pua.set_user_active(424242, True)
+        assert pua.is_user_active(424242) is True
+
+        _orig = pua.build_fake_message
+        async def _fake_build(bot, uid):
+            return "📦 Test message", None
+        pua.build_fake_message = _fake_build
+        try:
+            await pua._send_activity_to_user(_ForbiddenBot(), 424242)
+        finally:
+            pua.build_fake_message = _orig
+        assert pua.is_user_active(424242) is False, "Forbidden par deactivate nahi hua!"
+        pua.set_user_active(424242, True)  # cleanup
+
+    @pytest.mark.asyncio
+    async def test_throttle_skips_send_entirely(self):
+        """Global cap hit → _send_activity_to_user kuch bhi send nahi karta."""
+        import per_user_activity as pua
+        from database import set_setting
+
+        class _CountingBot:
+            sent = 0
+            async def send_message(self, **kw):
+                _CountingBot.sent += 1
+                return True
+
+        set_setting("pua_global_enabled", "1")
+        set_setting("dest_mode", "bot_only")
+        pua._last_fake_send_ts = 0.0
+        pua.register_user_job(424243)
+        pua.set_user_active(424243, True)
+
+        _orig = pua.build_fake_message
+        async def _fake_build(bot, uid):
+            return "📦 Test message", None
+        pua.build_fake_message = _fake_build
+        try:
+            await pua._send_activity_to_user(_CountingBot(), 424243)  # slot liya
+            await pua._send_activity_to_user(_CountingBot(), 424243)  # throttled
+            await pua._send_activity_to_user(_CountingBot(), 424243)  # throttled
+        finally:
+            pua.build_fake_message = _orig
+        assert _CountingBot.sent == 1, f"throttle fail: {_CountingBot.sent} sends"
+        pua.set_user_active(424243, True)  # cleanup
