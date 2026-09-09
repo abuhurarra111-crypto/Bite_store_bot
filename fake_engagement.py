@@ -3152,6 +3152,12 @@ async def fake_reviews_panel_callback(update, context):
     a4star     = allow_4star()
     rat_only   = ratings_only_enabled()
     total_fake = get_fake_review_count()
+    # 🆕 v170.91: custom review queue count (safe — table na ho to 0)
+    try:
+        from custom_reviews import pending_queue_count as _cfr_pending
+        pending_count = _cfr_pending()
+    except Exception:
+        pending_count = 0
 
     status_icon = "🟢 *ACTIVE*" if enabled else "🔴 *INACTIVE*"
 
@@ -3160,7 +3166,8 @@ async def fake_reviews_panel_callback(update, context):
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"🔌 Status: {status_icon}\n"
         f"⏱️ Interval: Every {min_m}–{max_m} min (random)\n"
-        f"🗃️ Total Fake Reviews in DB: *{total_fake}*\n\n"
+        f"🗃️ Total Fake Reviews in DB: *{total_fake}*\n"
+        f"📤 Custom Queue: *{pending_count}* pending\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"*Name Mix Ratio:*\n"
         f"  🇵🇰 Pakistani: *{pk_ratio}%*  🌍 International: *{intl_ratio}%*\n\n"
@@ -3200,6 +3207,10 @@ async def fake_reviews_panel_callback(update, context):
         [InlineKeyboardButton("📋 View Review Log",     callback_data="frv_log")],
         [InlineKeyboardButton("📊 Stats by Product",    callback_data="frv_stats")],
         [InlineKeyboardButton("🗑️ Clear ALL Fake Reviews", callback_data="frv_clear")],
+        # 🆕 v170.91 (Update1): custom reviews (owner ke apne texts)
+        [InlineKeyboardButton("━━━━━ Custom ━━━━━", callback_data="frv_noop")],
+        [InlineKeyboardButton("➕ Add Custom Reviews", callback_data="cfr_add")],
+        [InlineKeyboardButton("📋 Broadcast Queue", callback_data="cfr_queue")],
         [InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_panel")],
     ]
 

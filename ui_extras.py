@@ -1279,6 +1279,10 @@ async def _show_panel(q):
             InlineKeyboardButton("🟢 Start ALL Users", callback_data="act_start_all"),
         ],
         [InlineKeyboardButton("📤 Custom One-Time Broadcast", callback_data="fake_custom_broadcast")],
+        # 🆕 v170.91 (Update1): owner ke apne review texts — fake profiles ke
+        # saath product par add + random-time destination broadcasts
+        [InlineKeyboardButton("➕ Add Custom Reviews (fake profiles)", callback_data="cfr_add")],
+        [InlineKeyboardButton("⭐ Review Broadcast Queue", callback_data="cfr_queue")],
         [InlineKeyboardButton("📡 Broadcast Overview (fake + real)", callback_data="broadcast_overview")],
         [InlineKeyboardButton("📝 Edit Templates",    callback_data="tpl_panel")],
         [InlineKeyboardButton("📤 Where to Send? (Bot / Group / Both)", callback_data="dest_panel")],

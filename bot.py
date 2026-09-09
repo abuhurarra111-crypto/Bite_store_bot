@@ -384,6 +384,15 @@ from customization import (
 # fake_broadcast + fake_reviews panels removed (use Fake Activity instead)
 # broadcast_new_user_join kept for new-user join notification
 from fake_engagement import broadcast_new_user_join, admin_bcast_test_callback
+
+# 🆕 v170.91 (Update1): Custom fake reviews (owner texts + fake profiles +
+# random-time destination broadcasts, har review sirf ek bar)
+from custom_reviews import (
+    cfr_add_callback, cfr_lines_received, cfr_cat_callback, cfr_prod_callback,
+    cfr_cancel_callback, cfr_queue_callback, cfr_clear_callback,
+    cfr_cats_back_callback, schedule_custom_review_broadcasts,
+    CFR_LINES,
+)
 from fake_engagement import broadcast_overview_callback, broadcast_overview_toggle_callback  # ✨ v170.45
 # 🆕 v24: Removed gmail_checker (replaced by Binance API)
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -1191,6 +1200,13 @@ async def post_init(app):
     except Exception:
         pass
     # Fake Broadcast + Fake Reviews schedulers removed (use 🎭 Fake Activity instead)
+    # 🆕 v170.91 (Update1): Custom review broadcast queue — random times par
+    # destination broadcasts (har review sirf ek bar, restart-safe DB queue)
+    try:
+        if app.job_queue:
+            schedule_custom_review_broadcasts(app)
+    except Exception:
+        pass
     # 🆕 v73: Supplier System REMOVED — table setup + background jobs disabled.
     # Existing supplier DB tables are left intact (data preserved, just unused).
 
@@ -2884,6 +2900,16 @@ def main():
         ("^reseller_base_mode_(cost|price)$", reseller_base_mode_callback),
         ("^reseller_orders_panel$", reseller_orders_panel_callback),
         ("^reseller_orders_filter_(status|range)_(.+)$", reseller_orders_filter_callback),
+        ("^reseller_orders_search$", reseller_orders_search_callback),        # 🆕 v170.91 (Bug2a)
+        # 🆕 v170.91 (Update1): custom fake reviews flow
+        # (cfr_add ConversationHandler se handle hota hai — lines input ke liye)
+        ("^cfr_cat_\\d+$", cfr_cat_callback),
+        ("^cfr_cats_back$", cfr_cats_back_callback),
+        ("^cfr_prod_\\d+$", cfr_prod_callback),
+        ("^cfr_cancel$", cfr_cancel_callback),
+        ("^cfr_queue$", cfr_queue_callback),
+        ("^cfr_clear$", cfr_clear_callback),
+        ("^reseller_orders_clearsearch$", reseller_orders_clearsearch_callback),  # 🆕 v170.91
         ("^reseller_deliver_panel_\\d+$", reseller_deliver_panel_callback),
         ("^reseller_order_view_\\d+$", reseller_order_view_callback),  # 🆕 v170.40 full order detail
         ("^reseller_stats_panel$", reseller_stats_panel_callback),
@@ -3235,6 +3261,14 @@ def main():
     # fbc/frv prefix handlers removed
 
     # [conv handlers moved above prefix section]
+    # ── 🆕 v170.91 (Update1): Custom Reviews lines input ──
+    app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900,
+        entry_points=[CallbackQueryHandler(cfr_add_callback, pattern="^cfr_add$")],
+        states={CFR_LINES: [MessageHandler(filters.TEXT & ~filters.COMMAND, cfr_lines_received)]},
+        fallbacks=[CommandHandler("cancel", cancel_conversation),
+                   CallbackQueryHandler(conv_cancel_callback, pattern="^conv_cancel$"),
+                   CallbackQueryHandler(cfr_cancel_callback, pattern="^cfr_cancel$")],
+    ))
     # ── 🎭 Fake Activity Speed ──
     app.add_handler(ConversationHandler(allow_reentry=True, conversation_timeout=900, 
         entry_points=[CallbackQueryHandler(act_set_speed_callback, pattern="^act_set_speed$")],

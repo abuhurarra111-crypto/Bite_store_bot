@@ -157,6 +157,11 @@ _PRODUCT_COLUMNS = [
     # reversible: archived products keep their IDs/settings for safe re-sync.
     ("is_archived", "INTEGER DEFAULT 0"),
     ("delivery_mode", "TEXT DEFAULT 'auto'"),
+    # 🆕 v170.91 (Bug1): file-format delivery — 0=auto, 1=ALWAYS .txt file,
+    # 2=never file. ProdSeller jaise suppliers kuch products ki delivery apne
+    # bot par .txt FILE me dete hain (Notion 3-field format waghera) — ab hamara
+    # bot b customer ko wahi file bhejega.
+    ("deliver_as_file", "INTEGER DEFAULT 0"),
     ("req_account_type", "TEXT DEFAULT 'none'"),
     ("req_password", "INTEGER DEFAULT 0"),
     ("req_fresh", "INTEGER DEFAULT 0"),
@@ -3182,29 +3187,62 @@ def sync_product_stock_from_accounts(pid):
 
 # ── Profits ──
 def get_product_profit(pid):
-    """Single product ka profit/loss"""
+    """Single product ka profit/loss.
+
+    🐛 v170.91 FIX (Bug4): cost ab REAL hai — ext_orders.cost_usd (actual
+    supplier charge) → warna unit_cost × total_qty. Pehle COUNT(orders) ×
+    cost_price tha → bulk orders (order_qty>1) ka cost under-count hota tha.
+    sales ab delivered units (SUM(order_qty)) hai + orders count alag."""
     conn = get_connection(); c = conn.cursor()
     p = get_product(pid)
     if not p: return None
-    c.execute("SELECT COUNT(*) as sales, COALESCE(SUM(price),0) as revenue FROM orders WHERE product_id=? AND status='delivered'", (pid,))
-    r = c.fetchone(); conn.close()
-    sales = r['sales']; revenue = r['revenue']
-    cost = sales * (p['cost_price'] or 0)
+    c.execute("""SELECT COUNT(*) as orders_n, COALESCE(SUM(order_qty),0) as units,
+                        COALESCE(SUM(price),0) as revenue FROM orders
+                 WHERE product_id=? AND status='delivered' AND order_type='product'""", (pid,))
+    r = c.fetchone()
+    # real supplier cost (delivered ext_orders for this product's orders)
+    try:
+        c.execute("""SELECT COALESCE(SUM(eo.cost_usd),0) AS rc FROM orders o
+                     JOIN ext_orders eo ON eo.internal_order_id=o.id AND eo.status='delivered'
+                     WHERE o.product_id=? AND o.status='delivered'""", (pid,))
+        real_cost = float(c.fetchone()['rc'] or 0)
+    except Exception:
+        real_cost = 0.0
+    conn.close()
+    sales = int(r['units'] or r['orders_n'] or 0); revenue = r['revenue']
+    unit_cost = (p['cost_price'] or 0)
+    est_cost = sales * unit_cost
+    cost = real_cost if real_cost > 0 else est_cost
     profit = revenue - cost
-    return {'name':p['name'],'cost':p['cost_price'] or 0,'sell':p['price'],'sales':sales,'revenue':revenue,'total_cost':cost,'profit':profit}
+    return {'name':p['name'],'cost':unit_cost,'sell':p['price'],'sales':sales,
+            'orders':int(r['orders_n'] or 0),'revenue':revenue,'total_cost':cost,
+            'real_cost':real_cost,'profit':profit}
 
 def get_all_products_profit():
     """All products ka combined profit.
-    🆕 v60: Include hidden products too (admin needs full profit visibility)."""
+    🆕 v60: Include hidden products too (admin needs full profit visibility).
+    🐛 v170.91 FIX (Bug4): qty-aware units + real ext_orders cost (upar dekho)."""
     products = get_all_products(include_hidden=True)
     total_rev = 0; total_cost = 0; results = []
     conn = get_connection(); c = conn.cursor()
     for p in products:
-        c.execute("SELECT COUNT(*) as sales, COALESCE(SUM(price),0) as rev FROM orders WHERE product_id=? AND status='delivered'", (p['id'],))
+        c.execute("""SELECT COUNT(*) as orders_n, COALESCE(SUM(order_qty),0) as units,
+                            COALESCE(SUM(price),0) as rev FROM orders
+                     WHERE product_id=? AND status='delivered' AND order_type='product'""", (p['id'],))
         r = c.fetchone()
-        sales = r['sales']; rev = r['rev']; cost = sales * (p['cost_price'] or 0)
+        try:
+            c.execute("""SELECT COALESCE(SUM(eo.cost_usd),0) AS rc FROM orders o
+                         JOIN ext_orders eo ON eo.internal_order_id=o.id AND eo.status='delivered'
+                         WHERE o.product_id=? AND o.status='delivered'""", (p['id'],))
+            real_cost = float(c.fetchone()['rc'] or 0)
+        except Exception:
+            real_cost = 0.0
+        sales = int(r['units'] or r['orders_n'] or 0); rev = r['rev']
+        cost = real_cost if real_cost > 0 else sales * (p['cost_price'] or 0)
         total_rev += rev; total_cost += cost
-        results.append({'id':p['id'],'name':p['name'],'cost':p['cost_price'] or 0,'sell':p['price'],'sales':sales,'revenue':rev,'total_cost':cost,'profit':rev-cost})
+        results.append({'id':p['id'],'name':p['name'],'cost':p['cost_price'] or 0,
+                        'sell':p['price'],'sales':sales,'revenue':rev,
+                        'total_cost':cost,'profit':rev-cost})
     conn.close()
     return results, total_rev, total_cost, total_rev - total_cost
 
@@ -3258,6 +3296,103 @@ def create_order(uid, uname, pid, pname, price, method="manual", bname="", bamt=
 def get_order(oid):
     conn = get_connection(); c = conn.cursor()
     c.execute("SELECT * FROM orders WHERE id=?", (oid,)); r = c.fetchone(); conn.close(); return r
+
+
+# ════════════════════════════════════════════════════════════════
+# 🆕 v170.91 (Bug4): CANONICAL ORDER COST/PROFIT — ek hi sach
+# ════════════════════════════════════════════════════════════════
+# Pehle bot me 5 alag-alag (aur galat) profit formulas the:
+#   1. (sold − cost) × qty  — notifications/completed-orders (bulk par qty
+#      se multiply → 13-qty order par 13× inflated profit!)
+#   2. cost bina × qty      — finance/analytics panels (bulk ka sirf 1-unit cost)
+#   3. sales COUNT × cost   — product profit (order_qty ignore)
+#   4. points top-up orders ($948+) product revenue/profit me gine jaate the
+#   5. REAL supplier charge (ext_orders.cost_usd) kabhi use nahi hota tha
+# Ab yehi ek function sab jagah cost nikalega:
+#   Priority 1: ext_orders.cost_usd (status delivered) — supplier ne JITNA
+#               ASLI me charge kiya (discount/membership sab included)
+#   Priority 2: ext_products.cost_usd × order_qty (estimate)
+#   Priority 3: products.cost_price × order_qty (own products)
+#   Returns: (cost_total_usd, source_str)  — source: real|ext_est|own_est|none
+
+def order_cost_basis(order_or_id):
+    """Real total cost of ONE order (qty included). See block comment above."""
+    try:
+        if isinstance(order_or_id, (int, str)):
+            o = get_order(int(order_or_id))
+        else:
+            o = order_or_id
+        if o is None:
+            return 0.0, "none"
+        od = dict(o) if not isinstance(o, dict) else o
+        oid = int(od.get("id") or 0)
+        try:
+            qty = max(1, int(od.get("order_qty") or 1))
+        except Exception:
+            qty = 1
+        # 1) REAL supplier charge (delivered ext_orders row)
+        if oid:
+            conn = get_connection(); c = conn.cursor()
+            try:
+                c.execute("""SELECT cost_usd FROM ext_orders
+                             WHERE internal_order_id=? AND status='delivered'
+                             ORDER BY id DESC LIMIT 1""", (oid,))
+                r = c.fetchone()
+            finally:
+                try: conn.close()
+                except Exception: pass
+            if r is not None:
+                try:
+                    _real = float(r["cost_usd"] or 0)
+                    if _real > 0:
+                        return round(_real, 4), "real"
+                except Exception:
+                    pass
+        # 2) ext_products estimate × qty
+        pid = int(od.get("product_id") or 0)
+        if pid:
+            try:
+                conn = get_connection(); c = conn.cursor()
+                try:
+                    c.execute("""SELECT ep.cost_usd AS ecd, p.cost_price AS pcp
+                                 FROM products p LEFT JOIN ext_products ep ON ep.id = p.ext_product_id
+                                 WHERE p.id=?""", (pid,))
+                    r = c.fetchone()
+                finally:
+                    try: conn.close()
+                    except Exception: pass
+                if r is not None:
+                    try:
+                        _ecd = float(r["ecd"] or 0)
+                        if _ecd > 0:
+                            return round(_ecd * qty, 4), "ext_est"
+                        _pcp = float(r["pcp"] or 0)
+                        if _pcp > 0:
+                            return round(_pcp * qty, 4), "own_est"
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        return 0.0, "none"
+    except Exception:
+        return 0.0, "none"
+
+
+def order_profit_exact(order_or_id):
+    """Exact profit of ONE order: sold (order.price = TOTAL) − real total cost."""
+    try:
+        if isinstance(order_or_id, (int, str)):
+            o = get_order(int(order_or_id))
+        else:
+            o = order_or_id
+        if o is None:
+            return 0.0
+        od = dict(o) if not isinstance(o, dict) else o
+        sold = float(od.get("price") or 0)
+        cost, _src = order_cost_basis(od)
+        return round(sold - cost, 4)
+    except Exception:
+        return 0.0
 
 def get_pending_orders():
     """Legacy manual-approval orders only.
@@ -4138,6 +4273,7 @@ def setup_support_tables():
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
     # 🔧 Delivery-settings columns on products (self-heal — visible on real failure)
     ensure_column(c, "products", "delivery_mode", "TEXT DEFAULT 'auto'")
+    ensure_column(c, "products", "deliver_as_file", "INTEGER DEFAULT 0")
     ensure_column(c, "products", "req_account_type", "TEXT DEFAULT 'none'")
     ensure_column(c, "products", "req_password", "INTEGER DEFAULT 0")
     ensure_column(c, "products", "req_fresh", "INTEGER DEFAULT 0")
@@ -4628,14 +4764,26 @@ def analytics_summary(days=None):
         where = f"WHERE created_at >= datetime('now', '-{int(days)} days')"
     and_where = where[6:] if where else ""   # 'created_at >= ...' without WHERE
 
-    # Delivered: count, revenue, profit (price - cost_price per delivered order)
+    # Delivered: count, revenue, profit — 🐛 v170.91 FIX (Bug4):
+    # • profit me ab qty-aware REAL cost hai (ext_orders.cost_usd actual charge
+    #   → ext_products.cost_usd × qty → products.cost_price × qty). Pehle cost
+    #   me qty multiply nahi hoti thi → bulk orders par profit inflated.
+    # • revenue/profit sirf PRODUCT orders — points top-ups wallet loads hain.
     # 🐛 v170.8 FIX: `cost_price` orders table me NAHI hota (products me hota hai).
-    # Pehle query direct `orders.cost_price` use karti thi → OperationalError:
-    # no such column → Analytics button "Temporary error". Ab LEFT JOIN products.
     q = f"""SELECT COUNT(*), COALESCE(SUM(o.price),0),
-                   COALESCE(SUM(o.price - COALESCE(p.cost_price,0)),0)
-            FROM orders o LEFT JOIN products p ON p.id = o.product_id
-            WHERE o.status='delivered' {('AND ' + and_where.replace('created_at','o.created_at')) if and_where else ''}"""
+                   COALESCE(SUM(o.price - CASE
+                       WHEN eo.cost_usd IS NOT NULL AND eo.cost_usd > 0
+                           THEN eo.cost_usd
+                       WHEN ep.cost_usd IS NOT NULL AND ep.cost_usd > 0
+                           THEN ep.cost_usd * COALESCE(o.order_qty,1)
+                       WHEN p.cost_price IS NOT NULL AND p.cost_price > 0
+                           THEN p.cost_price * COALESCE(o.order_qty,1)
+                       ELSE 0 END),0)
+            FROM orders o
+            LEFT JOIN products p      ON p.id = o.product_id
+            LEFT JOIN ext_products ep ON ep.id = p.ext_product_id
+            LEFT JOIN ext_orders eo   ON eo.internal_order_id = o.id AND eo.status='delivered'
+            WHERE o.status='delivered' AND o.order_type='product' {('AND ' + and_where.replace('created_at','o.created_at')) if and_where else ''}"""
     c.execute(q)
     row = c.fetchone()
     delivered_count, revenue, profit = (int(row[0] or 0), float(row[1] or 0), float(row[2] or 0))
@@ -4651,7 +4799,7 @@ def analytics_summary(days=None):
 
     # Refunds: count + amount refunded (points-equivalent) in period
     c.execute(f"""SELECT COUNT(*), COALESCE(SUM(price),0) FROM orders
-                  WHERE status='refunded' {('AND ' + and_where) if and_where else ''}""")
+                  WHERE status='refunded' AND order_type='product' {('AND ' + and_where) if and_where else ''}""")
     rrow = c.fetchone()
     refund_count, refund_amt = (int(rrow[0] or 0), float(rrow[1] or 0))
 

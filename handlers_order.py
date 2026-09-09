@@ -1142,16 +1142,32 @@ async def _notify_admin_order_delivered(bot, order, qty=1, supplier_name="",
         except Exception:
             pass
         # ── profit ──
+        # 🐛 v170.91 FIX (Bug4): pehle (sold − cost) × qty tha — bulk orders par
+        # profit qty se MULTIPLY ho jata tha (13-qty order = 13× inflated profit!)
+        # order.price already TOTAL hota hai (unit × qty). Supplier router TOTAL
+        # cost (cost_usd) pass karta hai; own products me cost_price per-unit hai.
+        # Ab: profit = sold − cost_total (qty sirf cost side par, sold par nahi).
+        cost_total = None
         try:
-            if cost_usd is None:
-                from database import get_product
-                _p = get_product(order.get('product_id') or 0)
-                cost = float((dict(_p) if _p else {}).get('cost_price') or 0)
-            else:
-                cost = float(cost_usd)
+            if cost_usd is not None:
+                # Supplier path: router ab TOTAL charged cost pass karta hai.
+                # (Backward-compat: agar koi purana caller per-unit de raha ho
+                # to order_cost_basis se real value le lo.)
+                _cand = float(cost_usd)
+                if _cand > 0:
+                    from database import order_cost_basis
+                    _real, _src = order_cost_basis(order)
+                    if _src == "real" and _real > 0:
+                        cost_total = _real
+                    else:
+                        cost_total = _cand
         except Exception:
-            cost = 0.0
-        profit = round((sold - cost) * qty, 6)
+            cost_total = None
+        if cost_total is None:
+            from database import order_cost_basis
+            cost_total, _src = order_cost_basis(order)
+        cost = cost_total  # display value = total cost
+        profit = round(sold - cost_total, 6)
         # ── user wallet before/after (auto-compute when not provided) ──
         if user_wallet_before is None or user_wallet_after is None:
             try:

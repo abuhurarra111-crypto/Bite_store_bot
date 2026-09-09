@@ -920,7 +920,14 @@ def _notify_admin_order(order_row):
                                 cost = float(ep.get("cost_usd") or 0)
                     except Exception:
                         pass
-                profit = round(usd - cost, 4)
+                # 🐛 v170.91 FIX (Bug4): cost per-unit hai — qty multiply zaroori
+                # (bulk reseller orders par profit inflated hota tha).
+                try:
+                    _rq = max(1, int(qty or 1))
+                except Exception:
+                    _rq = 1
+                cost_total = round(cost * _rq, 4)
+                profit = round(usd - cost_total, 4)
                 # reseller wallet balance before/after
                 bal_after = 0.0
                 try:

@@ -1010,11 +1010,18 @@ _DELIVERY_COLLECTION_KEYS = (
     "accounts", "accountList", "account_list", "items", "itemList", "item_list",
     "orders", "results", "codes", "keys", "deliveredKeys", "delivered_keys",
     "licenses", "credentials", "deliveredCredentials",
+    # 🆕 v170.91 (Bug1): docs future-proofing — suppliers naye field names add
+    # karein to b delivery auto-detect ho (manual code change na lage).
+    "delivered", "deliveries", "purchased", "purchases", "fileContents",
+    "file_contents", "deliveredContent", "delivered_content", "deliveredText",
 )
 _DELIVERY_SINGLE_KEYS = (
     "account", "credential", "accountData", "account_data", "content", "text",
     "value", "code", "link", "url", "license", "key", "deliveredKey",
     "delivered_account", "deliveryLink", "delivery_url", "downloadUrl", "fileUrl",
+    # 🆕 v170.91: single-file delivery keys
+    "delivered_key", "file_url", "download_url", "file", "fileContent",
+    "file_content", "txt", "contentUrl",
 )
 _DELIVERY_NEST_KEYS = (
     "data", "order", "result", "response", "payload", "purchase", "delivery",
@@ -4066,6 +4073,47 @@ async def supplier_manual_delivery_received(update, context):
     return True
 
 
+def _maybe_download_delivery_file(items):
+    """🆕 v170.91 (Bug1): supplier file-URL delivery support.
+
+    Agar supplier (docs update ke baad) delivery me koi FILE URL de (.txt/.csv
+    waghera), to us file ko download karke content items bana dete hain —
+    customer ko wahi file milti hai jo supplier deta hai. Safe: sirf
+    http(s), 15s timeout, 2MB max, text-like content."""
+    try:
+        if not items or len(items) != 1:
+            return items, None
+        u = str(items[0]).strip()
+        if not (u.startswith("http://") or u.startswith("https://")):
+            return items, None
+        low = u.lower().split("?")[0]
+        if not any(low.endswith(ext) for ext in (".txt", ".csv", ".text", ".log")):
+            return items, None  # sirf clear text-file URLs (arbitrary pages nahi)
+        def _dl():
+            r = requests.get(u, timeout=15, stream=True)
+            if r.status_code != 200:
+                return None
+            cl = r.headers.get("Content-Length")
+            if cl and int(cl) > 2 * 1024 * 1024:
+                return None
+            data = r.raw.read(2 * 1024 * 1024 + 1, decode_content=True)
+            if len(data) > 2 * 1024 * 1024:
+                return None
+            try:
+                return data.decode("utf-8")
+            except Exception:
+                return data.decode("latin-1", "replace")
+        content = _dl()
+        if not content or not content.strip():
+            return items, None
+        lines = [ln.strip() for ln in re.split(r"[\r\n]+", content) if ln.strip()]
+        if not lines:
+            return items, None
+        return lines, content
+    except Exception:
+        return items, None
+
+
 def _supplier_error_is_not_found(result=None, reason=""):
     """Detect stale/removed supplier products so shop stock can be zeroed."""
     result = result or {}
@@ -4076,6 +4124,34 @@ def _supplier_error_is_not_found(result=None, reason=""):
         pass
     text = (str(reason or "") + " " + str(result.get("error") or "") + " " + str(result.get("raw") or "")).lower()
     return any(x in text for x in ("http 404", "404", "not found", "not_found", "does not exist", "unavailable"))
+
+
+def _supplier_error_is_stock_pool_broken(result=None, reason=""):
+    """🆕 v170.91 (Bug1): supplier-side stock/pool broken detect.
+
+    ProdSeller jaise suppliers ka server kai products par MongoDB bug dete
+    hain jab unka delivery pool khali hai:
+      "Plan executor error during findAndModify :: caused by ::
+       Third argument to $slice must be positive: 0"
+    (live orders #3718/#3721 Notion, #2925+ Miro, #3491+ Capcut6M — customer
+    ka order fail → auto-refund loop). Aisi condition me product ko turant
+    out-of-stock mark karna hai taake naye customers order karke fail na hon.
+    Docs ke mutabiq 409 Conflict = out of stock bhi isi family me hai."""
+    result = result or {}
+    text = (str(reason or "") + " " + str(result.get("error") or "") + " " + str(result.get("raw") or "")).lower()
+    markers = (
+        "$slice", "plan executor", "findandmodify",
+        "out of stock", "out_of_stock", "stock不足", "no stock",
+        "stock is empty", "empty stock", "sold out",
+    )
+    if any(x in text for x in markers):
+        return True
+    try:
+        if int(result.get("status_code") or 0) == 409:
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def _mark_supplier_product_unavailable(ep, shop_product_id=0, reason=""):
@@ -4124,6 +4200,11 @@ async def _schedule_supplier_retry_or_refund(bot, order, sup, ep, qty, reason, r
     """
     if _supplier_error_is_not_found(result, reason):
         _mark_supplier_product_unavailable(ep, order.get('product_id') or 0, reason)
+    # 🆕 v170.91 (Bug1): supplier-side stock pool broken ($slice / 409 / OOS) —
+    # product ko out-of-stock mark karo warna har naya order fail→refund hota rahega.
+    elif _supplier_error_is_stock_pool_broken(result, reason):
+        _mark_supplier_product_unavailable(ep, order.get('product_id') or 0,
+                                           "supplier stock pool broken: " + str(reason)[:120])
 
     due, retry_count = _set_order_supplier_retry_pending(order['id'], reason)
     due_txt = _supplier_retry_due_text(due)
@@ -4735,6 +4816,18 @@ async def route_order_to_supplier(bot, order):
         logger.warning(f"[router] order #{order['id']}: {overdelivery_note}")
         items = items[:qty]
 
+    # 🆕 v170.91 (Bug1): agar supplier ne file-URL diya ho to download karke
+    # uska content hi deliver karo (customer ko wahi file milti hai).
+    try:
+        _new_items, _dl_content = await asyncio.to_thread(
+            _maybe_download_delivery_file, items)
+        if _new_items != items:
+            overdelivery_note = (str(overdelivery_note or "") +
+                                 f" 📄 File delivery: {len(_new_items)} line(s) from supplier file URL.")
+            items = _new_items[:qty] if len(_new_items) > qty else _new_items
+    except Exception:
+        pass
+
     log_ext_order(
         internal_order_id=order['id'], supplier_id=ext_sid, ext_product_id=ext_pid,
         quantity=qty, cost_usd=supplier_cost,
@@ -4837,6 +4930,36 @@ async def route_order_to_supplier(bot, order):
             _needs_file = _long or _multi >= 5
         except Exception:
             _needs_file = False
+    # 🆕 v170.91 (Bug1): FILE-FORMAT DELIVERY — ProdSeller jaise suppliers kuch
+    # products ki delivery apne bot par .txt FILE me dete hain (e.g. Notion:
+    # "email pass notionpass" 3-field). Ab hamara bot b customer ko wahi file
+    # bhejega. Per-product flag (products.deliver_as_file: 1=ALWAYS, 2=never)
+    # + AUTO detection (3+ field account-style ya 2FA format).
+    try:
+        _daf = 0
+        _prow = get_product(order['product_id']) if order.get('product_id') else None
+        if _prow:
+            _daf = int((dict(_prow) if not isinstance(_prow, dict) else _prow).get('deliver_as_file') or 0)
+        if _daf == 1:
+            _needs_file = True
+        elif _daf == 2:
+            _needs_file = False
+        elif not _needs_file:
+            # auto: 3+ whitespace/tab-separated fields with @ (Notion-style
+            # "email pass extra") ya 2FA/email_multi format ya 100+ char item
+            _fmt2 = (ep.get('delivery_format') or '') if ep else ''
+            def _file_auto(it):
+                s = str(it)
+                if '\n' in s:
+                    return True
+                toks = [t for t in s.replace('\t', ' ').split(' ') if t]
+                return ('@' in s and len(toks) >= 3) or len(s) > 100
+            if _fmt2 in ('email_pass_2fa', 'email_multi', 'text_file'):
+                _needs_file = True
+            else:
+                _needs_file = any(_file_auto(i) for i in items)
+    except Exception:
+        pass
     if _needs_file:
         try:
             import io
@@ -4920,10 +5043,14 @@ async def route_order_to_supplier(bot, order):
     # sab isi EK notification me hain (customer ko kabhi supplier info nahi).
     try:
         from handlers_order import _notify_admin_order_delivered
+        # 🐛 v170.91 FIX (Bug4): pehle per-unit ep.cost_usd pass hota tha aur
+        # notification (sold − cost) × qty karti thi → bulk profit 13× inflated.
+        # Ab TOTAL charged cost (supplier_cost) pass hota hai aur profit
+        # sold − cost_total hota hai.
         await _notify_admin_order_delivered(
             bot, order, qty=qty,
             supplier_name=str(sup.get('name') or ''),
-            cost_usd=(float(ep.get('cost_usd') or 0) or None),
+            cost_usd=(float(supplier_cost) if supplier_cost else None),
             payment_method=str(order.get('payment_method') or ''),
             user_wallet_before=user_wallet_before,
             user_wallet_after=user_wallet_after,

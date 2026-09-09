@@ -90,6 +90,7 @@ def _fetch_users_with_completed_orders(search: str = "", status_filter: str = "a
                COALESCE(u.username, '') AS username,
                COUNT(*)                                        AS orders_count,
                COALESCE(SUM(CASE WHEN o.status='delivered'
+                                 AND o.order_type='product'
                                  THEN o.price ELSE 0 END), 0)  AS total_spend,
                MAX(COALESCE(o.created_at, ''))                 AS last_order_at
         FROM orders o
@@ -116,19 +117,53 @@ def _fetch_users_with_completed_orders(search: str = "", status_filter: str = "a
 
 
 def _completed_summary():
-    """v170.17: top summary - total orders, delivered spend, profit, refunds."""
+    """v170.17: top summary — total orders, delivered spend, profit, refunds.
+
+    🐛 v170.91 FIX (Bug4) — EXACT calculations:
+      • spend/profit sirf PRODUCT orders (order_type='product') par — points
+        top-up orders ($948+ wallet loads) product revenue NAHI hain (pehle
+        dono me gine jaate the → spend + profit dono inflated).
+      • cost ab REAL hai: ext_orders.cost_usd (supplier ne jitna asli charge
+        kiya) → warna ext_products.cost_usd × qty → warna products.cost_price
+        × qty. Pehle sirf products.cost_price bina qty ke use hota tha.
+      • refunds product orders ke hain (points top-up refunds alag line)."""
     conn = get_connection(); c = conn.cursor()
     c.execute(f"""SELECT COUNT(*),
-                         COALESCE(SUM(CASE WHEN status='delivered' THEN price ELSE 0 END),0),
-                         COALESCE(SUM(CASE WHEN status='refunded' THEN price ELSE 0 END),0)
-                  FROM orders WHERE status IN ({" ,".join("?"*len(_COMPLETED_STATUSES))})""",
+                         COALESCE(SUM(CASE WHEN status='delivered' AND order_type='product'
+                                           THEN price ELSE 0 END),0),
+                         COALESCE(SUM(CASE WHEN status='refunded' AND order_type='product'
+                                           THEN price ELSE 0 END),0)
+                  FROM orders WHERE status IN ({",".join("?"*len(_COMPLETED_STATUSES))})""",
               _COMPLETED_STATUSES)
     total, spend, refunds = c.fetchone()
     conn.close()
+    # 🆕 v170.91: points top-up totals (info line ke liye — revenue nahi)
     conn = get_connection(); c = conn.cursor()
-    c.execute("""SELECT COALESCE(SUM(o.price - COALESCE(p.cost_price,0) * COALESCE(o.order_qty,1)),0)
-                 FROM orders o LEFT JOIN products p ON p.id = o.product_id
-                 WHERE o.status='delivered'""")
+    try:
+        c.execute("""SELECT COUNT(*), COALESCE(SUM(price),0) FROM orders
+                     WHERE status='delivered' AND order_type='points'""")
+        pt_n, pt_amt = c.fetchone()
+    except Exception:
+        pt_n, pt_amt = 0, 0.0
+    conn.close()
+    # EXACT profit: delivered product orders — real cost basis
+    conn = get_connection(); c = conn.cursor()
+    c.execute("""
+        SELECT COALESCE(SUM(
+            o.price - CASE
+                WHEN eo.cost_usd IS NOT NULL AND eo.cost_usd > 0
+                    THEN eo.cost_usd
+                WHEN ep.cost_usd IS NOT NULL AND ep.cost_usd > 0
+                    THEN ep.cost_usd * COALESCE(o.order_qty, 1)
+                WHEN p.cost_price IS NOT NULL AND p.cost_price > 0
+                    THEN p.cost_price * COALESCE(o.order_qty, 1)
+                ELSE 0
+            END), 0)
+        FROM orders o
+        LEFT JOIN products p      ON p.id = o.product_id
+        LEFT JOIN ext_products ep ON ep.id = p.ext_product_id
+        LEFT JOIN ext_orders eo   ON eo.internal_order_id = o.id AND eo.status='delivered'
+        WHERE o.status='delivered' AND o.order_type='product'""")
     profit = c.fetchone()[0] or 0
     conn.close()
     return {
@@ -136,6 +171,8 @@ def _completed_summary():
         "spend": float(spend or 0),
         "profit": float(profit or 0),
         "refunds": float(refunds or 0),
+        "points_orders": int(pt_n or 0),
+        "points_amount": float(pt_amt or 0),
     }
 
 
@@ -265,24 +302,18 @@ def _pay_badge_html(method):
 
 
 def _order_profit(o) -> float:
-    """🆕 v170.17: profit = sold price − product cost (orders table me cost nahi,
-    products table se). Returns float."""
+    """Profit of ONE order — 🐛 v170.91 FIX (Bug4).
+
+    Pehle: (sold − unit_cost) × qty tha — order.price KHUD total hota hai
+    (unit × qty), isliye bulk orders par profit qty se multiply hota tha
+    (13-qty = 13× inflated). Ab canonical database.order_cost_basis use
+    hota hai: REAL supplier charge (ext_orders.cost_usd) → ext estimate ×
+    qty → own cost_price × qty. Profit = sold − cost_total."""
     try:
+        from database import order_cost_basis
         sold = float(o.get("price") or 0)
-        pid = int(o.get("product_id") or 0)
-        cost = 0.0
-        if pid:
-            from database import get_product
-            p = get_product(pid)
-            if p:
-                cost = float((dict(p) if p else {}).get("cost_price") or 0)
-        # qty (bulk orders)
-        qty = 1
-        try:
-            qty = int(o.get("order_qty") or 1)
-        except Exception:
-            qty = 1
-        return round((sold - cost) * qty, 4)
+        cost_total, _src = order_cost_basis(o)
+        return round(sold - cost_total, 4)
     except Exception:
         return 0.0
 
@@ -353,7 +384,8 @@ def _build_user_list_text(rows, search: str, status_filter: str = "all") -> str:
         _sm = _completed_summary()
         summary = (
             f"📦 Orders: *{_sm['total']}*  💵 Spend: *${_sm['spend']:.2f}*\n"
-            f"📈 Profit: *${_sm['profit']:.2f}*  💸 Refunds: *${_sm['refunds']:.2f}*\n\n"
+            f"📈 Profit: *${_sm['profit']:.2f}*  💸 Refunds: *${_sm['refunds']:.2f}*\n"
+            f"💎 Points top-ups: *{_sm.get('points_orders',0)}* (_${_sm.get('points_amount',0):.2f} — wallet loads, revenue nahi_)\n\n"
         )
     except Exception:
         summary = ""

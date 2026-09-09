@@ -8525,17 +8525,26 @@ async def delivery_settings_callback(u, c):
     if dmode == 'manual':
         mtype_label = "✋ Manual (Readymade)" if acct == 'none' else "✋ Manual (Own Mail)"
 
+    # 🆕 v170.91 (Bug1): file-format delivery state
+    try:
+        daf = int((dict(p) if p else {}).get('deliver_as_file') or 0)
+    except Exception:
+        daf = 0
+    daf_label = {0: "🤖 Auto (smart detect)", 1: "📄 Always File", 2: "💬 Never (text only)"}.get(daf, "🤖 Auto")
+
     txt = (
         f"⚙️ *Delivery Settings: {escape_md(p['name'])}*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"📦 *Type:* {mtype_label}\n"
         f"🧩 *Format:* {delivery_format_label(product_format)}\n"
-        f"🎁 *Template:* #{template_id} {escape_md(template_name)}\n\n"
+        f"🎁 *Template:* #{template_id} {escape_md(template_name)}\n"
+        f"📄 *File Delivery:* {daf_label}\n\n"
         f"Choose an option below to change delivery behavior, format, or customer template:\n"
     )
 
     kb = [
         [InlineKeyboardButton(f"{'✅ ' if dmode=='auto' else ''}Auto Delivery", callback_data=f"ds_auto_{pid}")],
+        [InlineKeyboardButton(f"📄 File Delivery: {daf_label}", callback_data=f"ds_file_{pid}")],
         [InlineKeyboardButton(f"{'✅ ' if dmode=='manual' and acct=='none' else ''}Manual Readymade", callback_data=f"ds_manready_{pid}")],
         [InlineKeyboardButton(f"{'✅ ' if dmode=='manual' and acct!='none' else ''}Manual Own Mail", callback_data=f"ds_manown_{pid}")],
         [InlineKeyboardButton(f"🧩 Change Format ({delivery_format_label(product_format)})", callback_data=f"dsfmtpick_{pid}")],
@@ -8571,6 +8580,7 @@ async def ds_toggle_callback(u, c):
     ensure_column(cur, "products", "req_fresh", "INTEGER DEFAULT 0")
     ensure_column(cur, "products", "product_format", "TEXT DEFAULT 'email_pass'")
     ensure_column(cur, "products", "delivery_template", "INTEGER DEFAULT 1")
+    ensure_column(cur, "products", "deliver_as_file", "INTEGER DEFAULT 0")
 
     if action == "auto":
         cur.execute("UPDATE products SET delivery_mode='auto' WHERE id=?", (pid,))
@@ -8583,6 +8593,10 @@ async def ds_toggle_callback(u, c):
         curr = (dict(p) if p else {}).get('req_account_type', 'none')
         new_val = 'fresh_gmail' if curr == 'any_mail' else ('any_gmail' if curr == 'fresh_gmail' else 'any_mail')
         cur.execute("UPDATE products SET req_account_type=? WHERE id=?", (new_val, pid))
+    elif action == "file":
+        # 🆕 v170.91 (Bug1): File Delivery cycle — Auto → Always → Never
+        new_val = {0: 1, 1: 2, 2: 0}.get(int((dict(p) if p else {}).get('deliver_as_file') or 0), 0)
+        cur.execute("UPDATE products SET deliver_as_file=? WHERE id=?", (new_val, pid))
     elif action == "pwd":
         new_val = 0 if (dict(p) if p else {}).get('req_password') else 1
         cur.execute("UPDATE products SET req_password=? WHERE id=?", (new_val, pid))
@@ -13122,7 +13136,9 @@ async def admin_reseller_callback(update, context):
                 uname = (u.get("first_name") if u else None) or str(t.get("user_id"))
             except Exception:
                 uname = str(t.get("user_id"))
-            text += f"• {uname}: ${float(t.get('rev') or 0):,.2f} ({t.get('orders')} orders)\n"
+            # 🐛 v170.91: escape naam (Markdown _ * se crash)
+            from utils import escape_md as _emd2
+            text += f"• {_emd2(str(uname)[:40])}: ${float(t.get('rev') or 0):,.2f} ({t.get('orders')} orders)\n"
     else:
         text += "• (koi orders nahi abhi)\n"
     kb = [
@@ -13198,7 +13214,9 @@ async def reseller_keys_panel_callback(update, context):
         return
     head = "📋 *Reseller Keys:*\n"
     if search:
-        head = f"📋 *Reseller Keys:* 🔍 `{search[:20]}` — {len(keys)} match\n"
+        # 🐛 v170.91: search text me backtick/underscore ho to Markdown na toote
+        _safe_search = str(search[:20]).replace("`", "'").replace("*", "").replace("_", "")
+        head = f"📋 *Reseller Keys:* 🔍 `{_safe_search}` — {len(keys)} match\n"
     lines = [head]
     kb = []
     for k in keys[:20]:
@@ -13216,7 +13234,13 @@ async def reseller_keys_panel_callback(update, context):
             _bal = 0.0
         tr = reseller_key_tracking(int(k.get("id") or 0))
         created = str(k.get("created_at") or "")[:16]
-        uline = f"{uname}" + (f" (@{username})" if username else "") + f" (id {k.get('owner_id')})"
+        # 🐛 v170.91 FIX (Bug3): username/name me _ * ` [ chars Telegram Markdown
+        # V1 tod dete the → "can't parse entities" → Resellers button par
+        # "Temporary error" (live-reproduced: @key40_osm). Ab escape_md ke saath.
+        from utils import escape_md as _emd
+        _safe_uname = _emd(str(uname or "")[:40])
+        _safe_username = _emd(str(username or "")[:32])
+        uline = f"{_safe_uname}" + (f" (@{_safe_username})" if username else "") + f" (id {k.get('owner_id')})"
         lines.append(
             f"{st_} `{k.get('key_prefix')}`\n"
             f"   👤 {uline}\n"
@@ -13740,15 +13764,28 @@ async def _render_reseller_orders_panel(update, context, q):
     """Reseller orders list with status + date filters (v161.6).
 
     🆕 v170.40: premium-emoji clean names + har order ka 📄 Details button
-    (full detail: supplier/cost/profit/delivery) — completed orders jesa."""
+    (full detail: supplier/cost/profit/delivery) — completed orders jesa.
+    🐛 v170.91 FIX (Bug2c): bulletproof render —
+      • saara dynamic text (product name, search) escape_md se — pehle
+        username/product names me ` _ * hone par Telegram "can't parse
+        entities" deta tha → filter buttons par "Temporary error".
+      • "Message is not modified" (same filter dobara tap) ab error NAHI —
+        silently success.
+      • Markdown fail hone par plain-text fallback — button kabhi toota hua
+        nahi dikhega.
+    🆕 v170.91 (Bug2a): 🔍 Search — order id / user id / username / product
+    name se filter. Clear Search button.
+    🆕 v170.91 (Bug2b): 📄 button par ab product ka NAAM bhi (pehle sirf
+    emoji + #id tha)."""
+    from utils import escape_md as _emd
     try:
-        from database import list_reseller_orders, get_connection
+        from database import list_reseller_orders, get_connection, get_user
     except Exception as e:
-        await q.edit_message_text(f"❌ {e}"); return
-    try:
-        from utils import html_strip_tags as _hs, name_for_button as _nfb
-    except Exception:
-        _hs = _nfb = None
+        try:
+            await q.edit_message_text(f"❌ {e}")
+        except Exception:
+            pass
+        return
     try:
         from button_system import make_premium_button as _mk, extract_emoji_from_html as _ex
     except Exception:
@@ -13756,10 +13793,15 @@ async def _render_reseller_orders_panel(update, context, q):
     flt = dict(context.user_data.get("rs_orders") or {"status": "all", "range": "all"})
     status = flt.get("status", "all")
     rng = flt.get("range", "all")
+    search = str(context.user_data.get("rs_orders_search") or "").strip().lower()
     try:
-        rows = list_reseller_orders(limit=200)
+        rows = list_reseller_orders(limit=300)
     except Exception as e:
-        await q.edit_message_text(f"❌ {e}"); return
+        try:
+            await q.edit_message_text(f"❌ {e}")
+        except Exception:
+            pass
+        return
     if status == "delivered":
         rows = [r for r in rows if r.get("status") == "delivered"]
     elif status == "pending":
@@ -13774,16 +13816,49 @@ async def _render_reseller_orders_panel(update, context, q):
         from datetime import datetime, timedelta
         cutoff = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
         rows = [r for r in rows if str(r.get("created_at") or "") >= cutoff]
+    # 🆕 v170.91 (Bug2a): search — order id / user id / username / product name
+    if search:
+        _s = search
+        try:
+            _snum = int(_s)
+        except Exception:
+            _snum = None
+        _filtered = []
+        for r in rows:
+            _hay_parts = [str(r.get("id") or ""), str(r.get("product_name") or "").lower()]
+            uid = r.get("user_id")
+            if uid:
+                _hay_parts.append(str(uid))
+                try:
+                    u = get_user(int(uid))
+                    if u:
+                        _hay_parts.append(str(u.get("username") or "").lower())
+                        _hay_parts.append(str(u.get("first_name") or "").lower())
+                except Exception:
+                    pass
+            if _snum is not None and _snum == int(uid or 0):
+                _filtered.append(r)  # exact user-id hit
+                continue
+            if any(_s in p for p in _hay_parts):
+                _filtered.append(r)
+        rows = _filtered
+    total_matched = len(rows)
     rows = rows[:12]
-    lines = [f"📦 *Reseller Orders* — status `{status}` · range `{rng}`\n"]
+    # ── build text (sab escape) ──
+    _safe_st = _emd(str(status))
+    _safe_rng = _emd(str(rng))
+    lines = [f"📦 *Reseller Orders* — status `{_safe_st}` · range `{_safe_rng}`"]
+    if search:
+        _safe_search = _emd(str(search[:24]).replace("`", "'"))
+        lines.append(f"🔍 `{_safe_search}` — {total_matched} match")
+    lines.append("")
     if not rows:
         lines.append("(koi orders nahi is filter mein)")
     kb = []
     for r in rows:
         st = {"delivered": "✅", "pending": "⏳", "processing": "🔄", "failed": "❌"}.get(r.get("status"), "❔")
         raw = str(r.get("product_name") or "Product")
-        clean = (_hs(raw) if _hs else raw) or "Product"
-        eid = ""
+        clean, eid = raw, ""
         if _ex:
             try:
                 _eid, _plain = _ex(raw)
@@ -13792,10 +13867,22 @@ async def _render_reseller_orders_panel(update, context, q):
                 eid = _eid or ""
             except Exception:
                 pass
-        lines.append(f"{st} #{r['id']} · {clean[:25]} ×{r.get('qty')} · ${float(r.get('usd_amount') or 0):.2f} · {str(r.get('created_at'))[:10]}")
+        else:
+            try:
+                from utils import html_strip_tags as _hs
+                clean = _hs(raw) or raw
+            except Exception:
+                pass
+        _safe_clean = _emd(str(clean)[:28])
+        try:
+            _usd = float(r.get("usd_amount") or 0)
+        except Exception:
+            _usd = 0.0
+        lines.append(f"{st} #{r['id']} · {_safe_clean} ×{r.get('qty')} · ${_usd:.2f} · {str(r.get('created_at'))[:10]}")
         row_btns = []
-        # 🆕 v170.40: full detail button (har order)
-        lbl = f"📄 #{r['id']}"
+        # 🆕 v170.91 (Bug2b): button par product ka naam bhi (pehle sirf 📄 #id)
+        _btn_name = str(clean)[:18].strip() or "view"
+        lbl = f"📄 #{r['id']} · {_btn_name}"
         if _mk and eid:
             try:
                 row_btns.append(_mk(lbl, emoji_id=eid, callback_data=f"reseller_order_view_{r['id']}"))
@@ -13804,7 +13891,7 @@ async def _render_reseller_orders_panel(update, context, q):
         else:
             row_btns.append(InlineKeyboardButton(lbl, callback_data=f"reseller_order_view_{r['id']}"))
         if r.get("status") in ("pending", "processing"):
-            row_btns.append(InlineKeyboardButton(f"📤 Deliver #{r['id']}",
+            row_btns.append(InlineKeyboardButton(f"📤 Deliver",
                                                  callback_data=f"reseller_deliver_panel_{r['id']}"))
         kb.append(row_btns)
     kb.append([
@@ -13818,8 +13905,59 @@ async def _render_reseller_orders_panel(update, context, q):
         InlineKeyboardButton("📅 7d", callback_data="reseller_orders_filter_range_7d"),
         InlineKeyboardButton("🗓️ All", callback_data="reseller_orders_filter_range_all"),
     ])
+    if search:
+        kb.append([InlineKeyboardButton("❌ Clear Search", callback_data="reseller_orders_clearsearch")])
+    else:
+        kb.append([InlineKeyboardButton("🔍 Search", callback_data="reseller_orders_search")])
     kb.append([InlineKeyboardButton("🔙 Back", callback_data="reseller_panel")])
-    await q.edit_message_text("\n".join(lines), parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    text = "\n".join(lines)
+    # ── bulletproof edit: not-modified = success, markdown fail = plain retry ──
+    try:
+        try:
+            await q.edit_message_text(text, parse_mode="Markdown",
+                                      reply_markup=InlineKeyboardMarkup(kb))
+        except Exception as _e1:
+            _m = str(_e1 or "").lower()
+            if "message is not modified" in _m:
+                return  # same content — silently OK (filter already applied)
+            if "can't parse entities" in _m or "parse entities" in _m:
+                await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
+                return
+            raise
+    except Exception as _e2:
+        # last resort: plain text bina markup ke — button kabhi dead nahi hoga
+        try:
+            _plain_txt = text.replace("*", "").replace("`", "")
+            await q.edit_message_text(_plain_txt, reply_markup=InlineKeyboardMarkup(kb))
+        except Exception as _e3:
+            try:
+                await q.answer("⚠️ Render error — dobara try karein", show_alert=False)
+            except Exception:
+                pass
+
+
+async def reseller_orders_search_callback(update, context):
+    """🆕 v170.91 (Bug2a): Orders search — order id / user id / username / product name."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    context.user_data["rs_step"] = {"action": "orders_search"}
+    await q.edit_message_text(
+        "🔍 *Search Reseller Orders*\n━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Bhejo: *order ID*, *user ID*, *username*, ya product ka naam:\n\n"
+        "_(/cancel to cancel)_",
+        parse_mode="Markdown")
+
+
+async def reseller_orders_clearsearch_callback(update, context):
+    """🆕 v170.91 (Bug2a): clear orders search + re-render."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    context.user_data.pop("rs_orders_search", None)
+    await _render_reseller_orders_panel(update, context, q)
 
 
 async def reseller_order_view_callback(update, context):
@@ -13871,7 +14009,14 @@ async def reseller_order_view_callback(update, context):
             except Exception:
                 pass
         usd = float(o.get("usd_amount") or 0)
-        profit = round(usd - cost, 4)
+        # 🐛 v170.91 FIX (Bug4): cost per-unit tha, qty multiply nahi hoti thi —
+        # bulk reseller orders par profit inflated dikhta tha. Ab qty-aware.
+        try:
+            _rq_qty = max(1, int(o.get("qty") or 1))
+        except Exception:
+            _rq_qty = 1
+        cost_total = round(cost * _rq_qty, 4)
+        profit = round(usd - cost_total, 4)
         st = o.get("status")
         st_icon = {"delivered": "✅", "pending": "⏳", "processing": "🔄", "failed": "❌"}.get(st, "❔")
         lines = [
@@ -13884,7 +14029,7 @@ async def reseller_order_view_callback(update, context):
         ]
         if supplier_name:
             lines.append(f"🏬 Supplier: *{escape_md(supplier_name)}*")
-        lines.append(f"💰 Cost: `{fmt_price(cost)}` · Sold: `{fmt_price(usd)}`")
+        lines.append(f"💰 Cost: `{fmt_price(cost_total)}` (unit `{fmt_price(cost)}` ×{_rq_qty}) · Sold: `{fmt_price(usd)}`")
         lines.append(f"📈 Profit: *{fmt_price(profit)}*")
         lines.append(f"📊 Status: *{escape_md(st or '—')}*")
         if o.get("delivered_keys"):
@@ -14104,6 +14249,14 @@ async def reseller_wizard_text(update, context):
                 parse_mode="Markdown",
                 reply_markup=InlineKeyboardMarkup([[
                     InlineKeyboardButton("📋 Resellers", callback_data="reseller_keys_panel")]]))
+        elif action == "orders_search":
+            # 🆕 v170.91 (Bug2a): reseller orders search
+            context.user_data["rs_orders_search"] = text.strip()
+            await update.message.reply_text(
+                f"🔍 Orders search set: *{text[:40]}*",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("📦 Orders", callback_data="reseller_orders_panel")]]))
         elif action == "prod_search":
             context.user_data["rs_prod_search"] = text.strip()
             await update.message.reply_text(

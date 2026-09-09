@@ -773,10 +773,15 @@ def _finance_totals(start_iso: str, end_iso: str):
     conn = get_connection(); c = conn.cursor()
 
     # Overall
+    # 🐛 v170.91 FIX (Bug4): revenue ab sirf PRODUCT orders (order_type='product')
+    # — points top-ups wallet loads hain, revenue nahi. Cost ab REAL hai:
+    # ext_orders.cost_usd (actual charge) → ext_products.cost_usd × qty →
+    # products.cost_price × qty. Pehle cost me qty multiply NAHI hoti thi
+    # (bulk 13-qty order ka sirf 1-unit cost gina jata tha → profit inflated).
     c.execute("""
         SELECT COUNT(*) AS n, COALESCE(SUM(price), 0) AS rev
         FROM orders
-        WHERE status='delivered'
+        WHERE status='delivered' AND order_type='product'
           AND created_at >= ? AND created_at < ?
     """, (start_iso, end_iso))
     r = c.fetchone()
@@ -789,17 +794,21 @@ def _finance_totals(start_iso: str, end_iso: str):
     #  via orders.product_id.)
     c.execute("""
         SELECT COALESCE(SUM(
-            CASE WHEN p.cost_price IS NOT NULL AND p.cost_price > 0
-                 THEN p.cost_price
-                 WHEN ep.cost_usd IS NOT NULL AND ep.cost_usd > 0
-                 THEN ep.cost_usd
-                 ELSE 0
+            CASE
+                WHEN eo.cost_usd IS NOT NULL AND eo.cost_usd > 0
+                    THEN eo.cost_usd
+                WHEN p.cost_price IS NOT NULL AND p.cost_price > 0
+                    THEN p.cost_price * COALESCE(o.order_qty, 1)
+                WHEN ep.cost_usd IS NOT NULL AND ep.cost_usd > 0
+                    THEN ep.cost_usd * COALESCE(o.order_qty, 1)
+                ELSE 0
             END
         ), 0) AS cost_est
         FROM orders o
         LEFT JOIN products p     ON p.id = o.product_id
         LEFT JOIN ext_products ep ON ep.id = p.ext_product_id
-        WHERE o.status='delivered'
+        LEFT JOIN ext_orders eo   ON eo.internal_order_id = o.id AND eo.status='delivered'
+        WHERE o.status='delivered' AND o.order_type='product'
           AND o.created_at >= ? AND o.created_at < ?
     """, (start_iso, end_iso))
     cost = float((c.fetchone() or {"cost_est": 0})["cost_est"] or 0)
@@ -813,18 +822,22 @@ def _finance_totals(start_iso: str, end_iso: str):
                    COUNT(o.id) AS n,
                    COALESCE(SUM(o.price), 0) AS rev,
                    COALESCE(SUM(
-                       CASE WHEN p.cost_price IS NOT NULL AND p.cost_price > 0
-                            THEN p.cost_price
-                            WHEN ep.cost_usd IS NOT NULL AND ep.cost_usd > 0
-                            THEN ep.cost_usd
-                            ELSE 0
+                       CASE
+                           WHEN eo.cost_usd IS NOT NULL AND eo.cost_usd > 0
+                               THEN eo.cost_usd
+                           WHEN ep.cost_usd IS NOT NULL AND ep.cost_usd > 0
+                               THEN ep.cost_usd * COALESCE(o.order_qty, 1)
+                           WHEN p.cost_price IS NOT NULL AND p.cost_price > 0
+                               THEN p.cost_price * COALESCE(o.order_qty, 1)
+                           ELSE 0
                        END
                    ), 0) AS cost
             FROM orders o
             JOIN products p          ON p.id = o.product_id
             JOIN ext_products ep      ON ep.id = p.ext_product_id
             JOIN ext_suppliers s      ON s.id = ep.supplier_id
-            WHERE o.status='delivered'
+            LEFT JOIN ext_orders eo   ON eo.internal_order_id = o.id AND eo.status='delivered'
+            WHERE o.status='delivered' AND o.order_type='product'
               AND o.created_at >= ? AND o.created_at < ?
             GROUP BY s.id, s.name
             ORDER BY rev DESC
@@ -847,10 +860,10 @@ def _finance_totals(start_iso: str, end_iso: str):
         c.execute("""
             SELECT COUNT(o.id) AS n,
                    COALESCE(SUM(o.price), 0) AS rev,
-                   COALESCE(SUM(COALESCE(p.cost_price, 0)), 0) AS cost
+                   COALESCE(SUM(COALESCE(p.cost_price, 0) * COALESCE(o.order_qty, 1)), 0) AS cost
             FROM orders o
             LEFT JOIN products p ON p.id = o.product_id
-            WHERE o.status='delivered'
+            WHERE o.status='delivered' AND o.order_type='product'
               AND o.created_at >= ? AND o.created_at < ?
               AND (p.ext_product_id IS NULL OR p.ext_product_id = 0)
         """, (start_iso, end_iso))
