@@ -1144,10 +1144,14 @@ if _FASTAPI_OK:
             with open(_dbp, "rb") as _f:
                 _data = _f.read()
             _fn = _dt.datetime.utcnow().strftime("bite_store_backup_%Y%m%d_%H%M%S.db")
+            import os as _os
             return Response(content=_data, media_type="application/octet-stream",
                             headers={"Content-Disposition": f'attachment; filename="{_fn}"',
                                      "X-DB-Path": str(_dbp),
-                                     "X-DB-Size": str(len(_data))})
+                                     "X-DB-Size": str(len(_data)),
+                                     "X-Env-Db-Path": _os.getenv("DB_PATH", ""),
+                                     "X-Env-Volume-Mount": _os.getenv("RAILWAY_VOLUME_MOUNT_PATH", ""),
+                                     "X-Env-Volume-Name": _os.getenv("RAILWAY_VOLUME_NAME", "")})
         except HTTPException:
             raise
         except Exception as e:
