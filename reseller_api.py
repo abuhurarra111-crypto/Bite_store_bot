@@ -1157,6 +1157,119 @@ if _FASTAPI_OK:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"backup failed: {e}")
 
+    @app.post("/db/restore", include_in_schema=False)
+    async def _db_restore(request: Request, token: str = ""):
+        """🆕 v170.98 — Owner-only DB restore via HTTP POST.
+        Telegram bots sirf 20 MB tak files download kar sakte hain — bade
+        DBs restore karne ke liye ye endpoint hai. Raw body ya multipart:
+          curl -X POST ".../db/restore?token=..." --data-binary @file.db
+        Flow: validate (SQLite + integrity) → current DB ka safety backup →
+        WAL checkpoint → swap → auto-migrate (Telegram restore flow jaisa)."""
+        import hashlib
+        try:
+            from config import BOT_TOKEN as _bt
+        except Exception:
+            _bt = ""
+        _want = hashlib.sha256(("db-backup:" + (_bt or "")).encode()).hexdigest()[:32]
+        if not _bt or token != _want:
+            raise HTTPException(status_code=403, detail="forbidden")
+        import os as _os, shutil as _sh, sqlite3 as _sq
+        import datetime as _dt, tempfile as _tf
+        try:
+            # ── file read (raw body ya multipart) ──
+            _data = b""
+            _ctype = request.headers.get("content-type", "")
+            if "multipart/form-data" in _ctype:
+                try:
+                    _form = await request.form()
+                    _up = None
+                    for _v in _form.values():
+                        if hasattr(_v, "read"):
+                            _up = _v; break
+                    if _up is None:
+                        raise HTTPException(status_code=400, detail="no file field found")
+                    _data = await _up.read()
+                except HTTPException:
+                    raise
+                except Exception:
+                    _data = await request.body()
+            else:
+                _data = await request.body()
+            if not _data or len(_data) < 1024:
+                raise HTTPException(status_code=400, detail="empty/too-small upload")
+
+            # ── temp file + validate ──
+            _fd, _tmp = _tf.mkstemp(suffix=".db")
+            with _os.fdopen(_fd, "wb") as _f:
+                _f.write(_data)
+            try:
+                _c = _sq.connect(_tmp)
+                _tables = _c.execute(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table'").fetchone()[0]
+                _integ = _c.execute("PRAGMA integrity_check").fetchone()[0]
+                _users = 0
+                try:
+                    _users = _c.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+                except Exception:
+                    pass
+                _c.close()
+                if _integ != "ok" or _tables < 10:
+                    _os.remove(_tmp)
+                    raise HTTPException(status_code=400,
+                                        detail=f"invalid DB (integrity={_integ}, tables={_tables})")
+            except HTTPException:
+                try: _os.remove(_tmp)
+                except Exception: pass
+                raise
+            except Exception as e:
+                try: _os.remove(_tmp)
+                except Exception: pass
+                raise HTTPException(status_code=400, detail=f"not a SQLite database: {e}")
+
+            # ── swap (Telegram restore flow + WAL cleanup) ──
+            from database import DB_PATH as _dbp
+            try:
+                from database import migrate_all as _mig
+            except Exception:
+                _mig = None
+            _os.makedirs("auto_backups", exist_ok=True)
+            _sb = _os.path.join(
+                "auto_backups",
+                f"pre_restore_http_{_dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.db")
+            if _os.path.exists(_dbp):
+                try:
+                    _cc = _sq.connect(_dbp)
+                    _cc.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    _cc.close()
+                except Exception:
+                    pass
+                _sh.copy2(_dbp, _sb)
+            _sh.copy2(_tmp, _dbp)
+            for _ext in ("-wal", "-shm"):
+                try: _os.remove(_dbp + _ext)
+                except Exception: pass
+            try: _os.remove(_tmp)
+            except Exception: pass
+            _stats = {}
+            if _mig:
+                try:
+                    _stats = _mig() or {}
+                except Exception as _me:
+                    _stats = {"errors": [f"migrate crash: {_me}"]}
+            return {
+                "ok": True,
+                "restored_to": str(_dbp),
+                "size_mb": round(len(_data) / 1048576, 2),
+                "users_in_restored_db": _users,
+                "safety_backup": _sb,
+                "migrate_tables_checked": _stats.get("tables_checked"),
+                "migrate_errors": len(_stats.get("errors") or []),
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"restore failed: {e}")
+
     @app.get("/api-docs/", include_in_schema=False)
     async def _api_docs():
         return RedirectResponse("/docs")
