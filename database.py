@@ -24,7 +24,30 @@ except Exception:
 # all products/orders/users — and forcing migrations to re-run each boot).
 # Mount a persistent disk (e.g. at /var/data) and set DB_PATH=/var/data/shop.db
 # to keep data across restarts. Defaults to local "shop.db" for VPS/local.
-DB_PATH = os.getenv("DB_PATH", "shop.db")
+#
+# 🚨 v170.95 RAILWAY VOLUME AUTO-DETECT: the service HAS a volume attached,
+# but DB_PATH was never set → the bot kept writing to the container-local
+# shop.db → EVERY deploy silently WIPED all data (users/orders/products —
+# confirmed 2026-09-11: live DB was 536 KB / 0 users after deploy).
+# Railway injects RAILWAY_VOLUME_MOUNT_PATH when a volume is attached — if
+# DB_PATH is not explicitly set, we now use <mount>/shop.db so data persists
+# across deploys FOREVER. Explicit DB_PATH always wins (local/dev overrides).
+def _resolve_db_path() -> str:
+    _explicit = os.getenv("DB_PATH", "").strip()
+    if _explicit:
+        return _explicit
+    _rvmp = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
+    if _rvmp:
+        try:
+            import os as _os
+            _os.makedirs(_rvmp, exist_ok=True)
+        except Exception:
+            pass
+        return _rvmp.rstrip("/") + "/shop.db"
+    return "shop.db"
+
+
+DB_PATH = _resolve_db_path()
 
 
 class DictRow(sqlite3.Row):

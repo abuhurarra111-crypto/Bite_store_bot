@@ -845,3 +845,50 @@ class TestCustomReviewStormFix:
             assert FJob.application.job_queue.added == [cr._JOB_NAME]
         finally:
             cr.pending_queue_count = orig
+
+
+# ═══════════════════════════════════════════════════════════════
+# 🆕 v170.95 — RAILWAY VOLUME AUTO-DETECT (data-loss fix)
+# Root cause: volume attached tha lekin DB_PATH set nahi → bot
+# container-local shop.db likhta tha → har deploy par saara data
+# WIPE (live DB 536KB/0 users paayi gayi 2026-09-11).
+# ═══════════════════════════════════════════════════════════════
+class TestRailwayVolumeAutoDetect:
+    def test_explicit_db_path_wins(self):
+        import os, importlib
+        import database as dbm
+        os.environ["DB_PATH"] = "/tmp/my_custom.db"
+        os.environ["RAILWAY_VOLUME_MOUNT_PATH"] = "/var/data"
+        importlib.reload(dbm)
+        try:
+            assert dbm.DB_PATH == "/tmp/my_custom.db", dbm.DB_PATH
+        finally:
+            del os.environ["DB_PATH"]
+            del os.environ["RAILWAY_VOLUME_MOUNT_PATH"]
+            os.environ["DB_PATH"] = _REGDB
+            importlib.reload(dbm)
+
+    def test_volume_used_when_no_db_path(self):
+        import os, importlib
+        import database as dbm
+        os.environ.pop("DB_PATH", None)
+        os.environ["RAILWAY_VOLUME_MOUNT_PATH"] = "/tmp/fake_vol"
+        importlib.reload(dbm)
+        try:
+            assert dbm.DB_PATH == "/tmp/fake_vol/shop.db", dbm.DB_PATH
+        finally:
+            del os.environ["RAILWAY_VOLUME_MOUNT_PATH"]
+            os.environ["DB_PATH"] = _REGDB
+            importlib.reload(dbm)
+
+    def test_default_local_when_no_env(self):
+        import os, importlib
+        import database as dbm
+        os.environ.pop("DB_PATH", None)
+        os.environ.pop("RAILWAY_VOLUME_MOUNT_PATH", None)
+        importlib.reload(dbm)
+        try:
+            assert dbm.DB_PATH == "shop.db", dbm.DB_PATH
+        finally:
+            os.environ["DB_PATH"] = _REGDB
+            importlib.reload(dbm)

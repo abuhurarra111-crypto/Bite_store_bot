@@ -756,6 +756,17 @@ def run_all_heals() -> list:
     Returns the list of heal actions taken."""
     _HEAL_REPORT.clear()
     _log(f"Self-heal started at {datetime.now().isoformat(timespec='seconds')}")
+    # 🆕 v170.95: boot marker — har boot par UNIQUE row (persistence verify +
+    # boot-history audit). Agar deploy ke baad ye rows ghatein to DB persist
+    # nahi ho raha (volume check karo).
+    try:
+        import time as _t
+        _bk = f"boot_ts_{int(_t.time())}"
+        _seen = get_setting(_bk, "")
+        if not _seen:
+            set_setting(_bk, datetime.now().isoformat(timespec="seconds"))
+    except Exception:
+        pass
     try:
         _heal_missing_tables()
     except Exception as e:
