@@ -768,3 +768,80 @@ class TestSpeedStormFix:
             pua.build_fake_message = _orig
         assert _CountingBot.sent == 1, f"throttle fail: {_CountingBot.sent} sends"
         pua.set_user_active(424243, True)  # cleanup
+
+
+# ═══════════════════════════════════════════════════════════════
+# 🆕 v170.94 — CUSTOM REVIEWS STORM FIX
+# Bug: custom_review_broadcast_job empty-queue path _reschedule karta
+# tha (early-return) AUR finally BHI → har idle run par chain DOUBLE →
+# exponential job storm (Railway: 1,800 log lines/min, 500 logs/sec
+# rate-limit, 454 jobs/13s, bot unresponsive 2026-09-11).
+# ═══════════════════════════════════════════════════════════════
+class TestCustomReviewStormFix:
+    def test_reschedule_guards(self):
+        """dedup + pending-only + exactly-one-named-add."""
+        import custom_reviews as cr
+        orig = cr.pending_queue_count
+
+        class FJQ:
+            def __init__(self, existing=None):
+                self.existing = existing or []; self.added = []
+            def get_jobs_by_name(self, name): return self.existing
+            def run_once(self, cb, when=None, **kw): self.added.append(kw.get("name"))
+        class FA:
+            def __init__(self, jq): self.job_queue = jq
+        try:
+            # 1) job already scheduled → SKIP (multi-chain impossible)
+            cr.pending_queue_count = lambda: 5
+            jq = FJQ([object()])
+            cr._reschedule(FA(jq)); assert jq.added == [], "dedup guard fail"
+            # 2) queue empty → SKIP (idle par kuch schedule nahi)
+            cr.pending_queue_count = lambda: 0
+            jq2 = FJQ()
+            cr._reschedule(FA(jq2)); assert jq2.added == [], "pending-only guard fail"
+            # 3) pending + no job → EXACTLY ONE named add
+            cr.pending_queue_count = lambda: 3
+            jq3 = FJQ()
+            cr._reschedule(FA(jq3))
+            assert jq3.added == [cr._JOB_NAME], f"single-add fail: {jq3.added}"
+        finally:
+            cr.pending_queue_count = orig
+
+    def test_empty_queue_run_adds_no_job(self):
+        """Empty run → chain STOPS (pehle 2 jobs banati thi → storm)."""
+        import custom_reviews as cr
+        orig = cr.pending_queue_count
+
+        class FJQ:
+            def __init__(self): self.added = []
+            def get_jobs_by_name(self, name): return []
+            def run_once(self, cb, when=None, **kw): self.added.append(kw.get("name"))
+        class FA: job_queue = FJQ()
+        class FJob:
+            application = FA(); bot = object()
+        try:
+            cr.pending_queue_count = lambda: 0
+            asyncio.run(cr.custom_review_broadcast_job(FJob()))
+            assert FJob.application.job_queue.added == [], \
+                f"empty run par job add hua: {FJob.application.job_queue.added}"
+        finally:
+            cr.pending_queue_count = orig
+
+    def test_watchdog_restarts_dead_chain(self):
+        """Watchdog: pending rows + dead chain → dobara start."""
+        import custom_reviews as cr
+        orig = cr.pending_queue_count
+
+        class FJQ:
+            def __init__(self): self.added = []
+            def get_jobs_by_name(self, name): return []
+            def run_once(self, cb, when=None, **kw): self.added.append(kw.get("name"))
+        class FA: job_queue = FJQ()
+        class FJob:
+            application = FA(); bot = object()
+        try:
+            cr.pending_queue_count = lambda: 7
+            asyncio.run(cr.custom_review_watchdog_job(FJob()))
+            assert FJob.application.job_queue.added == [cr._JOB_NAME]
+        finally:
+            cr.pending_queue_count = orig

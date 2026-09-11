@@ -1117,6 +1117,40 @@ if _FASTAPI_OK:
             _v = "unknown"
         return {"status": "ok", "version": _v}
 
+    @app.get("/db/backup", include_in_schema=False)
+    async def _db_backup(token: str = ""):
+        """🆕 v170.94 — Owner-only full DB backup download.
+        Token = sha256('db-backup:' + BOT_TOKEN) ka pehla 32-hex — sirf
+        wo hi download kar sakta hai jiske paas bot token hai (owner).
+        WAL checkpoint ke baad file stream hoti hai, data safe rehta hai."""
+        import hashlib
+        try:
+            from config import BOT_TOKEN as _bt
+        except Exception:
+            _bt = ""
+        _want = hashlib.sha256(("db-backup:" + (_bt or "")).encode()).hexdigest()[:32]
+        if not _bt or not token or token != _want:
+            raise HTTPException(status_code=403, detail="forbidden")
+        try:
+            import sqlite3 as _sq
+            import datetime as _dt
+            from database import DB_PATH as _dbp
+            try:
+                _c = _sq.connect(_dbp)
+                _c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                _c.close()
+            except Exception:
+                pass
+            with open(_dbp, "rb") as _f:
+                _data = _f.read()
+            _fn = _dt.datetime.utcnow().strftime("bite_store_backup_%Y%m%d_%H%M%S.db")
+            return Response(content=_data, media_type="application/octet-stream",
+                            headers={"Content-Disposition": f'attachment; filename="{_fn}"'})
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"backup failed: {e}")
+
     @app.get("/api-docs/", include_in_schema=False)
     async def _api_docs():
         return RedirectResponse("/docs")

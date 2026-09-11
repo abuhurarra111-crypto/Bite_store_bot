@@ -226,7 +226,12 @@ async def custom_review_broadcast_job(context):
         _requeue_stale_sending()
         row = _pop_next_pending()
         if row is None:
-            _reschedule(context.application)
+            # 🐛 v170.94 STORM FIX: queue khali → chain YAHIN ruk jati hai.
+            # Purana code yahan _reschedule karta tha AUR finally BHI —
+            # har idle run par 2 nayi jobs → chain DOUBLE → exponential
+            # job storm (Railway: 1,800 log lines/min, 500 logs/sec cap,
+            # misfires, bot unresponsive). Watchdog pending rows aane par
+            # chain dobara start kar dega.
             return
         from database import get_connection, get_product
         sent_ok = False
@@ -282,22 +287,59 @@ async def custom_review_broadcast_job(context):
         _reschedule(context.application)
 
 
+_JOB_NAME = "custom_review_broadcast"
+
+
 def _reschedule(app):
+    """🆕 v170.94 STORM FIX — teen guards:
+    (1) dedup: pehle se koi broadcast job scheduled ho → SKIP
+    (2) pending-only: queue khali → kuch schedule NAHI karo
+    (3) ek hi job add karo (named) — multi-chain impossible."""
     try:
+        if app is None or getattr(app, "job_queue", None) is None:
+            return
+        try:
+            existing = app.job_queue.get_jobs_by_name(_JOB_NAME)
+        except Exception:
+            existing = []
+        if existing:
+            return
+        if pending_queue_count() <= 0:
+            return
         mn, mx = _get_interval_range()
-        import random as _r
-        delay = _r.randint(mn * 60, mx * 60)
+        delay = random.randint(mn * 60, mx * 60)
         logger.info(f"[CustomReviews] next broadcast in {delay // 60}m")
-        app.job_queue.run_once(custom_review_broadcast_job, when=delay)
+        app.job_queue.run_once(custom_review_broadcast_job, when=delay,
+                               name=_JOB_NAME)
     except Exception as e:
         logger.error(f"[CustomReviews] reschedule failed: {e}")
 
 
+async def custom_review_watchdog_job(context):
+    """🆕 v170.94: har 30 min — agar pending reviews hon lekin koi broadcast
+    job scheduled nahi (crash/hiccup ke baad), chain dobara start karo."""
+    try:
+        _reschedule(context.application)
+    except Exception:
+        pass
+
+
 def schedule_custom_review_broadcasts(app):
-    """post_init se call hota hai — khud re-schedule karti rehti hai."""
+    """post_init se call hota hai. 🆕 v170.94: sirf pending rows par chain
+    start hoti hai (empty par nahi) + 30-min self-heal watchdog."""
     _ensure_queue_table()
     _requeue_stale_sending()
-    _reschedule(app)
+    try:
+        _reschedule(app)
+    except Exception:
+        pass
+    try:
+        if app is not None and getattr(app, "job_queue", None) is not None:
+            app.job_queue.run_repeating(custom_review_watchdog_job,
+                                        interval=1800, first=1800,
+                                        name="custom_review_watchdog")
+    except Exception as e:
+        logger.error(f"[CustomReviews] watchdog setup failed: {e}")
 
 
 # ────────────────────────────────────────────────────────────────
@@ -510,6 +552,12 @@ async def cfr_prod_callback(update, context):
     except Exception:
         nm = html_strip_tags(pd.get("name") or "?")
     inserted, skipped = add_custom_reviews(pid, lines, product_name=nm)
+    # 🆕 v170.94: naye reviews a gaye → broadcast chain start (agar already
+    # chal rahi ho to dedup guard skip kar dega)
+    try:
+        _reschedule(context.application)
+    except Exception:
+        pass
     context.user_data.pop("cfr_lines", None)
     context.user_data.pop("cfr_flow", None)
     await q.edit_message_text(
