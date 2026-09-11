@@ -761,12 +761,13 @@ def run_all_heals() -> list:
     # nahi ho raha (volume check karo).
     try:
         import time as _t
+        from database import get_setting as _gs, set_setting as _ss
         _bk = f"boot_ts_{int(_t.time())}"
-        _seen = get_setting(_bk, "")
+        _seen = _gs(_bk, "")
         if not _seen:
-            set_setting(_bk, datetime.now().isoformat(timespec="seconds"))
-    except Exception:
-        pass
+            _ss(_bk, datetime.now().isoformat(timespec="seconds"))
+    except Exception as _e:
+        _log(f"boot marker failed: {_e}", "WARN")
     try:
         _heal_missing_tables()
     except Exception as e:

@@ -1145,7 +1145,9 @@ if _FASTAPI_OK:
                 _data = _f.read()
             _fn = _dt.datetime.utcnow().strftime("bite_store_backup_%Y%m%d_%H%M%S.db")
             return Response(content=_data, media_type="application/octet-stream",
-                            headers={"Content-Disposition": f'attachment; filename="{_fn}"'})
+                            headers={"Content-Disposition": f'attachment; filename="{_fn}"',
+                                     "X-DB-Path": str(_dbp),
+                                     "X-DB-Size": str(len(_data))})
         except HTTPException:
             raise
         except Exception as e:
