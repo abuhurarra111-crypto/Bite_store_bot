@@ -51,6 +51,22 @@ AUTOSYNC_PRICE_STOCK_INTERVAL = 180   # seconds — price+stock refresh (default
 AUTOSYNC_BALANCE_INTERVAL = 180       # seconds — balance refresh (default)
 
 
+def _stock_sync_blocked(ep, now=None):
+    """🆕 v170.99: kya is ext_product ka stock-pool-broken cooldown active hai?
+
+    ``stock_broken_until`` (epoch) supplier-side bug ($slice/409/OOS) par
+    set hota hai — _mark_supplier_product_unavailable(). Iske active rehne
+    tak autosync fresh stock/cost apply nahi karta (jhooti listed stock se
+    0→restore loop rokne ke liye). Delivery success par flag 0 ho jata hai.
+    """
+    try:
+        now = float(now if now is not None else time.time())
+        until = float((ep or {}).get("stock_broken_until") or 0)
+        return until > now
+    except Exception:
+        return False
+
+
 def get_autosync_price_stock_interval() -> int:
     """Live interval (seconds) for the price+stock tick.
     Setting: autosync_interval_seconds (floor 60s, default 180)."""
@@ -217,6 +233,17 @@ async def autosync_price_stock_job(context):
                         continue
 
                     fresh_p = fresh_by_remote[remote_id]
+
+                    # 🆕 v170.99 (CAPCUT 6M refund-loop fix): agar is product
+                    # ka stock-pool recently BROSEN mark hua hai ($slice/409/
+                    # OOS supplier bug — flag stock_broken_until epoch), to
+                    # supplier ki (jhooti) listed stock apply NAHI karo.
+                    # Pehle autosync 0→listed-stock restore kar deti thi →
+                    # naya order → fail → auto-refund loop (orders #4295/
+                    # #4296/#4322). Flag expiry (default 15 min) ya delivery
+                    # success par sync wapas normal ho jati hai.
+                    if _stock_sync_blocked(ep):
+                        continue
 
                     # Product is present again; clear one-shot missing alert
                     # (only when it is ACTIVE again — a deactivated product

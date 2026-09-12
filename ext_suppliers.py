@@ -132,6 +132,13 @@ def ensure_ext_supplier_tables():
     ensure_column(c, "ext_products", "bulk_unsynced",      "INTEGER DEFAULT 0")
     ensure_column(c, "ext_products", "out_of_stock_since", "REAL DEFAULT 0")  # v141: auto-delete after 5 days OOS
     ensure_column(c, "ext_products", "missing_since",      "REAL DEFAULT 0")  # v141: supplier deleted/missing tracker
+    # 🆕 v170.99: stock-pool-broken cooldown flag. Jab supplier ka server-side
+    # bug ($slice/409/OOS) product ko break karta hai to product ko out-of-stock
+    # mark karte hain — LEKIN autosync supplier ki JHOOTI listed stock se use
+    # 0→restore kar deta tha → naya order → fail → refund loop (CAPCUT 6M saga,
+    # orders #4295/#4296/#4322). Is flag ke active hone tak autosync fresh
+    # stock apply nahi karega; delivery success par flag clear ho jata hai.
+    ensure_column(c, "ext_products", "stock_broken_until", "REAL DEFAULT 0")  # v170.99: broken-pool cooldown epoch
     # v170.61 lifecycle split. Existing active=0 rows are conservatively kept
     # owner-disabled rather than accidentally made live on the one-time upgrade.
     ensure_column(c, "ext_products", "owner_active",  "INTEGER DEFAULT 1")
@@ -533,7 +540,8 @@ def update_ext_product(eid, **fields):
                "emoji_status", "active", "owner_active", "source_active",
                "fixed_price", "fixed_price_base", "shop_product_id",
                "delivery_format", "format_detected", "synced_to_shop", "bulk_unsynced",
-               "out_of_stock_since", "missing_since"}
+               "out_of_stock_since", "missing_since",
+               "stock_broken_until"}  # 🆕 v170.99: stock-pool-broken cooldown
     fields = {k: v for k, v in fields.items() if k in allowed}
     if not fields:
         return False
@@ -4157,11 +4165,55 @@ def _supplier_error_is_stock_pool_broken(result=None, reason=""):
     return False
 
 
-def _mark_supplier_product_unavailable(ep, shop_product_id=0, reason=""):
-    """Set stale supplier product stock to 0 without deleting history."""
+def _stock_broken_cooldown():
+    """🆕 v170.99: stock-pool-broken cooldown seconds (admin setting, default 15 min)."""
+    try:
+        v = int(float(get_setting("supplier_stock_broken_cooldown", "900") or 900))
+        return max(60, v)
+    except Exception:
+        return 900
+
+
+def _clear_supplier_stock_broken(ep):
+    """🆕 v170.99: delivery success → broken-pool flag clear (recovery proof)."""
     try:
         if ep and ep.get("id"):
-            update_ext_product(int(ep["id"]), stock=0)
+            update_ext_product(int(ep["id"]), stock_broken_until=0)
+    except Exception as e:
+        logger.debug(f"[supplier-broken] clear flag failed: {e}")
+
+
+def _clear_broken_for_order_oid(oid):
+    """🆕 v170.99: order delivered → uske ext_product ka broken flag clear.
+
+    Auto-retry / manual delivery dono paths yahin se recovery prove karte
+    hain: agar supplier ne deliver kar diya to pool theek hai → autosync
+    wapas fresh stock laga sakta hai.
+    """
+    try:
+        from database import get_order, get_product
+        o = get_order(int(oid)) if oid else None
+        if not o or not o.get("product_id"):
+            return
+        p = get_product(int(o["product_id"]))
+        ep_id = (int(dict(p).get("ext_product_id") or 0) if p else 0)
+        if ep_id:
+            update_ext_product(ep_id, stock_broken_until=0)
+    except Exception as e:
+        logger.debug(f"[supplier-broken] clear-by-order failed #{oid}: {e}")
+
+
+def _mark_supplier_product_unavailable(ep, shop_product_id=0, reason=""):
+    """Set stale supplier product stock to 0 without deleting history.
+
+    🆕 v170.99: saath hi ``stock_broken_until`` cooldown flag set hota hai
+    (default 900s, setting ``supplier_stock_broken_cooldown``). Iske active
+    rehne tak autosync supplier ki jhooti listed stock restore NAHI karega —
+    yehi mark→autosync-restore→order→fail→refund loop ka root cause tha."""
+    try:
+        if ep and ep.get("id"):
+            until = time.time() + _stock_broken_cooldown()
+            update_ext_product(int(ep["id"]), stock=0, stock_broken_until=until)
     except Exception as e:
         logger.debug(f"[supplier-stale] ext stock zero failed: {e}")
     # Do not force products.stock=0 here. update_ext_product() mirrors remote
@@ -4169,11 +4221,29 @@ def _mark_supplier_product_unavailable(ep, shop_product_id=0, reason=""):
 
 
 def _set_order_supplier_retry_pending(order_id, reason):
-    """Mark order as retry-pending and return (due_epoch, retry_count)."""
+    """Mark order as retry-pending and return (due_epoch, retry_count).
+
+    🆕 v170.99 FIX (window-reset bug): pehle HAR failure par due=now+300
+    reset ho jata tha → repeated failures hard deadline ko hamesha aage
+    dhakel dete the (infinite retry loop, kabhi auto-refund nahi). Ab agar
+    order already ``supplier_retry_pending`` hai AUR due future me hai to
+    ORIGINAL deadline preserve hota hai — sirf retry_count badhta hai."""
     due = time.time() + _SUPPLIER_RETRY_WINDOW_SECONDS
     conn = get_connection(); c = conn.cursor()
     try:
         _ensure_supplier_retry_order_columns(c)
+        # v170.99: preserve the original hard deadline on repeat failures.
+        c.execute("""SELECT COALESCE(status,'') AS st,
+                            COALESCE(supplier_refund_due_at,0) AS prev_due
+                     FROM orders WHERE id=?""", (int(order_id),))
+        _row = c.fetchone()
+        if _row and str(_row["st"] or "") == "supplier_retry_pending":
+            try:
+                _prev = float(_row["prev_due"] or 0)
+            except Exception:
+                _prev = 0.0
+            if _prev > time.time():
+                due = _prev
         c.execute("""UPDATE orders
                      SET status='supplier_retry_pending',
                          supplier_failure_reason=?,
@@ -4192,6 +4262,26 @@ def _set_order_supplier_retry_pending(order_id, reason):
         try: conn.close()
         except Exception: pass
         return due, 0
+
+
+def _supplier_auto_retry_ready(order, now=None):
+    """🆕 v170.99: kya is pending order ka AUTO-RETRY ab due hai?
+
+    Window ke ANDAR staggered retries: pehli failure ke ~60s baad 1st
+    auto-retry, ~120s baad 2nd; 3+ attempts ke baad admin/refund hi raasta.
+    Hard deadline (supplier_refund_due_at) ke baad job refund karta hai."""
+    try:
+        now = float(now if now is not None else time.time())
+        due = float(order.get("supplier_refund_due_at") or 0)
+        cnt = int(order.get("supplier_retry_count") or 0)
+        if due <= 0 or due <= now:
+            return False
+        if cnt < 1 or cnt >= 3:
+            return False
+        first_pending = due - _SUPPLIER_RETRY_WINDOW_SECONDS
+        return now >= first_pending + 60 * cnt
+    except Exception:
+        return False
 
 
 async def _schedule_supplier_retry_or_refund(bot, order, sup, ep, qty, reason, result=None):
@@ -4215,7 +4305,11 @@ async def _schedule_supplier_retry_or_refund(bot, order, sup, ep, qty, reason, r
     refund_points = points_from_usd(price_usd)
 
     # Notify customer — professional, no raw API details beyond short reason.
-    try:
+    # 🆕 v170.99: sirf PEHLI failure par notify (retry_count==1) — baaki
+    # silent auto-retries customer ko spam nahi karenge; refund/expiry par
+    # _refund_and_notify khud bata dega.
+    if int(retry_count or 0) <= 1:
+      try:
         await bot.send_message(
             order['user_id'],
             f"⚠️ *Order #{order['id']} — Delivery retrying*\n"
@@ -4231,7 +4325,7 @@ async def _schedule_supplier_retry_or_refund(bot, order, sup, ep, qty, reason, r
                 [InlineKeyboardButton("🎫 Support", callback_data="support_menu")],
             ])
         )
-    except Exception as e:
+      except Exception as e:
         logger.error(f"[supplier-retry] customer notify failed: {e}")
 
     # Notify admin with Retry Delivery button.
@@ -4262,7 +4356,45 @@ async def _schedule_supplier_retry_or_refund(bot, order, sup, ep, qty, reason, r
 
 
 async def supplier_retry_refund_job(context):
-    """Auto-refund expired retry/manual-recovery supplier orders safely."""
+    """Auto-refund expired retry/manual-recovery supplier orders safely.
+
+    🆕 v170.99 Fix B: expired refunds se PEHLE non-expired pending orders ka
+    auto-retry bhi hota hai (transient supplier failures — ProdSeller ka
+    intermittent $slice bug — khud recover ho jayen bina admin button ke)."""
+    # ── Fix B: AUTO-RETRY (window ke andar, +60s/+120s staggered) ─────────
+    # Idempotency-Key per-order stable hai (v83) → re-route double-charge
+    # nahi karta. Max 2 auto-attempts; phir hard deadline par refund.
+    try:
+        conn = get_connection(); c = conn.cursor()
+        _ensure_supplier_retry_order_columns(c)
+        now = time.time()
+        c.execute("""SELECT * FROM orders
+                     WHERE status = 'supplier_retry_pending'
+                       AND COALESCE(supplier_refund_due_at,0) > ?
+                       AND COALESCE(supplier_retry_count,0) BETWEEN 1 AND 2
+                     ORDER BY supplier_refund_due_at ASC
+                     LIMIT 10""", (float(now),))
+        pend = [dict(r) for r in c.fetchall()]
+        conn.close()
+        for order in pend:
+            try:
+                if not _supplier_auto_retry_ready(order, now):
+                    continue
+                from database import get_order as _go
+                fresh = _go(order['id'])
+                if not fresh or str(fresh.get('status') or '') != 'supplier_retry_pending':
+                    continue
+                if not _supplier_auto_retry_ready(dict(fresh), now):
+                    continue
+                logger.info(f"[supplier-retry-job] 🔄 AUTO-RETRY order#{order['id']} "
+                            f"(attempt {fresh.get('supplier_retry_count')})")
+                await route_order_to_supplier(context.bot, dict(fresh))
+            except Exception as e:
+                logger.warning(f"[supplier-retry-job] auto-retry failed order#{order.get('id')}: {e}")
+    except Exception as e:
+        logger.warning(f"[supplier-retry-job] auto-retry scan failed: {e}")
+
+    # ── Expired → auto-refund (pehle jaisa hi) ────────────────────────────
     try:
         conn = get_connection(); c = conn.cursor()
         _ensure_supplier_retry_order_columns(c)
@@ -4886,6 +5018,11 @@ async def route_order_to_supplier(bot, order):
     except Exception:
         pass
     update_order_status(order['id'], 'delivered')
+    # 🆕 v170.99: delivery success = supplier pool recover → broken flag clear
+    try:
+        _clear_broken_for_order_oid(order['id'])
+    except Exception:
+        pass
 
     # 🐛 v170.23 FIX: pehle yahan EK notification bheji jaati thi aur neeche
     # "Supplier order delivered!" block SE DOOSRI bheji jaati thi → admin ko
