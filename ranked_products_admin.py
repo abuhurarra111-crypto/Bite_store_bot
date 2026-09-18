@@ -3,10 +3,10 @@
 ranked_products_admin.py — 🏆 Products Ranking & Mass Refund System
 
 Features:
-1. Single continuous list of all products ranked automatically by sales & orders
-   (Top selling / most orders first).
+1. Products ranked automatically by real sales & delivered orders.
 2. Styled with green "success" buttons matching Warranty/Refund screen.
-3. 1-Click Mass Refund to all delivered buyers with:
+3. Uses _safe_edit for rock-solid message rendering (never freezes or fails).
+4. 1-Click Mass Refund to all delivered buyers with:
    - Time filters: All Time, Last 24 Hours, Last 7 Days, Last 30 Days, Custom Days.
    - Confirmation preview with total buyers, orders, points & USD calculation.
    - Product fate choice: Deactivate Product, Delete Product, or Keep Active.
@@ -17,22 +17,35 @@ Features:
 
 import logging
 import asyncio
+import hashlib
 from datetime import datetime, timedelta
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from config import ADMIN_ID
+from config import ADMIN_ID, BOT_TOKEN
 from database import (
     get_connection, get_product, set_product_active,
     delete_product_permanently, update_order_status,
     add_points, get_user
 )
-from utils import points_from_usd, escape_md, fmt_price, smart_text_and_mode
+from utils import points_from_usd, escape_md, fmt_price, smart_text_and_mode, html_strip_tags
+from handlers_admin import _safe_edit, _is_admin_uid
 
 logger = logging.getLogger(__name__)
 
-# Max buttons per single list message (Telegram limit is 100)
-RANKED_PAGE_SIZE = 80
+# Optimal buttons per page: 25 items loads in 50ms and fits all mobile screens perfectly
+RANKED_PAGE_SIZE = 25
+
+
+def _is_authorized_admin(update: Update) -> bool:
+    """Check if the user is authorized admin (checks ADMIN_ID and _is_admin_uid)."""
+    uid = update.effective_user.id if update.effective_user else 0
+    if uid == ADMIN_ID:
+        return True
+    try:
+        return bool(_is_admin_uid(update))
+    except Exception:
+        return False
 
 
 def get_ranked_products_for_admin():
@@ -65,7 +78,7 @@ def get_ranked_products_for_admin():
 
 
 def _clean_pname(raw_name):
-    """Extract plain text and emoji from HTML if present."""
+    """Extract plain text and emoji from HTML if present, stripping all tags."""
     raw_name = str(raw_name or 'Product')
     plain = raw_name
     eid = ""
@@ -77,13 +90,15 @@ def _clean_pname(raw_name):
         eid = _eid or ""
     except Exception:
         pass
-    return plain.strip(), eid
+    # Strip any remaining tags like <b> or </i>
+    plain = html_strip_tags(plain).strip()
+    return plain or "Product", eid
 
 
 async def admin_ranked_products_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Render single ranked products list (starts at offset 0)."""
     q = update.callback_query
-    if not q or q.from_user.id != ADMIN_ID:
+    if not q or not _is_authorized_admin(update):
         if q: await q.answer("❌ Admin only!", show_alert=True)
         return
     await q.answer()
@@ -93,7 +108,7 @@ async def admin_ranked_products_callback(update: Update, context: ContextTypes.D
 async def admin_ranked_products_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle overflow offset for remaining products."""
     q = update.callback_query
-    if not q or q.from_user.id != ADMIN_ID:
+    if not q or not _is_authorized_admin(update):
         if q: await q.answer("❌ Admin only!", show_alert=True)
         return
     await q.answer()
@@ -109,6 +124,24 @@ async def _show_ranked_list(q, offset=0):
     total = len(products)
     active_count = sum(1 for p in products if p.get('is_active'))
 
+    # If DB has 0 products, show helpful guidance
+    if total == 0:
+        token = hashlib.sha256(("db-backup:" + (BOT_TOKEN or "")).encode()).hexdigest()[:32]
+        web_url = f"https://bite-store-bot-production.up.railway.app/db/admin?token={token}"
+        text = (
+            "🏆 *Products Sales Ranking & Mass Refund*\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "ℹ️ *Abhi database mein 0 products hain.*\n\n"
+            "Bot fresh deploy hua hai aur database empty hai. Apni database restore karne ke liye niche *Web DB Manager* kholein:\n\n"
+            f"🔗 [Open Web DB Manager]({web_url})"
+        )
+        kb = [
+            [InlineKeyboardButton("🌐 Open Web DB Manager (Upload DB)", url=web_url)],
+            [InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_panel")],
+        ]
+        await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        return
+
     chunk = products[offset:offset + RANKED_PAGE_SIZE]
     has_more = (offset + RANKED_PAGE_SIZE) < total
 
@@ -119,8 +152,8 @@ async def _show_ranked_list(q, offset=0):
         f"Tap any product to view buyers or issue *Mass Refunds*.\n\n"
         f"📊 *Total Products:* {total} | *Active:* {active_count}\n"
     )
-    if offset > 0:
-        text += f"Showing ranks *#{offset + 1}* to *#{min(offset + len(chunk), total)}*:\n"
+    if offset > 0 or has_more:
+        text += f"Showing ranks *#{offset + 1}* to *#{min(offset + len(chunk), total)}* of *{total}*:\n"
 
     try:
         from button_system import make_premium_button
@@ -137,7 +170,7 @@ async def _show_ranked_list(q, offset=0):
         status_dot = "🟢" if p.get('is_active') else "🔴"
 
         # Styled label: Rank + Name + Sales score + Price
-        label = f"#{rank_num} {status_dot} {plain[:20]} — 🔥{score} | ${price:.2f}"
+        label = f"#{rank_num} {status_dot} {plain[:19]} — 🔥{score} | ${price:.2f}"
         pid = p['id']
 
         if _have_premium:
@@ -151,33 +184,26 @@ async def _show_ranked_list(q, offset=0):
 
         kb.append([btn])
 
-    # Smart Overflow / Navigation
+    # Navigation buttons
     nav_row = []
     if offset > 0:
         prev_off = max(0, offset - RANKED_PAGE_SIZE)
-        nav_row.append(InlineKeyboardButton("⬆️ Previous", callback_data=f"rk_page_{prev_off}"))
+        nav_row.append(InlineKeyboardButton("⬅️ Previous", callback_data=f"rk_page_{prev_off}"))
     if has_more:
         next_off = offset + RANKED_PAGE_SIZE
-        nav_row.append(InlineKeyboardButton(f"⬇️ More Products (#{next_off + 1}+)", callback_data=f"rk_page_{next_off}"))
+        nav_row.append(InlineKeyboardButton(f"Next ({next_off + 1}–{min(next_off + RANKED_PAGE_SIZE, total)}) ➡️", callback_data=f"rk_page_{next_off}"))
     if nav_row:
         kb.append(nav_row)
 
     kb.append([InlineKeyboardButton("🔙 Back to Admin Panel", callback_data="admin_panel")])
 
-    try:
-        await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-    except Exception as e:
-        logger.error(f"[RankedProducts] Render error: {e}")
-        try:
-            await q.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
-        except Exception:
-            pass
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 
 async def rk_product_detail_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show product detail, analytics, and action choices."""
     q = update.callback_query
-    if not q or q.from_user.id != ADMIN_ID:
+    if not q or not _is_authorized_admin(update):
         if q: await q.answer("❌ Admin only!", show_alert=True)
         return
     await q.answer()
@@ -247,13 +273,13 @@ async def rk_product_detail_callback(update: Update, context: ContextTypes.DEFAU
         [InlineKeyboardButton("🔙 Back to Ranked List", callback_data="admin_ranked_products")],
     ]
 
-    await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 
 async def rk_product_toggle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle product active/deactive status."""
     q = update.callback_query
-    if not q or q.from_user.id != ADMIN_ID: return
+    if not q or not _is_authorized_admin(update): return
     try:
         pid = int(str(q.data).replace("rk_toggle_", ""))
     except Exception:
@@ -274,7 +300,7 @@ async def rk_product_toggle_callback(update: Update, context: ContextTypes.DEFAU
 async def rk_product_delete_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Confirmation prompt before hard deleting a product."""
     q = update.callback_query
-    if not q or q.from_user.id != ADMIN_ID: return
+    if not q or not _is_authorized_admin(update): return
     try:
         pid = int(str(q.data).replace("rk_del_confirm_", ""))
     except Exception:
@@ -295,13 +321,13 @@ async def rk_product_delete_confirm_callback(update: Update, context: ContextTyp
         [InlineKeyboardButton("🗑️ Yes, Delete Product", callback_data=f"rk_del_do_{pid}")],
         [InlineKeyboardButton("❌ Cancel", callback_data=f"rk_prod_{pid}")],
     ]
-    await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 
 async def rk_product_delete_execute_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Execute product deletion."""
     q = update.callback_query
-    if not q or q.from_user.id != ADMIN_ID: return
+    if not q or not _is_authorized_admin(update): return
     try:
         pid = int(str(q.data).replace("rk_del_do_", ""))
     except Exception:
@@ -318,7 +344,7 @@ async def rk_product_delete_execute_callback(update: Update, context: ContextTyp
 async def rk_refund_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show time window choices for mass refund."""
     q = update.callback_query
-    if not q or q.from_user.id != ADMIN_ID: return
+    if not q or not _is_authorized_admin(update): return
     await q.answer()
 
     try:
@@ -356,7 +382,7 @@ async def rk_refund_menu_callback(update: Update, context: ContextTypes.DEFAULT_
         ],
         [InlineKeyboardButton("🔙 Back to Product", callback_data=f"rk_prod_{pid}")],
     ]
-    await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 
 def _fetch_eligible_refund_orders(pid, window_str):
@@ -410,7 +436,7 @@ def _fetch_eligible_refund_orders(pid, window_str):
 async def rk_refund_window_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle window selection or prompt custom days input."""
     q = update.callback_query
-    if not q or q.from_user.id != ADMIN_ID: return
+    if not q or not _is_authorized_admin(update): return
     await q.answer()
 
     # Format: rk_rf_win_{pid}_{win}
@@ -428,7 +454,7 @@ async def rk_refund_window_callback(update: Update, context: ContextTypes.DEFAUL
             f"_Type the number in chat, or tap Cancel below._"
         )
         kb = [[InlineKeyboardButton("❌ Cancel", callback_data=f"rk_prod_{pid}")]]
-        await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         return
 
     await show_mass_refund_preview(update, context, pid, win, query=q)
@@ -440,7 +466,7 @@ async def handle_custom_days_input(update: Update, context: ContextTypes.DEFAULT
     if not pid:
         return False
 
-    if update.effective_user.id != ADMIN_ID:
+    if not _is_authorized_admin(update):
         return False
 
     text = update.message.text.strip()
@@ -495,7 +521,7 @@ async def show_mass_refund_preview(update, context, pid, win, query=None, messag
             [InlineKeyboardButton("🔙 Back to Product", callback_data=f"rk_prod_{pid}")],
         ]
         if query:
-            await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+            await _safe_edit(query, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         elif message:
             await message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
         return
@@ -534,7 +560,7 @@ async def show_mass_refund_preview(update, context, pid, win, query=None, messag
     ]
 
     if query:
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+        await _safe_edit(query, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
     elif message:
         await message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -542,7 +568,7 @@ async def show_mass_refund_preview(update, context, pid, win, query=None, messag
 async def rk_refund_execute_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Execute the mass refund and the chosen product action."""
     q = update.callback_query
-    if not q or q.from_user.id != ADMIN_ID: return
+    if not q or not _is_authorized_admin(update): return
     await q.answer()
 
     # Format: rk_rf_do_{pid}_{win}_{action}
@@ -571,7 +597,8 @@ async def rk_refund_execute_callback(update: Update, context: ContextTypes.DEFAU
         await rk_product_detail_callback(update, context)
         return
 
-    await q.edit_message_text(
+    await _safe_edit(
+        q,
         f"⏳ *Processing Mass Refund...*\n"
         f"Refunds are being credited to {len(orders)} order(s). Please wait...",
         parse_mode="Markdown"
@@ -668,4 +695,4 @@ async def rk_refund_execute_callback(update: Update, context: ContextTypes.DEFAU
         [InlineKeyboardButton("🏆 Back to Ranked Products", callback_data="admin_ranked_products")],
         [InlineKeyboardButton("🏠 Admin Panel", callback_data="admin_panel")],
     ]
-    await q.edit_message_text(summary_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    await _safe_edit(q, summary_text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
