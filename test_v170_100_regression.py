@@ -224,3 +224,26 @@ class TestMassRefundExecution:
             assert args[3] == "14d"  # window
         finally:
             ranked_products_admin.show_mass_refund_preview = orig_show
+
+
+class TestWebDBManager:
+    def test_web_admin_forbidden_without_token(self):
+        """Web DB Manager rejects unauthorized requests."""
+        from fastapi.testclient import TestClient
+        import reseller_api
+        client = TestClient(reseller_api.app)
+        r = client.get("/db/admin")
+        assert r.status_code == 403
+
+    def test_web_admin_authorized(self):
+        """Web DB Manager returns HTML dashboard with correct token."""
+        import hashlib
+        from config import BOT_TOKEN
+        from fastapi.testclient import TestClient
+        import reseller_api
+        client = TestClient(reseller_api.app)
+        token = hashlib.sha256(("db-backup:" + (BOT_TOKEN or "")).encode()).hexdigest()[:32]
+        r = client.get(f"/db/admin?token={token}")
+        assert r.status_code == 200
+        assert "Database Management Dashboard" in r.text
+        assert "No 20 MB Limit" in r.text

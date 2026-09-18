@@ -20,3 +20,4 @@ qrcode
 # 🆕 v161: Reseller API server (ProdSeller-compatible) — FastAPI + uvicorn
 fastapi
 uvicorn
+python-multipart

@@ -5668,8 +5668,19 @@ backup file. Send .db file as document.
   • Bot ko restart karna parta hai
   • Old backup taken automatically before restore
 
+🌐 *Web Manager:* 20MB limit se bachne ke liye browser se upload/restore karein.
+
 Choose action:"""
+    import hashlib
+    try:
+        from config import BOT_TOKEN as _bt
+    except Exception:
+        _bt = ""
+    _wtoken = hashlib.sha256(("db-backup:" + (_bt or "")).encode()).hexdigest()[:32]
+    web_admin_url = f"https://bite-store-bot-production.up.railway.app/db/admin?token={_wtoken}"
+
     kb = [
+        [InlineKeyboardButton("🌐 Web DB Manager (No 20MB Limit)", url=web_admin_url)],
         [InlineKeyboardButton("📥 Download Backup", callback_data="bk_download")],
         [InlineKeyboardButton("☁️ Backup to Channel NOW", callback_data="bk_cloud_now")],
         [InlineKeyboardButton("📤 Restore from File", callback_data="bk_restore_start")],

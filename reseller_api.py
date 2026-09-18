@@ -1157,6 +1157,416 @@ if _FASTAPI_OK:
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"backup failed: {e}")
 
+    @app.get("/db/admin", response_class=HTMLResponse, include_in_schema=False)
+    async def _db_admin_web(token: str = ""):
+        """🆕 v170.101 — Mobile Web Browser DB Manager (Backup & Restore).
+        Telegram ki 20 MB limit se bachne ke liye direct browser dashboard.
+        Phone ke browser se 1-click download aur drag/drop file restore."""
+        import hashlib
+        try:
+            from config import BOT_TOKEN as _bt
+        except Exception:
+            _bt = ""
+        _want = hashlib.sha256(("db-backup:" + (_bt or "")).encode()).hexdigest()[:32]
+        if not _bt or token != _want:
+            raise HTTPException(status_code=403, detail="Forbidden: Invalid or missing token")
+
+        import os as _os, sqlite3 as _sq
+        from database import DB_PATH as _dbp
+
+        users_cnt, orders_cnt, prods_cnt = 0, 0, 0
+        integrity_ok = "Checking..."
+        db_size_mb = 0.0
+
+        if _os.path.exists(_dbp):
+            try:
+                db_size_mb = round(_os.path.getsize(_dbp) / (1024 * 1024), 2)
+                _c = _sq.connect(_dbp)
+                try: users_cnt = _c.execute("SELECT count(*) FROM users").fetchone()[0]
+                except Exception: pass
+                try: orders_cnt = _c.execute("SELECT count(*) FROM orders").fetchone()[0]
+                except Exception: pass
+                try: prods_cnt = _c.execute("SELECT count(*) FROM products").fetchone()[0]
+                except Exception: pass
+                try:
+                    _integ = _c.execute("PRAGMA integrity_check").fetchone()[0]
+                    integrity_ok = "OK ✅" if _integ == "ok" else f"Warning: {_integ}"
+                except Exception as _ie:
+                    integrity_ok = str(_ie)
+                _c.close()
+            except Exception as _e:
+                integrity_ok = f"Error: {_e}"
+
+        html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bite Store Bot — Database Manager</title>
+    <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            background: #0f172a;
+            color: #f1f5f9;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            padding: 20px 15px;
+            display: flex;
+            justify-content: center;
+        }}
+        .container {{
+            max-width: 600px;
+            width: 100%;
+        }}
+        .header {{
+            text-align: center;
+            margin-bottom: 25px;
+        }}
+        .header h1 {{
+            font-size: 24px;
+            font-weight: 700;
+            color: #38bdf8;
+            margin-bottom: 6px;
+        }}
+        .header p {{
+            font-size: 14px;
+            color: #94a3b8;
+        }}
+        .badge {{
+            display: inline-block;
+            background: #0369a1;
+            color: #e0f2fe;
+            padding: 3px 10px;
+            border-radius: 9999px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 8px;
+        }}
+        .card {{
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 14px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+        }}
+        .card h2 {{
+            font-size: 17px;
+            margin-bottom: 15px;
+            color: #e2e8f0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        .stats-grid {{
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-bottom: 5px;
+        }}
+        .stat-box {{
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 12px;
+            text-align: center;
+        }}
+        .stat-value {{
+            font-size: 20px;
+            font-weight: 700;
+            color: #38bdf8;
+        }}
+        .stat-label {{
+            font-size: 12px;
+            color: #94a3b8;
+            margin-top: 3px;
+        }}
+        .btn {{
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 100%;
+            padding: 14px 20px;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }}
+        .btn-download {{
+            background: #0284c7;
+            color: white;
+        }}
+        .btn-download:hover {{ background: #0369a1; }}
+        .btn-restore {{
+            background: #16a34a;
+            color: white;
+            margin-top: 15px;
+        }}
+        .btn-restore:hover {{ background: #15803d; }}
+        .file-drop {{
+            background: #0f172a;
+            border: 2px dashed #475569;
+            border-radius: 10px;
+            padding: 20px 15px;
+            text-align: center;
+            cursor: pointer;
+        }}
+        .file-drop input[type="file"] {{
+            width: 100%;
+            color: #cbd5e1;
+            font-size: 14px;
+        }}
+        .note {{
+            font-size: 12px;
+            color: #94a3b8;
+            line-height: 1.5;
+            margin-top: 10px;
+        }}
+        .warning-box {{
+            background: rgba(234, 179, 8, 0.1);
+            border: 1px solid rgba(234, 179, 8, 0.3);
+            border-radius: 8px;
+            padding: 10px 12px;
+            font-size: 12px;
+            color: #fde047;
+            margin-top: 12px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 Bite Store Bot</h1>
+            <p>Database Management Dashboard</p>
+            <span class="badge">No 20 MB Limit • Direct Browser Access</span>
+        </div>
+
+        <div class="card">
+            <h2>📊 Live Database Overview</h2>
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="stat-value">{users_cnt:,}</div>
+                    <div class="stat-label">👥 Total Users</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value">{orders_cnt:,}</div>
+                    <div class="stat-label">📦 Total Orders</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value">{prods_cnt:,}</div>
+                    <div class="stat-label">🛍️ Products</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-value">{db_size_mb:.2f} MB</div>
+                    <div class="stat-label">💾 Size ({integrity_ok})</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>📥 Download Latest DB Backup</h2>
+            <p style="font-size: 13px; color: #94a3b8; margin-bottom: 15px;">
+                Download the complete raw SQLite database file directly to your phone or computer.
+            </p>
+            <a href="/db/backup?token={token}" class="btn btn-download">
+                📥 Download Full Database (.db)
+            </a>
+        </div>
+
+        <div class="card">
+            <h2>📤 Upload & Restore Database</h2>
+            <p style="font-size: 13px; color: #94a3b8; margin-bottom: 15px;">
+                Select your verified ready .db file to restore. The bot will automatically create a safety backup, verify integrity, and run schema migrations.
+            </p>
+
+            <form action="/db/restore-web?token={token}" method="POST" enctype="multipart/form-data" onsubmit="document.getElementById('submitBtn').innerText='⏳ Uploading & Restoring...'; document.getElementById('submitBtn').disabled=true;">
+                <div class="file-drop">
+                    <input type="file" name="db_file" accept=".db,.sqlite,.sqlite3" required>
+                </div>
+                <button type="submit" id="submitBtn" class="btn btn-restore">
+                    🚀 Upload & Restore DB Now
+                </button>
+            </form>
+
+            <div class="warning-box">
+                ⚠️ <b>Warning:</b> Restoring will replace the live database with your uploaded file. An automatic safety copy is created first.
+            </div>
+        </div>
+    </div>
+</body>
+</html>"""
+        return HTMLResponse(content=html_content, status_code=200)
+
+    @app.post("/db/restore-web", response_class=HTMLResponse, include_in_schema=False)
+    async def _db_restore_web(request: Request, token: str = ""):
+        """Process web multipart upload and render HTML receipt."""
+        import hashlib
+        try:
+            from config import BOT_TOKEN as _bt
+        except Exception:
+            _bt = ""
+        _want = hashlib.sha256(("db-backup:" + (_bt or "")).encode()).hexdigest()[:32]
+        if not _bt or token != _want:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        import os as _os, shutil as _sh, sqlite3 as _sq, datetime as _dt, tempfile as _tf
+
+        try:
+            file_bytes = b""
+            try:
+                form = await request.form()
+                upload_file = form.get("db_file")
+                if upload_file and hasattr(upload_file, "read"):
+                    file_bytes = await upload_file.read()
+            except Exception:
+                pass
+
+            if not file_bytes:
+                body = await request.body()
+                sqlite_idx = body.find(b"SQLite format 3\x00")
+                if sqlite_idx != -1:
+                    file_bytes = body[sqlite_idx:]
+                    last_dash = file_bytes.rfind(b"\r\n--")
+                    if last_dash != -1:
+                        file_bytes = file_bytes[:last_dash]
+                else:
+                    file_bytes = body
+
+            if not file_bytes or len(file_bytes) < 1024:
+                raise ValueError("Uploaded file is empty or corrupted (under 1 KB).")
+
+            # Save to temp
+            fd, tmp_path = _tf.mkstemp(suffix=".db")
+            with _os.fdopen(fd, "wb") as f:
+                f.write(file_bytes)
+
+            # Validate SQLite
+            conn = _sq.connect(tmp_path)
+            table_cnt = conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table'").fetchone()[0]
+            integ = conn.execute("PRAGMA integrity_check").fetchone()[0]
+            users_cnt = 0
+            orders_cnt = 0
+            prods_cnt = 0
+            try: users_cnt = conn.execute("SELECT count(*) FROM users").fetchone()[0]
+            except Exception: pass
+            try: orders_cnt = conn.execute("SELECT count(*) FROM orders").fetchone()[0]
+            except Exception: pass
+            try: prods_cnt = conn.execute("SELECT count(*) FROM products").fetchone()[0]
+            except Exception: pass
+            conn.close()
+
+            if integ != "ok" or table_cnt < 10:
+                _os.remove(tmp_path)
+                raise ValueError(f"File failed SQLite validation (integrity={integ}, tables={table_cnt})")
+
+            # Swap & Backup
+            from database import DB_PATH as _dbp
+            try:
+                from database import migrate_all as _mig
+            except Exception:
+                _mig = None
+
+            _os.makedirs("auto_backups", exist_ok=True)
+            safety_bk = _os.path.join("auto_backups", f"pre_restore_web_{_dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.db")
+            if _os.path.exists(_dbp):
+                try:
+                    c_old = _sq.connect(_dbp)
+                    c_old.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    c_old.close()
+                except Exception:
+                    pass
+                _sh.copy2(_dbp, safety_bk)
+
+            _sh.copy2(tmp_path, _dbp)
+            for ext in ("-wal", "-shm"):
+                try: _os.remove(_dbp + ext)
+                except Exception: pass
+            try: _os.remove(tmp_path)
+            except Exception: pass
+
+            mig_stats = {}
+            if _mig:
+                try:
+                    mig_stats = _mig() or {}
+                except Exception as me:
+                    mig_stats = {"errors": [f"Migration note: {me}"]}
+
+            size_mb = round(len(file_bytes) / (1024 * 1024), 2)
+            mig_errs = len(mig_stats.get("errors") or [])
+
+            success_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Restore Successful — Bite Store Bot</title>
+    <style>
+        body {{
+            background: #0f172a; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            padding: 25px 15px; display: flex; justify-content: center;
+        }}
+        .card {{
+            background: #1e293b; border: 1px solid #16a34a; border-radius: 14px;
+            padding: 25px; max-width: 550px; width: 100%; text-align: center;
+        }}
+        h1 {{ color: #4ade80; font-size: 22px; margin-bottom: 12px; }}
+        p {{ color: #cbd5e1; font-size: 14px; line-height: 1.6; margin-bottom: 20px; }}
+        .table {{
+            width: 100%; border-collapse: collapse; margin-bottom: 20px; text-align: left; font-size: 13px;
+        }}
+        .table td {{ padding: 8px 12px; border-bottom: 1px solid #334155; }}
+        .table td:first-child {{ color: #94a3b8; font-weight: 600; }}
+        .table td:last-child {{ color: #38bdf8; text-align: right; font-weight: bold; }}
+        .btn {{
+            display: block; width: 100%; padding: 12px; background: #0284c7; color: white;
+            border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>✅ Database Restored Successfully!</h1>
+        <p>Your live database has been updated and schema migrations applied.</p>
+        <table class="table">
+            <tr><td>👥 Restored Users</td><td>{users_cnt:,}</td></tr>
+            <tr><td>📦 Restored Orders</td><td>{orders_cnt:,}</td></tr>
+            <tr><td>🛍️ Restored Products</td><td>{prods_cnt:,}</td></tr>
+            <tr><td>💾 File Size</td><td>{size_mb} MB</td></tr>
+            <tr><td>⚙️ Migrations</td><td>{mig_stats.get('tables_checked', 18)} tables ({mig_errs} errors)</td></tr>
+            <tr><td>🛡️ Safety Backup</td><td>{safety_bk}</td></tr>
+        </table>
+        <a href="/db/admin?token={token}" class="btn">🔙 Return to Database Manager</a>
+    </div>
+</body>
+</html>"""
+            return HTMLResponse(content=success_html, status_code=200)
+
+        except Exception as e:
+            err_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Restore Error — Bite Store Bot</title>
+    <style>
+        body {{ background: #0f172a; color: #f1f5f9; font-family: sans-serif; padding: 25px; display: flex; justify-content: center; }}
+        .card {{ background: #1e293b; border: 1px solid #ef4444; border-radius: 12px; padding: 25px; max-width: 500px; width: 100%; text-align: center; }}
+        h1 {{ color: #f87171; font-size: 20px; }}
+        p {{ color: #cbd5e1; font-size: 14px; margin: 15px 0; }}
+        .btn {{ display: inline-block; padding: 10px 20px; background: #ef4444; color: white; border-radius: 8px; text-decoration: none; }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>❌ Restore Failed</h1>
+        <p>{str(e)}</p>
+        <a href="/db/admin?token={token}" class="btn">Try Again</a>
+    </div>
+</body>
+</html>"""
+            return HTMLResponse(content=err_html, status_code=400)
+
     @app.post("/db/restore", include_in_schema=False)
     async def _db_restore(request: Request, token: str = ""):
         """🆕 v170.98 — Owner-only DB restore via HTTP POST.
