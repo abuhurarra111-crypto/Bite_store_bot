@@ -395,6 +395,20 @@ from custom_reviews import (
     CFR_LINES,
 )
 from fake_engagement import broadcast_overview_callback, broadcast_overview_toggle_callback  # ✨ v170.45
+
+# 🆕 v170.100: Products Ranking & Mass Refund
+from ranked_products_admin import (
+    admin_ranked_products_callback,
+    admin_ranked_products_page_callback,
+    rk_product_detail_callback,
+    rk_product_toggle_callback,
+    rk_product_delete_confirm_callback,
+    rk_product_delete_execute_callback,
+    rk_refund_menu_callback,
+    rk_refund_window_callback,
+    rk_refund_execute_callback,
+    handle_custom_days_input
+)
 # 🆕 v24: Removed gmail_checker (replaced by Binance API)
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 
@@ -792,6 +806,9 @@ async def handle_text(update, context):
         if await adm_refund_uid_reason_received(update, context): return
     if context.user_data.get('ruid_step') == 'uhist_id':
         if await adm_uhist_id_received(update, context): return
+    # 🆕 v170.100: Custom days input for Mass Refund
+    if context.user_data.get('mass_refund_custom_pid'):
+        if await handle_custom_days_input(update, context): return
     if context.user_data.get('fake_custom_broadcast'):
         if await handle_fake_custom_broadcast_message(update, context): return
     if context.user_data.get('broadcasting'):
@@ -2608,6 +2625,16 @@ def main():
         ("^catstyle_", category_style_callback),
         ("^admin_products$", admin_products_callback),
         (r"^adminprodpg_\d+$", admin_products_page_callback),
+        # 🆕 v170.100: Products Ranking & Mass Refund routes
+        ("^admin_ranked_products$", admin_ranked_products_callback),
+        (r"^rk_page_\d+$", admin_ranked_products_page_callback),
+        (r"^rk_prod_\d+$", rk_product_detail_callback),
+        (r"^rk_toggle_\d+$", rk_product_toggle_callback),
+        (r"^rk_del_confirm_\d+$", rk_product_delete_confirm_callback),
+        (r"^rk_del_do_\d+$", rk_product_delete_execute_callback),
+        (r"^rk_ref_menu_\d+$", rk_refund_menu_callback),
+        (r"^rk_rf_win_\d+_.+$", rk_refund_window_callback),
+        (r"^rk_rf_do_\d+_.+$", rk_refund_execute_callback),
         ("^delprod_", delete_product_callback),
         ("^viewcat_", view_category_callback),
         ("^catasg_", category_assign_products_callback),

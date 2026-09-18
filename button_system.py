@@ -218,6 +218,12 @@ BUTTONS = {
         "large": "📝 Edit Items", "xl": "📝 Edit Items — Add/Delete products",
         "callback": "admin_products",
     },
+    "admin_ranked_products": {
+        "group": "admin", "essential": True,
+        "short": "🏆", "medium": "🏆 Ranked Items",
+        "large": "🏆 Ranked & Refund", "xl": "🏆 Ranked Products & Mass Refund",
+        "callback": "admin_ranked_products",
+    },
     "admin_categories": {
         "group": "admin", "essential": True,
         "short": "🏷️", "medium": "🏷️ Cats",

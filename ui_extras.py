@@ -1159,6 +1159,8 @@ async def _show_panel(q):
     except Exception:
         dest_display = "🤖 Bot Only"
 
+    dest_speed_line = "⚡ Destination Speed: *1–60s* (Guaranteed active)\n" if dest_mode in ("group_only", "both") else ""
+
     text = (
         f"🎭 *Per-User Fake Activity Panel*\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -1166,6 +1168,7 @@ async def _show_panel(q):
         f"⚡ First message: in *{delay} seconds* after user joins\n"
         f"⏱️ Then: every *{mn}–{mx} {unit_label}* randomly\n\n"
         f"📤 Sending to: {dest_display}\n"
+        f"{dest_speed_line}"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"👥 *Simulated Community Stats:*\n"
         f"  📊 Real Registered Users: *{real_users}*\n"

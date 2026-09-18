@@ -8804,6 +8804,8 @@ async def view_product_callback(u, c):
         # 🆕 v71: Replacement window — per-product setting
         [_v71_replacement_window_button(pid)],
     ]
+    # 🆕 v170.100: Mass refund all delivered buyers for this product
+    kb.append([InlineKeyboardButton("💸 Mass Refund Buyers", callback_data=f"rk_ref_menu_{pid}")])
     kb.append([InlineKeyboardButton("🗑️ Delete Product", callback_data=f"delprod_{pid}")])
     kb.extend([
         [InlineKeyboardButton("🔙 Back to Add Products", callback_data="admin_products")]

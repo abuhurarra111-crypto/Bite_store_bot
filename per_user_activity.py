@@ -1406,6 +1406,17 @@ def _group_job_actually_scheduled(app):
         return False
 
 
+def get_dest_interval_seconds():
+    """Returns (min_seconds, max_seconds) strictly for destination (group/channel) activity.
+    Owner rule: Guaranteed every 1 to 60 seconds (must never exceed 60s)."""
+    try:
+        mn = max(1, int(_g("pua_dest_min_sec", "1") or 1))
+        mx = max(mn, min(60, int(_g("pua_dest_max_sec", "60") or 60)))
+        return mn, mx
+    except Exception:
+        return 1, 60
+
+
 def schedule_group_activity_job(app):
     """
     Schedules a single central job to send fake activity directly to the group.
@@ -1413,6 +1424,7 @@ def schedule_group_activity_job(app):
     Keeps the group active even if there are 0 users in the bot.
     🐛 v144.4: now verifies the ACTUAL job exists in the queue before skipping —
     a stale True flag no longer blocks scheduling.
+    🆕 v170.100: Guaranteed 1 to 60 seconds interval for selected destination.
     """
     global _group_job_scheduled
     if _group_job_scheduled and _group_job_actually_scheduled(app):
@@ -1420,8 +1432,8 @@ def schedule_group_activity_job(app):
         return
     _group_job_scheduled = False  # stale flag → reset so we schedule fresh
 
-    # Let's get the interval range
-    mn_s, mx_s = get_speed_seconds()
+    # Destination interval: strictly 1 to 60 seconds (owner rule)
+    mn_s, mx_s = get_dest_interval_seconds()
     delay_seconds = random.randint(mn_s, mx_s)
 
     logger.info(f"[Activity] Scheduling group-only central job in {delay_seconds} seconds")
@@ -1430,10 +1442,16 @@ def schedule_group_activity_job(app):
         global _group_job_scheduled
         _group_job_scheduled = False  # Reset so next one can be scheduled
 
-        # 🆕 v170.93: group sends share the SAME global throttle as per-user
-        # sends (skip + re-schedule when the cap is hit).
+        # 🆕 v170.100: Destination message MUST fire within 1 to 60 seconds.
+        # If the process-wide throttle was consumed by another message < 5s ago,
+        # do NOT skip and wait another full 60s. Re-check in 2 seconds so it fires
+        # immediately without exceeding the 60s window.
         if not fake_send_allowed_now():
-            schedule_group_activity_job(context.application)
+            try:
+                context.application.job_queue.run_once(_group_job, when=2, name="pua_group_central")
+                _group_job_scheduled = True
+            except Exception:
+                schedule_group_activity_job(context.application)
             return
 
         # Check if still enabled and correct mode
