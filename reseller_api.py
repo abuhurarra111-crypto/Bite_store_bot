@@ -1117,6 +1117,56 @@ if _FASTAPI_OK:
             _v = "unknown"
         return {"status": "ok", "version": _v}
 
+    @app.get("/bot-diag", include_in_schema=False)
+    async def _bot_diag(token: str = ""):
+        """Owner diagnostic endpoint to inspect process threads, DB state & polling."""
+        import hashlib, os, sys, threading
+        try:
+            from config import BOT_TOKEN as _bt
+            import config
+        except Exception:
+            _bt = ""
+        _want = hashlib.sha256(("db-backup:" + (_bt or "")).encode()).hexdigest()[:32]
+        if not _bt or token != _want:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        threads_info = []
+        for t in threading.enumerate():
+            threads_info.append({
+                "name": t.name,
+                "alive": t.is_alive(),
+                "daemon": t.daemon,
+                "ident": t.ident,
+            })
+
+        import sqlite3
+        from database import DB_PATH
+        db_exists = os.path.exists(DB_PATH)
+        db_size = os.path.getsize(DB_PATH) if db_exists else 0
+        tables = []
+        counts = {}
+        if db_exists:
+            try:
+                con = sqlite3.connect(DB_PATH)
+                tables = [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+                for tbl in ["users", "orders", "products", "bot_settings"]:
+                    if tbl in tables:
+                        counts[tbl] = con.execute(f"SELECT count(*) FROM {tbl}").fetchone()[0]
+                con.close()
+            except Exception as e:
+                counts["error"] = str(e)
+
+        return {
+            "version": getattr(config, "BOT_VERSION", "unknown"),
+            "pid": os.getpid(),
+            "threads": threads_info,
+            "db_path": str(DB_PATH),
+            "db_exists": db_exists,
+            "db_size_mb": round(db_size / (1024*1024), 2),
+            "tables_count": len(tables),
+            "counts": counts,
+        }
+
     @app.get("/db/backup", include_in_schema=False)
     async def _db_backup(token: str = ""):
         """🆕 v170.94 — Owner-only full DB backup download.

@@ -7,6 +7,7 @@ import sys
 import os
 import warnings
 from telegram.warnings import PTBUserWarning
+from telegram import Update
 from telegram.ext import (Application, CommandHandler, CallbackQueryHandler,
     MessageHandler, ConversationHandler, filters, ApplicationHandlerStop,
     PreCheckoutQueryHandler, ChatMemberHandler)
@@ -3605,7 +3606,13 @@ def main():
         # after an exception. If polling crashes, the __main__ supervisor below
         # creates a fresh Application and fresh event loop.
         print("🤖 Bot running via polling (Render Background Worker safe)")
-        app.run_polling(drop_pending_updates=True, close_loop=False, bootstrap_retries=-1, timeout=20)
+        app.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,
+            close_loop=False,
+            bootstrap_retries=-1,
+            timeout=20,
+        )
 
 
 if __name__ == "__main__":
