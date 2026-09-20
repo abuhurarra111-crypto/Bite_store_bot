@@ -3828,12 +3828,15 @@ def invalidate_settings_cache(key=None):
         _SETTINGS_CACHE.pop(key, None)
 
 def set_setting(key, value):
+    if not key or str(key).strip().lower() in ("none", ""):
+        return
     try:
         invalidate_settings_cache(key)
     except Exception:
         pass
     conn = get_connection(); c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO bot_settings (key,value) VALUES (?,?)", (key,str(value))); conn.commit(); conn.close()
+    c.execute("INSERT OR REPLACE INTO bot_settings (key,value) VALUES (?,?)", (str(key), str(value)))
+    conn.commit(); conn.close()
 
 
 # ── 🆕 Customization Toggles ──
@@ -6352,7 +6355,12 @@ def _migrate_flash_sales():
 # ════════════════════════════════════════════════
 # 🆕 v46: PROFESSIONAL API SYSTEM TABLES + FUNCTIONS
 # ════════════════════════════════════════════════
+_API_TABLES_SETUP_DONE = False
+
 def setup_api_tables():
+    global _API_TABLES_SETUP_DONE
+    if _API_TABLES_SETUP_DONE:
+        return
     conn = get_connection()
     c = conn.cursor()
     c.execute("""CREATE TABLE IF NOT EXISTS api_keys (
@@ -6402,6 +6410,7 @@ def setup_api_tables():
         price REAL, status TEXT, logged_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
     conn.commit()
     conn.close()
+    _API_TABLES_SETUP_DONE = True
 
 def add_api_key(key, bot_name, owner_id):
     conn = get_connection()
@@ -7658,6 +7667,10 @@ def log_api_request(key_id: int, endpoint: str, status_code: int = 200, ip: str 
         c.execute("""UPDATE api_keys
                      SET last_used_at=?, request_count=COALESCE(request_count,0)+1
                      WHERE id=?""", (now, int(key_id)))
+        # Occasional log pruning to keep DB snappy
+        import random
+        if random.randint(1, 100) == 1:
+            c.execute("DELETE FROM api_request_log WHERE id < (SELECT MAX(id) - 20000 FROM api_request_log)")
         conn.commit()
     except Exception:
         pass
@@ -7665,13 +7678,14 @@ def log_api_request(key_id: int, endpoint: str, status_code: int = 200, ip: str 
 
 
 def count_api_requests_recent(key_id: int, window_sec: int = 60) -> int:
-    """Count requests in the last `window_sec` for rate limiting."""
+    """Count requests in the last `window_sec` for rate limiting using index."""
     setup_api_tables()
+    from datetime import datetime, timedelta
+    since = (datetime.now() - timedelta(seconds=int(window_sec))).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_connection(); c = conn.cursor()
-    c.execute(f"""SELECT COUNT(*) FROM api_request_log
-                  WHERE api_key_id=?
-                    AND datetime(created_at) >= datetime('now', '-{int(window_sec)} seconds')""",
-              (int(key_id),))
+    c.execute("""SELECT COUNT(*) FROM api_request_log
+                  WHERE api_key_id=? AND created_at >= ?""",
+              (int(key_id), since))
     n = int(c.fetchone()[0] or 0); conn.close()
     return n
 

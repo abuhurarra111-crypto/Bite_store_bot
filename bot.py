@@ -455,6 +455,11 @@ async def global_error_handler(update, context):
     """Log uncaught handler errors so bugs are visible instead of silent."""
     logging.getLogger(__name__).exception("Unhandled bot error", exc_info=context.error)
     try:
+        if update and update.callback_query:
+            try:
+                await update.callback_query.answer("⚠️ An error occurred. Please try again.", show_alert=True)
+            except Exception:
+                pass
         if update and getattr(update, "effective_message", None):
             # 🐛 v147 FIX: never reply "Temporary error" inside a group — the
             # bot must stay silent in groups (see _is_group_chat).
@@ -1869,7 +1874,14 @@ def main():
                           .post_init(post_init)
                           .build())
     else:
-        app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+        request = HTTPXRequest(connect_timeout=25, read_timeout=30, write_timeout=25)
+        get_updates_request = HTTPXRequest(connect_timeout=25, read_timeout=35)
+        app = (Application.builder()
+                          .token(BOT_TOKEN)
+                          .request(request)
+                          .get_updates_request(get_updates_request)
+                          .post_init(post_init)
+                          .build())
 
     app.add_error_handler(global_error_handler)
 
@@ -3593,7 +3605,7 @@ def main():
         # after an exception. If polling crashes, the __main__ supervisor below
         # creates a fresh Application and fresh event loop.
         print("🤖 Bot running via polling (Render Background Worker safe)")
-        app.run_polling(drop_pending_updates=True, close_loop=False)
+        app.run_polling(drop_pending_updates=True, close_loop=False, bootstrap_retries=-1, timeout=20)
 
 
 if __name__ == "__main__":

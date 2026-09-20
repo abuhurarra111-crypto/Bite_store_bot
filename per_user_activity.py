@@ -1324,6 +1324,13 @@ def _schedule_next_for_user(app, user_id: int, delay_seconds: int = None):
     Schedule the NEXT fake message for a specific user.
     After sending, re-schedules itself automatically.
     """
+    if app is None or getattr(app, "job_queue", None) is None:
+        return
+    mode = _g("dest_mode", "bot_only")
+    if mode == "group_only":
+        _scheduled_users.discard(user_id)
+        return
+
     if delay_seconds is None:
         mn_s, mx_s = get_speed_seconds()
         delay_seconds = random.randint(mn_s, mx_s)
@@ -1342,8 +1349,9 @@ def _schedule_next_for_user(app, user_id: int, delay_seconds: int = None):
         finally:
             # Remove before re-scheduling (to allow clean re-entry)
             _scheduled_users.discard(user_id)
-            # Schedule the NEXT one
-            _schedule_next_for_user(context.application, user_id)
+            # Schedule the NEXT one if mode allows
+            if _g("dest_mode", "bot_only") != "group_only":
+                _schedule_next_for_user(context.application, user_id)
 
     try:
         app.job_queue.run_once(_job, when=delay_seconds,
@@ -1553,7 +1561,15 @@ def restore_all_jobs(app):
         logger.info("[Activity] Global OFF — skipping restore")
         return
 
+    mode = _g("dest_mode", "bot_only")
+    if mode == "group_only":
+        logger.info("[Activity] dest_mode is group_only — per-user private jobs skipped")
+        return
+
     active_ids = get_active_user_ids()
+    # 🆕 v170.103: Cap scheduled concurrent timers to 30 most recent users
+    # to prevent JobQueue and SQLite event loop starvation
+    active_ids = active_ids[:30]
     logger.info(f"[Activity] Restoring {len(active_ids)} user jobs...")
 
     for uid in active_ids:
@@ -1594,12 +1610,14 @@ async def activity_watchdog_job(context):
             logger.warning(f"[Activity][Watchdog] group re-schedule failed: {e}")
         # 2) per-user jobs
         try:
-            active = set(get_active_user_ids())
-            missing = active - _scheduled_users
-            if missing:
-                for uid in list(missing)[:20]:  # stagger to avoid flood
-                    _schedule_next_for_user(app, uid, delay_seconds=random.randint(20, 120))
-                logger.info(f"[Activity][Watchdog] re-scheduled {len(missing)} user jobs")
+            mode = _g("dest_mode", "bot_only")
+            if mode != "group_only":
+                active = set(get_active_user_ids()[:30])
+                missing = active - _scheduled_users
+                if missing:
+                    for uid in list(missing)[:10]:  # stagger to avoid flood
+                        _schedule_next_for_user(app, uid, delay_seconds=random.randint(20, 120))
+                    logger.info(f"[Activity][Watchdog] re-scheduled {len(missing)} user jobs")
         except Exception as e:
             logger.warning(f"[Activity][Watchdog] user re-schedule failed: {e}")
     except Exception as e:

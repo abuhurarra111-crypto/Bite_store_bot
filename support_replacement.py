@@ -1366,12 +1366,16 @@ async def review_reminder_job(context):
 # ════════════════════════════════════════════════════════════
 def get_due_reminder_tickets(hours=3, limit=25):
     """Open/in_progress tickets that need a close-reminder now:
+    - max 3 reminders per ticket to avoid spamming dead/blocked users
     - no reminder sent yet AND created > `hours` ago, OR
     - last reminder sent > `hours` ago."""
     try:
         from database import get_connection
         conn = get_connection(); c = conn.cursor()
-        c.execute("SELECT * FROM support_tickets WHERE status IN ('open','in_progress') ORDER BY id DESC LIMIT 200")
+        c.execute("""SELECT * FROM support_tickets
+                     WHERE status IN ('open','in_progress')
+                       AND COALESCE(reminder_count, 0) < 3
+                     ORDER BY id DESC LIMIT 100""")
         rows = [dict(r) for r in c.fetchall()]
         conn.close()
     except Exception as e:
@@ -1439,6 +1443,7 @@ async def ticket_reminder_job(context):
                         InlineKeyboardButton("🔒 Close Ticket", callback_data=f"st_uclose_{tid}")
                     ]]))
                 mark_ticket_reminded(tid)
+                await asyncio.sleep(0.1)
             except Exception as e:
                 logger.debug(f"[TicketReminder] notify #{tid}: {e}")
     except Exception as e:

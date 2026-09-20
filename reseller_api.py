@@ -1136,7 +1136,7 @@ if _FASTAPI_OK:
             import datetime as _dt
             from database import DB_PATH as _dbp
             try:
-                _c = _sq.connect(_dbp)
+                _c = _sq.connect(_dbp, isolation_level=None)
                 _c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 _c.close()
             except Exception:
@@ -1899,7 +1899,7 @@ if _FASTAPI_OK:
                 f"pre_restore_http_{_dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.db")
             if _os.path.exists(_dbp):
                 try:
-                    _cc = _sq.connect(_dbp)
+                    _cc = _sq.connect(_dbp, isolation_level=None)
                     _cc.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                     _cc.close()
                 except Exception:
