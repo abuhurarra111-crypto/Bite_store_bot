@@ -1010,8 +1010,10 @@ async def _supplier_new_products_job(context):
         from ext_suppliers import list_suppliers, get_adapter_for_supplier, get_ext_products, upsert_ext_product, detect_product_format, update_ext_product
         from async_adapter_helpers import async_fetch_products
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        from utils import escape_md
         for sup in list_suppliers(include_disabled=False):
             sid = int(sup.get('id') or 0)
+            sup_name = sup.get('name') or f"Supplier #{sid}"
             ad = get_adapter_for_supplier(sup)
             if not ad: continue
             fresh = await async_fetch_products(ad)
@@ -1019,23 +1021,79 @@ async def _supplier_new_products_job(context):
             existing = {str(ep.get('remote_id')) for ep in get_ext_products(supplier_id=sid)}
             new_items = [p for p in fresh if str(p.get('remote_id')) not in existing]
             if not new_items: continue
-            shown=[]
-            for p in new_items[:10]:
-                try:
-                    eid = upsert_ext_product(sid, p.get('remote_id'), p.get('name') or '', p.get('description') or '', p.get('cost_usd') or 0, p.get('stock') or 0, raw_json=__import__('json').dumps(p.get('raw') or {}, ensure_ascii=False))
-                    fmt = detect_product_format(p)
-                    if fmt: update_ext_product(eid, delivery_format=fmt, format_detected=1)
-                    shown.append((eid, p))
-                except Exception:
-                    pass
-            if shown:
-                lines=[f"🆕 *New Supplier Products Detected*", "━━━━━━━━━━━━━━━━━━━━", f"🏬 Supplier: *{sup.get('name','?')}*", ""]
-                kb=[]
-                for eid,p in shown[:5]:
-                    lines.append(f"• {p.get('name','?')[:70]} — cost ${float(p.get('cost_usd') or 0):.2f}, stock {int(p.get('stock') or 0)}")
-                    kb.append([InlineKeyboardButton(f"🔄 Sync {str(p.get('name','?'))[:30]}", callback_data=f"ext_prod_sync_{eid}")])
-                kb.append([InlineKeyboardButton('⚙️ Supplier Panel', callback_data=f"ext_sup_view_{sid}")])
-                await context.bot.send_message(ADMIN_ID, '\n'.join(lines), parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
+
+            # If 1-3 new items, send individual rich alert cards with 1-click sync
+            if len(new_items) <= 3:
+                for p in new_items:
+                    try:
+                        eid = upsert_ext_product(sid, p.get('remote_id'), p.get('name') or '', p.get('description') or '', p.get('cost_usd') or 0, p.get('stock') or 0, raw_json=__import__('json').dumps(p.get('raw') or {}, ensure_ascii=False))
+                        fmt = detect_product_format(p)
+                        if fmt: update_ext_product(eid, delivery_format=fmt, format_detected=1)
+
+                        cost = float(p.get('cost_usd') or 0)
+                        stock = int(p.get('stock') or 0)
+                        p_name = (p.get('name') or 'Unnamed Product').strip()
+                        fmt_str = (fmt or "STANDARD").upper()
+
+                        msg = (
+                            f"🆕 *New Supplier Product Detected!*\n"
+                            f"━━━━━━━━━━━━━━━━━━━━\n"
+                            f"🏬 *Supplier:* {escape_md(sup_name)} (`#{sid}`)\n"
+                            f"📦 *Product:* {escape_md(p_name)}\n"
+                            f"💰 *Cost Price:* `${cost:.2f}`\n"
+                            f"📊 *Stock:* `{stock}`\n"
+                            f"⚙️ *Format:* `{escape_md(fmt_str)}`\n\n"
+                            f"_Tap below to immediately sync this product to your live shop catalog._"
+                        )
+                        kb = [
+                            [InlineKeyboardButton("🔄 Sync to Shop Now", callback_data=f"ext_prod_sync_{eid}")],
+                            [InlineKeyboardButton(f"⚙️ View in {sup_name[:20]}", callback_data=f"ext_sup_view_{sid}")]
+                        ]
+                        await context.bot.send_message(
+                            ADMIN_ID,
+                            msg,
+                            parse_mode='Markdown',
+                            reply_markup=InlineKeyboardMarkup(kb)
+                        )
+                    except Exception as ex:
+                        print(f"[SupplierNewProducts] single item error: {ex}")
+            else:
+                # 4+ new items: send batch summary with individual sync buttons
+                shown = []
+                for p in new_items[:8]:
+                    try:
+                        eid = upsert_ext_product(sid, p.get('remote_id'), p.get('name') or '', p.get('description') or '', p.get('cost_usd') or 0, p.get('stock') or 0, raw_json=__import__('json').dumps(p.get('raw') or {}, ensure_ascii=False))
+                        fmt = detect_product_format(p)
+                        if fmt: update_ext_product(eid, delivery_format=fmt, format_detected=1)
+                        shown.append((eid, p))
+                    except Exception:
+                        pass
+                if shown:
+                    lines = [
+                        f"🆕 *New Supplier Products Detected!*",
+                        f"━━━━━━━━━━━━━━━━━━━━",
+                        f"🏬 *Supplier:* {escape_md(sup_name)} (`#{sid}`)",
+                        f"📊 Total New: *{len(new_items)} products*",
+                        "",
+                    ]
+                    kb = []
+                    for eid, p in shown[:5]:
+                        c_usd = float(p.get('cost_usd') or 0)
+                        stk = int(p.get('stock') or 0)
+                        p_title = (p.get('name') or '?').strip()
+                        lines.append(f"• {escape_md(p_title[:55])} — `${c_usd:.2f}` (stock {stk})")
+                        kb.append([InlineKeyboardButton(f"🔄 Sync: {p_title[:28]}", callback_data=f"ext_prod_sync_{eid}")])
+
+                    if len(new_items) > 5:
+                        lines.append(f"\n_...and {len(new_items) - 5} more products._")
+
+                    kb.append([InlineKeyboardButton(f"⚙️ Browse All in {sup_name[:20]}", callback_data=f"ext_sup_import_pick_{sid}_0")])
+                    await context.bot.send_message(
+                        ADMIN_ID,
+                        '\n'.join(lines),
+                        parse_mode='Markdown',
+                        reply_markup=InlineKeyboardMarkup(kb)
+                    )
     except Exception as e:
         print(f'[SupplierNewProducts] failed: {e}')
 
@@ -1379,7 +1437,7 @@ async def post_init(app):
             app.job_queue.run_repeating(_payment_pending_reminder_job, interval=300, first=180, name="payment_pending_reminders")
             app.job_queue.run_repeating(_abandoned_cart_job, interval=600, first=600, name="abandoned_cart_recovery")
             app.job_queue.run_repeating(_daily_admin_summary_job, interval=60, first=30, name="daily_admin_summary_2359_pkt")
-            app.job_queue.run_repeating(_supplier_new_products_job, interval=1800, first=300, name="supplier_new_products_detector")
+            app.job_queue.run_repeating(_supplier_new_products_job, interval=120, first=45, name="supplier_new_products_detector")
             app.job_queue.run_repeating(_payment_risk_alert_job, interval=300, first=240, name="payment_risk_alerts")
     except Exception as e:
         print(f'[BizJobs] setup error: {e}')

@@ -519,6 +519,42 @@ def get_ext_products(supplier_id=None, active_only=False, category_id=None):
     return rows
 
 
+def get_active_supplier_products(supplier_id: int):
+    """Fetch products for a supplier that are ACTIVE and NOT DELETED.
+
+    Uniform rules applied across all suppliers:
+    1. owner_active == 1 (not deactivated by admin)
+    2. source_active == 1 (not deactivated by supplier)
+    3. active == 1
+    4. missing_since is 0 or NULL (not deleted by supplier)
+    5. If linked to shop_product_id > 0:
+       The linked product in `products` table must NOT be archived/deleted (is_archived == 0)
+       and must NOT be deactivated (is_active == 1).
+    6. Out of stock products (stock <= 0) ARE KEPT and SHOWN, as long as they
+       are not deactivated and not deleted.
+    """
+    ensure_ext_supplier_tables()
+    conn = get_connection(); c = conn.cursor()
+    query = """
+        SELECT ep.*,
+               COALESCE(p.is_active, 1) as shop_is_active,
+               COALESCE(p.is_archived, 0) as shop_is_archived
+        FROM ext_products ep
+        LEFT JOIN products p ON ep.shop_product_id = p.id AND ep.shop_product_id > 0
+        WHERE ep.supplier_id = ?
+          AND COALESCE(ep.owner_active, ep.active, 1) = 1
+          AND COALESCE(ep.source_active, 1) = 1
+          AND COALESCE(ep.active, 1) = 1
+          AND (ep.missing_since IS NULL OR ep.missing_since = 0)
+          AND (ep.shop_product_id IS NULL OR ep.shop_product_id = 0 OR (COALESCE(p.is_active, 1) = 1 AND COALESCE(p.is_archived, 0) = 0))
+        ORDER BY ep.id DESC
+    """
+    c.execute(query, (int(supplier_id),))
+    rows = [dict(r) for r in c.fetchall()]
+    conn.close()
+    return rows
+
+
 def get_ext_product(eid):
     ensure_ext_supplier_tables()
     conn = get_connection(); c = conn.cursor()
@@ -2648,8 +2684,10 @@ async def ext_sup_view_callback(update, context):
     conn = get_connection(); c = conn.cursor()
     c.execute("SELECT COUNT(*) FROM ext_products WHERE supplier_id=?", (sid,))
     total_p = c.fetchone()[0] or 0
-    c.execute("SELECT COUNT(*) FROM ext_products WHERE supplier_id=? AND active=1", (sid,))
-    active_p = c.fetchone()[0] or 0
+    active_prods = get_active_supplier_products(sid)
+    active_p = len(active_prods)
+    oos_p = sum(1 for p in active_prods if int(p.get("stock") or 0) <= 0)
+    stock_status_note = f" ({oos_p} out of stock)" if oos_p else ""
     # v128: 24h supplier health summary from ext_orders
     try:
         c.execute("""SELECT status, COUNT(*) AS n FROM ext_orders
@@ -2683,7 +2721,7 @@ async def ext_sup_view_callback(update, context):
         f"⚠️ Low-bal threshold: `${s.get('low_bal_threshold', 5):.2f}`\n"
         f"🔄 Product auto-sync: `{auto_label}`\n"
         f"💡 Balance refresh: `auto every 5 min + Test & Refresh + after orders`\n"
-        f"📦 Products: *{active_p}/{total_p}* active\n"
+        f"📦 Active Products: *{active_p}*{stock_status_note}\n"
         f"🩺 24h Health: ✅ {hmap.get('delivered',0)} delivered · ❌ {hmap.get('failed',0)} failed · 💸 {hmap.get('refunded',0)} refunded\n"
         + (f"⚠️ Last failure: `{escape_md(last_fail[:90])}`\n" if last_fail else "")
     )
@@ -2971,7 +3009,7 @@ async def ext_sup_import_pick_callback(update, context):
     except Exception:
         return
     per_page = 10
-    prods = get_ext_products(supplier_id=sid)
+    prods = get_active_supplier_products(supplier_id=sid)
     total = len(prods)
     total_pages = max(1, (total + per_page - 1) // per_page)
     page = max(0, min(page, total_pages - 1))
@@ -2987,7 +3025,7 @@ async def ext_sup_import_pick_callback(update, context):
     lines = [
         f"☑️ *Browse Supplier #{sid} — Page {page+1}/{total_pages}*",
         f"━━━━━━━━━━━━━━━━━━━━",
-        f"_Total: {total} products_",
+        f"_Active Products: {total}_",
         "",
     ]
     # 🆕 v90/v91: use name_for_button() to defensively strip [[HTML]] / <tg-emoji>
@@ -3002,39 +3040,47 @@ async def ext_sup_import_pick_callback(update, context):
         _mkbtn = None
     kb = []
     for p in slice_:
-        # Legend: 🟢 active + emoji OK · 🟡 needs emoji · 🔴 inactive
-        if not p["active"]:
-            icon = "🔴"
-        elif p["emoji_status"] == "ok" or p["emoji_id"]:
-            icon = "🟢"
-        else:
-            icon = "🟡"
-        raw_name = p["name"] or "?"
-        # Strip any HTML markup + [[HTML]] sentinel BEFORE truncating so we
-        # never cut mid-tag (root cause of screenshot bug).
-        clean = _clean_name(raw_name) or "?"
-        name_line = clean[:60]      # in the text body we can afford 60 chars
-        name_btn  = clean[:32]      # button labels stay under Telegram limit
         cost = float(p.get("cost_usd") or 0)
         sell = float(p.get("sell_price") or 0)
         stock = int(p.get("stock") or 0)
+        is_oos = (stock <= 0)
+
+        # Legend:
+        # Out-of-stock active products stay visible with explicit OOS indicator
+        if is_oos:
+            icon = "🔴"
+            stock_str = "⚠️ OUT OF STOCK"
+        elif p.get("emoji_status") == "ok" or p.get("emoji_id"):
+            icon = "🟢"
+            stock_str = f"stock {stock}"
+        else:
+            icon = "🟡"
+            stock_str = f"stock {stock}"
+
+        raw_name = p["name"] or "?"
+        clean = _clean_name(raw_name) or "?"
+        name_line = clean[:60]
+        name_btn  = clean[:26] if is_oos else clean[:32]
+        synced_mark = " ⚡[LIVE]" if p.get("synced_to_shop") else ""
+
         # Message body line — plain clean text, escape for Markdown
-        lines.append(f"{icon} `#{p['id']}` {escape_md(name_line)}")
-        lines.append(f"    cost ${cost:.2f} → sell ${sell:.2f} · stock {stock}")
+        lines.append(f"{icon} `#{p['id']}` {escape_md(name_line)}{synced_mark}")
+        lines.append(f"    cost ${cost:.2f} → sell ${sell:.2f} · {stock_str}")
         # Button — use make_premium_button so the emoji renders as ICON
         # (proper Bot API 9.4 way — no raw HTML tags in button text).
         eid = str(p.get("emoji_id") or "").strip()
+        btn_label = f"{icon} {name_btn}" + (" (OOS)" if is_oos else "")
         if _mkbtn is not None and eid:
-            kb.append([_mkbtn(f"{icon} {name_btn}",
+            kb.append([_mkbtn(btn_label,
                               emoji_id=eid,
                               callback_data=f"ext_prod_view_{p['id']}")])
         else:
             kb.append([InlineKeyboardButton(
-                f"{icon} {name_btn}",
+                btn_label,
                 callback_data=f"ext_prod_view_{p['id']}"
             )])
     if not slice_:
-        lines.append("📭 _No products imported yet — tap 📥 Import Products first._")
+        lines.append("📭 _No active products found for this supplier (all deactivated/deleted)._")
 
     nav = []
     if page > 0:
@@ -3276,10 +3322,10 @@ async def ext_sup_bulk_set_callback(update, context):
         sid = int(parts[0]); pct = float(parts[1])
     except Exception:
         return
-    prods = get_ext_products(supplier_id=sid)
+    prods = get_active_supplier_products(supplier_id=sid)
     for p in prods:
         update_ext_product(p["id"], markup_pct=pct)
-    await q.answer(f"✅ Applied {pct:.0f}% to {len(prods)} products.",
+    await q.answer(f"✅ Applied {pct:.0f}% to {len(prods)} active products.",
                    show_alert=True)
     _set_q_data(q, f"ext_sup_import_pick_{sid}_0")
     await ext_sup_import_pick_callback(update, context)
