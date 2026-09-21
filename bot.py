@@ -455,6 +455,14 @@ for _http_logger in ("httpx", "httpcore"):
 async def global_error_handler(update, context):
     """Log uncaught handler errors so bugs are visible instead of silent."""
     logging.getLogger(__name__).exception("Unhandled bot error", exc_info=context.error)
+    # 🛡️ Defensive Webhook Guard: if Conflict error occurred, auto-delete webhook immediately
+    try:
+        from telegram.error import Conflict
+        if isinstance(getattr(context, "error", None), Conflict) or "Conflict" in str(getattr(context, "error", "")):
+            await context.bot.delete_webhook(drop_pending_updates=False)
+            logging.getLogger(__name__).warning("🛡️ [WebhookGuard] Conflict detected: auto-deleted external webhook!")
+    except Exception as _wh_err:
+        pass
     try:
         if update and update.callback_query:
             try:
@@ -1122,6 +1130,35 @@ async def _payment_risk_alert_job(context):
         print(f'[PaymentRisk] alert job failed: {e}')
 
 
+async def _webhook_watchdog_job(context):
+    """🛡️ Defensive Webhook Guard:
+    Checks if an external service (like tele.goldenherd.com) hijacked the bot
+    by calling setWebhook. If any webhook URL is detected, immediately deletes
+    the webhook so long polling continues uninterrupted, and alerts admin.
+    """
+    try:
+        info = await context.bot.get_webhook_info()
+        if info and getattr(info, "url", None):
+            bad_url = str(info.url).strip()
+            if bad_url:
+                await context.bot.delete_webhook(drop_pending_updates=False)
+                print(f"🚨 [WebhookGuard] Hijacked webhook detected ({bad_url})! Automatically deleted & polling restored.")
+                try:
+                    from config import ADMIN_ID
+                    await context.bot.send_message(
+                        ADMIN_ID,
+                        f"🛡️ *Security Guard Alert*\n"
+                        f"━━━━━━━━━━━━━━━━━━━━\n"
+                        f"⚠️ External webhook hijack detected:\n`{bad_url}`\n\n"
+                        f"✅ *Action Taken:* Webhook automatically deleted and bot polling restored immediately!",
+                        parse_mode="Markdown"
+                    )
+                except Exception:
+                    pass
+    except Exception as e:
+        pass
+
+
 async def _delayed_live_notify_job(context):
     """Send BOSS BOT IS LIVE only after DB looks stable for restore workflow.
     🔧 v131: includes maintenance status + 2 buttons: turn OFF maintenance now,
@@ -1439,8 +1476,20 @@ async def post_init(app):
             app.job_queue.run_repeating(_daily_admin_summary_job, interval=60, first=30, name="daily_admin_summary_2359_pkt")
             app.job_queue.run_repeating(_supplier_new_products_job, interval=120, first=45, name="supplier_new_products_detector")
             app.job_queue.run_repeating(_payment_risk_alert_job, interval=300, first=240, name="payment_risk_alerts")
+            # 🛡️ Defensive Webhook Guard: checks every 15s to auto-clear external hijacks
+            app.job_queue.run_repeating(_webhook_watchdog_job, interval=15, first=5, name="webhook_hijack_watchdog")
+            print("[WebhookGuard] Watchdog scheduled every 15s")
     except Exception as e:
         print(f'[BizJobs] setup error: {e}')
+
+    # 🛡️ Defensive Webhook Guard: clear any leftover webhook at startup
+    try:
+        wh_info = await app.bot.get_webhook_info()
+        if wh_info and getattr(wh_info, "url", None):
+            await app.bot.delete_webhook(drop_pending_updates=False)
+            print(f"🛡️ [post_init] Cleared leftover webhook: {wh_info.url}")
+    except Exception as _whe:
+        print(f"⚠️ [post_init] delete_webhook startup check error: {_whe}")
 
     # 🆕 v141: Live notification is delayed until startup DB checks/jobs settle.
     # This prevents admin restoring DB right after an early message while old
@@ -3707,8 +3756,15 @@ if __name__ == "__main__":
             main()
             break  # graceful shutdown
         except _PTBConflict as _e:
-            print(f"⚠️ Telegram polling conflict (another instance/webhook). Retrying fresh in 15s: {_e}")
-            _time.sleep(15)
+            print(f"⚠️ Telegram polling conflict (another instance/webhook). Clearing webhook and retrying fresh in 10s: {_e}")
+            try:
+                import urllib.request as _urllib_req
+                _tok = (os.getenv("BOT_TOKEN") or "").strip()
+                if _tok:
+                    _urllib_req.urlopen(f"https://api.telegram.org/bot{_tok}/deleteWebhook?drop_pending_updates=False", timeout=10)
+            except Exception:
+                pass
+            _time.sleep(10)
         except (_PTBNetworkError, _PTBTimedOut) as _e:
             print(f"⚠️ Telegram network error. Retrying fresh in 15s: {_e}")
             _time.sleep(15)
