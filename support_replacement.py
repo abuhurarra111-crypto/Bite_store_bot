@@ -1452,6 +1452,7 @@ async def ticket_reminder_job(context):
                 )
                 from datetime import datetime
                 update_ticket(u_tid, last_admin_reminder_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                await asyncio.sleep(0.5)
             except Exception as _ume:
                 logger.debug(f"[TicketReminder] admin notify #{u_tid}: {_ume}")
     except Exception as _aue:

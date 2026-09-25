@@ -74,11 +74,22 @@ MAINT_TEMPLATES = {
 # ------------------------------------------------------------
 # Storage helpers
 # ------------------------------------------------------------
+_MAINT_CACHE = None
+_MAINT_CACHE_TS = 0.0
+
 def is_maintenance_on() -> bool:
-    return str(get_setting("maint_enabled", "0")) == "1"
+    global _MAINT_CACHE, _MAINT_CACHE_TS
+    now = time.time()
+    if _MAINT_CACHE is None or (now - _MAINT_CACHE_TS) > 10.0:
+        _MAINT_CACHE = str(get_setting("maint_enabled", "0")) == "1"
+        _MAINT_CACHE_TS = now
+    return _MAINT_CACHE
 
 def set_maintenance(on: bool):
+    global _MAINT_CACHE, _MAINT_CACHE_TS
     set_setting("maint_enabled", "1" if on else "0")
+    _MAINT_CACHE = bool(on)
+    _MAINT_CACHE_TS = time.time()
 
 def get_maintenance_template() -> str:
     """Returns the currently-selected template key ('1'..'5' or 'custom')."""

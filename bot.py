@@ -1492,9 +1492,9 @@ async def post_init(app):
             app.job_queue.run_repeating(_daily_admin_summary_job, interval=60, first=30, name="daily_admin_summary_2359_pkt")
             app.job_queue.run_repeating(_supplier_new_products_job, interval=120, first=45, name="supplier_new_products_detector")
             app.job_queue.run_repeating(_payment_risk_alert_job, interval=300, first=240, name="payment_risk_alerts")
-            # 🛡️ Defensive Webhook Guard: checks every 15s to auto-clear external hijacks
-            app.job_queue.run_repeating(_webhook_watchdog_job, interval=15, first=5, name="webhook_hijack_watchdog")
-            print("[WebhookGuard] Watchdog scheduled every 15s")
+            # 🛡️ Defensive Webhook Guard: checks every 3 min to auto-clear external hijacks
+            app.job_queue.run_repeating(_webhook_watchdog_job, interval=180, first=60, name="webhook_hijack_watchdog")
+            print("[WebhookGuard] Watchdog scheduled every 180s")
     except Exception as e:
         print(f'[BizJobs] setup error: {e}')
 
@@ -1989,21 +1989,23 @@ def main():
     # 🌐 v26: Use proxy for Telegram connection if set in .env
     if TELEGRAM_PROXY:
         print(f"🌐 Using Telegram proxy: {TELEGRAM_PROXY[:40]}...")
-        request = HTTPXRequest(proxy=TELEGRAM_PROXY, connect_timeout=30, read_timeout=30)
-        get_updates_request = HTTPXRequest(proxy=TELEGRAM_PROXY, connect_timeout=30, read_timeout=30)
+        request = HTTPXRequest(proxy=TELEGRAM_PROXY, connect_timeout=15, read_timeout=20, pool_timeout=5.0, connection_pool_size=64)
+        get_updates_request = HTTPXRequest(proxy=TELEGRAM_PROXY, connect_timeout=15, read_timeout=35, pool_timeout=5.0, connection_pool_size=16)
         app = (Application.builder()
                           .token(BOT_TOKEN)
                           .request(request)
                           .get_updates_request(get_updates_request)
+                          .concurrent_updates(True)
                           .post_init(post_init)
                           .build())
     else:
-        request = HTTPXRequest(connect_timeout=25, read_timeout=30, write_timeout=25)
-        get_updates_request = HTTPXRequest(connect_timeout=25, read_timeout=35)
+        request = HTTPXRequest(connect_timeout=15, read_timeout=20, write_timeout=15, pool_timeout=5.0, connection_pool_size=128)
+        get_updates_request = HTTPXRequest(connect_timeout=15, read_timeout=35, pool_timeout=5.0, connection_pool_size=16)
         app = (Application.builder()
                           .token(BOT_TOKEN)
                           .request(request)
                           .get_updates_request(get_updates_request)
+                          .concurrent_updates(True)
                           .post_init(post_init)
                           .build())
 

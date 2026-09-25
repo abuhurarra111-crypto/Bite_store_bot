@@ -116,11 +116,10 @@ def get_connection():
     try:
         if not _WAL_SETUP_DONE:
             conn.execute("PRAGMA journal_mode = WAL")
-            conn.execute("PRAGMA busy_timeout = 10000")
             conn.execute("PRAGMA synchronous = NORMAL")
+            conn.execute("PRAGMA mmap_size = 268435456")  # 256MB RAM memory mapping
+            conn.execute("PRAGMA cache_size = -64000")    # 64MB memory page cache
             _WAL_SETUP_DONE = True
-        else:
-            conn.execute("PRAGMA busy_timeout = 10000")
     except Exception:
         pass
     return conn
@@ -859,6 +858,25 @@ def setup_banned_users_table():
     conn.commit(); conn.close()
 
 
+_BANNED_USERS_CACHE = None
+
+def _get_banned_set():
+    global _BANNED_USERS_CACHE
+    if _BANNED_USERS_CACHE is None:
+        try:
+            setup_banned_users_table()
+            conn = get_connection(); c = conn.cursor()
+            c.execute("SELECT user_id FROM banned_users")
+            _BANNED_USERS_CACHE = {int(r[0]) for r in c.fetchall()}
+            conn.close()
+        except Exception:
+            return set()
+    return _BANNED_USERS_CACHE
+
+def invalidate_banned_cache():
+    global _BANNED_USERS_CACHE
+    _BANNED_USERS_CACHE = None
+
 def ban_user(user_id, reason=""):
     """Ban a user globally (block all bot actions)."""
     setup_banned_users_table()
@@ -873,6 +891,7 @@ def ban_user(user_id, reason=""):
               (uid, str(reason or "")[:200],
                datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit(); conn.close()
+    invalidate_banned_cache()
     return True
 
 
@@ -886,22 +905,19 @@ def unban_user(user_id):
     conn = get_connection(); c = conn.cursor()
     c.execute("DELETE FROM banned_users WHERE user_id=?", (uid,))
     conn.commit(); conn.close()
+    invalidate_banned_cache()
     return True
 
 
 def is_user_banned(user_id):
-    """True if the user is globally banned."""
+    """True if the user is globally banned. Instant in-memory check."""
     if user_id is None:
         return False
     try:
         uid = int(user_id)
     except Exception:
         return False
-    setup_banned_users_table()
-    conn = get_connection(); c = conn.cursor()
-    c.execute("SELECT 1 FROM banned_users WHERE user_id=?", (uid,))
-    r = c.fetchone(); conn.close()
-    return r is not None
+    return uid in _get_banned_set()
 
 
 def list_banned_users():
@@ -4398,16 +4414,19 @@ def auto_solve_expired_tickets(days=30):
     return cnt
 
 def get_unanswered_customer_tickets(reminder_gap_hours=2):
-    """Find open tickets where customer sent a reply/message and admin has not answered yet."""
+    """Find recent open tickets where customer sent a reply/message and admin has not answered yet.
+    Limited to active tickets from the last 2 days, max 3 per cycle to prevent rate-limit backlog."""
     conn = get_connection(); c = conn.cursor()
     c.execute("""
         SELECT * FROM support_tickets
         WHERE status IN ('open', 'in_progress')
           AND last_sender = 'user'
           AND COALESCE(admin_replied, 0) = 0
+          AND datetime(COALESCE(updated_at, created_at)) >= datetime('now', '-2 days')
           AND (last_admin_reminder_at IS NULL OR last_admin_reminder_at = '' 
                OR datetime(last_admin_reminder_at) <= datetime('now', '-' || ? || ' hours'))
-        ORDER BY created_at ASC
+        ORDER BY created_at DESC
+        LIMIT 3
     """, (int(reminder_gap_hours),))
     rows = c.fetchall()
     conn.close()

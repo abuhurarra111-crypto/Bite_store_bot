@@ -73,8 +73,13 @@ def _pretty_event(cb_or_cmd: str) -> str:
     return f"📌 {s[:30]}"
 
 
+_TABLE_CHECKED = False
+
 def ensure_table():
     """Create the tracking table if it doesn't exist."""
+    global _TABLE_CHECKED
+    if _TABLE_CHECKED:
+        return
     try:
         from database import get_connection
         conn = get_connection()
@@ -91,6 +96,7 @@ def ensure_table():
         c.execute("CREATE INDEX IF NOT EXISTS idx_uc_time      ON user_clicks(created_at)")
         conn.commit()
         conn.close()
+        _TABLE_CHECKED = True
     except Exception as e:
         logger.debug(f"[Tracking] ensure_table failed: {e}")
 
