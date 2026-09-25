@@ -945,8 +945,13 @@ ACT_DELAY = 911
 
 
 def _is_admin(uid):
-    from config import ADMIN_ID
-    return uid == ADMIN_ID
+    if not uid:
+        return False
+    try:
+        from config import ADMIN_ID
+        return int(uid) == int(ADMIN_ID)
+    except Exception:
+        return False
 
 
 def _g(key, default=""):
@@ -1960,12 +1965,7 @@ async def _resolve_chat_id(bot, chat_id: str) -> str:
 # get_chat_member per target (3 targets × network latency each tap) which
 # made the bot feel slow/stuck. Cache result per (user, chat) for 300s.
 _FJ_MEMBER_CACHE = {}
-# 🐛 v170.20 SPEED FIX: TTL 5s → 60s. 5s TTL har 5 second mein user ke tap par
-# 3 channels ka network member-check (500ms-1.5s) chalata tha → bot "slow".
-# Ab positive result 60s cache hota hai (12x kam network). Group leave phir bhi
-# INSTANT detect hota hai (ChatMemberHandler cache invalidate karta hai); channel
-# leave max 60s me detect hota hai (Telegram channel leave ka koi event nahi).
-_FJ_MEMBER_CACHE_TTL = 60
+_FJ_MEMBER_CACHE_TTL = 300  # 5 min in-memory cache for ultra-fast taps
 _FJ_MEMBER_CACHE_LOCK = asyncio.Lock() if False else None  # placeholder
 
 
@@ -2054,25 +2054,18 @@ async def _is_member(bot, user_id: int, chat_id: str) -> bool:
                 _FJ_MEMBER_CACHE.pop(k, None)
         return result
     except (TimeoutError, asyncio.TimeoutError):
-        # 🐛 v170.1 FIX: get_chat_member slow ho to callback crash nahi hona
-        # chahiye (pehle TimeoutError propagate hota tha → user sirf
-        # "Checking..." toast dekhta tha aur kuch nahi hota tha).
         logger.warning(f"[ForceJoin] Member check timed out for {user_id} in {chat_id} — failing open")
-        return True  # fail open — state unknown, don't cache
+        _FJ_MEMBER_CACHE[cache_key] = (now, True)
+        return True  # fail open — state unknown
     except TelegramError as e:
         err = str(e)
-        # "Chat not found" — bot is not in the group
-        # "User not found" — user never interacted with bot before
-        # Both → fail OPEN (don't block user)
         logger.warning(f"[ForceJoin] Member check for {user_id} in {chat_id}: {e}")
-
         if "Chat not found" in err:
             logger.error(
                 f"[ForceJoin] ⚠️ Bot is NOT a member of {chat_id}. "
                 f"Add bot as admin to the group/channel first!"
             )
-        # 🐛 v170.3: fail-open True cache NAHI karo — ek transient API error ke
-        # baad user 5s tak "member" na samjha jaye. Agli check dobara fresh hogi.
+        _FJ_MEMBER_CACHE[cache_key] = (now, True)
         return True  # Fail open — do NOT block user on API errors
 
 
@@ -2243,6 +2236,8 @@ async def check_force_join(update, context) -> bool:
     return False  # Block user
 
 
+_FJ_MIGRATION_CHECKED = False
+
 async def force_join_action_gate(update, context) -> bool:
     """🆕 v135: GLOBAL gate for EXISTING users. Called at the top of every
     user action (text + callback). If force join is enabled and the user
@@ -2252,11 +2247,14 @@ async def force_join_action_gate(update, context) -> bool:
     Returns True when the action was blocked (caller must stop).
     Returns False when the user may proceed.
     """
-    try:
-        from database import migrate_legacy_force_join
-        migrate_legacy_force_join()
-    except Exception:
-        pass
+    global _FJ_MIGRATION_CHECKED
+    if not _FJ_MIGRATION_CHECKED:
+        try:
+            from database import migrate_legacy_force_join
+            migrate_legacy_force_join()
+            _FJ_MIGRATION_CHECKED = True
+        except Exception:
+            pass
     if _g(S_FJ_ENABLED, "0") != "1":
         return False
     user = update.effective_user

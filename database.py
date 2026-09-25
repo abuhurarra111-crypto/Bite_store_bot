@@ -116,10 +116,10 @@ def get_connection():
     try:
         if not _WAL_SETUP_DONE:
             conn.execute("PRAGMA journal_mode = WAL")
-            conn.execute("PRAGMA synchronous = NORMAL")
-            conn.execute("PRAGMA mmap_size = 268435456")  # 256MB RAM memory mapping
-            conn.execute("PRAGMA cache_size = -64000")    # 64MB memory page cache
             _WAL_SETUP_DONE = True
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute("PRAGMA mmap_size = 268435456")  # 256MB RAM memory mapping
+        conn.execute("PRAGMA cache_size = -64000")    # 64MB memory page cache
     except Exception:
         pass
     return conn
@@ -3809,8 +3809,15 @@ def set_response(key, value):
 
 # ── Settings ──
 _SETTINGS_CACHE = {}
-_SETTINGS_CACHE_TTL = 3.0  # seconds — settings rarely change; huge speedup
+_SETTINGS_CACHE_TTL = 120.0  # seconds — settings rarely change; instant in-memory speed
 import time as _stime
+
+def invalidate_all_caches():
+    """Clear all process caches upon DB restore/swap."""
+    global _WAL_SETUP_DONE, _BANNED_USERS_CACHE, _SETTINGS_CACHE
+    _WAL_SETUP_DONE = False
+    _BANNED_USERS_CACHE = None
+    _SETTINGS_CACHE.clear()
 
 
 def get_setting(key, default=""):

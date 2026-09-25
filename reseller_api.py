@@ -1777,6 +1777,24 @@ if _FASTAPI_OK:
             try: _os.remove(tmp_path)
             except Exception: pass
 
+            # ⚡ Ultra-fast DB initialization & pragmas on restored DB
+            try:
+                c_new = _sq.connect(_dbp, autocommit=True)
+                c_new.execute("PRAGMA journal_mode = WAL")
+                c_new.execute("PRAGMA synchronous = NORMAL")
+                c_new.execute("PRAGMA mmap_size = 268435456")
+                c_new.execute("PRAGMA cache_size = -64000")
+                c_new.close()
+            except Exception:
+                pass
+
+            # Invalidate all in-memory caches on the running process
+            try:
+                from database import invalidate_all_caches
+                invalidate_all_caches()
+            except Exception:
+                pass
+
             mig_stats = {}
             if _mig:
                 try:

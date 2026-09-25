@@ -3089,39 +3089,33 @@ async def ext_sup_import_all_callback(update, context):
     if err:
         text = f"❌ *Import failed*\n\n{escape_md(err)}"
     else:
-        # Try to auto-apply emoji library & auto-mirror to shop so they appear immediately!
+        # Auto-apply emojis and category guesses to ext_products, but keep UNSYNCED by default.
+        # Admin manually selects which products to sync to shop via Browse Products.
         prods = get_ext_products(supplier_id=sid)
-        synced_count = 0
         for p in prods:
             try:
                 apply_emoji_to_product(p["id"])
             except Exception:
                 pass
             try:
-                # If product doesn't have category, guess it
                 if not p.get("category_id"):
                     cid = _smart_guess_category(p.get("name") or "")
                     if cid:
                         update_ext_product(p["id"], category_id=cid)
-                # Auto-sync to shop
-                update_ext_product(p["id"], synced_to_shop=1)
-                mirror_ext_to_products(p["id"], sync_category=True)
-                synced_count += 1
-            except Exception as _m_err:
-                logger.warning(f"[import_all] auto-sync #{p['id']}: {_m_err}")
+            except Exception:
+                pass
 
         text = (
             f"✅ *Import complete!*\n"
             f"━━━━━━━━━━━━━━━━━━━━\n\n"
             f"📥 Imported from supplier: *{n} products*\n"
-            f"🛍️ Added to Shop & Edit Items: *{synced_count} products*\n\n"
-            f"_All products are live in your shop and categorized!_\n"
-            f"_Default markup: 40% (edit prices via Edit Items or Browse Products)._"
+            f"⚪ Status: *Unsynced (ready for manual selection)*\n\n"
+            f"_Tap **Browse Products** below to select and sync only the products you want in your shop!_"
         )
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("☑️ Browse Products", callback_data=f"ext_sup_import_pick_{sid}_0")],
         [InlineKeyboardButton("⚙️ Supplier Panel",  callback_data=f"ext_sup_view_{sid}")],
-        [InlineKeyboardButton("📝 Edit Items",      callback_data="admin_products")],
+        [InlineKeyboardButton("📦 All Suppliers",   callback_data="admin_suppliers")],
     ])
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
 

@@ -101,8 +101,38 @@ def ensure_table():
         logger.debug(f"[Tracking] ensure_table failed: {e}")
 
 
+import queue as _queue
+import threading as _threading
+import time as _ttime
+
+_CLICK_QUEUE = _queue.Queue(maxsize=10000)
+_CLICK_WORKER_STARTED = False
+
+def _click_drain_worker():
+    while True:
+        try:
+            batch = [_CLICK_QUEUE.get()]
+            while len(batch) < 50:
+                try:
+                    batch.append(_CLICK_QUEUE.get_nowait())
+                except _queue.Empty:
+                    break
+            if batch:
+                ensure_table()
+                from database import get_connection
+                conn = get_connection()
+                c = conn.cursor()
+                c.executemany("INSERT INTO user_clicks (user_id, action) VALUES (?, ?)", batch)
+                conn.commit()
+                conn.close()
+        except Exception as e:
+            logger.debug(f"[Tracking] drain error: {e}")
+        _ttime.sleep(0.5)
+
+
 def log_click(user_id, action):
-    """Log a single user click/command. Silently no-op on any error."""
+    """Log a single user click/command asynchronously without blocking the event loop."""
+    global _CLICK_WORKER_STARTED
     if not user_id or not action:
         return
     # Skip admin's own clicks (avoid polluting DB with admin testing)
@@ -116,19 +146,14 @@ def log_click(user_id, action):
     skip_prefixes = ("act_noop", "noop", "_noop")
     if any(str(action).startswith(p) for p in skip_prefixes):
         return
+    if not _CLICK_WORKER_STARTED:
+        t = _threading.Thread(target=_click_drain_worker, daemon=True, name="click_logger_worker")
+        t.start()
+        _CLICK_WORKER_STARTED = True
     try:
-        ensure_table()
-        from database import get_connection
-        conn = get_connection()
-        c = conn.cursor()
-        c.execute(
-            "INSERT INTO user_clicks (user_id, action) VALUES (?, ?)",
-            (int(user_id), str(action)[:60]),
-        )
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.debug(f"[Tracking] log_click failed: {e}")
+        _CLICK_QUEUE.put_nowait((int(user_id), str(action)[:60]))
+    except _queue.Full:
+        pass
 
 
 def get_user_clicks(user_id, limit=30):
