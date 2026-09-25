@@ -1012,11 +1012,11 @@ class SupplierAdapterBase:
             logger.warning(f"[{self.KEY_ID}] GET {path}: {e}")
             return None
 
-    def _post(self, path, body, timeout=20):
+    def _post(self, path, body=None, timeout=20):
         url = self.base_url + path
         try:
             r = requests.post(url, headers=self._headers(),
-                              params=self._params(), json=body, timeout=timeout)
+                              params=self._params(), json=(body or {}), timeout=timeout)
             return r
         except Exception as e:
             logger.warning(f"[{self.KEY_ID}] POST {path}: {e}")
@@ -1755,7 +1755,7 @@ class MMOStoreAdapter(SupplierAdapterBase):
             data = j.get("data") or {}
             res_order_id = data.get("order_id") or _extract_order_id(data) or _extract_order_id(j)
             if res_order_id:
-                r_conf = self._post(f"/api/v1/orders/{res_order_id}/confirm", timeout=45)
+                r_conf = self._post(f"/api/v1/orders/{res_order_id}/confirm", body={}, timeout=45)
                 if r_conf is not None:
                     try:
                         j_conf = r_conf.json()

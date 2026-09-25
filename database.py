@@ -4328,14 +4328,24 @@ def setup_support_tables():
     # 🆕 v158: 3-hour close-reminder tracking (no more 30-min auto-close)
     ensure_column(c, "support_tickets", "last_reminder_at", "TEXT DEFAULT ''")
     ensure_column(c, "support_tickets", "reminder_count", "INTEGER DEFAULT 0")
+    # 🆕 v170.108: Enhanced Ticket Schema (Name, Product, Reply Tracking, 30-day lifecycle)
+    ensure_column(c, "support_tickets", "customer_name", "TEXT DEFAULT ''")
+    ensure_column(c, "support_tickets", "product_name", "TEXT DEFAULT ''")
+    ensure_column(c, "support_tickets", "product_id", "INTEGER DEFAULT 0")
+    ensure_column(c, "support_tickets", "last_sender", "TEXT DEFAULT 'user'")
+    ensure_column(c, "support_tickets", "admin_replied", "INTEGER DEFAULT 0")
+    ensure_column(c, "support_tickets", "last_admin_reminder_at", "TEXT DEFAULT ''")
 
     conn.commit(); conn.close()
 
 
-def create_ticket(user_id, subject, description=""):
+def create_ticket(user_id, subject, description="", customer_name="", product_name="", product_id=0):
     conn = get_connection(); c = conn.cursor()
-    c.execute("INSERT INTO support_tickets (user_id, subject, description) VALUES (?,?,?)",
-              (user_id, subject[:200], description[:2000]))
+    c.execute("""INSERT INTO support_tickets 
+                 (user_id, subject, description, customer_name, product_name, product_id, last_sender, admin_replied) 
+                 VALUES (?,?,?,?,?,?,'user',0)""",
+              (user_id, (subject or "")[:200], (description or "")[:2000],
+               (customer_name or "")[:100], (product_name or "")[:100], int(product_id or 0)))
     tid = c.lastrowid; conn.commit(); conn.close(); return tid
 
 def get_ticket(tid):
@@ -4357,7 +4367,9 @@ def get_all_tickets(status=None):
     r = c.fetchall(); conn.close(); return r
 
 def update_ticket(tid, **kwargs):
-    allowed = {"status", "admin_reply", "subject", "description"}
+    allowed = {"status", "admin_reply", "subject", "description",
+               "customer_name", "product_name", "product_id",
+               "last_sender", "admin_replied", "last_reminder_at", "last_admin_reminder_at"}
     fields = {k: v for k, v in kwargs.items() if k in allowed}
     if not fields: return
     from datetime import datetime
@@ -4367,6 +4379,39 @@ def update_ticket(tid, **kwargs):
     conn = get_connection(); c = conn.cursor()
     c.execute(f"UPDATE support_tickets SET {sets} WHERE id=?", vals)
     conn.commit(); conn.close()
+
+def auto_solve_expired_tickets(days=30):
+    """Auto-close support tickets that have been inactive or open for >= 30 days."""
+    conn = get_connection(); c = conn.cursor()
+    c.execute("""
+        UPDATE support_tickets
+        SET status = 'closed',
+            admin_reply = CASE WHEN admin_reply IS NULL OR admin_reply = '' 
+                               THEN 'Auto-resolved after 30 days of inactivity' 
+                               ELSE admin_reply || ' (Auto-resolved after 30 days)' END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE status IN ('open', 'in_progress')
+          AND datetime(COALESCE(updated_at, created_at)) <= datetime('now', '-' || ? || ' days')
+    """, (int(days),))
+    cnt = c.rowcount
+    conn.commit(); conn.close()
+    return cnt
+
+def get_unanswered_customer_tickets(reminder_gap_hours=2):
+    """Find open tickets where customer sent a reply/message and admin has not answered yet."""
+    conn = get_connection(); c = conn.cursor()
+    c.execute("""
+        SELECT * FROM support_tickets
+        WHERE status IN ('open', 'in_progress')
+          AND last_sender = 'user'
+          AND COALESCE(admin_replied, 0) = 0
+          AND (last_admin_reminder_at IS NULL OR last_admin_reminder_at = '' 
+               OR datetime(last_admin_reminder_at) <= datetime('now', '-' || ? || ' hours'))
+        ORDER BY created_at ASC
+    """, (int(reminder_gap_hours),))
+    rows = c.fetchall()
+    conn.close()
+    return rows
 
 def get_open_tickets_count():
     conn = get_connection(); c = conn.cursor()

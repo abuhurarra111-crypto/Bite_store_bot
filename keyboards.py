@@ -1097,6 +1097,8 @@ def admin_products_keyboard(prods, page=0, per_page=ADMIN_PRODUCTS_PAGE_SIZE):
                                              callback_data=f"adminprodpg_{page + 1}"))
         kb.append(nav)
 
+    # 🆕 v170.108: Search Product
+    kb.append([InlineKeyboardButton("🔍 Search Products", callback_data="adm_prod_search_start")])
     # 🆕 v170.100: Top Sales Ranking & Mass Refund
     kb.append([InlineKeyboardButton("🏆 Top Sales Ranking & Mass Refund", callback_data="admin_ranked_products")])
     kb.append([_btn("➕", "➕ Add", "➕ Add Item", "➕ Add New Product", callback_data="add_product")])

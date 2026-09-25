@@ -627,6 +627,84 @@ async def admin_products_page_callback(u, c):
     await q.answer()
     await _show_admin_products(q, page=page)
 
+
+async def admin_prod_search_start_callback(u, c):
+    """Prompt admin to enter product name or keyword to search."""
+    q = u.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True)
+        return
+    await q.answer()
+    c.user_data['admin_prod_search'] = True
+    text = (
+        "🔍 *Search Products*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Enter product name, keyword, or Product ID to search in Edit Items:\n\n"
+        "_Send /cancel to go back._"
+    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Edit Items", callback_data="admin_products")]])
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
+
+
+async def admin_prod_search_received(u, c):
+    if u.effective_user.id != ADMIN_ID:
+        return False
+    c.user_data.pop('admin_prod_search', None)
+    query = (u.message.text or "").strip()
+    if query.lower() == '/cancel':
+        await u.message.reply_text(
+            "❌ Product search cancelled.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Edit Items", callback_data="admin_products")]])
+        )
+        return True
+
+    from database import get_all_products
+    prods = get_all_products(include_hidden=True, include_inactive=True)
+    clean_q = query.strip().lower()
+
+    matches = []
+    for p in prods:
+        p_id = str(p.get('id', ''))
+        p_name = str(p.get('name', '')).lower()
+        p_desc = str(p.get('description', '')).lower()
+        if clean_q == p_id or clean_q in p_name or clean_q in p_desc:
+            matches.append(p)
+
+    if not matches:
+        await u.message.reply_text(
+            f"🔍 *Product Search Results for: \"{escape_md(query)}\"*\n\n"
+            f"❌ No matching products found.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔍 Search Again", callback_data="adm_prod_search_start")],
+                [InlineKeyboardButton("🔙 Back to Edit Items", callback_data="admin_products")]
+            ])
+        )
+        return True
+
+    text = (
+        f"🔍 *Product Search Results for: \"{escape_md(query)}\"*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Found *{len(matches)}* matching item(s):\n"
+        f"Tap an item to edit it directly:"
+    )
+    kb = []
+    for p in matches[:25]:
+        p_name = p.get('name', 'Product')
+        status_tag = ""
+        if not p.get('is_active', 1):
+            status_tag = " [OFF]"
+        elif p.get('is_hidden', 0):
+            status_tag = " [HIDDEN]"
+        lbl = f"📦 {p_name[:32]}{status_tag}"
+        kb.append([InlineKeyboardButton(lbl, callback_data=f"viewprod_{p['id']}")])
+
+    kb.append([InlineKeyboardButton("🔍 New Search", callback_data="adm_prod_search_start")])
+    kb.append([InlineKeyboardButton("🔙 Back to Edit Items", callback_data="admin_products")])
+
+    await u.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    return True
+
 async def bulk_product_delete_start_callback(u, c):
     """Start multi-select product delete screen."""
     q = u.callback_query

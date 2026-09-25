@@ -115,11 +115,13 @@ from handlers_admin import (flash_toggle_callback, edit_product_field_callback, 
                              EDIT_PRODUCT_VALUE, EDIT_CATEGORY_VALUE)
 from handlers_support import (support_menu_callback, st_list_callback, st_view_callback,
                                st_new_callback, st_subject_received, st_desc_received,
+                               st_cat_pick_callback, st_cat_back_callback, st_prod_pick_callback,
                                admin_direct_chat_start_callback, admin_direct_chat_uid_received,
                                ADMIN_DIRECT_CHAT_UID, ADMIN_DIRECT_CHAT_MSG,
                                warranty_menu_callback, wr_order_callback, wr_type_callback,
                                wr_reason_received,
                                adm_tickets_callback, adm_tickets_list_callback,
+                               adm_ticket_search_start_callback, adm_ticket_search_received,
                                adm_st_view_callback, adm_st_resolve_callback,
                                adm_st_progress_callback, adm_st_close_callback,
                                adm_st_reply_callback, adm_reply_received,
@@ -129,6 +131,7 @@ from handlers_support import (support_menu_callback, st_list_callback, st_view_c
                                adm_wr_reject_cancel_callback, adm_wr_reject_reason_received,
                                adm_pending_delivery_callback, adm_delivery_mode_callback, adm_restock_reqs_callback,
                                adm_deliver_callback, adm_delivery_text_received)
+from handlers_admin import (admin_prod_search_start_callback, admin_prod_search_received)
 from handlers_admin import admin_deposit_history_callback, admin_deposit_page_callback, admin_deposit_detail_callback, admin_responses_category_callback, bybit_test_callback  # 📊 Deposit + ✏️ Responses
 from handlers_admin import resp_template_apply_callback, resp_custom_callback, resp_reset_callback  # 🆕 v170.22: response templates
 from handlers_admin import (admin_effects_callback, admin_effects_global_callback,
@@ -602,6 +605,19 @@ async def handle_text(update, context):
     # 🆕 v144: customization text inputs (search / import / banner)
     if context.user_data.get('adm_users_search'):
         if await adm_users_search_received(update, context): return
+    # 🆕 v170.108: Admin Product Search in Edit Items
+    if context.user_data.get('admin_prod_search'):
+        from handlers_admin import admin_prod_search_received
+        if await admin_prod_search_received(update, context): return
+    # 🆕 v170.108: Admin Ticket Search by ID or Product
+    if context.user_data.get('adm_ticket_search'):
+        from handlers_support import adm_ticket_search_received
+        if await adm_ticket_search_received(update, context): return
+    # 🆕 v170.108: Customer Support Ticket description fallback
+    if context.user_data.get('st_step') == 'waiting_desc':
+        from handlers_support import st_desc_received
+        await st_desc_received(update, context)
+        return
     if context.user_data.get('cz_search'):
         if await cz_search_received(update, context): return
     if context.user_data.get('cz_import'):
@@ -2745,6 +2761,7 @@ def main():
         ("^catstyle_", category_style_callback),
         ("^admin_products$", admin_products_callback),
         (r"^adminprodpg_\d+$", admin_products_page_callback),
+        ("^adm_prod_search_start$", admin_prod_search_start_callback),
         # 🆕 v170.100: Products Ranking & Mass Refund routes
         ("^admin_ranked_products$", admin_ranked_products_callback),
         (r"^rk_page_\d+$", admin_ranked_products_page_callback),
@@ -2965,11 +2982,15 @@ def main():
         ("^support_menu$", support_menu_callback),
         ("^st_list$", st_list_callback),
         ("^st_view_", st_view_callback),
+        ("^st_cat_back$", st_cat_back_callback),
+        (r"^st_cat_\d+$", st_cat_pick_callback),
+        (r"^st_prod_", st_prod_pick_callback),
         # 🛡️ Warranty/Refund (user side)
         ("^warranty_menu$", warranty_menu_callback),
         ("^wr_order_", wr_order_callback),
         # 🎫 Support Tickets (admin side)
         ("^adm_tickets$", adm_tickets_callback),
+        ("^adm_ticket_search_start$", adm_ticket_search_start_callback),
         ("^adm_tickets_open$", adm_tickets_list_callback),
         ("^adm_tickets_all$", adm_tickets_list_callback),
         ("^adm_st_view_", adm_st_view_callback),
@@ -3567,8 +3588,15 @@ def main():
     from telegram.ext import ConversationHandler as _CH
     app.add_handler(_CH(allow_reentry=True, conversation_timeout=600,
         entry_points=[CallbackQueryHandler(st_new_callback, pattern="^st_new$")],
-        states={400: [MessageHandler(filters.TEXT & ~filters.COMMAND, st_subject_received)],
-                401: [MessageHandler(filters.TEXT & ~filters.COMMAND, st_desc_received)]},
+        states={
+            400: [MessageHandler(filters.TEXT & ~filters.COMMAND, st_subject_received)],
+            401: [
+                CallbackQueryHandler(st_cat_pick_callback, pattern=r"^st_cat_\d+$"),
+                CallbackQueryHandler(st_cat_back_callback, pattern="^st_cat_back$"),
+                CallbackQueryHandler(st_prod_pick_callback, pattern=r"^st_prod_"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, st_desc_received),
+            ],
+        },
         fallbacks=[CommandHandler("cancel", cancel_conversation)],
     ))
     app.add_handler(_CH(allow_reentry=True, conversation_timeout=600,

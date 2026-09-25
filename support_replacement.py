@@ -1417,9 +1417,46 @@ def mark_ticket_reminded(tid):
 
 
 async def ticket_reminder_job(context):
-    """Runs every 30 min. For each open ticket due a reminder (3h), send the
-    user a message with a 🔒 Close Ticket button. Ticket closes ONLY when the
-    user taps it."""
+    """Runs every 30 min.
+    1. Auto-resolves tickets older than 30 days (1 month lifecycle).
+    2. Alerts admin about open tickets where customer replied and admin hasn't answered.
+    3. Sends user close-reminder for long-standing issues."""
+    try:
+        from database import auto_solve_expired_tickets, get_unanswered_customer_tickets, update_ticket
+        auto_solve_expired_tickets(30)
+    except Exception as _ase:
+        logger.warning(f"[TicketReminder] auto-solve error: {_ase}")
+
+    # 🔔 Remind Admin about pending customer replies
+    try:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        from config import ADMIN_ID
+        unanswered = get_unanswered_customer_tickets(reminder_gap_hours=2)
+        for ut in unanswered:
+            u_tid = ut['id']
+            c_name = ut.get('customer_name') or f"User {ut['user_id']}"
+            p_name = ut.get('product_name') or ut.get('subject') or "General"
+            try:
+                await context.bot.send_message(
+                    ADMIN_ID,
+                    f"🔔 *Unanswered Ticket Alert!*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Customer *{escape_md(c_name)}* (`{ut['user_id']}`) is waiting for your reply on Ticket *#{u_tid}*!\n"
+                    f"📦 Product: *{escape_md(p_name)}*\n\n"
+                    f"_Please reply to keep customer satisfaction high._",
+                    parse_mode="Markdown",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("💬 Reply Now", callback_data=f"adm_st_reply_{u_tid}"),
+                         InlineKeyboardButton("👀 View Ticket", callback_data=f"adm_st_view_{u_tid}")]
+                    ])
+                )
+                from datetime import datetime
+                update_ticket(u_tid, last_admin_reminder_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            except Exception as _ume:
+                logger.debug(f"[TicketReminder] admin notify #{u_tid}: {_ume}")
+    except Exception as _aue:
+        logger.warning(f"[TicketReminder] admin reminder check error: {_aue}")
+
     try:
         due = get_due_reminder_tickets(hours=3)
         if not due:

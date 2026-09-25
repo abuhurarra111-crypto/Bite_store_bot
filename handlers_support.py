@@ -130,54 +130,160 @@ async def support_menu_callback(update, context):
 
 
 async def st_new_callback(update, context):
-    """Start new ticket — ask subject"""
+    """Start new ticket — Step 1/3: Ask Customer Name"""
     q = update.callback_query
     await q.answer()
-    await q.edit_message_text(
-        "🎫 *New Support Ticket*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        "📝 *Step 1/2:* Enter ticket subject:\n\n"
-        "Example: `Payment issue`, `Product not working`, `Account problem`\n\n"
-        "_Max 200 characters_",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="support_menu")]]))
+    context.user_data['_st_user_id'] = update.effective_user.id
+    context.user_data['st_flow'] = True
+    context.user_data['st_step'] = 'waiting_name'
+    text = (
+        "🎫 *New Support Ticket*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "👤 *Step 1/3:* Please enter your *Name*:\n\n"
+        "_Please send your full name or nickname so our team can address you properly._"
+    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="support_menu")]])
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
     return SUPPORT_SUBJECT
 
 
 async def st_subject_received(update, context):
-    """Subject received — ask description"""
+    """Step 1 received (Customer Name) — Step 2/3: Show Categorized Product Picker"""
     if update.effective_user.id != context.user_data.get('_st_user_id', update.effective_user.id):
         return SUPPORT_SUBJECT
-    subject = update.message.text.strip()
-    if not subject or len(subject) < 3:
-        await update.message.reply_text("❌ Subject too short. Enter at least 3 characters:")
+    name = (update.message.text or "").strip()
+    if not name or len(name) < 2:
+        await update.message.reply_text("❌ Name is too short. Please enter your name (at least 2 characters):")
         return SUPPORT_SUBJECT
-    context.user_data['st_subject'] = subject[:200]
-    await update.message.reply_text(
-        f"✅ Subject: *{escape_md(subject[:200])}*\n\n"
-        "📝 *Step 2/2:* Describe your issue in detail:\n\n"
-        "_The more detail you provide, the faster we can help._\n\n"
-        "Type `-` to skip description",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="support_menu")]]))
+    context.user_data['st_cust_name'] = name[:100]
+    context.user_data['st_step'] = 'picking_product'
+
+    from database import get_all_categories
+    cats = get_all_categories()
+    text = (
+        f"👤 Name: *{escape_md(name[:100])}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📦 *Step 2/3:* Which product do you need help with?\n\n"
+        f"Please choose a category below to select your product:"
+    )
+    kb = []
+    for c in cats:
+        c_name = c.get('name') or 'Category'
+        kb.append([InlineKeyboardButton(f"📁 {c_name}", callback_data=f"st_cat_{c['id']}")])
+    kb.append([InlineKeyboardButton("❓ General / Other Inquiry", callback_data="st_prod_0")])
+    kb.append([InlineKeyboardButton("❌ Cancel", callback_data="support_menu")])
+
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    return SUPPORT_DESC
+
+
+async def st_cat_pick_callback(update, context):
+    """Show products within chosen category for support ticket."""
+    q = update.callback_query
+    await q.answer()
+    cid = int(q.data.replace("st_cat_", ""))
+    from database import get_products_by_category, get_category
+    prods = get_products_by_category(cid, include_hidden=False, include_inactive=False)
+    cat = get_category(cid)
+    cat_name = cat.get('name') if cat else 'Category'
+    cust_name = context.user_data.get('st_cust_name') or 'Customer'
+
+    text = (
+        f"👤 Name: *{escape_md(cust_name)}*\n"
+        f"📁 Category: *{escape_md(cat_name)}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Select the exact product you need help with:"
+    )
+    kb = []
+    for p in prods[:20]:
+        p_name = p.get('name') or 'Product'
+        kb.append([InlineKeyboardButton(f"📦 {p_name[:35]}", callback_data=f"st_prod_{p['id']}")])
+    kb.append([InlineKeyboardButton("❓ Other / General in this Category", callback_data=f"st_prod_c_{cid}")])
+    kb.append([InlineKeyboardButton("🔙 Back to Categories", callback_data="st_cat_back")])
+    kb.append([InlineKeyboardButton("❌ Cancel", callback_data="support_menu")])
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    return SUPPORT_DESC
+
+
+async def st_cat_back_callback(update, context):
+    """Return to category list for support ticket."""
+    q = update.callback_query
+    await q.answer()
+    cust_name = context.user_data.get('st_cust_name') or 'Customer'
+    from database import get_all_categories
+    cats = get_all_categories()
+    text = (
+        f"👤 Name: *{escape_md(cust_name)}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📦 *Step 2/3:* Which product do you need help with?\n\n"
+        f"Please choose a category below to select your product:"
+    )
+    kb = []
+    for c in cats:
+        c_name = c.get('name') or 'Category'
+        kb.append([InlineKeyboardButton(f"📁 {c_name}", callback_data=f"st_cat_{c['id']}")])
+    kb.append([InlineKeyboardButton("❓ General / Other Inquiry", callback_data="st_prod_0")])
+    kb.append([InlineKeyboardButton("❌ Cancel", callback_data="support_menu")])
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    return SUPPORT_DESC
+
+
+async def st_prod_pick_callback(update, context):
+    """User selects product -> prompt in English for issue description."""
+    q = update.callback_query
+    await q.answer()
+    raw_id = q.data.replace("st_prod_", "")
+    from database import get_product, get_category
+    if raw_id.startswith("c_"):
+        cid = int(raw_id.replace("c_", ""))
+        cat = get_category(cid)
+        prod_name = f"General ({cat['name']})" if cat else "General Category Inquiry"
+        prod_id = 0
+    elif raw_id == "0":
+        prod_name = "General / Account Inquiry"
+        prod_id = 0
+    else:
+        prod_id = int(raw_id)
+        p = get_product(prod_id)
+        prod_name = p.get('name') if p else "Product"
+
+    context.user_data['st_prod_name'] = prod_name
+    context.user_data['st_prod_id'] = prod_id
+    context.user_data['st_step'] = 'waiting_desc'
+    cust_name = context.user_data.get('st_cust_name') or 'Customer'
+
+    text = (
+        f"👤 Name: *{escape_md(cust_name)}*\n"
+        f"📦 Product: *{escape_md(prod_name)}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📝 *Step 3/3:* Please describe your issue in detail:\n\n"
+        f"_Explain what went wrong or how we can assist you._\n\n"
+        f"_Type your message below and send it:_"
+    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="support_menu")]])
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
     return SUPPORT_DESC
 
 
 async def st_desc_received(update, context):
-    """Description received — create ticket"""
-    desc = update.message.text.strip()
+    """Description received — create ticket with Name, Product, User ID, Description."""
+    desc = (update.message.text or "").strip()
     if desc == "-":
         desc = ""
-    subject = context.user_data.pop('st_subject', 'Support Request')
+    cust_name = context.user_data.pop('st_cust_name', '') or update.effective_user.first_name or 'Customer'
+    prod_name = context.user_data.pop('st_prod_name', 'General Support')
+    prod_id = context.user_data.pop('st_prod_id', 0)
     user_id = update.effective_user.id
 
-    tid = create_ticket(user_id, subject, desc[:2000])
+    tid = create_ticket(user_id, subject=prod_name, description=desc[:2000],
+                        customer_name=cust_name, product_name=prod_name, product_id=prod_id)
 
     # 🆕 v71: try AI auto-reply BEFORE notifying admin
     ai_handled = False
     try:
         from ai_misc import is_enabled as _ai_on, try_ai_reply
         if _ai_on():
-            ai_result = await try_ai_reply(tid, user_id, subject, desc)
+            ai_result = await try_ai_reply(tid, user_id, prod_name, desc)
             if ai_result.get("ok") and ai_result.get("answer"):
                 # AI confidently answered — send to user, save reply to ticket
                 ai_answer = ai_result["answer"]
@@ -191,7 +297,8 @@ async def st_desc_received(update, context):
                 await update.message.reply_text(
                     f"🎫 *Ticket #{tid} — Quick Answer*\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n\n"
-                    f"📝 Subject: {escape_md(subject)}\n\n"
+                    f"👤 Name: {escape_md(cust_name)}\n"
+                    f"📦 Product: {escape_md(prod_name)}\n\n"
                     f"🤖 *Our assistant suggests:*\n\n"
                     f"{escape_md(ai_answer)}\n\n"
                     f"_If this doesn't help, tap below to talk to a human._",
@@ -207,11 +314,11 @@ async def st_desc_received(update, context):
 
                 # Quiet admin notification (info only — no action needed)
                 try:
-                    user_name = update.effective_user.first_name or str(user_id)
                     await context.bot.send_message(ADMIN_ID,
                         f"🤖 *AI Auto-Handled Ticket #{tid}*\n"
-                        f"👤 {escape_md(user_name)} (`{user_id}`)\n"
-                        f"📝 Subject: {escape_md(subject)}\n\n"
+                        f"👤 Name: {escape_md(cust_name)}\n"
+                        f"🆔 User ID: `{user_id}`\n"
+                        f"📦 Product: *{escape_md(prod_name)}*\n\n"
                         f"_AI suggested an answer. Tap below if you want to override._",
                         parse_mode="Markdown",
                         reply_markup=InlineKeyboardMarkup([
@@ -223,43 +330,55 @@ async def st_desc_received(update, context):
 
                 ai_handled = True
                 context.user_data.pop('_st_user_id', None)
+                context.user_data.pop('st_step', None)
                 return ConversationHandler.END
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning(f"[AISupport] try_ai_reply failed: {e}")
 
-    # ── Original flow (AI disabled, AI escalated, or AI failed) ──
+    # ── Customer confirmation in English ──
     await update.message.reply_text(
-        f"✅ *Ticket Created!*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"🎫 Ticket #{tid}\n"
-        f"📝 Subject: {escape_md(subject)}\n"
+        f"✅ *Support Ticket Created!*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🎫 Ticket ID: *#{tid}*\n"
+        f"👤 Name: *{escape_md(cust_name)}*\n"
+        f"📦 Product: *{escape_md(prod_name)}*\n"
         f"📊 Status: 🟡 Open\n\n"
-        f"Admin will review your ticket and reply.\n"
-        f"You'll be notified when there's an update.",
+        f"Our support team has been notified and will review your issue shortly.\n"
+        f"You will receive updates directly here.",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("📋 My Tickets", callback_data="st_list")],
             [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")],
         ]))
 
-    # Notify admin
+    # Exact required admin notification format:
+    # Line 1: Customer Name
+    # Line 2: User ID
+    # Line 3: Product Name
+    # Line 4: Issue Description
     try:
-        user_name = update.effective_user.first_name or str(user_id)
-        await context.bot.send_message(ADMIN_ID,
+        admin_notif = (
             f"🎫 *New Support Ticket #{tid}*\n"
-            f"👤 {escape_md(user_name)} (`{user_id}`)\n"
-            f"📝 Subject: {escape_md(subject)}\n"
-            f"{'📄 ' + escape_md(desc[:100]) if desc else ''}",
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 Name: {escape_md(cust_name)}\n"
+            f"🆔 User ID: `{user_id}`\n"
+            f"📦 Product: *{escape_md(prod_name)}*\n\n"
+            f"📄 *Issue:* {escape_md(desc[:500]) if desc else '_(No description provided)_'}"
+        )
+        await context.bot.send_message(ADMIN_ID,
+            admin_notif,
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📝 Reply", callback_data=f"adm_st_reply_{tid}"),
                  InlineKeyboardButton("✅ Resolve", callback_data=f"adm_st_resolve_{tid}")],
                 [InlineKeyboardButton("📋 All Tickets", callback_data="adm_tickets")],
             ]))
-    except:
+    except Exception as e:
         pass
 
     context.user_data.pop('_st_user_id', None)
+    context.user_data.pop('st_step', None)
     return ConversationHandler.END
 
 
@@ -678,14 +797,93 @@ async def adm_tickets_callback(update, context):
     text = (f"🎫 *Support Tickets*\n━━━━━━━━━━━━━━━━━━━━\n\n"
             f"📊 Total: {len(tickets)}\n"
             f"🟡 Open: {open_count}\n\n"
-            f"Filter by status:")
+            f"Choose an option:")
 
     kb = [
+        [InlineKeyboardButton("🔍 Search Tickets (by ID or Product)", callback_data="adm_ticket_search_start")],
         [InlineKeyboardButton(f"🟡 Open ({open_count})", callback_data="adm_tickets_open")],
         [InlineKeyboardButton("📋 All Tickets", callback_data="adm_tickets_all")],
         [InlineKeyboardButton("🔙 Back", callback_data="admin_panel")],
     ]
     await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def adm_ticket_search_start_callback(update, context):
+    """Admin: Prompt to search tickets by ID, Product name, or keyword."""
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌", show_alert=True); return
+    await q.answer()
+    context.user_data['adm_ticket_search'] = True
+    text = (
+        "🔍 *Search Support Tickets*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Enter Ticket ID (e.g. `123`) or Product Name (e.g. `capcut`, `netflix`, `adobe`):\n\n"
+        "_Send /cancel to return to tickets menu._"
+    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Tickets", callback_data="adm_tickets")]])
+    await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
+
+
+async def adm_ticket_search_received(update, context):
+    """Admin: Process ticket search input."""
+    if update.effective_user.id != ADMIN_ID:
+        return False
+    context.user_data.pop('adm_ticket_search', None)
+    query = (update.message.text or "").strip()
+    if query.lower() == '/cancel':
+        await update.message.reply_text(
+            "❌ Ticket search cancelled.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Tickets", callback_data="adm_tickets")]])
+        )
+        return True
+
+    from database import get_all_tickets, get_user
+    all_tickets = get_all_tickets()
+    clean_q = query.lstrip("#").strip().lower()
+    matches = []
+
+    for t in all_tickets:
+        t_id = str(t['id'])
+        t_prod = str(t.get('product_name') or t.get('subject') or '').lower()
+        t_cust = str(t.get('customer_name') or '').lower()
+        t_desc = str(t.get('description') or '').lower()
+        t_uid = str(t.get('user_id') or '')
+
+        if clean_q == t_id or clean_q in t_prod or clean_q in t_cust or clean_q in t_desc or clean_q == t_uid:
+            matches.append(t)
+
+    if not matches:
+        await update.message.reply_text(
+            f"🔍 *Ticket Search: \"{escape_md(query)}\"*\n\n"
+            f"❌ No matching tickets found.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔍 Search Again", callback_data="adm_ticket_search_start")],
+                [InlineKeyboardButton("🔙 Back to Tickets", callback_data="adm_tickets")]
+            ])
+        )
+        return True
+
+    text = (
+        f"🔍 *Ticket Search Results: \"{escape_md(query)}\"*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Found *{len(matches)}* matching ticket(s):\n"
+        f"Tap any ticket below to view details:"
+    )
+    kb = []
+    status_map = {'open': '🟡', 'in_progress': '🔄', 'resolved': '✅', 'closed': '🔒'}
+    for t in matches[:20]:
+        s = status_map.get(t['status'], '❓')
+        c_name = t.get('customer_name') or str(t['user_id'])
+        p_name = t.get('product_name') or t.get('subject') or 'General'
+        lbl = f"{s} #{t['id']} {c_name[:12]}: {p_name[:20]}"
+        kb.append([InlineKeyboardButton(lbl, callback_data=f"adm_st_view_{t['id']}")])
+
+    kb.append([InlineKeyboardButton("🔍 New Search", callback_data="adm_ticket_search_start")])
+    kb.append([InlineKeyboardButton("🔙 All Tickets", callback_data="adm_tickets")])
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
+    return True
 
 
 async def adm_tickets_list_callback(update, context):
@@ -719,11 +917,14 @@ async def adm_tickets_list_callback(update, context):
             uname = u['first_name'] if u else str(t['user_id'])
         except:
             uname = str(t['user_id'])
-        text += f"{s} #{t['id']} {escape_md(uname)}: {escape_md(t['subject'][:40])}\n"
-        kb.append([InlineKeyboardButton(f"{s} #{t['id']} {uname[:15]}: {t['subject'][:25]}",
+        cust_name = t.get('customer_name') or uname
+        prod_name = t.get('product_name') or t.get('subject') or 'General'
+        text += f"{s} #{t['id']} {escape_md(cust_name)}: {escape_md(prod_name[:35])}\n"
+        kb.append([InlineKeyboardButton(f"{s} #{t['id']} {cust_name[:12]}: {prod_name[:20]}",
                                          callback_data=f"adm_st_view_{t['id']}")])
 
-    kb.append([InlineKeyboardButton("🔙 Back", callback_data="adm_tickets")])
+    kb.append([InlineKeyboardButton("🔍 Search", callback_data="adm_ticket_search_start"),
+               InlineKeyboardButton("🔙 Back", callback_data="adm_tickets")])
     await q.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(kb))
 
 
@@ -754,9 +955,14 @@ async def adm_st_view_callback(update, context, _skip_answer=False):
     except:
         uname = 'N/A'
 
+    cust_name = t.get('customer_name') or uname
+    prod_name = t.get('product_name') or t.get('subject') or 'General'
+
+    # Admin view: Line 1 Name, Line 2 User ID, Line 3 Product Name, Line 4 Status
     text = (f"🎫 *Ticket #{t['id']}*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"👤 User: {escape_md(uname)} (`{t['user_id']}`)\n"
-            f"📝 Subject: {escape_md(t['subject'])}\n"
+            f"👤 Name: *{escape_md(cust_name)}*\n"
+            f"🆔 User ID: `{t['user_id']}`\n"
+            f"📦 Product: *{escape_md(prod_name)}*\n"
             f"📊 Status: {s}\n"
             f"📅 Created: {t['created_at'][:16]}\n\n")
 
@@ -839,7 +1045,7 @@ async def adm_reply_received(update, context):
     # Persist (cap text to 2000 for the legacy single admin_reply field)
     safe_text = text_body[:2000]
     update_ticket(tid, admin_reply=safe_text or ("[media]" if media_type else ""),
-                  status='in_progress')
+                  status='in_progress', admin_replied=1, last_sender='admin')
     add_ticket_message(tid, "admin", ADMIN_ID,
                        text=safe_text, media_type=media_type, media_id=media_id)
 
@@ -859,7 +1065,7 @@ async def adm_reply_received(update, context):
     if t:
         user_id = t['user_id']
         header = (f"💬 *Support Ticket Update*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                  f"🎫 Ticket #{tid}: {escape_md(t['subject'])}\n"
+                  f"🎫 Ticket #{tid}: {escape_md(t.get('product_name') or t.get('subject') or 'Support')}\n"
                   f"📊 Status: 🔄 In Progress\n\n"
                   f"💬 *Admin replied:*")
         try:
@@ -945,31 +1151,33 @@ async def st_user_reply_received(update, context):
     safe_text = text_body[:2000]
     add_ticket_message(tid, "user", uid,
                        text=safe_text, media_type=media_type, media_id=media_id)
-    # Reopen ticket if it was resolved/closed
+    # Reopen ticket if it was resolved/closed, and mark admin_replied=0, last_sender='user'
     try:
-        t = get_ticket(tid)
-        if t and t['status'] in ('resolved', 'closed'):
-            update_ticket(tid, status='in_progress')
+        update_ticket(tid, status='in_progress', admin_replied=0, last_sender='user')
     except Exception:
         pass
 
     await msg.reply_text(
-        f"✅ *Reply sent for Ticket #{tid}*\n\n_Admin will see it shortly._",
+        f"✅ *Reply sent for Ticket #{tid}*\n\n_Admin will review it shortly._",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([[
             InlineKeyboardButton("🎫 My Tickets", callback_data="support_menu")
         ]]))
 
-    # Notify admin
+    # Notify admin with Line 1 Name, Line 2 User ID, Line 3 Product Name
     try:
-        header = (f"📩 *New reply on Ticket #{tid}*\n━━━━━━━━━━━━━━━━━━━━\n\n"
-                  f"👤 From user `{uid}`")
+        t = get_ticket(tid)
+        cust_name = (t.get('customer_name') if t else '') or msg.from_user.first_name or str(uid)
+        prod_name = (t.get('product_name') if t else '') or (t.get('subject') if t else '') or 'General'
+        header = (f"📩 *New reply on Ticket #{tid}*\n━━━━━━━━━━━━━━━━━━━━\n"
+                  f"👤 Name: {escape_md(cust_name)}\n"
+                  f"🆔 User ID: `{uid}`\n"
+                  f"📦 Product: *{escape_md(prod_name)}*\n\n"
+                  f"📄 *Reply:* {escape_md(safe_text[:400]) if safe_text else '_(Media attachment)_'}")
         await context.bot.send_message(ADMIN_ID, header, parse_mode="Markdown")
         if media_type:
             await relay_media_to(context.bot, ADMIN_ID, media_type, media_id,
                                  caption=safe_text)
-        elif safe_text:
-            await context.bot.send_message(ADMIN_ID, safe_text)
         await context.bot.send_message(
             ADMIN_ID,
             f"_Open ticket to reply ↓_",
