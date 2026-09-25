@@ -440,7 +440,7 @@ def parse_delivery_item(raw, product_format=FORMAT_EMAIL_PASS):
 
     if fmt == FORMAT_REDEEM_LINK:
         for ln in lines:
-            if ln.lower().startswith(("http://", "https://")):
+            if "http://" in ln.lower() or "https://" in ln.lower():
                 data["link"] = ln  # raw line, no strip
                 break
         if not data["link"]:
@@ -480,8 +480,8 @@ def validate_account_line(raw, product_format=FORMAT_EMAIL_PASS):
         return True, ""
 
     if fmt == FORMAT_REDEEM_LINK:
-        if not line.lower().startswith(("http://", "https://")):
-            return False, "Redeem link must start with http:// or https://"
+        if not ("http://" in line.lower() or "https://" in line.lower()):
+            return False, "Redeem link must contain http:// or https://"
         return True, ""
 
     # coupon code

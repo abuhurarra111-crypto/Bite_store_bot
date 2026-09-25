@@ -1724,37 +1724,96 @@ class MMOStoreAdapter(SupplierAdapterBase):
     def create_order(self, remote_id, quantity):
         """MMOStore POST /api/v1/orders {product_id, qty, currency, reserve}.
 
-        🔧 v111 defensive parser:
-        - MMOStore normally returns ``data.accounts`` as a list, but some
-          products/versions may return a single string or richer dict objects.
-        - Never iterate a string character-by-character (that can inflate one
-          account into many fake "items").
-        - Preserve Outlook-style extra fields (refresh_token/client_id/etc.)
-          instead of collapsing dicts to only email|password.
+        🔧 v170.107 FIX for partner/external products (Adobe Express, Coursera, etc.):
+        MMOStore upstream partner products fail on direct buy (reserve: false) with:
+          {"code": "stock_error", "message": "Failed to retrieve accounts from supplier"}
+        Because their upstream partner API requires a reservation lock before dispatch!
+        
+        Strategy:
+        1. First try 2-step reservation flow (reserve: True).
+           When reserved, immediately call POST /api/v1/orders/{order_id}/confirm
+           to capture payment and receive the delivered accounts.
+        2. If reservation fails with an error or returns no items, fall back to
+           direct buy (reserve: False).
         """
-        body = {"product_id": str(remote_id), "qty": int(quantity),
-                "currency": "USD", "reserve": False}
-        r = self._post("/api/v1/orders", body, timeout=45)
-        if r is None:
-            return {"ok": False, "error": "network_error", "items": [], "raw": None}
+        # Step 1: Attempt reservation + confirm flow
+        body_reserve = {
+            "product_id": str(remote_id),
+            "qty": int(quantity),
+            "currency": "USD",
+            "reserve": True
+        }
+        r = self._post("/api/v1/orders", body_reserve, timeout=45)
+        j = None
+        if r is not None:
+            try:
+                j = r.json()
+            except Exception:
+                j = None
+
+        if j and j.get("ok"):
+            data = j.get("data") or {}
+            res_order_id = data.get("order_id") or _extract_order_id(data) or _extract_order_id(j)
+            if res_order_id:
+                r_conf = self._post(f"/api/v1/orders/{res_order_id}/confirm", timeout=45)
+                if r_conf is not None:
+                    try:
+                        j_conf = r_conf.json()
+                        if j_conf.get("ok"):
+                            data_conf = j_conf.get("data") or {}
+                            items = _extract_delivery_items(data_conf) or _extract_delivery_items(j_conf)
+                            if items:
+                                return {
+                                    "ok": True,
+                                    "items": items,
+                                    "order_id": str(res_order_id),
+                                    "supplier_qty": data_conf.get("qty") if isinstance(data_conf, dict) else None,
+                                    "total_usd": data_conf.get("total_usd") if isinstance(data_conf, dict) else None,
+                                    "raw": j_conf
+                                }
+                    except Exception as _ce:
+                        logger.warning(f"[MMOStore] confirm error: {_ce}")
+
+        # Step 2: Direct buy fallback (for native products where reserve is not used)
+        body_direct = {
+            "product_id": str(remote_id),
+            "qty": int(quantity),
+            "currency": "USD",
+            "reserve": False
+        }
+        r_direct = self._post("/api/v1/orders", body_direct, timeout=45)
+        if r_direct is None:
+            err_msg = "network_error"
+            if j and not j.get("ok"):
+                err_obj = j.get("error") or j.get("message")
+                if isinstance(err_obj, dict):
+                    err_msg = err_obj.get("message") or err_obj.get("code") or str(err_obj)
+                elif err_obj:
+                    err_msg = str(err_obj)
+            return {"ok": False, "error": err_msg, "items": [], "raw": j}
+
         try:
-            j = r.json()
+            j_direct = r_direct.json()
         except Exception:
-            return {"ok": False, "error": f"bad_response_{r.status_code}",
-                    "items": [], "raw": r.text[:500]}
-        if not j.get("ok"):
-            err = j.get("error") or j.get("message") or f"HTTP {r.status_code}"
+            return {"ok": False, "error": f"bad_response_{r_direct.status_code}",
+                    "items": [], "raw": r_direct.text[:500]}
+
+        if not j_direct.get("ok"):
+            err = j_direct.get("error") or j_direct.get("message") or f"HTTP {r_direct.status_code}"
             if isinstance(err, dict):
                 err = err.get("message") or err.get("code") or json.dumps(err, ensure_ascii=False)
-            return {"ok": False, "error": str(err), "items": [], "raw": j}
+            return {"ok": False, "error": str(err), "items": [], "raw": j_direct}
 
-        data = j.get("data") or {}
-        items = _extract_delivery_items(data) or _extract_delivery_items(j)
-        return {"ok": True, "items": items,
-                "order_id": _extract_order_id(data) or _extract_order_id(j),
-                "supplier_qty": data.get("qty") if isinstance(data, dict) else None,
-                "total_usd": data.get("total_usd") if isinstance(data, dict) else None,
-                "raw": j}
+        data_d = j_direct.get("data") or {}
+        items = _extract_delivery_items(data_d) or _extract_delivery_items(j_direct)
+        return {
+            "ok": True,
+            "items": items,
+            "order_id": _extract_order_id(data_d) or _extract_order_id(j_direct),
+            "supplier_qty": data_d.get("qty") if isinstance(data_d, dict) else None,
+            "total_usd": data_d.get("total_usd") if isinstance(data_d, dict) else None,
+            "raw": j_direct
+        }
 
 
 class TunVNMMOAdapter(SupplierAdapterBase):
