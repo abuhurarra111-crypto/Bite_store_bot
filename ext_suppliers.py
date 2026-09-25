@@ -652,6 +652,62 @@ def toggle_ext_product_active(eid):
     return int(refreshed.get("active") or 0)
 
 
+def _smart_guess_category(p_name: str) -> int:
+    """Guess the best category ID based on product name keywords."""
+    low = (p_name or '').lower()
+    try:
+        from database import get_all_categories
+        cats = get_all_categories()
+    except Exception:
+        return 0
+    if not cats:
+        return 0
+    if 'gemini' in low:
+        for c in cats:
+            if 'gemini' in (c.get('name') or '').lower(): return c['id']
+    if 'duolingo' in low:
+        for c in cats:
+            if 'duolingo' in (c.get('name') or '').lower(): return c['id']
+    if 'coursera' in low:
+        for c in cats:
+            if 'coursera' in (c.get('name') or '').lower(): return c['id']
+    if 'adobe' in low:
+        for c in cats:
+            if 'adobe' in (c.get('name') or '').lower(): return c['id']
+    if 'vpn' in low or 'nordvpn' in low:
+        for c in cats:
+            if 'vpn' in (c.get('name') or '').lower(): return c['id']
+    if 'canva' in low:
+        for c in cats:
+            if 'canva' in (c.get('name') or '').lower(): return c['id']
+    if 'lovable' in low:
+        for c in cats:
+            if 'lovable' in (c.get('name') or '').lower(): return c['id']
+    if 'notion' in low:
+        for c in cats:
+            if 'notion' in (c.get('name') or '').lower(): return c['id']
+    if 'outlook' in low or 'hotmail' in low or 'gmail' in low or 'mail' in low:
+        for c in cats:
+            if 'mail accounts' in (c.get('name') or '').lower() or 'mail' in (c.get('name') or '').lower():
+                return c['id']
+    if 'music' in low or 'spotify' in low or 'apple' in low:
+        for c in cats:
+            if 'spotify' in (c.get('name') or '').lower() or 'music' in (c.get('name') or '').lower():
+                return c['id']
+    if 'tiktok' in low:
+        for c in cats:
+            if 'telegram' in (c.get('name') or '').lower() or 'account' in (c.get('name') or '').lower():
+                return c['id']
+    if 'phone' in low or 'number' in low:
+        for c in cats:
+            if 'number' in (c.get('name') or '').lower() or 'gmail' in (c.get('name') or '').lower():
+                return c['id']
+    if 'headspace' in low:
+        for c in cats:
+            if 'prime' in (c.get('name') or '').lower(): return c['id']
+    return 0
+
+
 # ────────────────────────────────────────────────────────────
 # 🆕 v82 PHASE 2: MIRROR-SYNC ext_products → products (shop table)
 # ────────────────────────────────────────────────────────────
@@ -3017,7 +3073,7 @@ async def ext_sup_del_confirm_callback(update, context):
 
 
 async def ext_sup_import_all_callback(update, context):
-    """Import ALL products from supplier."""
+    """Import ALL products from supplier and auto-mirror them to shop."""
     q = update.callback_query
     if q.from_user.id != ADMIN_ID:
         await q.answer("❌", show_alert=True); return
@@ -3033,24 +3089,39 @@ async def ext_sup_import_all_callback(update, context):
     if err:
         text = f"❌ *Import failed*\n\n{escape_md(err)}"
     else:
-        # Try to auto-apply emoji library
+        # Try to auto-apply emoji library & auto-mirror to shop so they appear immediately!
         prods = get_ext_products(supplier_id=sid)
+        synced_count = 0
         for p in prods:
             try:
                 apply_emoji_to_product(p["id"])
             except Exception:
                 pass
+            try:
+                # If product doesn't have category, guess it
+                if not p.get("category_id"):
+                    cid = _smart_guess_category(p.get("name") or "")
+                    if cid:
+                        update_ext_product(p["id"], category_id=cid)
+                # Auto-sync to shop
+                update_ext_product(p["id"], synced_to_shop=1)
+                mirror_ext_to_products(p["id"], sync_category=True)
+                synced_count += 1
+            except Exception as _m_err:
+                logger.warning(f"[import_all] auto-sync #{p['id']}: {_m_err}")
+
         text = (
             f"✅ *Import complete!*\n"
             f"━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"📥 Imported/updated: *{n} products*\n\n"
-            f"_Default markup: 40% (edit per-product from Browse Products)._\n"
-            f"_Products with premium emoji IDs → 🟢 ready._\n"
-            f"_Products without → 🟡 need manual emoji fix._"
+            f"📥 Imported from supplier: *{n} products*\n"
+            f"🛍️ Added to Shop & Edit Items: *{synced_count} products*\n\n"
+            f"_All products are live in your shop and categorized!_\n"
+            f"_Default markup: 40% (edit prices via Edit Items or Browse Products)._"
         )
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("☑️ Browse Products", callback_data=f"ext_sup_import_pick_{sid}_0")],
         [InlineKeyboardButton("⚙️ Supplier Panel",  callback_data=f"ext_sup_view_{sid}")],
+        [InlineKeyboardButton("📝 Edit Items",      callback_data="admin_products")],
     ])
     await _safe_edit(q, text, parse_mode="Markdown", reply_markup=kb)
 
